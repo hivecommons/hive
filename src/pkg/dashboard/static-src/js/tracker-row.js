@@ -199,6 +199,41 @@
       if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
       return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (sa.why ? ' — ' + sa.why : '');
     }
+    // Why a person is wanted (hivecommons/hive#15773): a 👤 mover always
+    // has a reason. `short` (at most STAGE_TRACKER_HUMAN_REASON_MAX chars)
+    // rides after the 👤 unless the chevron word already says it ("Needs
+    // human decision", "Triage needed"); `full` is its hover. Built only
+    // from fields the payload already carries: a covered issue's parked
+    // PR, the 090 human-merge reason, the decision's question, the stage
+    // actor's why. null when the next move is not a person's.
+    const STAGE_TRACKER_HUMAN_REASON_MAX = 40;
+    const STAGE_TRACKER_HUMAN_REASON_FALLBACK = 'a person must act';
+    const STAGE_TRACKER_HUMAN_WHY_SAID = ['a human decision is owed', 'no maintainer has triaged it yet', 'a maintainer merges it'];
+    function stageTrackerHumanReason(item) {
+      if (!item || stageTrackerActorKind(item) !== 'human') return null;
+      const sa = stageTrackerStageActor(item);
+      const d = item.decision_needed && typeof item.decision_needed === 'object' ? item.decision_needed : null;
+      const covered = typeof stageTrackerCoveredDecisionPR === 'function' ? stageTrackerCoveredDecisionPR(item) : null;
+      const why = sa && sa.why ? String(sa.why).trim() : '';
+      let short = '', full = '';
+      if (covered) {
+        short = '#' + (Number(covered.number) || 0) + ' needs a decision';
+        full = 'Covered by PR #' + (Number(covered.number) || 0) + ' — waiting for a decision on the PR';
+      } else if (item.human_merge_reason) {
+        short = String(item.human_merge_reason).replace(/-/g, ' ');
+        full = String(item.human_merge_reason_text || '').trim();
+      } else {
+        full = d && d.question ? String(d.question).trim() : '';
+        if (why && STAGE_TRACKER_HUMAN_WHY_SAID.indexOf(why) < 0) short = why.split(/ — |; /)[0].trim();
+      }
+      if (short.length > STAGE_TRACKER_HUMAN_REASON_MAX) short = short.slice(0, STAGE_TRACKER_HUMAN_REASON_MAX - 1).trimEnd() + '…';
+      return { short, full: full || why || short || STAGE_TRACKER_HUMAN_REASON_FALLBACK };
+    }
+    // " · #15759 needs a decision" after the 👤, the full reason on hover.
+    function stageTrackerHumanReasonHtml(item) {
+      const r = stageTrackerHumanReason(item);
+      return r && r.short ? `<span class="ham-human-why" title="${esc(r.full)}"> · ${esc(r.short)}</span>` : '';
+    }
     // Who holds the row: the payload's claimant {kind, login, agent, hive,
     // since, source} (hivecommons/hive#15422). The chevron gets one short
     // token after the stage word; the hover gets one "Held by:" line.
@@ -432,6 +467,8 @@
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        // Why the person is wanted rides after the 👤 (hivecommons/hive#15773).
+        if (active && !sg.cap && actorKind === 'human' && typeof stageTrackerHumanReasonHtml === 'function') inner += stageTrackerHumanReasonHtml(item);
         return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
@@ -1119,6 +1156,29 @@
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs : [];
       return linked.filter(lp => !stageTrackerLinkedDrawnHere(lp, item)).sort((x, y) => (x.number || 0) - (y.number || 0));
     }
+    // Pure: is PR #number linked to this issue but drawn under another one?
+    function stageTrackerLinkedDrawnElsewhere(item, number) {
+      const n = Number(number) || 0;
+      const lp = (Array.isArray(item && item.linked_prs) ? item.linked_prs : []).find(x => x && Number(x.number) === n);
+      return !!lp && !stageTrackerLinkedDrawnHere(lp, item);
+    }
+    // Pure: the open PR, drawn under another issue, that this issue waits
+    // on for a person's decision — #15503 covered by #15759, which is
+    // drawn under #15502 and parked at 085 (hivecommons/hive#15773). null
+    // when the issue draws an open PR itself or none of its PRs asks.
+    function stageTrackerCoveredDecisionPR(item) {
+      if (!item || item.kind !== 'issue' || !Array.isArray(item.linked_prs)) return null;
+      const open = item.linked_prs.filter(lp => lp && stageTrackerLinkedPROpen(lp, item));
+      if (open.some(lp => stageTrackerLinkedDrawnHere(lp, item))) return null;
+      const asks = lp => (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('needs-decision') >= 0 || [45, 85].indexOf(Number(lp.stage) || 0) >= 0 || !!(lp.decision_needed && lp.decision_needed.question);
+      return open.find(asks) || null;
+    }
+    // "Covered by PR #N — waiting for a decision on the PR": the covered
+    // issue's caption and next-move line; '' when it is not one.
+    function stageTrackerCoveredDecisionCaption(item) {
+      const lp = stageTrackerCoveredDecisionPR(item);
+      return lp ? 'Covered by PR #' + (Number(lp.number) || 0) + ' — waiting for a decision on the PR' : '';
+    }
     function stageTrackerLinkedElsewhereHtml(item) {
       return stageTrackerLinkedElsewhere(item).map(lp => `<a class="ham-badge ham-linked-elsewhere" href="${esc(lp.url || '#')}" target="_blank" rel="noopener" title="${esc('PR #' + (Number(lp.number) || 0) + ' covers this issue too; its row is drawn under #' + Number(lp.drawn_under))}">↳ #${Number(lp.number) || 0} · under #${Number(lp.drawn_under)}</a>`).join(' ');
     }
@@ -1332,6 +1392,11 @@
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs, ctx)).join('');
           subRows = linked;
         }
+        // A covered issue waiting on a decision on its PR, which is drawn
+        // under another issue, says so in its caption and next-move line
+        // (hivecommons/hive#15773).
+        const coveredCap = typeof stageTrackerCoveredDecisionCaption === 'function' ? stageTrackerCoveredDecisionCaption(item) : '';
+        if (coveredCap) shown = Object.assign({}, shown, { caption: coveredCap, stage_actor: shown.stage_actor ? Object.assign({}, shown.stage_actor, { why: coveredCap.charAt(0).toLowerCase() + coveredCap.slice(1) }) : shown.stage_actor });
       }
       // Invariant (owner): the issue slot on the left never holds a PR. A
       // PR whose issue is listed is nested under it; a PR seen on its own

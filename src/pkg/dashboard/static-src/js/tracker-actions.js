@@ -492,6 +492,12 @@
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
+      // A covered issue whose parked PR is drawn under another issue
+      // (drawn_under) never carries that PR's button: the PR's own row
+      // does, and this row shows the passive "decision pending on #N"
+      // chip instead (hivecommons/hive#15773: #15503 under #15502 carried
+      // #15759's "Let hive decide").
+      if (a && a.target && a.target.kind === 'pr' && item.kind === 'issue' && typeof stageTrackerLinkedDrawnElsewhere === 'function' && stageTrackerLinkedDrawnElsewhere(item, a.target.number)) return null;
       if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
@@ -506,12 +512,88 @@
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
-      if (!a) return '';
+      if (!a) return typeof stageTrackerDecisionPendingChipHtml === 'function' ? stageTrackerDecisionPendingChipHtml(item) : '';
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
+      // A re-render while the plan is being fetched keeps the busy button.
+      if (a.id === 'decide:delegate' && typeof stageTrackerAsking === 'function' && stageTrackerAsking(item)) return stageTrackerLeadBusyHtml(a.id, label, ref, a.danger);
       const state = a.enabled ? (tip ? ` title="${esc(tip)}"` : '') : ` aria-disabled="true" title="${esc(tip)}"`;
       return `<button type="button" class="ham-lead-act${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
+    }
+    // "Let hive decide" first asks the server for a plan (2–6 s on a PR):
+    // from the click until the preview opens the button is disabled and
+    // aria-busy, reads "Asking the hive…" beside the acting glyph, and the
+    // row wears the acting wash (hivecommons/hive#15773). Keyed by the row
+    // and the item decided; a second click while asking does nothing.
+    const STAGE_TRACKER_ASKING_CAPTION = 'Asking the hive…';
+    var _stageTrackerAsking = new Set();
+    function stageTrackerAsking(item) { return !!item && _stageTrackerAsking.has(stageTrackerItemKey(item)); }
+    // Pure: the busy lead button.
+    function stageTrackerLeadBusyHtml(id, label, ref, danger) {
+      return `<button type="button" class="ham-lead-act ham-lead-busy${danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(id)}" data-ham-label="${esc(label)}" disabled aria-disabled="true" aria-busy="true" title="${esc(STAGE_TRACKER_ASKING_CAPTION)}" aria-label="${esc(STAGE_TRACKER_ASKING_CAPTION + (ref ? ' — ' + ref : ''))}"><span class="toast-spinner cue-acting-spin" aria-hidden="true"></span>${esc(STAGE_TRACKER_ASKING_CAPTION)}</button>`;
+    }
+    // Swap the live lead buttons of the asking rows to / from busy, in
+    // place: the tracker may not re-render before the preview opens.
+    function stageTrackerAskingSync(el) {
+      if (!el || typeof el.querySelectorAll !== 'function') return;
+      for (const b of el.querySelectorAll('.ham-lead-act[data-ham-act="decide:delegate"]')) {
+        const sub = b.closest('[data-ham-sub-key]');
+        const row = b.closest('[data-ham-key]');
+        const key = sub ? sub.getAttribute('data-ham-sub-key') : (row ? row.getAttribute('data-ham-key') : '');
+        const busy = !!key && _stageTrackerAsking.has(key);
+        if (busy === b.classList.contains('ham-lead-busy')) continue;
+        const tpl = document.createElement('template');
+        if (busy) {
+          tpl.innerHTML = stageTrackerLeadBusyHtml(b.dataset.hamAct, b.textContent, '', b.classList.contains('ham-menu-danger'));
+          tpl.content.firstElementChild.setAttribute('aria-label', STAGE_TRACKER_ASKING_CAPTION);
+          tpl.content.firstElementChild.dataset.hamWas = b.outerHTML;
+        } else {
+          tpl.innerHTML = b.dataset.hamWas || `<button type="button" class="ham-lead-act" data-ham-act="${esc(b.dataset.hamAct)}">${esc(b.dataset.hamLabel || 'Let hive decide')}</button>`;
+        }
+        b.replaceWith(tpl.content.firstElementChild);
+      }
+    }
+    // Pure: the keys that read "asking" — every decided item and the rows
+    // clicked on its behalf.
+    function stageTrackerAskingKeys(items, rows) {
+      const keys = [];
+      for (const it of items || []) for (const k of stageTrackerPendingKeys(it, rows)) if (keys.indexOf(k) < 0) keys.push(k);
+      for (const r of rows || []) { const k = stageTrackerItemKey(r); if (keys.indexOf(k) < 0) keys.push(k); }
+      return keys;
+    }
+    function stageTrackerBeginAsking(items, rows) {
+      const keys = stageTrackerAskingKeys(items, rows);
+      for (const k of keys) _stageTrackerAsking.add(k);
+      const pend = stageTrackerSetPending(keys, STAGE_TRACKER_ASKING_CAPTION);
+      stageTrackerAskingSync(document.getElementById('activity-monitor-panel'));
+      return { keys, pend };
+    }
+    function stageTrackerEndAsking(asking) {
+      for (const k of asking.keys) _stageTrackerAsking.delete(k);
+      stageTrackerClearPending(asking.pend);
+      stageTrackerAskingSync(document.getElementById('activity-monitor-panel'));
+    }
+    // Pure: the passive chip a covered issue carries instead of its PR's
+    // button: "decision pending on #N", pointing at the PR's row.
+    function stageTrackerDecisionPendingChipHtml(item) {
+      const lp = typeof stageTrackerCoveredDecisionPR === 'function' ? stageTrackerCoveredDecisionPR(item) : null;
+      if (!lp) return '';
+      const n = Number(lp.number) || 0;
+      const under = Number(lp.drawn_under) || 0;
+      const tip = 'Covered by PR #' + n + ' — waiting for a decision on the PR. Its row' + (under ? ' (under #' + under + ')' : '') + ' carries the decision; click to go there.';
+      return `<button type="button" class="ham-badge ham-decision-pending" data-ham-goto="${esc(stageTrackerItemKey({ repo: item.repo, kind: 'pr', number: n }))}"${under ? ` data-ham-goto-row="${esc(stageTrackerItemKey({ repo: item.repo, kind: 'issue', number: under }))}"` : ''} title="${esc(tip)}">decision pending on #${n}</button>`;
+    }
+    // Scroll to the PR row a "decision pending on #N" chip names: its
+    // sub-row, else the issue row it is drawn on.
+    function stageTrackerGotoRow(el, key, rowKey) {
+      if (!el) return false;
+      const node = (key && el.querySelector(`[data-ham-sub-key="${CSS.escape(key)}"], [data-ham-key="${CSS.escape(key)}"]`)) || (rowKey && el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`));
+      if (!node) { showToast('That PR\'s row is not on this page — clear the filter or turn the page to see it.', 'info'); return false; }
+      const reduced = typeof stageTrackerReducedMotion === 'function' && stageTrackerReducedMotion();
+      if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+      if (typeof node.focus === 'function') node.focus({ preventScroll: true });
+      return true;
     }
     // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
     // the server lists them in decision_needed.options (a capability gap
@@ -763,7 +845,7 @@
         const b = e.target.closest ? e.target.closest('.ham-lead-act[data-ham-act]') : null;
         if (!b) return;
         e.preventDefault(); e.stopPropagation();
-        if (b.getAttribute('aria-disabled') === 'true') return;
+        if (b.getAttribute('aria-disabled') === 'true' || b.getAttribute('aria-busy') === 'true') return;
         // The one row (or nested PR) the button sits on, never the selection.
         const sub = b.closest('[data-ham-sub-key]');
         const row = b.closest('.ham-row[data-ham-key]');
@@ -771,6 +853,13 @@
         const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
         if (!item) return;
         stageTrackerDecisionRun(item, b.dataset.hamAct);
+      });
+      // A covered issue's "decision pending on #N" chip goes to the PR's row.
+      el.addEventListener('click', e => {
+        const c = e.target.closest ? e.target.closest('.ham-decision-pending[data-ham-goto]') : null;
+        if (!c) return;
+        e.preventDefault(); e.stopPropagation();
+        stageTrackerGotoRow(el, c.dataset.hamGoto, c.dataset.hamGotoRow || '');
       });
       // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
       // buttons) selects it too.
@@ -1573,9 +1662,12 @@
     // Let hive decide → plan → preview → act. Returns the delegate payload,
     // or null when cancelled or when the operator took the merge
     // alternative (which runs as its own row action with the chosen button
-    // recorded on the ledger).
-    async function stageTrackerDelegatePreview(items) {
-      const plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan));
+    // recorded on the ledger). While the plans are fetched the button and
+    // the row read "Asking the hive…" (rows: the clicked rows, #15773).
+    async function stageTrackerDelegatePreview(items, rows) {
+      const asking = typeof stageTrackerBeginAsking === 'function' ? stageTrackerBeginAsking(items, rows || items) : null;
+      let plans;
+      try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { if (asking) stageTrackerEndAsking(asking); }
       const failed = plans.filter(pl => pl.error);
       if (failed.length) { showToast('Could not preview ' + failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', '), 'error'); return null; }
       const picked = await stageTrackerDelegatePlanDialog(plans, stageTrackerSentinelPreface(items));
@@ -1586,7 +1678,7 @@
       }
       return { chosen: picked.chosen };
     }
-    async function stageTrackerActionPayload(items, id) {
+    async function stageTrackerActionPayload(items, id, rows) {
       const refs = items.map(stageTrackerRefOf).join(', ');
       const who = window._hiveUser || 'you';
       const prs = items.length > 0 && items.every(it => it.kind === 'pr');
@@ -1596,7 +1688,7 @@
         case 'decide:delegate':
           // Preview first (hivecommons/hive#15126): nothing is written
           // until the operator picks a button.
-          return stageTrackerDelegatePreview(items);
+          return stageTrackerDelegatePreview(items, rows);
         case 'decide:delegate-all': {
           // Confirms as Let hive decide (same opt-out key), naming each PR.
           const prs = [].concat(...items.map(stageTrackerNestedOpenPRs));
@@ -2063,7 +2155,10 @@
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
-      const payload = await stageTrackerActionPayload(items, id);
+      // A second "Let hive decide" while the plan is being fetched does
+      // nothing: the button is already busy (#15773).
+      if (id === 'decide:delegate' && typeof stageTrackerAsking === 'function' && items.some(stageTrackerAsking)) return { toasts: [], pending: [], busy: true };
+      const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
       const results = await stageTrackerRunActions(items, id, payload, rows);
       return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };

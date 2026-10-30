@@ -679,6 +679,16 @@
     .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
     .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
     .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
+    /* "Let hive decide" while the plan is fetched (hivecommons/hive#15773):
+       the acting glyph + "Asking the hive…" in the --cue-work colour, solid
+       border, no hover; static like every other tracker glyph. */
+    .ham-lead-act.ham-lead-busy[aria-busy="true"] { color: var(--cue-work, var(--accent)); border-color: var(--cue-work, var(--accent)); border-style: solid; background: color-mix(in srgb, var(--cue-work, var(--accent)) 10%, transparent); cursor: progress; opacity: 1; }
+    .ham-lead-busy .cue-acting-spin { width: 10px; height: 10px; margin-right: var(--sp-1); }
+    /* A covered issue points at the PR row that carries the decision. */
+    .ham-decision-pending { font: inherit; font-size: var(--fs-xs); cursor: pointer; border-style: dashed; }
+    .ham-decision-pending:focus-visible { outline: none; box-shadow: 0 0 0 var(--line-width) var(--accent); }
+    /* Why a person is wanted, after the 👤 on the lit chevron. */
+    .ham-human-why { color: inherit; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     /* The technical background folds behind one collapsed Details. */
     .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
