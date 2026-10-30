@@ -68,7 +68,10 @@ func (c AdoptionClock) offlineGrace() time.Duration {
 	return durationOr(c.AdoptOfflineGrace, defaultAdoptOfflineGrace)
 }
 
-func durationOr(d, def time.Duration) time.Duration {
+func durationOr(d, def time.Duration) time.Duration { return DurationOr(d, def) }
+
+// DurationOr returns d, or def when d is not positive.
+func DurationOr(d, def time.Duration) time.Duration {
 	if d > 0 {
 		return d
 	}
