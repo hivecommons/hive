@@ -1276,7 +1276,7 @@ The prompt forbids printing `no_work_needed` *and* `complete` for one task, but 
 
 ### fix-pr tasks
 
-The one place a declaration DOES shape dispatch is the stage-072 contributor nudge ([labels-and-control-signals.md](labels-and-control-signals.md#off-the-happy-path-072--nudge--074--takeover)), and only in the client's favour: the hub never grants more than the relay asked for. When one of a contributor's earlier PRs goes red (failing checks, `changes_requested`, conflicts) and the contributor is online — a heartbeat within `governor.labels.stage.presence_window`, default 15m — the hub pushes the diagnosis to their relay as a `task_assign` the relay may receive **while a task is already running**:
+The one place a declaration DOES shape dispatch is the stage-072 contributor nudge ([labels-and-control-signals.md](labels-and-control-signals/stage-labels.md#off-the-happy-path-072--nudge--074--takeover)), and only in the client's favour: the hub never grants more than the relay asked for. When one of a contributor's earlier PRs goes red (failing checks, `changes_requested`, conflicts) and the contributor is online — a heartbeat within `governor.labels.stage.presence_window`, default 15m — the hub pushes the diagnosis to their relay as a `task_assign` the relay may receive **while a task is already running**:
 
 ```json
 { "type": "task_assign", "task_id": "…", "task_gen": 7,
