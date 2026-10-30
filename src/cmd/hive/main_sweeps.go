@@ -1969,6 +1969,7 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },
 	)
+	client.SetNotificationsQuiet(func() bool { return cfg.GitHub.Notifications.Quiet() })
 	// review.require_labels (PR approval allow-list): the relay's half of the
 	// gate, read live so a Features-tab edit applies to the next request.
 	client.SetReviewRequireLabels(func() []string { return cfg.Review.RequireLabels })
@@ -2488,18 +2489,21 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		reviewBotLogins = reviewBots.Logins
 	}
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
-		RequireApproval:       cfg.Review.RequireApproval,
-		FanOut:                cfg.Review.FanOut,
-		MaxParallelReviews:    cfg.Review.EffectiveMaxParallelReviews(),
-		MaxPerspectivesPerPR:  cfg.Review.MaxPerspectivesPerPR,
-		Perspectives:          reviewPerspectiveSet(cfg, logger),
-		CombinedPerspectives:  cfg.Review.CombinedPerspectives,
-		ReviewerAgents:        cfg.Review.ReviewerAgents,
-		FixerAgent:            cfg.Review.FixerAgent,
-		PostComments:          cfg.Review.PostComments,
-		WritingGuideSection:   cfg.Project.WritingGuideSection(),
-		FixHumanPRs:           cfg.Review.FixHumanPRsEnabled(),
-		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
+		RequireApproval:      cfg.Review.RequireApproval,
+		FanOut:               cfg.Review.FanOut,
+		MaxParallelReviews:   cfg.Review.EffectiveMaxParallelReviews(),
+		MaxPerspectivesPerPR: cfg.Review.MaxPerspectivesPerPR,
+		Perspectives:         reviewPerspectiveSet(cfg, logger),
+		CombinedPerspectives: cfg.Review.CombinedPerspectives,
+		ReviewerAgents:       cfg.Review.ReviewerAgents,
+		FixerAgent:           cfg.Review.FixerAgent,
+		PostComments:         cfg.Review.PostComments,
+		WritingGuideSection:  cfg.Project.WritingGuideSection(),
+		FixHumanPRs:          cfg.Review.FixHumanPRsEnabled(),
+		// Quiet notification mode never acknowledges a clean review on
+		// GitHub: the one-liner is an email to everyone to say nothing
+		// happened, and the verdict is already on the evidence bundle.
+		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings && !cfg.GitHub.Notifications.Quiet(),
 		ReviseRepos:           cfg.Review.ReviseRepos,
 		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
 		PendingTTL:            cfg.Review.PendingReviewTTL(),

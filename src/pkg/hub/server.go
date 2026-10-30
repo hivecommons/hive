@@ -4834,6 +4834,23 @@ func (s *HubServer) handleContributeLanding(w http.ResponseWriter, r *http.Reque
       <h2 id="hive-list-title" style="margin:34px 0 0">Public hives accepting contributions</h2>
       %[2]s
     </section>
+    <section class="card" id="apple-mlx" aria-labelledby="apple-mlx-title" style="margin-top:28px">
+      <h2 id="apple-mlx-title">Apple MLX: local ClankeR inference</h2>
+      <p>Apple Silicon only: macOS 14+, native arm64 Python 3.10+ and Node 22.19+. Intel Macs and Rosetta are unsupported. MLX-LM runs on your Mac; Pi 1.4.0+ supplies the coding tools in the contributor container. This is optional local inference, not Apple sign-in, a hosted Hive backend or an Apple endorsement.</p>
+      <p>Choose a hive above and select <strong>Apple MLX</strong> on its contributor page for OS-aware installation and copyable commands. Install just, gh, Pi and MLX-LM in a native Python virtualenv as described in the setup guide. Docker Desktop 4.34+ requires you to enable host networking. Podman machine and Kubernetes cannot use this loopback-only Mac route.</p>
+      <pre style="overflow-x:auto"><code># From your Hive source checkout, with HIVE_MLX_PYTHON pointing to your virtualenv:
+# Terminal 1: explicitly load your already-downloaded, tool-capable model:
+just contribute-mlx-serve /Users/YOU/models/tool-coder
+# Terminal 2: explicitly request two bounded tool-call verification turns:
+just contribute-mlx-setup /Users/YOU/models/tool-coder --verify-tools
+export AGENT_MODEL=mlx//Users/YOU/models/tool-coder
+export HIVE_HUB=https://YOUR-CHOSEN-HIVE
+just contribute-check pi
+just contribute-setup pi
+just contribute-mlx</code></pre>
+      <p>Download model weights yourself within your shared-RAM budget; the relay container limit does not cap host inference memory. No automatic weight downloads, public listener, cloud fallback or memory-setting changes. Not every model supports tools; the protocol probe is not a coding-quality benchmark. Live Mac inference is not certified by mock CI.</p>
+      <a href="%[1]s#apple-mlx-local-inference">Complete installation, model requirements and troubleshooting</a>
+    </section>
   </main>
 </body>
 </html>

@@ -1215,6 +1215,52 @@ above, and `/api/status` → `writeback.dedupe` carries the settings plus the
 last-hour counters `dedupe_same_item`, `dedupe_burst` and `rate_capped`.
 `enabled: false` turns the layer off.
 
+### Notification mode (`github.notifications.mode`)
+
+**Why:** every issue comment and every review the hive posts emails the PR
+author and everyone watching the repository. Editing an existing comment or
+review notifies nobody. Measured on one busy PR, the hive posted eight
+comments and three reviews in two hours — a 071 note per new head (each
+@-mentioning the author), a "stage regressed" note for a check that had
+merely gone back to pending after a push, a "stalled" note for a PR that
+was simply queued in the merge train, a duplicate-PR redirect, and three
+"**Reviewed** — no findings" reviews. Multiplied over thirty open PRs that
+is dozens of emails an hour saying nothing the Activity Monitor, the
+evidence bundle and the stage labels did not already say.
+
+```yaml
+github:
+  notifications:
+    mode: quiet   # quiet (default) | normal
+```
+
+`quiet` (the default) changes how the hive delivers its own PR bookkeeping,
+not what it records:
+
+- **One status comment per PR, edited in place.** The stage-stalled and
+  stage-regressed notes, the trusted-human 071 note and the duplicate-PR
+  redirect are sections of a single comment marked `<!-- hive:status -->`.
+  The comment is created the first time a note is due and PATCHed for every
+  later note; only the creation sends email.
+- **No "no findings" reviews.** A reviewer whose whole body is the clean
+  acknowledgement has its verdict recorded through the relay and the
+  evidence bundle, and no GitHub review is submitted (the reviewer prompts
+  also stop asking for the line, whatever `review.acknowledge_no_findings`
+  says). Only perspectives with findings post, and a head carries at most
+  one hive review: a later perspective's findings for the same head are
+  folded into the status comment instead of becoming a second review.
+- **@-mentions once per cause.** The 071 note mentions the author the first
+  time a cause class appears (conflict, red CI, changes requested) and is
+  silent for further heads with the same cause; a new cause mentions again.
+
+Independently of the mode, a check going back to pending after a push is
+no longer reported as a stage regression, and a PR the hive itself is
+holding — queued behind the merge-train front, being rebased by the train,
+or waiting on a base refresh — is never marked stalled.
+
+`normal` restores the previous behaviour: every note is its own comment,
+every perspective's verdict its own review, every new head its own mention.
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel evaluates open PRs in the watched repos — human, bot, or agent —

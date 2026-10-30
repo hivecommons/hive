@@ -189,6 +189,7 @@ duplicate_sweep.bot_authors[] # TODO #11854
 evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854
 github.additional_bot_logins[] # TODO #11854
+github.notifications.mode # quiet|normal PR notification mode; yaml-only, see operator-reference.md
 github.shared_uid_read_token # shared-UID App read-token opt-in; yaml-only, restart required (#14778)
 good_first_issue.exclude_labels[] # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.repos[] # advanced scorer tuning; yaml-only (#12185)
