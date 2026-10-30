@@ -106,12 +106,18 @@ func (s *Server) handleRepoItemDecideDelegatedPlan(w http.ResponseWriter, r *htt
 	if s.deps.Ctx != nil {
 		ctx = s.deps.Ctx
 	}
-	plan, err := s.planDelegatedDecision(ctx, repoFull, number, itemType, mergerRole, body)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadGateway)
+	res := s.cachedPlanDelegatedDecision(ctx, repoFull, number, itemType, mergerRole, body)
+	// Server-Timing says how long the gather took and whether the cache
+	// answered, so the click's latency can be read off the network panel.
+	w.Header().Add("Server-Timing", fmt.Sprintf("decide_plan;dur=%.1f;desc=%s", float64(res.dur.Microseconds())/1000, res.source))
+	if s.logger != nil {
+		s.logger.Debug("decide-delegated plan", "repo", repoFull, "number", number, "type", itemType, "source", res.source, "prefetch", body.Prefetch, "dur_ms", res.dur.Milliseconds(), "err", res.err)
+	}
+	if res.err != nil {
+		jsonError(w, res.err.Error(), http.StatusBadGateway)
 		return
 	}
-	jsonResponse(w, plan)
+	jsonResponse(w, res.plan)
 }
 
 // planDelegatedDecision runs the same gather + decide as

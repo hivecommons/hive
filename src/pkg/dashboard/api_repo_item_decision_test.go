@@ -67,6 +67,8 @@ type repoItemDecisionMock struct {
 	fixedIssueClosedBy int
 	// issueTitle / issueBody shape issue #7 (empty = untitled, no body).
 	issueTitle, issueBody string
+	// gets counts GET requests (the plan cache test reads it).
+	gets int
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -76,6 +78,9 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 		defer m.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		path := r.URL.Path
+		if r.Method == http.MethodGet {
+			m.gets++
+		}
 		switch {
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/collaborators/writer/permission") || strings.HasSuffix(path, "/collaborators/someone/permission")):
 			_, _ = io.WriteString(w, `{"permission":"write"}`)

@@ -150,6 +150,10 @@ type Server struct {
 	// the status snapshot, served until its TTL lapses (stage_tracker_build.go).
 	stageTrackerCache   stageTrackerCache
 	stageTrackerCacheMu sync.Mutex
+	// delegatedPlanCache holds the "Let hive decide" previews the SPA
+	// prefetched or a click gathered (delegated_plan_cache.go).
+	delegatedPlanCache *delegatedPlanCache
+	delegatedPlanOnce  sync.Once
 	// stageTrackerBuild is the one rebuild in flight, nil when none; it is
 	// guarded by stageTrackerCacheMu, which is never held across the build.
 	stageTrackerBuild *stageTrackerBuild

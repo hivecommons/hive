@@ -1753,6 +1753,19 @@
     .ham-plan-finding { color: var(--status-error); }
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
+    /* The preview while the plan is on its way (hivecommons/hive#15773):
+       the sentence line carries the tracker's working glyph and "Asking
+       the hive…"; placeholder lines shimmer where the why / then will be.
+       The clicked lead chip wears the same glyph and label meanwhile. */
+    .ham-plan-skeleton .ham-plan-sentence { color: var(--muted); font-weight: var(--fw-medium); }
+    .ham-plan-placeholder { display: block; height: var(--sp-4); margin: 0 0 var(--sp-3); border-radius: var(--r-pill); width: 72%; background: linear-gradient(90deg, var(--line-subtle) 0%, var(--surface-3) 50%, var(--line-subtle) 100%); background-size: 200% 100%; animation: ham-plan-shimmer 1.4s linear infinite; }
+    .ham-plan-placeholder-wide { width: 94%; }
+    .ham-plan-placeholder-short { width: 48%; }
+    .ham-plan-error { color: var(--status-error); font-weight: var(--fw-medium); }
+    .ham-lead-act.ham-asking, .ham-chip.ham-asking { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: progress; opacity: .85; }
+    .ham-lead-act.ham-asking .cue-acting-spin, .ham-chip.ham-asking .cue-acting-spin { color: currentColor; }
+    @keyframes ham-plan-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .ham-plan-placeholder { animation: none; background: var(--line-subtle); } }
     .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-lineage:hover { color: var(--text); }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
@@ -20148,6 +20161,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       el.style.setProperty('left', pos.left + 'px');
       el.style.setProperty('top', pos.top + 'px');
       const m = { el, items, restore: at.restore || at.anchor || null };
+      stageTrackerPrefetchDelegatePlans(items);
       m.onAway = e => { if (e.type !== 'pointerdown' || !el.contains(e.target)) stageTrackerCloseMenu(false); };
       m.onKey = e => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseMenu(true); return; }
@@ -20234,8 +20248,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
         const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
         if (!item) return;
-        stageTrackerDecisionRun(item, b.dataset.hamAct);
+        stageTrackerDecisionRun(item, b.dataset.hamAct, b);
       });
+      // Hovering or focusing a "Let hive decide" lead warms its plan so
+      // the click answers at once (hivecommons/hive#15773).
+      const warm = e => {
+        const b = e.target && e.target.closest ? e.target.closest('.ham-lead-act[data-ham-act="decide:delegate"]') : null;
+        if (!b || b.getAttribute('aria-disabled') === 'true') return;
+        const sub = b.closest('[data-ham-sub-key]');
+        const row = b.closest('.ham-row[data-ham-key]');
+        const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+        const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
+        if (item) stageTrackerPrefetchDelegatePlans([item]);
+      };
+      el.addEventListener('pointerover', warm);
+      el.addEventListener('focusin', warm);
       // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
       // buttons) selects it too.
       el.addEventListener('click', e => {
@@ -20354,8 +20381,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       </div>`;
     }
     // Run a popover action down the row context menu's path.
-    function stageTrackerDecisionRun(item, act) {
-      if (typeof runRowAction === 'function') return runRowAction(act, item);
+    function stageTrackerDecisionRun(item, act, button) {
+      if (typeof runRowAction === 'function') return runRowAction(act, item, { button });
       return stageTrackerDoAction([item], act);
     }
     function stageTrackerCloseDecisionPop(refocus) {
@@ -20404,6 +20431,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       el.style.setProperty('top', pos.top + 'px');
       trigger.setAttribute('aria-expanded', 'true');
       const p = { el, key, item, pinned: !!pin, timer: 0 };
+      stageTrackerPrefetchDelegatePlans([item]);
       p.onAway = e => { if (e.type !== 'pointerdown' || !(el.contains(e.target) || (e.target.closest && e.target.closest('.ham-decision-trigger') === stageTrackerDecisionTrigger(key)))) stageTrackerCloseDecisionPop(false); };
       p.onKey = e => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseDecisionPop(true); return; }
@@ -20431,7 +20459,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         e.preventDefault(); e.stopPropagation();
         const act = b.dataset.hamAct;
         stageTrackerCloseDecisionPop(true);
-        stageTrackerDecisionRun(p.item, act);
+        stageTrackerDecisionRun(p.item, act, b);
       });
       document.addEventListener('pointerdown', p.onAway, true);
       document.addEventListener('keydown', p.onKey, true);
@@ -20513,7 +20541,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const items = stageTrackerItemsForKeys(el ? stageTrackerRowKeys(el).filter(k => _stageTrackerSel.has(k)) : []);
       if (!items.length) return;
       if (id === 'decide') { stageTrackerOpenMenu(items, { anchor: btn, restore: btn, expandDecide: true }); return; }
-      stageTrackerDoAction(items, id);
+      runRowAction(id, items, { button: btn });
     }
     // Pure: the selection bar — count, Clear, and the shared actions
     // (disabled ones keep their tooltip, so aria-disabled rather than disabled).
@@ -20558,6 +20586,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (id === 'decide:delegate' || id === 'decide:delegate:rerun') {
         const body = { type, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' };
+        // The head keys the server's plan cache (hivecommons/hive#15773).
+        if (item.head) body.head = item.head;
         // Re-run skips the "already recorded" dedup on a stuck decision.
         if (id === 'decide:delegate:rerun') body.force = true;
         if (payload.chosen) body.chosen = payload.chosen;
@@ -21008,41 +21038,173 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === action && a.enabled === false && a.reason_if_disabled) return a.reason_if_disabled;
       return '';
     }
-    async function stageTrackerFetchDelegatePlan(item) {
+    // The plan request, and the short client-side cache in front of it
+    // (hivecommons/hive#15773): a plan asked for ahead of the click — as
+    // the row's decision options came into view — answers the click at
+    // once. Keyed by row and head; a failed fetch is never reused.
+    const STAGE_TRACKER_PLAN_PREFETCH_TTL_MS = 60000;
+    var _stageTrackerPlanPrefetch = {};
+    function stageTrackerPlanPrefetchKey(item) { return stageTrackerItemKey(item) + '@' + String(item.head || ''); }
+    async function stageTrackerRequestDelegatePlan(item, prefetch) {
       const req = stageTrackerActionRequest(item, 'decide:delegate', {});
       if (!req) return { ref: stageTrackerRefOf(item), number: item.number, error: 'no route' };
       try {
-        const r = await fetch(req.url + '/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
+        const body = prefetch ? Object.assign({}, req.body, { prefetch: true }) : req.body;
+        const r = await fetch(req.url + '/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) return { ref: stageTrackerRefOf(item), number: item.number, error: data.error || ('HTTP ' + r.status) };
         return Object.assign({ ref: stageTrackerRefOf(item) + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : '') }, data);
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }
-    // The preview: resolves { chosen } for Let hive do that, { chosen,
-    // merge: <action id> } for the merge button, null on Cancel.
-    function stageTrackerDelegatePlanDialog(plans, sentinel) {
-      const view = stageTrackerDelegatePlanView(plans, sentinel);
+    // Pure-ish: the live prefetched plan for the item, or null.
+    function stageTrackerPlanPrefetched(item, now) {
+      const e = _stageTrackerPlanPrefetch[stageTrackerPlanPrefetchKey(item)];
+      if (!e) return null;
+      if ((typeof now === 'number' ? now : Date.now()) - e.at > STAGE_TRACKER_PLAN_PREFETCH_TTL_MS) { delete _stageTrackerPlanPrefetch[stageTrackerPlanPrefetchKey(item)]; return null; }
+      return e;
+    }
+    function stageTrackerFetchDelegatePlan(item, fresh) {
+      const key = stageTrackerPlanPrefetchKey(item);
+      const live = fresh ? null : stageTrackerPlanPrefetched(item);
+      if (live) return live.promise;
+      const entry = { at: Date.now(), promise: null };
+      entry.promise = stageTrackerRequestDelegatePlan(item, false).then(pl => { if (pl && pl.error && _stageTrackerPlanPrefetch[key] === entry) delete _stageTrackerPlanPrefetch[key]; return pl; });
+      _stageTrackerPlanPrefetch[key] = entry;
+      return entry.promise;
+    }
+    // Warm the plan for the rows whose "Let hive decide" is in view; a
+    // row that is not a delegate target, or already warm, is skipped.
+    function stageTrackerPrefetchDelegatePlans(items) {
+      for (const it of (items || [])) {
+        for (const target of stageTrackerDelegateTargets(it)) {
+          if (!target || stageTrackerPlanPrefetched(target)) continue;
+          const key = stageTrackerPlanPrefetchKey(target);
+          const entry = { at: Date.now(), promise: null };
+          entry.promise = stageTrackerRequestDelegatePlan(target, true).then(pl => { if (pl && pl.error && _stageTrackerPlanPrefetch[key] === entry) delete _stageTrackerPlanPrefetch[key]; return pl; });
+          _stageTrackerPlanPrefetch[key] = entry;
+        }
+      }
+    }
+    // The preview as a skeleton while the plan is on its way: the real
+    // title, the subject, placeholder lines, Cancel live and the primary
+    // disabled (hivecommons/hive#15773). The skeleton reuses the row's
+    // working glyph so the dialog says "working" the way the tracker does.
+    const STAGE_TRACKER_PLAN_ASKING = 'Asking the hive…';
+    const STAGE_TRACKER_PLAN_RETRY = 'Retry';
+    function stageTrackerDelegatePlanSkeletonHtml(items, sentinel) {
+      const esc = hiveDialogEscape;
+      const subject = (items || []).map(stageTrackerRefOf).join(', ');
+      return '<div id="hive-dialog-title" class="hive-dialog-title">' + esc(STAGE_TRACKER_PLAN_TITLE) + '</div>'
+        + '<div class="ham-plan-subject">' + esc(subject) + (sentinel ? ' <span class="ham-plan-chip">⚠ Sentinel</span>' : '') + '</div>'
+        + '<div class="hive-dialog-body ham-plan-body ham-plan-skeleton" aria-busy="true"><div class="ham-plan-decision">'
+        + '<div class="ham-plan-eyebrow">' + esc(STAGE_TRACKER_PLAN_EYEBROW) + '</div>'
+        + '<p class="ham-plan-sentence cue-acting-cap" role="status"><span class="toast-spinner cue-acting-spin"></span>' + esc(STAGE_TRACKER_PLAN_ASKING) + '</p>'
+        + '<p class="ham-plan-placeholder ham-plan-placeholder-wide" aria-hidden="true"></p><p class="ham-plan-placeholder" aria-hidden="true"></p><p class="ham-plan-placeholder ham-plan-placeholder-short" aria-hidden="true"></p>'
+        + '</div></div>'
+        + '<div class="hive-dialog-buttons">'
+        + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel" data-initial-focus>Cancel</button>'
+        + '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" disabled aria-disabled="true">' + esc(STAGE_TRACKER_PLAN_BUTTON_DELEGATE) + '</button>'
+        + '</div>';
+    }
+    // The preview when the plan could not be fetched: the error inline,
+    // Cancel and Retry.
+    function stageTrackerDelegatePlanErrorHtml(items, failed) {
+      const esc = hiveDialogEscape;
+      const subject = (items || []).map(stageTrackerRefOf).join(', ');
+      return '<div id="hive-dialog-title" class="hive-dialog-title">' + esc(STAGE_TRACKER_PLAN_TITLE) + '</div>'
+        + '<div class="ham-plan-subject">' + esc(subject) + '</div>'
+        + '<div class="hive-dialog-body ham-plan-body"><div class="ham-plan-decision">'
+        + '<p class="ham-plan-sentence ham-plan-error" role="alert">Could not preview: ' + esc(failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', ')) + '</p>'
+        + '</div></div>'
+        + '<div class="hive-dialog-buttons">'
+        + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>'
+        + '<button type="button" class="hv-btn btn-primary hive-dialog-btn ham-plan-retry" data-initial-focus>' + esc(STAGE_TRACKER_PLAN_RETRY) + '</button>'
+        + '</div>';
+    }
+    // The preview: opens at once as a skeleton, fills when the plans land,
+    // shows a fetch failure inline with Retry. Resolves { chosen } for Let
+    // hive do that, { chosen, merge: <action id> } for the merge button,
+    // null on Cancel. fetchPlans(fresh) returns the plans' promise.
+    function stageTrackerDelegatePlanDialog(items, sentinel, fetchPlans) {
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
         hiveRememberModalOpen(overlay);
-        overlay.innerHTML = '<div class="hive-dialog ham-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">' + stageTrackerDelegatePlanHtml(view) + '</div>';
+        overlay.innerHTML = '<div class="hive-dialog ham-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">' + stageTrackerDelegatePlanSkeletonHtml(items, sentinel) + '</div>';
         document.body.appendChild(overlay);
-        const would = plans.map(pl => pl.would || '?').filter((v, i, a) => a.indexOf(v) === i).join('/');
-        hiveWireDialog(overlay, resolve, null, '.primary', '.cancel', close => close({ chosen: STAGE_TRACKER_PLAN_BUTTON_DELEGATE + ' · previewed ' + would }));
-        const merge = overlay.querySelector('.ham-plan-merge');
-        if (merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: view.mergeLabel + ' · previewed ' + would, merge: view.mergeAction }); });
+        const dialog = overlay.firstElementChild || overlay;
+        let settled = false;
+        const done = v => { if (settled) return; settled = true; resolve(v); };
+        // Each phase wires its own buttons; the skeleton's primary is
+        // disabled so Enter and a click do nothing until the plan is in.
+        const wire = (view, plans) => {
+          const would = (plans || []).map(pl => pl.would || '?').filter((v, i, a) => a.indexOf(v) === i).join('/');
+          hiveWireDialog(overlay, done, null, view ? '.primary' : '.ham-plan-retry', '.cancel', close => {
+            if (!view) { load(true); return; }
+            close({ chosen: STAGE_TRACKER_PLAN_BUTTON_DELEGATE + ' · previewed ' + would });
+          });
+          const merge = overlay.querySelector('.ham-plan-merge');
+          if (view && merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); done({ chosen: view.mergeLabel + ' · previewed ' + would, merge: view.mergeAction }); });
+        };
+        const load = async fresh => {
+          if (fresh) { dialog.innerHTML = stageTrackerDelegatePlanSkeletonHtml(items, sentinel); hiveWireDialog(overlay, done, null, '.primary', '.cancel', () => {}); }
+          const plans = await fetchPlans(!!fresh);
+          if (settled || !overlay.parentNode) return;
+          const failed = plans.filter(pl => pl.error);
+          if (failed.length) { dialog.innerHTML = stageTrackerDelegatePlanErrorHtml(items, failed); wire(null, plans); return; }
+          const view = stageTrackerDelegatePlanView(plans, sentinel);
+          dialog.innerHTML = stageTrackerDelegatePlanHtml(view);
+          wire(view, plans);
+        };
+        hiveWireDialog(overlay, done, null, '.primary', '.cancel', () => {});
+        load(false);
       });
+    }
+    // The clicked button while the plan is on its way: disabled,
+    // aria-busy, "Asking the hive…" behind the tracker's working glyph
+    // (the same one the stage chips use); restored afterwards.
+    function stageTrackerDelegateButtonBusy(btn, on) {
+      if (!btn || typeof btn.setAttribute !== 'function') return;
+      if (on) {
+        if (btn.getAttribute('aria-busy') === 'true') return;
+        btn.dataset.hamIdleLabel = btn.innerHTML;
+        btn.setAttribute('aria-busy', 'true');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="toast-spinner cue-acting-spin"></span>' + esc(STAGE_TRACKER_PLAN_ASKING);
+        if (btn.classList) btn.classList.add('ham-asking');
+      } else {
+        if (btn.getAttribute('aria-busy') !== 'true') return;
+        btn.removeAttribute('aria-busy');
+        btn.disabled = false;
+        if (btn.dataset.hamIdleLabel != null) { btn.innerHTML = btn.dataset.hamIdleLabel; delete btn.dataset.hamIdleLabel; }
+        if (btn.classList) btn.classList.remove('ham-asking');
+      }
     }
     // Let hive decide → plan → preview → act. Returns the delegate payload,
     // or null when cancelled or when the operator took the merge
     // alternative (which runs as its own row action with the chosen button
-    // recorded on the ledger).
-    async function stageTrackerDelegatePreview(items) {
-      const plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan));
-      const failed = plans.filter(pl => pl.error);
-      if (failed.length) { showToast('Could not preview ' + failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', '), 'error'); return null; }
-      const picked = await stageTrackerDelegatePlanDialog(plans, stageTrackerSentinelPreface(items));
+    // recorded on the ledger). opts.button is the clicked button, made
+    // busy while the plan is fetched; a second click while one preview is
+    // open for any of the same rows is ignored (hivecommons/hive#15773).
+    var _stageTrackerDelegateOpen = {};
+    async function stageTrackerDelegatePreview(items, opts) {
+      const keys = items.map(stageTrackerItemKey);
+      if (keys.some(k => _stageTrackerDelegateOpen[k])) return null;
+      for (const k of keys) _stageTrackerDelegateOpen[k] = true;
+      const btn = opts && opts.button;
+      stageTrackerDelegateButtonBusy(btn, true);
+      const pend = stageTrackerSetPending(keys, STAGE_TRACKER_PLAN_ASKING);
+      const fetchPlans = async fresh => {
+        try { return await Promise.all(items.map(it => stageTrackerFetchDelegatePlan(it, fresh))); }
+        finally { stageTrackerClearPending(pend); stageTrackerDelegateButtonBusy(btn, false); }
+      };
+      let picked = null;
+      try { picked = await stageTrackerDelegatePlanDialog(items, stageTrackerSentinelPreface(items), fetchPlans); }
+      finally {
+        for (const k of keys) delete _stageTrackerDelegateOpen[k];
+        stageTrackerClearPending(pend);
+        stageTrackerDelegateButtonBusy(btn, false);
+      }
       if (!picked) return null;
       if (picked.merge) {
         await stageTrackerRunActions(items, picked.merge, { comment: '', chosen: picked.chosen }, items);
@@ -21050,7 +21212,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return { chosen: picked.chosen };
     }
-    async function stageTrackerActionPayload(items, id) {
+    async function stageTrackerActionPayload(items, id, opts) {
       const refs = items.map(stageTrackerRefOf).join(', ');
       const who = window._hiveUser || 'you';
       const prs = items.length > 0 && items.every(it => it.kind === 'pr');
@@ -21060,7 +21222,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'decide:delegate':
           // Preview first (hivecommons/hive#15126): nothing is written
           // until the operator picks a button.
-          return stageTrackerDelegatePreview(items);
+          return stageTrackerDelegatePreview(items, opts);
         case 'decide:delegate-all': {
           // Confirms as Let hive decide (same opt-out key), naming each PR.
           const prs = [].concat(...items.map(stageTrackerNestedOpenPRs));
@@ -21462,7 +21624,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
       if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
     }
-    async function runRowAction(action, row) {
+    async function runRowAction(action, row, opts) {
       let items = Array.isArray(row) ? row.slice() : (row ? [row] : []);
       const id = action;
       const rows = items.slice();
@@ -21527,7 +21689,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
-      const payload = await stageTrackerActionPayload(items, id);
+      const payload = await stageTrackerActionPayload(items, id, opts);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
       const results = await stageTrackerRunActions(items, id, payload, rows);
       return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };

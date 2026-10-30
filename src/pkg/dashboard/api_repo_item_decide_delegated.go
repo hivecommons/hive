@@ -87,6 +87,12 @@ type delegatedDecisionRequest struct {
 	// Chosen names the preview button that sent this request
 	// (hivecommons/hive#15126); the ledger records it as the action's note.
 	Chosen string `json:"chosen,omitempty"`
+	// Head is the PR head the tracker row showed when the plan was asked
+	// for; it keys the plan cache so a push invalidates a prefetched
+	// preview (hivecommons/hive#15773). Prefetch marks a plan asked for
+	// ahead of a click (logged, otherwise identical).
+	Head     string `json:"head,omitempty"`
+	Prefetch bool   `json:"prefetch,omitempty"`
 }
 
 // delegatedDecisionJob is the wire shape of one job.
@@ -254,6 +260,8 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 	}
 	now := time.Now()
 	key := delegatedJobKey(repoFull, number)
+	// A decision changes what the preview would say: drop its plans.
+	s.delegatedPlans().invalidate(repoFull, number)
 	job := &delegatedDecisionJob{
 		ID: key + "@" + strconv.FormatInt(now.UnixNano(), 36), Repo: repoFull, Number: number, Type: itemType,
 		Status: delegatedJobStatusRunning, Requester: user, StartedAt: now, Marker: delegatedecision.Marker(s.delegateHiveID()),

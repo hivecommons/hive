@@ -2,11 +2,13 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 )
@@ -331,5 +333,107 @@ func TestDelegatedDecisionPlanIssueAndAdvisory(t *testing.T) {
 				t.Fatalf("a plan may not write: %v %v", mock.comments, mock.edits)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#15773: the preview is cached for a short TTL keyed by
+// (repo, number, type, head, request, role) so a prefetch as the row's
+// options come into view makes the click instant; a gather in flight is
+// joined, not repeated; a decision on the item drops its plans; the
+// response says where the plan came from.
+func TestDelegatedDecisionPlanCacheAnswersRepeatClicks(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	hdr := map[string]string{"X-Hive-Role": "merger"}
+	body := `{"type":"pr","reason":"adoption-stalled:contributor-offline","caption":"adoption stalled","head":"abc123","prefetch":true}`
+
+	w := postDelegatedPlan(t, srv, 8, "writer", body, hdr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if st := w.Header().Get("Server-Timing"); !strings.Contains(st, "decide_plan;dur=") || !strings.Contains(st, "desc=gather") {
+		t.Fatalf("Server-Timing = %q, want a gather with its duration", st)
+	}
+	mock.mu.Lock()
+	gets := mock.gets
+	mock.mu.Unlock()
+	if gets == 0 {
+		t.Fatal("the first plan must gather from GitHub")
+	}
+
+	// The click after the prefetch: same key, no GitHub traffic.
+	w = postDelegatedPlan(t, srv, 8, "writer", strings.Replace(body, `,"prefetch":true`, "", 1), hdr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if st := w.Header().Get("Server-Timing"); !strings.Contains(st, "desc=cache") {
+		t.Fatalf("Server-Timing = %q, want the cache", st)
+	}
+	mock.mu.Lock()
+	if mock.gets != gets {
+		mock.mu.Unlock()
+		t.Fatalf("cached click hit GitHub: gets %d → %d", gets, mock.gets)
+	}
+	mock.mu.Unlock()
+	var plan delegatedDecisionPlan
+	if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil || plan.Would != string(delegatedecision.VerdictAdoptSupersede) {
+		t.Fatalf("cached plan = %+v err=%v", plan, err)
+	}
+
+	// A new head is a new plan.
+	w = postDelegatedPlan(t, srv, 8, "writer", strings.Replace(body, "abc123", "def456", 1), hdr)
+	if st := w.Header().Get("Server-Timing"); w.Code != http.StatusOK || !strings.Contains(st, "desc=gather") {
+		t.Fatalf("new head: code=%d Server-Timing=%q", w.Code, st)
+	}
+
+	// A decision on the item drops its plans.
+	srv.delegatedPlans().invalidate("testorg/testrepo", 8)
+	w = postDelegatedPlan(t, srv, 8, "writer", body, hdr)
+	if st := w.Header().Get("Server-Timing"); w.Code != http.StatusOK || !strings.Contains(st, "desc=gather") {
+		t.Fatalf("after invalidate: code=%d Server-Timing=%q", w.Code, st)
+	}
+}
+
+// The cache itself: a TTL lapse (clock injected) drops the entry, a gather
+// in flight is shared, a failed gather is not kept, and TTL 0 disables it.
+func TestDelegatedPlanCacheTTLAndInflight(t *testing.T) {
+	c := newDelegatedPlanCache(time.Minute)
+	t0 := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	key := delegatedPlanCacheKey("o/r", 1, "pr", true, delegatedDecisionRequest{Head: "h1"})
+	if c.lookup(key, t0) != nil {
+		t.Fatal("empty cache answered")
+	}
+	e := c.start(key, t0)
+	if got := c.lookup(key, t0); got != e {
+		t.Fatal("a gather in flight must be shared")
+	}
+	c.finish(key, e, &delegatedDecisionPlan{Would: "approve"}, nil, t0, 3*time.Second)
+	if got := c.lookup(key, t0.Add(59*time.Second)); got == nil || got.plan.Would != "approve" || got.dur != 3*time.Second {
+		t.Fatalf("within TTL: %+v", got)
+	}
+	if c.lookup(key, t0.Add(61*time.Second)) != nil {
+		t.Fatal("past the TTL the plan must be gathered again")
+	}
+	failed := c.start(key, t0)
+	c.finish(key, failed, nil, errors.New("github: 502"), t0, time.Second)
+	if c.lookup(key, t0) != nil {
+		t.Fatal("a failed gather must not be cached")
+	}
+	if k2 := delegatedPlanCacheKey("o/r", 1, "pr", true, delegatedDecisionRequest{Head: "h2"}); k2 == key {
+		t.Fatal("the head must be part of the key")
+	}
+	if k3 := delegatedPlanCacheKey("o/r", 1, "pr", false, delegatedDecisionRequest{Head: "h1"}); k3 == key {
+		t.Fatal("the merger role must be part of the key")
+	}
+	off := newDelegatedPlanCache(0)
+	e = off.start(key, t0)
+	off.finish(key, e, &delegatedDecisionPlan{}, nil, t0, 0)
+	if off.lookup(key, t0) != nil {
+		t.Fatal("TTL 0 must disable the cache")
+	}
+	t.Setenv(delegatedPlanCacheTTLEnv, "15s")
+	if got := delegatedPlanCacheTTL(); got != 15*time.Second {
+		t.Fatalf("env TTL = %v", got)
 	}
 }

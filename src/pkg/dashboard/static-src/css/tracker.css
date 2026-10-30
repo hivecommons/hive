@@ -424,6 +424,19 @@
     .ham-plan-finding { color: var(--status-error); }
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
+    /* The preview while the plan is on its way (hivecommons/hive#15773):
+       the sentence line carries the tracker's working glyph and "Asking
+       the hive…"; placeholder lines shimmer where the why / then will be.
+       The clicked lead chip wears the same glyph and label meanwhile. */
+    .ham-plan-skeleton .ham-plan-sentence { color: var(--muted); font-weight: var(--fw-medium); }
+    .ham-plan-placeholder { display: block; height: var(--sp-4); margin: 0 0 var(--sp-3); border-radius: var(--r-pill); width: 72%; background: linear-gradient(90deg, var(--line-subtle) 0%, var(--surface-3) 50%, var(--line-subtle) 100%); background-size: 200% 100%; animation: ham-plan-shimmer 1.4s linear infinite; }
+    .ham-plan-placeholder-wide { width: 94%; }
+    .ham-plan-placeholder-short { width: 48%; }
+    .ham-plan-error { color: var(--status-error); font-weight: var(--fw-medium); }
+    .ham-lead-act.ham-asking, .ham-chip.ham-asking { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: progress; opacity: .85; }
+    .ham-lead-act.ham-asking .cue-acting-spin, .ham-chip.ham-asking .cue-acting-spin { color: currentColor; }
+    @keyframes ham-plan-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .ham-plan-placeholder { animation: none; background: var(--line-subtle); } }
     .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-lineage:hover { color: var(--text); }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }

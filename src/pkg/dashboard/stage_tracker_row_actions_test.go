@@ -784,7 +784,7 @@ function stageTrackerAfterActions() {}
     return { ok: true, status: 200, json: async () => ({ status: 'done', result: { action: STAGE_TRACKER_ACTION_NOOP, target: { repo: issue.repo, kind: 'pr', number }, outcome: 'No change' } }) };
   };
   for (const selected of [[issue], [issue, a, b], [b, issue, a]]) {
-    calls.length = 0; dialogs.length = 0;
+    calls.length = 0; dialogs.length = 0; _stageTrackerPlanPrefetch = {}; // a fresh click, not the cached plan (#15773)
     await runRowAction('decide:delegate', selected);
     // Let hive decide previews first: one plan call per PR, then one
     // decide call per PR after the operator picks (#15126).
@@ -808,7 +808,7 @@ function stageTrackerAfterActions() {}
   // one parked PR (of two open) delegates that PR alone — never the other
   // in-flight PR, which only the explicit delegate-all touches.
   for (const selected of [oneParked, [oneParked], [oneParked, b]]) {
-    calls.length = 0; dialogs.length = 0;
+    calls.length = 0; dialogs.length = 0; _stageTrackerPlanPrefetch = {}; // a fresh click, not the cached plan (#15773)
     await runRowAction('decide:delegate', selected);
     assert.deepStrictEqual(calls.filter(c => !c.url.endsWith('/plan')).map(c => c.url), ['/api/repos/hivecommons/hive/items/15020/decide-delegated']);
     assert.strictEqual(dialogs.length, 1);
@@ -861,14 +861,25 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeLabel"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeable"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeReason"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_PREFETCH_TTL_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_ASKING"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_RETRY"),
+		"var _stageTrackerPlanPrefetch = {}; var _stageTrackerDelegateOpen = {};",
+		jsFunc(t, html, "stageTrackerPlanPrefetchKey"),
+		jsFunc(t, html, "stageTrackerRequestDelegatePlan"),
+		jsFunc(t, html, "stageTrackerPlanPrefetched"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),
+		jsFunc(t, html, "stageTrackerPrefetchDelegatePlans"),
+		jsFunc(t, html, "stageTrackerDelegateButtonBusy"),
 		jsFunc(t, html, "stageTrackerDelegatePreview"),
 		jsFunc(t, html, "stageTrackerActionPayload"),
 		jsFunc(t, html, "stageTrackerDirectionCarrier"),
 		// The preview dialog is recorded like the confirms; its answer is
-		// the "Let hive do that" button unless a test sets planAnswer.
+		// the "Let hive do that" button unless a test sets planAnswer. A
+		// plan that failed to fetch is recorded as an error dialog and
+		// answers Cancel (hivecommons/hive#15773).
 		`let planAnswer = null;
-function stageTrackerDelegatePlanDialog(plans, sentinel) { const view = stageTrackerDelegatePlanView(plans, sentinel); const html = stageTrackerDelegatePlanHtml(view); dialogs.push({ kind: 'plan', cfg: { title: view.title, message: stageTrackerDelegatePlanVisibleText(html), html, view, plans } }); return Promise.resolve(planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer); }`,
+async function stageTrackerDelegatePlanDialog(items, sentinel, fetchPlans) { const plans = await fetchPlans(false); const failed = plans.filter(pl => pl.error); if (failed.length) { dialogs.push({ kind: 'plan-error', cfg: { failed } }); return null; } const view = stageTrackerDelegatePlanView(plans, sentinel); const html = stageTrackerDelegatePlanHtml(view); dialogs.push({ kind: 'plan', cfg: { title: view.title, message: stageTrackerDelegatePlanVisibleText(html), html, view, plans } }); return planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer; }`,
 		`const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
 global.window = { _hiveUser: 'clubanderson' };
 const dialogs = []; let dialogAnswer = true;
