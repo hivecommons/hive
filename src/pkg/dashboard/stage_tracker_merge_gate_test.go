@@ -322,6 +322,7 @@ func stageTrackerTrainQueueJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerOrdinal"),
 		jsFunc(t, html, "stageTrackerShortLeft"),
 		jsFunc(t, html, "stageTrackerTrainPlace"),
+		stageTrackerTrainProvisionalJS(t, html),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STALLED_LEAD"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_HEAD_STALL_WORD"),
 		jsFunc(t, html, "stageTrackerTrainStallWhy"),
@@ -332,6 +333,20 @@ func stageTrackerTrainQueueJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTrainEtaDetail"),
 		jsFunc(t, html, "stageTrackerTrainQueueTip"),
 		jsFunc(t, html, "stageTrackerTrainLines"),
+	}, "\n")
+}
+
+// stageTrackerTrainProvisionalJS lifts the provisional-slot words: a train
+// member whose own stage is short of the merge gate reads its blocker
+// first and its slot as a suffix.
+func stageTrackerTrainProvisionalJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_READY"),
+		jsConstLine(t, html, "STAGE_TRACKER_PROVISIONAL_STAGE_WORD"),
+		jsFunc(t, html, "stageTrackerTrainProvisional"),
+		jsFunc(t, html, "stageTrackerTrainProvisionalHeadline"),
+		jsFunc(t, html, "stageTrackerTrainProvisionalSuffix"),
 	}, "\n")
 }
 

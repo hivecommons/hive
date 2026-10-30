@@ -244,6 +244,7 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsFunc(t, html, "stageTrackerOrdinal"),
 		jsFunc(t, html, "stageTrackerShortLeft"),
 		jsFunc(t, html, "stageTrackerTrainPlace"),
+		stageTrackerTrainProvisionalJS(t, html),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STALLED_LEAD"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_HEAD_STALL_WORD"),
 		jsFunc(t, html, "stageTrackerTrainStallWhy"),
@@ -332,10 +333,13 @@ for (const [pos, w] of [[11, '11th'], [12, '12th'], [13, '13th'], [21, '21st'], 
 // whatever stage the lane holds the head at (hive #15400 at 050 lit CI / Review).
 for (const st of ['front', 'queued-behind', 'rebasing', 'rebase-exhausted']) for (const stage of [50, 60, 70, 74, 80, 95]) assert.strictEqual(stageTrackerAnchor(stage, stages, 'pr', mk(2, stage, { state: st, position: 1 })), 80, st + ' at ' + stage);
 assert.strictEqual(stageTrackerAnchor(50, stages, 'pr', other), 50, 'no train: stage rules as before');
-// The 1st-in-train head at 050 lights its word in the Merge queue column.
+// The 1st-in-train head at 050 lights the Merge queue column, but its
+// word leads with the stage's blocker — the slot is provisional until
+// CI and the verdict are in (hive #15577 read "Merge queued · 1st" over
+// a caption saying build-and-test was still running).
 const headAt50 = mk(15400, 50, { state: 'front', position: 1 });
 assert.strictEqual(lit(headAt50).number, 80);
-assert.strictEqual(lit(headAt50).short, 'Merge queued · 1st');
+assert.strictEqual(lit(headAt50).short, 'CI / Review · queued 1st once ready');
 const grouped = stageTrackerTrainContiguous(sorted).map(it => it.number);
 assert.deepStrictEqual(grouped, [15074, 15085, 15087, 15097, 15100, 1]);
 // Header line before the run, once; rail classes on members, last closes it.
