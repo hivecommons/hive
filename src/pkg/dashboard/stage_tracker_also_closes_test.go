@@ -100,7 +100,7 @@ func TestStageTrackerLinkedPRAlsoCloses(t *testing.T) {
 // pill rides both the single-covering-PR issue row and the sub-row.
 func TestStageTrackerLinkedPRAlsoClosesJS(t *testing.T) {
 	html := indexHTML(t)
-	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+stageTrackerRowsFixtureJS+`
+	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+jsFunc(t, html, "stageTrackerLinkedSupersededText")+"\n"+stageTrackerActorIconJS(t, html)+stageTrackerRowsFixtureJS+`
 const since = new Date(now - 3600000).toISOString();
 const li = (n) => ({ number: n, title: 'Review backlog (correctness): item ' + n, url: 'https://x/issues/' + n });
 const lp = (n, under, extra) => Object.assign({ number: n, title: 'fix', url: 'https://x/' + n, author: 'hive-bot', author_kind: 'hive', stage: 50, stage_since: since, drawn_under: under }, extra || {});
