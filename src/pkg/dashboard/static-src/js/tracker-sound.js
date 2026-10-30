@@ -407,7 +407,81 @@
         + stageTrackerConfirmSectionHtml(state.skippedConfirms)
         + stageTrackerCelebrateSectionHtml(state.celebrate !== false, state.celebrateGlyph)
         + stageTrackerNoteTuckSectionHtml(state.noteTuck !== false)
+        + stageTrackerTimingSectionHtml(state.timing || {})
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
+    }
+    // Pure: the Toasts & timing section (hivecommons/hive#15813) — the info
+    // and error toast durations and the contributor lane's pre-merge soak.
+    // Values are the hive's (every browser sees the same), written through
+    // the dashboard's config overlay so they survive a reload and a roll.
+    function stageTrackerTimingSectionHtml(t) {
+      const num = (id, action, value, min, max, unit, label) => `<label class="overview-settings-field">${label} <span class="sts-timing-unit">(${unit})</span><input type="number" class="sts-timing-input" id="${id}" min="${min}" max="${max}" step="1" value="${esc(String(value))}" data-change-action="${action}" data-arg-types="t" aria-label="${label} in ${unit}"></label>`;
+      const info = stageTrackerToastSecondsValid(t.toastInfoS) || STAGE_TRACKER_TOAST_DEFAULT_S.info;
+      const error = stageTrackerToastSecondsValid(t.toastErrorS) || STAGE_TRACKER_TOAST_DEFAULT_S.error;
+      const soak = Number(t.soakMinutes) >= 1 ? Math.round(Number(t.soakMinutes)) : STAGE_TRACKER_SOAK_DEFAULT_MIN;
+      return `<section class="overview-settings-section" id="sts-timing" aria-labelledby="sts-timing-title">
+          <div class="overview-settings-card-title" id="sts-timing-title">Toasts &amp; timing</div>
+          <p class="sts-hint">How long the tracker's toasts stay: result and waiting-on-you toasts use the info duration, failed actions the error duration, and the merge banner twice the info duration. ${STAGE_TRACKER_TOAST_MIN_S}–${STAGE_TRACKER_TOAST_MAX_S} s; every toast keeps its × and pauses while hovered. Saved for the whole hive (dashboard.stage_tracker.toast_info_s / toast_error_s).</p>
+          <div class="sts-row">${num('sts-toast-info', 'stageTrackerToastInfoChange', info, STAGE_TRACKER_TOAST_MIN_S, STAGE_TRACKER_TOAST_MAX_S, 's', 'Info toast')}${num('sts-toast-error', 'stageTrackerToastErrorChange', error, STAGE_TRACKER_TOAST_MIN_S, STAGE_TRACKER_TOAST_MAX_S, 's', 'Error toast')}<span class="text-muted" id="sts-toast-note">${t.fallback ? 'Saved in this browser only — the hive refused the write.' : 'Defaults ' + STAGE_TRACKER_TOAST_DEFAULT_S.info + ' s / ' + STAGE_TRACKER_TOAST_DEFAULT_S.error + ' s.'}</span></div>
+          <p class="sts-hint">The contributor lane holds a green head this long before it merges (auto_merge.contributor_lane.soak_minutes, default ${STAGE_TRACKER_SOAK_DEFAULT_MIN}). The lane re-reads it on every pass, so a running soak follows the new window too — a head counts as soaked once it has been green for this long.</p>
+          <div class="sts-row">${num('sts-soak', 'stageTrackerSoakChange', soak, 1, 100000, 'minutes', 'Pre-merge soak')}</div>
+        </section>`;
+    }
+    const STAGE_TRACKER_SOAK_DEFAULT_MIN = 30;
+    // The settings the Timing section shows: the tracker payload's block
+    // (the hive's values), with the browser fallback when a write failed.
+    function stageTrackerTimingState() {
+      const st = (_stageTracker && _stageTracker.settings) || {};
+      const local = stageTrackerToastLocal();
+      return {
+        toastInfoS: stageTrackerToastSeconds('info', st, local),
+        toastErrorS: stageTrackerToastSeconds('error', st, local),
+        soakMinutes: st.soak_minutes,
+        fallback: !!(local && local.fallback),
+      };
+    }
+    function stageTrackerTimingHeaders() {
+      return Object.assign({ 'Content-Type': 'application/json' }, typeof _inceptionAuthHeaders === 'function' ? _inceptionAuthHeaders() : {});
+    }
+    // Save one toast duration: the hive first (PUT /api/config/dashboard),
+    // this browser's localStorage only when that write is refused.
+    async function stageTrackerSaveToastSeconds(kind, input) {
+      const secs = stageTrackerToastSecondsValid(input && input.value);
+      if (!secs) { if (input) input.value = String(stageTrackerToastSeconds(kind, _stageTracker && _stageTracker.settings, stageTrackerToastLocal())); return false; }
+      if (input) input.value = String(secs);
+      const field = 'toast_' + kind + '_s';
+      let saved = false;
+      try {
+        const r = await fetch('/api/config/dashboard', { method: 'PUT', headers: stageTrackerTimingHeaders(), body: JSON.stringify({ stage_tracker: { [field]: secs } }) });
+        saved = !!(r && r.ok);
+      } catch { saved = false; }
+      if (saved) {
+        if (_stageTracker) { _stageTracker.settings = Object.assign({}, _stageTracker.settings, { [field]: secs }); }
+        try { localStorage.removeItem(STAGE_TRACKER_TOAST_KEY); } catch {}
+      } else if (!(window.hiveKioskMode && window.hiveKioskMode())) {
+        try { localStorage.setItem(STAGE_TRACKER_TOAST_KEY, JSON.stringify(Object.assign({}, stageTrackerToastLocal() || {}, { [kind]: secs, fallback: true }))); } catch {}
+      }
+      stageTrackerRenderSettings();
+      if (typeof showToast === 'function') showToast(saved ? (kind === 'error' ? 'Error' : 'Info') + ' toasts now stay ' + secs + ' s' : 'Could not save to the hive — ' + secs + ' s applies in this browser only', saved ? 'success' : 'warning');
+      return saved;
+    }
+    function stageTrackerToastInfoChange(input) { return stageTrackerSaveToastSeconds('info', input); }
+    function stageTrackerToastErrorChange(input) { return stageTrackerSaveToastSeconds('error', input); }
+    // Save the contributor lane's soak through the auto-merge config
+    // endpoint (the same write the Settings page makes).
+    async function stageTrackerSoakChange(input) {
+      const mins = Math.round(Number(input && input.value));
+      if (!isFinite(mins) || mins < 1) { if (input) input.value = String(stageTrackerTimingState().soakMinutes || STAGE_TRACKER_SOAK_DEFAULT_MIN); return false; }
+      let ok = false, msg = '';
+      try {
+        const r = await fetch('/api/config/auto-merge', { method: 'PUT', headers: stageTrackerTimingHeaders(), body: JSON.stringify({ contributor_lane: { soak_minutes: mins } }) });
+        ok = !!(r && r.ok);
+        if (!ok && r) { try { const j = await r.json(); msg = j && j.error ? j.error : ''; } catch {} }
+      } catch (e) { msg = e && e.message ? e.message : ''; }
+      if (ok && _stageTracker) _stageTracker.settings = Object.assign({}, _stageTracker.settings, { soak_minutes: mins });
+      stageTrackerRenderSettings();
+      if (typeof showToast === 'function') showToast(ok ? 'Pre-merge soak is now ' + mins + ' min — applies on the lane\'s next pass' : 'Could not save the soak' + (msg ? ': ' + msg : ''), ok ? 'success' : 'error');
+      return ok;
     }
     // Pure: the Merges section — the "Celebrate merges" toggle, the glyph.
     function stageTrackerCelebrateSectionHtml(on, glyph) {
@@ -415,7 +489,7 @@
       const opts = Object.keys(STAGE_TRACKER_CELEBRATE_GLYPHS).map(id => `<option value="${esc(id)}"${id === glyphId ? ' selected' : ''}>${esc(STAGE_TRACKER_CELEBRATE_GLYPHS[id])}${id === STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT ? ' (default)' : ''}</option>`).join('');
       return `<section class="overview-settings-section" id="sts-celebrate" aria-labelledby="sts-celebrate-title">
           <div class="overview-settings-card-title" id="sts-celebrate-title">Merges</div>
-          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a glyph (the bee) rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count rolls up like an odometer, and a banner at the bottom right names the merge until dismissed (or 30 s). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
+          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a glyph (the bee) rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count rolls up like an odometer, and a banner at the bottom right names the merge until dismissed (or twice the info toast duration — see Toasts &amp; timing). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
           <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange" data-arg-types="c"${on ? ' checked' : ''}>Celebrate merges <span class="text-muted">(default on)</span></label><label class="overview-settings-field">Glyph <select class="ham-select" id="sts-celebrate-glyph" data-change-action="stageTrackerCelebrateGlyphChange" data-arg-types="v" aria-label="Celebration glyph">${opts}</select></label><button type="button" class="hv-btn btn-sm" data-action="stageTrackerTestCelebration" data-stop="1" title="Close this dialog and play one celebration on a row in view — the count does not change">Test celebration</button></div>
         </section>`;
     }
@@ -486,7 +560,7 @@
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), timing: stageTrackerTimingState(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }

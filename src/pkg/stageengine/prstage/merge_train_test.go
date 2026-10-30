@@ -55,6 +55,26 @@ func TestMergeTrainSentence(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#15810: the claim-conflict hold round-trips and reads as
+// the tracker caption first.
+func TestMergeTrainClaimConflictSentence(t *testing.T) {
+	m := MergeTrain{State: MergeTrainStateClaimConflict, Front: 15793, Position: 15773}
+	reason := m.Reason()
+	if reason != "merge-train:claim-conflict#15793:15773/0:0/0:" {
+		t.Fatalf("reason = %q", reason)
+	}
+	back, ok := ParseMergeTrain(reason)
+	if !ok || back.State != MergeTrainStateClaimConflict || back.Front != 15793 || back.Position != 15773 {
+		t.Fatalf("parse = %+v ok=%v", back, ok)
+	}
+	if got, want := back.Sentence(), "held · duplicate of #15793 · needs decision (both claim issue #15773; the merge queue admits neither until one is closed or approved)"; got != want {
+		t.Fatalf("Sentence() = %q, want %q", got, want)
+	}
+	if got := ClaimConflictCaption(15793); got != "held · duplicate of #15793 · needs decision" {
+		t.Fatalf("caption = %q", got)
+	}
+}
+
 func TestParseMergeTrainRejectsMalformed(t *testing.T) {
 	for _, reason := range []string{
 		"held",

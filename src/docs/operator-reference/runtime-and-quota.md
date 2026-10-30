@@ -475,6 +475,8 @@ dashboard:
     webhook_refresh_replay_window_s: 1800   # re-apply re-reads to snapshots published meanwhile
     closed_sweep_interval_s: 300   # list items closed since the last look and evict rows still shown; -1 disables
     waiting_push_stale_h: 4        # hours without a push on a CI / Review row before the pill's age turns muted-amber
+    toast_info_s: 15               # how long the tracker's result / waiting-on-you toasts stay (3-120 s); the merge banner stays twice as long
+    toast_error_s: 30              # how long a failed row action's toast stays (3-120 s); editable from the Activity Monitor's ⚙ → Toasts & timing
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

@@ -32160,7 +32160,7 @@
           "System"
         ],
         "summary": "Update dashboard settings",
-        "description": "Owner-only update for dashboard.port, dashboard.agent_poll_interval_s, dashboard.strategy_lab, dashboard.auth_token, dashboard.authorized_users, dashboard.authorized_user_names, dashboard.hub_proxied, and dashboard.issue_bands.",
+        "description": "Owner-only update for dashboard.port, dashboard.agent_poll_interval_s, dashboard.strategy_lab, dashboard.auth_token, dashboard.authorized_users, dashboard.authorized_user_names, dashboard.hub_proxied, dashboard.issue_bands, and dashboard.stage_tracker (toast_info_s / toast_error_s, 3-120 seconds, 0 resets the default).",
         "requestBody": {
           "required": true,
           "content": {
@@ -32197,6 +32197,17 @@
                   },
                   "issue_bands": {
                     "type": "object"
+                  },
+                  "stage_tracker": {
+                    "type": "object",
+                    "properties": {
+                      "toast_info_s": {
+                        "type": "integer"
+                      },
+                      "toast_error_s": {
+                        "type": "integer"
+                      }
+                    }
                   }
                 }
               }
