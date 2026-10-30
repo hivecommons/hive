@@ -856,7 +856,20 @@ GitHub calls (hivecommons/hive#15280). Push detection needs the head saved
 by a nudge: a never-nudged 071 row has only a stage-entry time, so a push
 cannot produce `· re-review pending` and may appear as `· acknowledged`
 from PR activity instead. The stage engine still routes the new head to
-050 on its next sweep (hivecommons/hive#15286). When the
+050 on its next sweep (hivecommons/hive#15286). Every PR row in the CI /
+Review column also carries push progress (hivecommons/hive#15784): the
+stage record keeps `waiting_push_since`, `last_push_at` and `last_push_sha`,
+booked from the `pull_request` synchronize / `push` webhook re-read and, as
+a fallback, from the head change the next enumerate sees. While a 071 / 072
+row waits the pill ends with the wait's age (`waiting on 👤 @user to push ·
+38m`), muted-amber once past `dashboard.stage_tracker.waiting_push_stale_h`
+(default `4`; `0` keeps the default, negative disables the tone). Once a
+push lands and CI / the re-review for that head still run, the chevron
+returns to the column's own word — stage only, the 👤 clears because the
+ball is back with the hive — and the gray pill names the push: `@user
+pushed abc1234 · 2m` (links to the commit), `adopted from @x's #N · pushed
+2m ago` on an adopted row, `pushed abc1234 · 2m` on a plain CI / Review
+row; the hive line reads `push seen 2m ago → CI/re-review queued`. When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR
@@ -2002,6 +2015,7 @@ dashboard:
     webhook_refresh_debounce_ms: 2000
     webhook_refresh_replay_window_s: 1800   # re-apply re-reads to snapshots published meanwhile
     closed_sweep_interval_s: 300   # list items closed since the last look and evict rows still shown; -1 disables
+    waiting_push_stale_h: 4        # hours without a push on a CI / Review row before the pill's age turns muted-amber
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions
