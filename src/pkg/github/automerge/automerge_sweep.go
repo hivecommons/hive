@@ -1271,7 +1271,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			result.Candidates++
 			repoCandidates++
 			c.sweepClock.evaluating(repo, number)
-			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
+			event, reason, err := c.trySweepSelfAuthoredPR(withMergeTrainCandidateHold(ctx, c.mergeTrainCandidateReason(train, number)), repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
 			c.sweepClock.evaluated()
 			if event.BranchUpdated || reason == "updated-branch" || reason == "update-branch" {
 				branchUpdateAttempts++
@@ -1466,7 +1466,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			}
 			result.Candidates++
 			c.sweepClock.evaluating(displayRepo, number)
-			event, reason, err := c.trySweepTrustedAuthorPR(ctx, displayRepo, owner, repoName, number, policy)
+			event, reason, err := c.trySweepTrustedAuthorPR(withMergeTrainCandidateHold(ctx, c.mergeTrainCandidateReason(train, number)), displayRepo, owner, repoName, number, policy)
 			c.sweepClock.evaluated()
 			if err == nil {
 				c.noteMergeTrainOutcome(stageLaneTrusted, owner, repoName, number, pr.GetHead().GetSHA(), reason)
@@ -2076,6 +2076,10 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 
+	if hold := mergeTrainCandidateHold(ctx); hold != "" {
+		return AutoMergeSweepEvent{}, hold, nil
+	}
+
 	// Queue-enabled bases use GitHub's native queue after the same gates.
 	// Other bases retain the direct merge and remembered refusal handling.
 	if reason, err := c.tryNativeQueue(ctx, current, mergeClaim); reason != "" || err != nil {
@@ -2533,6 +2537,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	// unreviewed head.
 	if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, stageLaneTrusted, number, current, headSHA, priorApprover, priorChecked); reviewReason != "" {
 		return AutoMergeSweepEvent{}, reviewReason, nil
+	}
+	if hold := mergeTrainCandidateHold(ctx); hold != "" {
+		return AutoMergeSweepEvent{}, hold, nil
 	}
 	if reason, err := c.tryNativeQueue(ctx, current, mergeClaim); reason != "" || err != nil {
 		return AutoMergeSweepEvent{}, reason, err
