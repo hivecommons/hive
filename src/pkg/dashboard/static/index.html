@@ -1190,6 +1190,14 @@
     .gh-app-perm-details { font-size: 0.8rem; margin-top: var(--sp-3); color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
     .gh-app-perm-details .perm-missing { color: var(--red); font-weight: 600; }
+    /* Onboarding guide tip — appended under any onboarding-kind problem
+       (GitHub App, repo target, system alert) so a new operator is pointed at
+       the 🧭 Guide instead of asking Slack for the install URL. */
+    .onboarding-guide-tip { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-3); }
+    .onboarding-guide-tip .onboarding-guide-link { color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: underline; }
+    .onboarding-guide-tip .onboarding-guide-link:hover, .onboarding-guide-tip .onboarding-guide-link:focus-visible { text-decoration: none; }
+    .welcome-install-url { margin-top: var(--sp-3); font-size: var(--fs-sm); word-break: break-all; }
+    .welcome-install-url code { color: var(--text); }
     /* .gh-auth-overlay/.gh-auth-modal — modal overlay/panel recipes (end of style block).
        z-index encodes stacking intent — do not change. */
     .gh-auth-overlay { z-index: 9999; }
@@ -7031,6 +7039,7 @@
     <div style="flex:1">
       <div class="gh-app-title">GitHub App Not Installed</div>
       <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
+      <div class="onboarding-guide-tip" id="gh-app-guide-tip"></div>
     </div>
     <!-- autocomplete=off + name-less: Firefox form history would otherwise
          offer/refill a stored value and, on Linux, could clear the field on a
@@ -7071,6 +7080,7 @@
     <div style="flex:1">
       <div class="gh-app-title">Project Target Misconfigured</div>
       <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
+      <div class="onboarding-guide-tip" id="repo-target-guide-tip"></div>
     </div>
     <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Projects</button>
   </div>
@@ -25535,6 +25545,46 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (wrap && e.target && wrap.contains(e.target)) return;
       btn.setAttribute('aria-expanded', 'false');
     });
+    /* ── Onboarding → Getting Started guide tips ────────────────────────
+       Server classifies setup problems (StatusPayload.onboardingIssues,
+       SystemAlert.onboarding/guideStep, deepHealth checks[].guideStep). Every
+       surface that renders one appends this tip, whose link opens the 🧭 Guide
+       at the matching step. A new operator (GHE, no welcome checklist in
+       sight) asked Slack for the install URL and "where is the guide?" — the
+       dashboard must answer that itself. */
+    var ONBOARDING_GUIDE_STEP_TITLES = {
+      'github-app': 'Install the Forge App (GitHub App)',
+      'repos': 'Add projects & mark the primary',
+      'add-agent': 'Add a custom agent',
+      'welcome': 'Welcome to your hive'
+    };
+    function onboardingGuideTipHtml(stepId, extra) {
+      var step = ONBOARDING_GUIDE_STEP_TITLES[stepId] ? stepId : 'github-app';
+      var what = step === 'github-app' ? ' for the install URL and permissions checklist' : '';
+      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open the 🧭 Guide</a> (top navbar) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
+        + (extra ? ' ' + extra : '');
+    }
+    function onboardingGuideTipFill(id, stepId, extra) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = onboardingGuideTipHtml(stepId, extra);
+    }
+    /* Why the Governor Config gear may be missing for a new operator: the
+       Guide, its entry points and the settings gear all require a non-read
+       role (/api/role), granted via Manage Access on the hub. */
+    var ONBOARDING_ROLE_NOTE = 'Settings (⚙️ Governor Config) and this guide require a read-write or owner role — ask the hive owner for access via Manage Access if you cannot see them.';
+    /* Keep the Guide chip reachable while any onboarding problem is active,
+       even if the checklist was dismissed earlier. Read-only roles stay
+       gated (the guide drives write actions). */
+    var _welcomeRoleIsRead = false;
+    function renderOnboardingGuideChip(data) {
+      var issues = (data && Array.isArray(data.onboardingIssues)) ? data.onboardingIssues : [];
+      if (!issues.length || _welcomeRoleIsRead) return;
+      var topBtn = document.getElementById('welcome-topbar-btn');
+      if (topBtn && topBtn.style.display === 'none') topBtn.style.display = '';
+      var navItem = document.getElementById('welcome-nav-item');
+      if (navItem && navItem.style.display === 'none') navItem.style.display = '';
+    }
+
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
@@ -25588,6 +25638,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         var staleDetails = document.getElementById('gh-app-perm-details');
         if (staleDetails) staleDetails.remove();
+        onboardingGuideTipFill('gh-app-guide-tip', 'github-app', 'The step explains which parts are yours and which the hub operator supplies.');
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
         return;
@@ -25701,6 +25752,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             }
           }
         }
+        onboardingGuideTipFill('gh-app-guide-tip', 'github-app');
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
@@ -25718,6 +25770,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (data && data.repoTargetMisconfigured) {
         var desc = document.getElementById('repo-target-banner-desc');
         if (desc) desc.textContent = data.repoTargetIssue || 'Project target misconfigured — expected owner/name. Fix in Settings → Projects.';
+        onboardingGuideTipFill('repo-target-guide-tip', 'repos', ONBOARDING_ROLE_NOTE);
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
@@ -25877,9 +25930,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var dismiss = (a.id || '').indexOf('plan-stall-') === 0
           ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(a.id || '') + '" data-stop="1" title="Dismiss this needs-human plan alert">Dismiss</button>'
           : '';
+        var guideTip = a.onboarding ? '<div class="onboarding-guide-tip">' + onboardingGuideTipHtml(a.guideStep || 'github-app') + '</div>' : '';
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + ';flex:1">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + '</span>'
+          + '<span style="color:' + textColor + ';flex:1">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + guideTip + '</span>'
           + dismiss
           + '</div>';
       }).join('');
@@ -41526,6 +41580,7 @@ function burnAreaChart() {
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
+      renderOnboardingGuideChip(data);
       renderIssuesDisabledBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
@@ -42706,7 +42761,8 @@ function burnAreaChart() {
       const deepChecks = Array.isArray((data.deepHealth || {}).checks) ? data.deepHealth.checks : [];
       const deepFailNames = [];
       for (const c of deepChecks) {
-        const line = c.detail ? `${c.name}: ${c.detail}` : c.name;
+        let line = c.detail ? `${c.name}: ${c.detail}` : c.name;
+        if (c.onboarding) line += ' — new hive? open the 🧭 Guide (top navbar) → step ‘' + (ONBOARDING_GUIDE_STEP_TITLES[c.guideStep] || ONBOARDING_GUIDE_STEP_TITLES['github-app']) + '’';
         if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
         else if (c.status === 'warn') warning.push(line);
         else passing.push(line);
@@ -63154,7 +63210,7 @@ function burnAreaChart() {
         const data = await resp.json();
         role = data.role || HIVE_ROLE_DEFAULT;
       } catch (e) { /* API unreachable — treat as read-only */ }
-      if (role === HIVE_ROLE_READ) return;
+      if (role === HIVE_ROLE_READ) { _welcomeRoleIsRead = true; return; }
       _welcomeWriteAccess = true;
       const navItem = document.getElementById('welcome-nav-item');
       if (navItem) navItem.style.display = '';
@@ -63166,7 +63222,13 @@ function burnAreaChart() {
       if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 
-    function openWelcomeDialog() {
+    /** Open the Getting Started guide; stepId (a WELCOME_STEPS id such as
+        'github-app') expands and scrolls to that step — the onboarding tips
+        under GitHub App / repo-target errors deep-link here. */
+    function openWelcomeDialog(stepId) {
+      if (typeof stepId !== 'string') stepId = '';
+      if (stepId && WELCOME_STEPS.some(s => s.id === stepId)) _welcomeOpenSteps.add(stepId);
+      else stepId = '';
       // Populate the bee-to-hive banner from the shared helper (idempotent — the
       // ACMM overlay reuses the same markup). Only inject once to avoid
       // restarting the CSS animations on every open.
@@ -63195,6 +63257,13 @@ function burnAreaChart() {
       }
       overlay.classList.remove('hidden');
       hiveRememberModalOpen(overlay);
+      if (stepId) {
+        const stepEl = document.getElementById('welcome-step-' + stepId);
+        if (stepEl) {
+          stepEl.classList.add('open');
+          if (typeof stepEl.scrollIntoView === 'function') stepEl.scrollIntoView({ block: 'start', behavior: _prefersReducedMotion() ? 'auto' : 'smooth' });
+        }
+      }
     }
     // Genie-minimize timing. GENIE_MS must match --welcome-genie-ms in CSS;
     // it is the fallback deadline in case transitionend never fires (the
@@ -63304,6 +63373,30 @@ function burnAreaChart() {
       if (!_welcomeConfiguredValue(model)) return false;
       return !isAutoModelSentinel(backend, model);
     }
+    const WELCOME_GITHUB_APP_STEP_TEXT = 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.';
+    /** GitHub App step body with the CONCRETE install URL for this hive's
+        forge host (github.com or the configured GitHub Enterprise base URL,
+        via the server's githubAppInstallURL — never a github.com fallback on
+        GHE). Rendered per open so it tracks the live payload. */
+    function welcomeGitHubAppStepBody(data) {
+      var host = (data && data.githubBaseURL) ? String(data.githubBaseURL).replace(/^https?:\/\//, '') : 'github.com';
+      var url = (data && data.githubAppInstallURL) || '';
+      var installed = !!data && data.githubAppRequired !== true && !data.githubAppInstallMissing;
+      var operatorSide = !!data && ghAppIsOperatorSide(data.githubAppState);
+      var line;
+      if (operatorSide) {
+        line = 'Status: waiting on GitHub App credentials from the hub operator — installing the App again will not help. Your part (install + installation ID) is not at fault.';
+      } else if (url) {
+        line = 'Install URL for <strong>' + esc(host) + '</strong>: <a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer"><code>' + esc(url) + '</code></a>'
+          + ' — open it as an org owner, pick the org, grant the requested permissions (Issues &amp; Pull requests: read/write, Contents: read, Metadata: read), then paste the numeric installation ID from the resulting URL into the banner above or wait for the automatic re-check.'
+          + (installed ? ' <span class="text-muted">(already detected as installed ✓)</span>' : '');
+      } else if (host !== 'github.com') {
+        line = 'Install URL for <strong>' + esc(host) + '</strong>: not available — the GitHub App slug for this enterprise host is not configured, so a link cannot be built. Ask your hub operator to set <code>github_app_slug</code> (and <code>github.base_url</code>) for this cluster; the install page is <code>https://' + esc(host) + '/github-apps/&lt;slug&gt;/installations/new</code>.';
+      } else {
+        line = 'Install URL: not available yet — waiting for the next status refresh.';
+      }
+      return WELCOME_GITHUB_APP_STEP_TEXT + '<div class="welcome-install-url">' + line + '</div>';
+    }
     const WELCOME_STEPS = [
       {
         id: 'welcome',
@@ -63324,7 +63417,7 @@ function burnAreaChart() {
           if (ghAppIsOperatorSide(data.githubAppState)) return null;
           return data.githubAppRequired !== true;
         },
-        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
+        body: welcomeGitHubAppStepBody,
         autoNote: 'Checks itself once the app is detected on your project.',
         actions: [
           { label: 'Install GitHub App', action: 'welcomeInstallGitHubApp' },
@@ -63467,7 +63560,7 @@ function burnAreaChart() {
           + `<span class="welcome-step-title">${n}. ${step.title}</span>`
           + `<span class="welcome-step-chevron">▶</span>`
           + `</div>`
-          + `<div class="welcome-step-body">${step.body}`
+          + `<div class="welcome-step-body">${typeof step.body === 'function' ? step.body(data) : step.body}`
           + (step.autoNote ? `<span class="welcome-auto-note">${step.autoNote}</span>` : '')
           + (step.actions ? `<div class="welcome-step-actions">` + step.actions.map(a => `<button class="hv-btn btn-secondary btn" data-action="${a.action}"${a.actionArg !== undefined ? ` data-arg0="${a.actionArg}"` : ''}${a.actionArgTypes ? ` data-arg-types="${a.actionArgTypes}"` : ''}>${a.label}</button>`).join('') + `</div>` : '')
           + `</div></div>`;
