@@ -362,6 +362,9 @@ type mergeTrainPlan struct {
 	// duplicates are the PRs held out of every train this pass because
 	// another open PR fixes the same issue (one PR per issue).
 	duplicates map[int]mergeTrainDuplicateHold
+	// claimConflicts are the candidates held because an open PR outside
+	// this lane claims the same issue and no decision is recorded.
+	claimConflicts map[int]mergeTrainClaimConflict
 }
 
 // group returns the train number rides in, if any.
@@ -414,7 +417,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
 		return plan
 	}
-	prs = c.planDuplicateHolds(plan, lane, owner, repo, displayRepo, prs, prefilter)
+	prs = c.planDuplicateHolds(ctx, plan, lane, owner, repo, displayRepo, prs, prefilter)
 	perBase := map[string][]*gh.PullRequest{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
