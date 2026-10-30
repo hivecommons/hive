@@ -761,7 +761,9 @@
         cd.remaining = Math.max(0, cd.remaining - (Date.now() - cd.startedAt));
         bar.style.animationPlayState = 'paused';
       };
-      if (!el._countdownWired) {
+      // A kiosk (#15594) has no pointer; the hidden cursor must never park a
+      // toast on screen for the whole stream.
+      if (!el._countdownWired && !(window.hiveKioskMode && window.hiveKioskMode())) {
         el._countdownWired = true;
         const c = () => el._countdown;
         el.addEventListener('mouseenter', () => { const x = c(); if (x) { x.hovered = true; x.pause(); } });
