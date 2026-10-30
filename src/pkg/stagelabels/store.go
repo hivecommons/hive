@@ -311,6 +311,12 @@ type Record struct {
 	// HiveHeldWarned is set once the hive-side alert for an item held by
 	// the hive past its dwell has been logged; activity resets it.
 	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+	// LabelsSuppressed is set when the write-back gate kept the stage
+	// labels off the item on GitHub (a contributor PR without the opt-in
+	// label): the stage lives in this record only, so a label-less item
+	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
+	// "PR in progress" while the record said 085).
+	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -2063,6 +2069,21 @@ func HiveHeld(r Record, overrides map[string]time.Duration, now time.Time) bool 
 	}
 	d := Dwell(r.Stage, overrides)
 	return d > 0 && r.QuietFor(now) >= d
+}
+
+// NoteLabelsSuppressed records whether the last stage-label write for key
+// was kept off GitHub by the write-back gate. A missing record is left
+// missing.
+func (s *Store) NoteLabelsSuppressed(key string, suppressed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.LabelsSuppressed == suppressed {
+		return
+	}
+	r.LabelsSuppressed = suppressed
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkHiveHeldWarned records that the hive-held alert was logged for key.

@@ -102,22 +102,22 @@ for (const stage of stages) for (const state of ['front', 'queued-behind']) for 
   assert.strictEqual(classOf(chip), want, label + ' chip html: ' + JSON.stringify(chip));
   if (provisional) {
     // Blocker first, slot as a suffix — never the slot alone.
-    assert.ok(/queued (1st|2nd) once ready$/.test(word), label + ' suffix: ' + JSON.stringify(word));
-    assert.strictEqual(info.detail, 'queued ' + (pos === 1 ? '1st' : '2nd') + ' once ready', label + ' detail');
+    assert.ok(/queued (1st|2nd) of 2 once ready$/.test(word), label + ' suffix: ' + JSON.stringify(word));
+    assert.strictEqual(info.detail, 'queued ' + (pos === 1 ? '1st' : '2nd') + ' of 2 once ready', label + ' detail');
     assert.ok(!/merges next/.test(info.tip), label + ' hover promises merges next: ' + info.tip);
     assert.ok(info.until === 0, label + ' no ETA countdown ahead of readiness');
   } else {
-    assert.ok(/^Merge queued · (1st|2nd)$/.test(word), label + ' place word: ' + JSON.stringify(word));
+    assert.ok(/^Merge queued · (1st|2nd)( of \d+)?$/.test(word), label + ' place word: ' + JSON.stringify(word));
   }
 }
 // hive's own #15577 exactly: 050, front, CI running — the chevron leads with CI / Review.
 const own = { repo: 'hivecommons/hive', number: 15577, kind: 'pr', stage: 50, modifiers: [], reason: 'required-check-pending:build-and-test', caption,
   merge_train: { id: 'v5#15577', state: 'front', front: 15577, position: 1, size: 2, head_number: 15577, head_state: 'ci', head_reason: 'waiting for CI', provisional: true },
   merge_gate: { state: 'front', reason: '1st in the merge queue; merges first once it is ready (1st of 2, overlapping files: tracker-words.js)' } };
-assert.strictEqual(stageTrackerTrainWord(own), 'CI / Review · queued 1st once ready');
+assert.strictEqual(stageTrackerTrainWord(own), 'CI / Review · queued 1st of 2 once ready');
 const ownInfo = stageTrackerMergeGateInfo(own, now);
 assert.strictEqual(ownInfo.word, 'CI / Review');
-assert.strictEqual(ownInfo.detail, 'queued 1st once ready');
+assert.strictEqual(ownInfo.detail, 'queued 1st of 2 once ready');
 assert.ok(/CI in progress/.test(ownInfo.tip), ownInfo.tip);
 assert.ok(/merges first once it is ready/.test(ownInfo.tip), ownInfo.tip);
 `)
