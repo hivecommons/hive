@@ -858,7 +858,11 @@ func TestSyncIssueStageLabels_PRLinkRateLimitPausesSweepWithOneLine(t *testing.T
 		appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: n, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: pr, PRURL: "https://x/pr/" + strconv.Itoa(pr)}}, workBucketClaimedByPR, "open PR")
 	}
 	fake.seed(result)
+	// The secondary-limit 403 engages the process-wide caution window for
+	// over an hour; clear it afterwards or every later test in the package
+	// is paced ~2-3s per request (#15700).
 	ResetRateLimitPacingForTest()
+	t.Cleanup(ResetRateLimitPacingForTest)
 	resetRESTAccountingForTest(t, stageNow())
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
