@@ -1,0 +1,1 @@
+- Agents now bypass the hive proxy for the host of `OMP_AUTH_BROKER_URL` (added to `NO_PROXY`), so a credential broker on a private address such as the Docker bridge gateway is no longer refused by the plain-forward guard and the agent CLI no longer exits on start ([#15432](https://github.com/hivecommons/hive/issues/15432)).

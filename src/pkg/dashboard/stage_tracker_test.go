@@ -346,11 +346,14 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 	clock = now.Add(-25 * time.Hour)
 	store.Observe(key101, stagelabels.ReturnedToContributor, "reviewer-verdict:changes_requested")
 	store.MarkNudged(key101, "abc123", 1, true, clock)
-	// PR 102: hive PR admitted and soaking, fresh (12m left as of a sweep 5m ago).
+	// PR 102: hive PR admitted and soaking: the record carries the soak
+	// clock (head green 23m ago, 30m window → 7m left now); the reason is
+	// the bare token and the sweep re-read it 5m ago.
 	clock = now.Add(-40 * time.Minute)
-	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking(remaining=17m0s)")
+	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking")
+	store.NoteSoak(stagelabels.Key("acme/console", 102), "abc102", now.Add(-23*time.Minute), 30*time.Minute)
 	clock = now.Add(-5 * time.Minute)
-	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking(remaining=12m0s)")
+	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking")
 	// PR 103: regressed from the merge queue to review-pending.
 	key103 := stagelabels.Key("acme/console", 103)
 	clock = now.Add(-3 * time.Hour)
@@ -506,10 +509,15 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if pr102.Caption != "Admitted by the automerge lane; soaking — 7m left" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
 		t.Fatalf("pr102 caption=%q actor=%q mods=%v", pr102.Caption, pr102.Actor, pr102.Modifiers)
 	}
-	// 12m left when the sweep wrote it 5m ago → 7m now; the 40m-old entry
-	// time is the stage_since, not the soak clock.
+	// The record's deadline (green 23m ago + 30m) → 7m now; the 40m-old
+	// entry time is the stage_since, not the soak clock.
 	if pr102.SoakRemainingSeconds != 7*60 || pr102.StageSince == nil || !pr102.StageSince.Equal(now.Add(-40*time.Minute)) {
 		t.Fatalf("pr102 soak_remaining_seconds=%d since=%v", pr102.SoakRemainingSeconds, pr102.StageSince)
+	}
+	// The note's age is the stage entry, not the sweep 5m ago that re-read
+	// the same reason (hivecommons/hive#15729).
+	if pr102.NoteChangedAt == nil || !pr102.NoteChangedAt.Equal(now.Add(-40*time.Minute)) {
+		t.Fatalf("pr102 note_changed_at=%v, want the 095 entry 40m ago", pr102.NoteChangedAt)
 	}
 
 	pr103 := trackerItem(t, resp, "pr", 103)

@@ -31,6 +31,9 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsFunc(t, html, "stageTrackerEventsNext"),
+		jsFunc(t, html, "stageTrackerEventShownAt"),
+		jsFunc(t, html, "stageTrackerSameNote"),
+		jsFunc(t, html, "stageTrackerNewEvent"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
 		jsFunc(t, html, "stageTrackerEventHtml"),
 		jsFunc(t, html, "stageTrackerLocalMidnight"),
@@ -207,6 +210,34 @@ assert.strictEqual(events['hivecommons/hive/pr#14947'].text, 'moved to Needs dec
 assert.deepStrictEqual(stageTrackerEventsNext({}, null, next, stages, now), {}, 'the first payload never writes a line for everything');
 events = stageTrackerEventsNext(events, next, next, stages, now + STAGE_TRACKER_EVENT_MS + 1);
 assert.deepStrictEqual(events, {}, 'lines expire');
+// A soaking row (hivecommons/hive#15729): the caption counts down each
+// poll but note_changed_at stands still, so the line is one note — its
+// words refresh in place, its age counts from the server's stamp and the
+// line neither re-opens nor is re-written when it has expired.
+const soakStages = [{ number: 80, label: 'Merge gate' }, { number: 95, label: 'Pre-merge soak' }];
+const soakAt = new Date(now - 120000).toISOString();
+const soakRow = (caption, noteAt) => ({ repo: 'hivecommons/hive', kind: 'pr', number: 15730, stage: 95, caption, note_changed_at: noteAt });
+const gate = stageTrackerStateMap([Object.assign(soakRow('Awaiting merge admission', new Date(now - 600000).toISOString()), { stage: 80 })]);
+const soak10 = stageTrackerStateMap([soakRow('Admitted by the automerge lane; soaking — 10m left', soakAt)]);
+const soak9 = stageTrackerStateMap([soakRow('Admitted by the automerge lane; soaking — 9m left', soakAt)]);
+const soakKey = 'hivecommons/hive/pr#15730';
+let soakEv = stageTrackerEventsNext({}, gate, soak10, soakStages, now);
+assert.strictEqual(soakEv[soakKey].text, 'moved to Pre-merge soak');
+assert.strictEqual(soakEv[soakKey].at, now - 120000, 'the age counts from when the note changed on the server');
+assert.strictEqual(soakEv[soakKey].openAt, now, 'but the 30 s open window starts when this tab first shows it');
+soakEv = stageTrackerEventsNext(soakEv, soak10, soak9, soakStages, now + 60000);
+assert.strictEqual(soakEv[soakKey].text, 'Admitted by the automerge lane; soaking — 9m left', 'the words move in place');
+assert.strictEqual(soakEv[soakKey].at, now - 120000, 'the age does not reset');
+assert.strictEqual(soakEv[soakKey].openAt, now, 'the line does not re-open');
+assert.deepStrictEqual(stageTrackerEventsNext({}, soak10, soak9, soakStages, now + STAGE_TRACKER_EVENT_MS * 2), {}, 'an expired line is not re-written by the countdown');
+const soakDone = stageTrackerStateMap([soakRow('Admitted by the automerge lane; soak complete — merges on the next pass', new Date(now + 480000).toISOString())]);
+soakEv = stageTrackerEventsNext(soakEv, soak9, soakDone, soakStages, now + 500000);
+assert.strictEqual(soakEv[soakKey].text, 'Admitted by the automerge lane; soak complete — merges on the next pass', 'a new note_changed_at is a new note');
+assert.strictEqual(soakEv[soakKey].at, now + 480000);
+const legacy9 = stageTrackerStateMap([soakRow('soaking — 9m left', '')]);
+const legacy8 = stageTrackerStateMap([soakRow('soaking — 8m left', '')]);
+assert.strictEqual(stageTrackerEventsNext({}, legacy9, legacy8, soakStages, now)[soakKey].at, now, 'without the stamp (an older payload) a caption change is a new line as before');
+assert.strictEqual(stageTrackerNewEvent('x', new Date(now + 5000).toISOString(), now).at, now, 'a stamp in the future is clamped to now');
 _stageTrackerEvents = {};
 stageTrackerNoteOwnerEvent('k', 'approved', now);
 let line = stageTrackerEventHtml('k', { events: _stageTrackerEvents, nowMs: now });
@@ -329,6 +360,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "hamBannerDismiss"),
 		jsFunc(t, html, "hamBannerShowRow"),
 		jsFunc(t, html, "stageTrackerEventLineInject"),
+		jsFunc(t, html, "stageTrackerEventShownAt"),
 		jsFunc(t, html, "stageTrackerEventHtml"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
 		jsFunc(t, html, "stageTrackerCueAgeSync"),
