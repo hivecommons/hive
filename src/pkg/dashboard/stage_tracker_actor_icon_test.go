@@ -203,7 +203,7 @@ func TestStageTrackerMergedCounterPlacement(t *testing.T) {
 			t.Errorf("index.html still carries the retired %q", gone)
 		}
 	}
-	for _, fn := range []string{"celebrateRow", "stageTrackerMergedCountDraw", "hamMergedToggle"} {
+	for _, fn := range []string{"stageTrackerFlyGlyph", "stageTrackerMergedCountDraw", "hamMergedToggle"} {
 		src := jsFunc(t, html, fn)
 		if strings.Contains(src, "getElementById('activity-monitor-merged')") || !strings.Contains(src, "stageTrackerMergedChip()") {
 			t.Errorf("%s must resolve the chip through stageTrackerMergedChip() so the flight, the draw and the popover share one node", fn)
