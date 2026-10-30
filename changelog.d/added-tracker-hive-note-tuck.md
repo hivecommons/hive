@@ -1,0 +1,1 @@
+- Activity Monitor: a row's "Hive: …" note shows for 30 s when it is new, then slides left into a small ⬡ info icon so the list stays quiet; the icon's tooltip keeps the note and its age, a click (or Enter / Space) opens it for another 30 s, a hidden tab pauses the clock, and ⚙ → Hive notes → *Auto-collapse hive notes* (default on) turns it off.
