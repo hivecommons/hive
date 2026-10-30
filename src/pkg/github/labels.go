@@ -12,6 +12,23 @@ type issueLabelDefinition struct {
 	description string
 }
 
+// githubLabelDescriptionMax is GitHub's cap on a label description. A
+// longer value makes POST/PATCH /labels answer 422 "description is too
+// long", which used to drop the label from every CreateIssue.
+const githubLabelDescriptionMax = config.GitHubLabelDescriptionMax
+
+// clampLabelDescription trims desc and shortens it to fit GitHub's label
+// description cap, ending an over-long value with an ellipsis. It counts
+// runes so a multibyte description is never cut mid-character.
+func clampLabelDescription(desc string) string {
+	desc = strings.TrimSpace(desc)
+	runes := []rune(desc)
+	if len(runes) <= githubLabelDescriptionMax {
+		return desc
+	}
+	return strings.TrimSpace(string(runes[:githubLabelDescriptionMax-1])) + "…"
+}
+
 // NeedsDecisionStageLabel is the single "issue parked for a human ruling"
 // signal (hivecommons/hive#12683): `stage/045-needs-decision`, the issue-side
 // parking stage. On an issue it is an INPUT as well as the stage — an agent,

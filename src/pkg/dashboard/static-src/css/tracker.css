@@ -266,6 +266,7 @@
     /* "supersedes N": the closed original a live PR replaced (hive PR 15135 follow-up). Muted — a trace, not a call to act. */
     .ham-badge-supersedes { color: var(--text-faint); border-color: var(--line-subtle); text-decoration: none; }
     .ham-badge-supersedes:hover { color: var(--text-muted); }
+    .ham-badge-overlap { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
     .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
@@ -389,6 +390,8 @@
     .ham-sub-superseded { opacity: .55; }
     .ham-sub-superseded .ham-row-head { min-height: 0; }
     .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); flex: 0 0 auto; white-space: nowrap; }
+    .ham-review-notes { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-1); }
+    .ham-review-notes a { color: inherit; }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
     /* The Let hive decide preview. One decision, readable in three seconds
        (operator feedback on the dialog, issue 15397): subject line,

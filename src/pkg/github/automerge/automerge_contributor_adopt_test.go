@@ -862,10 +862,12 @@ func TestAdoptionRelayOfflineAdoptsAfterOfflineWindow(t *testing.T) {
 	}
 	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 
-	// Relay went away 20m after the nudge.
+	// Relay went away 20m after the nudge. A heartbeat after the nudge
+	// buys at most one offline window (15m) past it: the clock counts from
+	// nudge+15m, not from the heartbeat, so adoption is due at +30m.
 	h.sink.presence = &ContributorPresence{Registered: true, LastSeen: start.Add(20 * time.Minute)}
 	h.api.reset()
-	h.clock.advance(34 * time.Minute)
+	h.clock.advance(29 * time.Minute)
 	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
 	if h.api.writes() != 0 || len(h.adopt.pulls) != 0 {
 		t.Fatalf("adopted before 15m offline: added=%v comments=%v", h.api.added, h.api.comments)
