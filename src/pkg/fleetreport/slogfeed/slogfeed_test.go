@@ -675,6 +675,32 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #15789: a hub that is restarting answers the heartbeat 5xx and the spoke
+// retries on the next beat; auth rejections stay reportable.
+func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
+	body := `{"ok":false,"error":"hive unavailable"}`
+	for _, status := range []int{502, 503, 504} {
+		logger, seen, out := newFeed(t)
+		for i := 0; i < 8; i++ {
+			logger.Warn("hub heartbeat rejected", "status", status, "body", body)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("status %d: produced observations: %+v", status, *seen)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 8 {
+			t.Errorf("status %d: wrapped handler saw %d records, want 8", status, n)
+		}
+	}
+
+	for _, status := range []int{401, 403} {
+		logger, seen, _ := newFeed(t)
+		logger.Warn("hub heartbeat rejected", "status", status, "body", "unauthorized")
+		if len(*seen) != 1 {
+			t.Errorf("status %d must remain reportable: %+v", status, *seen)
+		}
+	}
+}
+
 // #15333: keep repeated translator identity refusals visible under their own
 // gateway class, without treating them as backend credential failures.
 func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {

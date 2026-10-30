@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -207,6 +207,28 @@ func failClosedStatus500(r slog.Record) bool {
 		if a.Key == "error" {
 			e := a.Value.String() + " "
 			match = strings.Contains(e, "/status") && strings.Contains(e, ": 500 ")
+			return false
+		}
+		return true
+	})
+	return match
+}
+
+// hubHeartbeatUnavailable reports whether r is a spoke heartbeat the hub
+// answered with 502/503/504 (restarting or temporarily unreachable). The
+// heartbeat retries on the next beat, so this is expected transient behaviour
+// (hivecommons/hive#15789). 401/403 (bad HIVE_HUB_SECRET) stay reportable.
+func hubHeartbeatUnavailable(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "hub heartbeat rejected" {
+		return false
+	}
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "status" {
+			switch a.Value.String() {
+			case "502", "503", "504":
+				match = true
+			}
 			return false
 		}
 		return true
