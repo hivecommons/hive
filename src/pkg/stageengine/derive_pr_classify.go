@@ -306,6 +306,13 @@ var stageMergeQueueReasons = map[string]bool{
 	autoMergeReasonBehindBudgetExhausted: true, autoMergeReasonMergeQueueRequired: true,
 }
 
+// MergeQueueReason reports whether a lane reason means the head is at the
+// merge queue (100): the merge was attempted or is waiting on the queue, a
+// branch update, or a release hold — the head itself is ready.
+func MergeQueueReason(reason string) bool {
+	return stageMergeQueueReasons[reason] || strings.HasPrefix(reason, prstage.AutoMergeReasonNativeQueuePrefix) || strings.HasPrefix(reason, "release-hold")
+}
+
 // stageFixingReasons are reasons an agent (or the author) must fix the head.
 var stageFixingReasons = map[string]bool{
 	"changes-requested": true, autoMergeReasonHumanChangesRequested: true, StageReasonDecisionAnswered: true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
@@ -495,7 +502,7 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// 095, not 100 — the merge has not been attempted yet.
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.PreMergeSoak, Rank: stageRankOwned}, humanApprovalReason)
 	}
-	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, prstage.AutoMergeReasonNativeQueuePrefix) || strings.HasPrefix(reason, "release-hold") {
+	if MergeQueueReason(reason) {
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if reason == contributorLaneReasonNoVerdict {
