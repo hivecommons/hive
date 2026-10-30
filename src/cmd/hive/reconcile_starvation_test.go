@@ -2,12 +2,32 @@ package main
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
+
+// loopClock is a fake clock the test advances from its own goroutine while
+// the loop reads it through deps.now.
+type loopClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *loopClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *loopClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
 
 // Wake-driven cached cycles arriving more often than the eval interval
 // must not starve the reconcile pass: once the cached snapshot is older
@@ -17,11 +37,11 @@ func TestRunLoopWakeEnumeratesWhenSnapshotOlderThanInterval(t *testing.T) {
 	b, log, cancel := newLoopBoot(t, 900, 0)
 	defer cancel()
 	b.reviewWake = make(chan struct{}, 1)
-	clock := time.Now()
+	clock := &loopClock{t: time.Now()}
 	gov := newFakeTicker()
 	h := &loopHarness{startupOK: true, pending: []*fakeTicker{gov}, persisted: make(chan struct{}, 16)}
 	deps := h.deps()
-	deps.now = func() time.Time { return clock }
+	deps.now = clock.now
 	done := runLoopAsync(b, deps)
 	<-h.persisted // initial reconcile pass
 
@@ -29,7 +49,7 @@ func TestRunLoopWakeEnumeratesWhenSnapshotOlderThanInterval(t *testing.T) {
 	// plan from the cache, the third lands 15m after the last reconcile
 	// and must enumerate; the fourth is cached again.
 	for i := 0; i < 4; i++ {
-		clock = clock.Add(5 * time.Minute)
+		clock.advance(5 * time.Minute)
 		b.reviewWake <- struct{}{}
 		<-h.persisted
 	}
@@ -59,22 +79,22 @@ func TestRunLoopTopRunsOverdueReconcileWithoutTickerTick(t *testing.T) {
 	b.cfg.Governor.Modes = map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"alpha": "continuous"}}}
 	b.gov = governor.New(b.cfg.Governor, b.cfg.EnabledAgents(), b.logger)
 	b.gov.Evaluate(0, 0, 0, 0)
-	clock := time.Now()
-	b.gov.SeedContinuousNextKickForTest("alpha", clock.Add(24*time.Hour))
+	clock := &loopClock{t: time.Now()}
+	b.gov.SeedContinuousNextKickForTest("alpha", clock.now().Add(24*time.Hour))
 	gov := newFakeTicker()
 	wake := newFakeTicker()
 	h := &loopHarness{startupOK: true, pending: []*fakeTicker{gov}, persisted: make(chan struct{}, 16)}
 	deps := h.deps()
-	deps.now = func() time.Time { return clock }
+	deps.now = clock.now
 	deps.newWakeTimer = func(time.Duration) loopTicker { return wake }
 	done := runLoopAsync(b, deps)
 	<-h.persisted
 
 	// Poll wake inside the interval: nothing runs, only a re-arm.
-	clock = clock.Add(10 * time.Minute)
+	clock.advance(10 * time.Minute)
 	wake.fire()
 	// Poll wake after the interval elapsed with no ticker tick delivered.
-	clock = clock.Add(6 * time.Minute)
+	clock.advance(6 * time.Minute)
 	wake.fire()
 	<-h.persisted
 	cancel()

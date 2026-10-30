@@ -312,6 +312,7 @@ func TestRunLoopHealthRecheckResetsTickerWhenWebhooksLapse(t *testing.T) {
 	clock.Advance(121 * time.Second)
 	github.RecordGitHubActivity(clock.Now()) // a poll saw a change webhooks missed
 	health.fire()
+	<-h.persisted // the loop top's overdue reconcile pass (asserted below)
 	cancel()
 	waitDone(t, done)
 

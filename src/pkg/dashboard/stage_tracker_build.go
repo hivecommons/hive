@@ -136,10 +136,6 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.DCOTotal, it.DCOUnsigned = total, unsigned
 			}
 		}
-		if !hasRec && !rec.UnblockedAt.IsZero() {
-			t := rec.UnblockedAt
-			it.StageSince = &t
-		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
 		var attempt github.MergeAttempt
 		var hasAttempt bool
@@ -322,6 +318,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
+		stageTrackerSinceUnblock(&it, rec, ok)
 		advisory := stageTrackerAdvisoryFor(issue.Labels, issue.Body, advisoryHint)
 		if advisory == nil {
 			applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
@@ -942,4 +939,15 @@ func stageTrackerParkedOnDecision(it StageTrackerItem) bool {
 	base, _ := stagelabels.HumanApprovedReason(it.Reason)
 	lower := strings.ToLower(strings.TrimSpace(base))
 	return lower == stageengine.StageReasonVerdictRequiresHuman || lower == stageengine.StageReasonDecisionRequested
+}
+
+// stageTrackerSinceUnblock ages an unstaged, no-longer-blocked issue from
+// the blocked sweep's lift rather than from creation
+// (hivecommons/hive#15779). A row blocked again keeps its own age.
+func stageTrackerSinceUnblock(it *StageTrackerItem, rec stagelabels.Record, hasRec bool) {
+	if hasRec || rec.UnblockedAt.IsZero() || it.BlockedOnPR != nil || len(it.BlockedOn) > 0 || slices.Contains(it.Modifiers, modBlocked) {
+		return
+	}
+	t := rec.UnblockedAt
+	it.StageSince = &t
 }

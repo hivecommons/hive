@@ -655,8 +655,7 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 	tr := Transition{Prev: prev.Stage, Next: stage}
 	if stage == None {
 		if had {
-			delete(s.items, key)
-			s.dirty = true
+			s.forgetStageLocked(key, prev)
 			tr.Changed = prev.Stage != None
 		}
 		return tr
@@ -1982,7 +1981,7 @@ func (s *Store) SetCoveringPR(key, prKey string) {
 	s.dirty = true
 }
 
-// Forget drops key (closed/merged item).
+// Forget drops key (closed/merged item), lift record included.
 func (s *Store) Forget(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1990,6 +1989,29 @@ func (s *Store) Forget(key string) {
 		delete(s.items, key)
 		s.dirty = true
 	}
+}
+
+// ForgetStage drops key's stage for an item that is still open but has no
+// stage (a blocked issue, or one outside the hive's buckets). Unlike
+// Forget it keeps the blocked sweep's lift, so the stage-label pass that
+// runs right after an unblock does not reset the row's since-time back to
+// creation (hivecommons/hive#15779).
+func (s *Store) ForgetStage(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.items[key]; ok {
+		s.forgetStageLocked(key, r)
+	}
+}
+
+// forgetStageLocked is ForgetStage with s.mu held and the record in hand.
+func (s *Store) forgetStageLocked(key string, r Record) {
+	if r.UnblockedAt.IsZero() {
+		delete(s.items, key)
+	} else {
+		s.items[key] = Record{UnblockedAt: r.UnblockedAt, LastSeen: s.now()}
+	}
+	s.dirty = true
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped

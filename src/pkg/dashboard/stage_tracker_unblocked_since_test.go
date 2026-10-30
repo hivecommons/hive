@@ -40,6 +40,15 @@ func TestStageTrackerNewRowAgesFromUnblock(t *testing.T) {
 		t.Fatalf("after the lift since = %v, want the lift %v", it.StageSince, lifted)
 	}
 
+	// The stage-label pass that follows may still decide None for the
+	// issue (SyncIssueStageLabels → ForgetStage); the lift survives it.
+	store.ForgetStage(stagelabels.Key("acme/console", 15517))
+	resp = s.buildStageTracker(s.status, store, now)
+	it = trackerItem(t, resp, "issue", 15517)
+	if it.StageSlug != StageTrackerNewSlug || it.StageSince == nil || !it.StageSince.Equal(lifted) {
+		t.Fatalf("after a None pass: slug %q since %v, want 000-new since the lift %v", it.StageSlug, it.StageSince, lifted)
+	}
+
 	// The next stage-label pass stages it: since is the stage entry.
 	staged := now.Add(-5 * time.Minute)
 	clock = staged

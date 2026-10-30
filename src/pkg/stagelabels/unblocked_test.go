@@ -36,8 +36,26 @@ func TestNoteUnblockedAgesRecordFromLift(t *testing.T) {
 	if !rec.StageSinceAt().Equal(later) {
 		t.Fatalf("since after a later lift = %v, want %v", rec.StageSinceAt(), later)
 	}
+	// The stage-label pass deciding None for a still-open issue (the
+	// row the symptom describes) keeps the lift; only Forget — the
+	// closed/merged path — drops it.
 	s.Observe(key, None, "")
+	rec, ok = s.Get(key)
+	if !ok || rec.Stage != None || !rec.UnblockedAt.Equal(later) || rec.Reason != "" {
+		t.Fatalf("after a None observation: ok=%v rec=%+v, want a lift-only record", ok, rec)
+	}
+	s.ForgetStage(key)
+	if rec, ok = s.Get(key); !ok || !rec.UnblockedAt.Equal(later) {
+		t.Fatalf("after ForgetStage: ok=%v rec=%+v, want the lift kept", ok, rec)
+	}
+	s.Forget(key)
 	if _, ok := s.Get(key); ok {
-		t.Fatal("a None observation must drop the record, lift included")
+		t.Fatal("Forget must drop the record, lift included")
+	}
+	s.ForgetStage(Key("o/r", 1))
+	s.Observe(Key("o/r", 2), Actionable, "actionable")
+	s.ForgetStage(Key("o/r", 2))
+	if _, ok := s.Get(Key("o/r", 2)); ok {
+		t.Fatal("ForgetStage without a lift must drop the record")
 	}
 }
