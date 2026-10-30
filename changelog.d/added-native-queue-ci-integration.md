@@ -1,0 +1,1 @@
+- Add native merge-group CI and an owned PR-evidence gate, opt-in external freshness-writer suppression, and native queue configuration visibility with a conservative pilot runbook.

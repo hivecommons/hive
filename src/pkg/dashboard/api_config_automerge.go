@@ -422,6 +422,12 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
 		"require_current_base":         emptyIfNilStrings(am.RequireCurrentBase),
 		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
+		"native_merge_queue": map[string]interface{}{
+			"enabled":                am.NativeMergeQueue.Enabled,
+			"repos":                  emptyIfNilStrings(am.NativeMergeQueue.Repos),
+			"skip_current_base_gate": am.NativeMergeQueue.SkipCurrentBaseGate,
+			"probe_ttl":              am.NativeMergeQueue.EffectiveProbeTTL().String(),
+		},
 		"trusted_authors": map[string]interface{}{
 			"enabled":                   ta.Enabled,
 			"repos":                     trustedAuthorRepos,

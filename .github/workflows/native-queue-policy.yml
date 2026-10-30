@@ -1,0 +1,52 @@
+name: Native queue policy
+
+on:
+  pull_request_target:
+    branches: [v5, v6]
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
+jobs:
+  policy:
+    name: native-queue-policy
+    # Read-only, GitHub-hosted: do not run candidate code with write credentials
+    # or put fork/group policy scripts on a privileged self-hosted runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A group's candidates must not supply their own evidence validator.
+          # PR-target also uses trusted base code, never candidate code.
+          ref: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Test policy behavior
+        run: node --test .github/scripts/native-queue-policy.test.cjs
+      - name: Validate exact-head evidence (bounded wait for PR providers)
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { evaluate, PendingEvidence } = require('./.github/scripts/native-queue-policy.cjs');
+            const attempts = 90;
+            const intervalMs = 15000;
+            for (let attempt = 0; attempt < attempts; attempt++) {
+              try {
+                core.info(await evaluate({github, context}));
+                return;
+              } catch (error) {
+                if (!(error instanceof PendingEvidence) || attempt === attempts - 1) throw error;
+                core.info(error.message);
+                await new Promise(resolve => setTimeout(resolve, intervalMs));
+              }
+            }

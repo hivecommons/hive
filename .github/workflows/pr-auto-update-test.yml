@@ -6,12 +6,24 @@ on:
       - '.github/scripts/pr-auto-update.sh'
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
+      - '.github/scripts/native-queue-policy*.cjs'
+      - '.github/scripts/test-native-queue-workflows.py'
+      - '.github/workflows/native-queue-policy.yml'
+      - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/v2-tests.yml'
+      - '.github/workflows/go-security-analysis.yml'
   push:
     branches: [v5, v6]
     paths:
       - '.github/scripts/pr-auto-update.sh'
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
+      - '.github/scripts/native-queue-policy*.cjs'
+      - '.github/scripts/test-native-queue-workflows.py'
+      - '.github/workflows/native-queue-policy.yml'
+      - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/v2-tests.yml'
+      - '.github/workflows/go-security-analysis.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -28,3 +40,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Exercise push and shared-CI incident recovery with mocked APIs
         run: bash .github/scripts/test_pr-auto-update.sh
+      - name: Exercise native queue policy with mocked APIs
+        run: node --test .github/scripts/native-queue-policy.test.cjs
+      - name: Check native queue workflow contracts
+        run: python3 .github/scripts/test-native-queue-workflows.py
