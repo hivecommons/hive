@@ -1219,6 +1219,24 @@
       const tip = repo + (primary ? ' (primary repo)' : '') + (active ? ' — showing only this repo; click to show all repos' : ' — click to show only this repo');
       return `<button type="button" class="ham-repo-chip ham-repo-tint-${stageTrackerRepoTint(repo)}${primary ? ' ham-repo-primary' : ''}" data-action="hamRepoChip" data-arg0="${esc(repo)}" data-stop="1" aria-pressed="${active ? 'true' : 'false'}" title="${esc(tip)}">${esc(stageTrackerRepoShort(repo))}</button>`;
     }
+    // Every hive-filed issue title leads with its filing agent in brackets
+    // (`[scanner] …`, `[reviewer] Review backlog (security): …`). The tag is
+    // drawn once, as a chip ahead of the title, and the title text that
+    // follows no longer repeats it; the full title stays in the tooltip. A
+    // bracket that is not an agent slug (`[ACMM L0]`, `[Tests]`) is part of
+    // the subject and is left in the title.
+    function stageTrackerSplitTitleTag(title) {
+      const m = /^\s*\[([a-z0-9][a-z0-9_.-]*)\]\s*(.*)$/s.exec(String(title || ''));
+      if (!m || !m[2]) return { tag: '', text: String(title || '') };
+      return { tag: m[1], text: m[2] };
+    }
+    function stageTrackerTitleHtml(title, extraClass) {
+      const full = String(title || '');
+      const { tag, text } = stageTrackerSplitTitleTag(full);
+      const cls = 'ham-title' + (extraClass ? ' ' + extraClass : '');
+      const chip = tag ? `<span class="ham-badge ham-title-tag" title="${esc('Filed by [' + tag + ']')}">${esc(tag)}</span> ` : '';
+      return `${chip}<span class="${cls}" title="${esc(full)}">${esc(text)}</span>`;
+    }
     // Column name for a group header's distribution tooltip (as the column header draws it).
     function stageTrackerColName(idx, stages) {
       if (idx >= STAGE_TRACKER_PATH.length) return 'Merged';
@@ -1352,7 +1370,7 @@
         leadHtml = `<div class="ham-head-main">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
-            <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
+            ${stageTrackerTitleHtml(title)}
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${typeof stageTrackerLinkedElsewhereHtml === 'function' ? stageTrackerLinkedElsewhereHtml(item) : ''}
             ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
@@ -1364,7 +1382,7 @@
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
-            ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.soft ? ` <span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}${li.closed ? ' ' + stageTrackerClosedChipHtml(item, li) : ''}
+            ${li.title ? stageTrackerTitleHtml(li.title) : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.soft ? ` <span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}${li.closed ? ' ' + stageTrackerClosedChipHtml(item, li) : ''}
           </div>`
           : `<div class="ham-head-main ham-no-issue">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}

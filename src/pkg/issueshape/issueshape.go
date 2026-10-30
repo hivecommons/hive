@@ -13,7 +13,8 @@ var (
 	UnsubstitutedTemplatePlaceholder = cruxissueshape.UnsubstitutedTemplatePlaceholder
 	BodyHasMisEscapedNewlines        = cruxissueshape.BodyHasMisEscapedNewlines
 	UnchosenOptionList               = cruxissueshape.UnchosenOptionList
-	TitleFor                         = cruxissueshape.TitleFor
+	AgentIssueTitle                  = cruxissueshape.AgentIssueTitle
+	IsFilerTag                       = cruxissueshape.IsFilerTag
 	HasAgentPrefix                   = cruxissueshape.HasAgentPrefix
 	AgentPrefix                      = cruxissueshape.AgentPrefix
 	StripAgentPrefix                 = cruxissueshape.StripAgentPrefix

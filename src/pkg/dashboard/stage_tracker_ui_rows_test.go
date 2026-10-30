@@ -41,6 +41,19 @@ assert.ok(!strip(row).includes('✓'), 'no ✓ in the strip before the PR merges
 assert.ok(tooltip(row).includes('Claimed by scanner') && tooltip(row).includes('@alice') && tooltip(row).includes('30 min ago'), tooltip(row));
 assert.ok(!row.includes('✓'), 'no text check glyphs');
 
+// A hive-filed issue leads with its filing agent in brackets; the tag is
+// drawn once as a chip ahead of the title, the title text no longer repeats
+// it, and the full title stays in the tooltip. A bracket that is not an
+// agent slug is part of the subject and stays in the title.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', title: '[reviewer] Review backlog (security): token <logged>', url: 'https://x/8', stage: 0, caption: 'No stage recorded yet' }, stages, ctx);
+assert.ok(row.includes('<span class="ham-badge ham-title-tag" title="Filed by [reviewer]">reviewer</span> <span class="ham-title" title="[reviewer] Review backlog (security): token &lt;logged&gt;">Review backlog (security): token &lt;logged&gt;</span>'), 'agent tag chip then the untagged title: ' + row);
+assert.strictEqual((row.match(/\[reviewer\]/g) || []).length, 2, 'the tag appears only in the chip tooltip and the title tooltip, never twice in the text: ' + row);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', title: '[ACMM L0] Add CI/CD pipeline', url: 'https://x/10', stage: 0, caption: 'No stage recorded yet' }, stages, ctx);
+assert.ok(!row.includes('ham-title-tag') && row.includes('<span class="ham-title" title="[ACMM L0] Add CI/CD pipeline">[ACMM L0] Add CI/CD pipeline</span>'), 'a non-agent bracket is not a chip: ' + row);
+// The chip also leads a PR row's linked-issue slot.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 12, kind: 'pr', title: 'fix it', url: 'https://x/12', stage: 50, caption: 'In review', nested_under: 8, linked_issues: [{ number: 8, state: 'open', title: '[scanner] logscrub misses attrs', url: 'https://x/8' }] }, stages, ctx);
+assert.ok(row.includes('<span class="ham-badge ham-title-tag" title="Filed by [scanner]">scanner</span> <span class="ham-title" title="[scanner] logscrub misses attrs">logscrub misses attrs</span>'), 'linked issue slot draws the chip: ' + row);
+
 // Open but held: the Open segment itself names the hold state and the row
 // tooltip names the matching hold label, while the trailing flag pill remains.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'pr', title: 'Paused', stage: 0, caption: 'No stage recorded yet', labels: ['do-not-merge/hold'], modifiers: ['hold'] }, stages, ctx);
