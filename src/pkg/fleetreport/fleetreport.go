@@ -712,6 +712,10 @@ var benignSubstrings = []string{
 	// already withholds agent kicks; it is an account state, not a runtime
 	// defect (#15809).
 	"inference backend refused on a spending limit",
+	// The kick manager's own backoff reaction to a provider error already
+	// logs the classified error and withholds kicks; the reaction itself is
+	// not a defect (hivecommons/hive#15843).
+	"inference provider error detected, backing off kicks",
 	// Shutdown and per-request deadlines log cancellation on purpose.
 	"context canceled",
 	"context cancelled",
