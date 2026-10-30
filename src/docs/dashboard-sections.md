@@ -742,6 +742,8 @@ More about the line:
 
 A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next.
 
+**Kiosk mode.** Open the dashboard with `?kiosk=1` to show only this section, full screen, for an unattended display such as a headless browser stream. The sidebar, top bar, notices and every other section are hidden, and no Welcome or feedback dialog opens by itself. Without the parameter nothing changes.
+
 ### First use: find the next action
 
 1. Find an item by repository, number or title. Every open issue and PR in the watched repositories is represented, including held, draft, filtered, exempt and reporter-triage work. Being visible does not make it actionable.

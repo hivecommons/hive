@@ -6652,6 +6652,20 @@
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
     .review-priority-low { border-color: var(--muted); }
+    /* ══ Kiosk mode (?kiosk=1) ══
+       boot.js sets html.kiosk before first paint. Only the Hive activity
+       monitor renders, full viewport, with no chrome or dialogs. Selectors
+       lead with `html.kiosk body` so they out-rank the !important topbar
+       rules served by /api/theme.css. */
+    html.kiosk body #oc-topbar.oc-topbar,
+    html.kiosk body #oc-sidebar,
+    html.kiosk body .oc-sidebar-resize,
+    html.kiosk body #dash-notices,
+    html.kiosk body #nps-survey-card,
+    html.kiosk body .config-overlay,
+    html.kiosk body [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    html.kiosk body { padding: var(--sp-5) !important; margin: 0 !important; }
+    html.kiosk body #activity-monitor-section { margin: 0 !important; width: 100%; min-height: calc(100vh - 2 * var(--sp-5)); }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6669,6 +6683,16 @@
 </head>
 <body>
 <script>
+// Kiosk mode (?kiosk=1): flag <html> before first paint so css/kiosk.css can
+// hide the chrome; welcome.js and nps.js check the same class.
+(function(){
+  try {
+    if (new URLSearchParams(window.location.search).get('kiosk') === '1') {
+      document.documentElement.classList.add('kiosk');
+      document.body.classList.add('kiosk');
+    }
+  } catch (e) { /* no URLSearchParams — normal dashboard */ }
+})();
 // Apply layout immediately and hide content until first data render.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.
@@ -61547,6 +61571,7 @@ function burnAreaChart() {
     // initNPSSurvey decides whether this page load may show the prompt and,
     // if so, waits for enough engaged time. At most once per page load.
     async function initNPSSurvey() {
+      if (document.documentElement.classList.contains('kiosk')) return;
       const t = npsTiming();
       const sessionCount = npsBumpSessionCount();
       if (sessionCount < t.MIN_SESSIONS_BEFORE_NPS) return;
@@ -61735,6 +61760,7 @@ function burnAreaChart() {
     let _welcomeWriteAccess = false;
 
     async function initWelcomeDialog() {
+      if (document.documentElement.classList.contains('kiosk')) return;
       // Write-access gating: read-only previews never see the checklist or
       // its entry points. On fetch failure (e.g. static snapshot) stay hidden.
       let role = HIVE_ROLE_READ;

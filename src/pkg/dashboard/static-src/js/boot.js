@@ -1,3 +1,13 @@
+// Kiosk mode (?kiosk=1): flag <html> before first paint so css/kiosk.css can
+// hide the chrome; welcome.js and nps.js check the same class.
+(function(){
+  try {
+    if (new URLSearchParams(window.location.search).get('kiosk') === '1') {
+      document.documentElement.classList.add('kiosk');
+      document.body.classList.add('kiosk');
+    }
+  } catch (e) { /* no URLSearchParams — normal dashboard */ }
+})();
 // Apply layout immediately and hide content until first data render.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.

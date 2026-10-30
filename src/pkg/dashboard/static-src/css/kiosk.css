@@ -1,0 +1,14 @@
+    /* ══ Kiosk mode (?kiosk=1) ══
+       boot.js sets html.kiosk before first paint. Only the Hive activity
+       monitor renders, full viewport, with no chrome or dialogs. Selectors
+       lead with `html.kiosk body` so they out-rank the !important topbar
+       rules served by /api/theme.css. */
+    html.kiosk body #oc-topbar.oc-topbar,
+    html.kiosk body #oc-sidebar,
+    html.kiosk body .oc-sidebar-resize,
+    html.kiosk body #dash-notices,
+    html.kiosk body #nps-survey-card,
+    html.kiosk body .config-overlay,
+    html.kiosk body [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    html.kiosk body { padding: var(--sp-5) !important; margin: 0 !important; }
+    html.kiosk body #activity-monitor-section { margin: 0 !important; width: 100%; min-height: calc(100vh - 2 * var(--sp-5)); }

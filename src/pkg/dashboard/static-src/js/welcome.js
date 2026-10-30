@@ -30,6 +30,7 @@
     let _welcomeWriteAccess = false;
 
     async function initWelcomeDialog() {
+      if (document.documentElement.classList.contains('kiosk')) return;
       // Write-access gating: read-only previews never see the checklist or
       // its entry points. On fetch failure (e.g. static snapshot) stay hidden.
       let role = HIVE_ROLE_READ;

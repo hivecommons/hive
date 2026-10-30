@@ -179,6 +179,7 @@
     // initNPSSurvey decides whether this page load may show the prompt and,
     // if so, waits for enough engaged time. At most once per page load.
     async function initNPSSurvey() {
+      if (document.documentElement.classList.contains('kiosk')) return;
       const t = npsTiming();
       const sessionCount = npsBumpSessionCount();
       if (sessionCount < t.MIN_SESSIONS_BEFORE_NPS) return;
