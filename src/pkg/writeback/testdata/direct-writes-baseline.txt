@@ -55,7 +55,7 @@ wrap cmd/hive/claimescalation.go 2
 wrap cmd/hive/claimswire.go 3
 wrap cmd/hive/forgewire.go 2
 wrap cmd/hive/github_client_provider.go 2
-wrap cmd/hive/main.go 6
+wrap cmd/hive/main_sweeps.go 6
 wrap cmd/hive/review_queue.go 1
 wrap cmd/hive/rfccoverage_wire.go 1
 wrap pkg/convergence/publish/channel.go 1
