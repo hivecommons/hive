@@ -179,6 +179,10 @@ func (e *Env) remoteLogs(ctx context.Context, c *api.Client, args []string) int 
 		fmt.Fprintln(e.Stderr, "usage: crux --server ADDR logs [-n N] [-buffer] [-full] [-f] [-json] <agent>")
 		return ExitUsage
 	}
+	if *lines < 0 {
+		fmt.Fprintln(e.Stderr, "crux: -n must not be negative")
+		return ExitUsage
+	}
 	if (*buffer && *full) || (*follow && (*full || *asJSON)) {
 		fmt.Fprintln(e.Stderr, "crux: -buffer and -full are exclusive; -f takes neither -full nor -json")
 		return ExitUsage

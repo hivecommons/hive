@@ -269,6 +269,10 @@ func (e *Env) cmdLogs(rt crux.Runtime, args []string) int {
 		fmt.Fprintln(e.Stderr, "usage: crux logs [-n N] [-buffer] [-full] [-json] <agent>")
 		return ExitUsage
 	}
+	if *lines < 0 {
+		fmt.Fprintln(e.Stderr, "crux: -n must not be negative")
+		return ExitUsage
+	}
 	if *buffer && *full {
 		fmt.Fprintln(e.Stderr, "crux: -buffer and -full are exclusive")
 		return ExitUsage
