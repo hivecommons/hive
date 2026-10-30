@@ -392,13 +392,13 @@ func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name strin
 			continue
 		}
 		note := alreadyLandedIssueNote(pr.GetNumber(), redundantOf, strings.TrimSpace(pr.GetBase().GetRef()))
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, name, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil {
+		if _, _, err := c.client.Issues.CreateComment(ctx, owner, name, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
 			if c.logger != nil {
 				c.logger.Warn("already-landed auto-close: issue note failed", slog.String("repo", repo), slog.Int("issue", number), slog.String("error", err.Error()))
 			}
 			continue
 		}
-		if err := c.CloseIssue(ctx, repo, number, IssueCloseOptions{StateReason: IssueStateReasonCompleted}); err != nil {
+		if err := c.CloseIssue(ctx, repo, number, IssueCloseOptions{StateReason: IssueStateReasonCompleted}); err != nil { // writeback:gated
 			if c.logger != nil {
 				c.logger.Warn("already-landed auto-close: issue left open", slog.String("repo", repo), slog.Int("issue", number), slog.String("error", err.Error()))
 			}

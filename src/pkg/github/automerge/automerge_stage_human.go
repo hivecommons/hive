@@ -309,14 +309,14 @@ func (c *Engine) settleAlreadyLandedLineage(ctx context.Context, obs stageObserv
 			c.info("stage labels: already-landed lineage close gated", "repo", obs.Display, "pr", number, "copy", copy, "reason", d.Reason)
 			continue
 		}
-		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 			c.warn("stage labels: already-landed lineage note failed", "repo", obs.Display, "pr", number, "copy", copy, "error", err)
 			continue
 		}
 		// The note is out: whatever the close below does, never post it
 		// again, and never read the closed copy as an orphan.
 		store.MarkSuperseded(key, copy, true, now)
-		if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
+		if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil { // writeback:gated
 			c.warn("stage labels: already-landed lineage: closing the original failed; left open with the note", "repo", obs.Display, "pr", number, "copy", copy, "error", err)
 			continue
 		}
