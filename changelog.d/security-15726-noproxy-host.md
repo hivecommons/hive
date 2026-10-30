@@ -1,0 +1,1 @@
+- Agent NO_PROXY only appends the OMP_AUTH_BROKER_URL host when it is a concrete hostname or IP, so a wildcard or leading-dot host can no longer widen the proxy bypass (#15726)
