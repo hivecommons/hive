@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ const contributorLaneReasonOperatorApproval = prstage.ContributorLaneReasonOpera
 // merger (`/hive decision approve`, or a dashboard Approve that landed
 // before the record existed). The second source is written back to the
 // record so the activity monitor shows the admission.
-func (c *Engine) operatorAdmission(owner, repo string, number int, head string) string {
+func (c *Engine) operatorAdmission(ctx context.Context, owner, repo string, number int, head string) string {
 	head = strings.TrimSpace(head)
 	if c == nil || head == "" {
 		return ""
@@ -41,7 +42,7 @@ func (c *Engine) operatorAdmission(owner, repo string, number int, head string) 
 			}
 		}
 	}
-	login, ok := c.recordedHumanApprovalForHead(owner, repo, number, head)
+	login, ok := c.recordedHumanApprovalForHead(ctx, owner, repo, number, head)
 	if !ok {
 		return ""
 	}
@@ -66,11 +67,11 @@ func (m contributorClaimMatch) admittedByOperator() bool {
 // conflicting, DCO missing): approval there means "approved to proceed",
 // so the hive adopts and carries the approval to its copy rather than
 // deadlocking between "merge as-is" and "cannot merge".
-func (c *Engine) adoptionRefusedByAdmission(store *stagelabels.Store, key string, obs stageObservation, requested bool, now time.Time) bool {
+func (c *Engine) adoptionRefusedByAdmission(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, requested bool, now time.Time) bool {
 	if requested {
 		return false
 	}
-	login := c.operatorAdmission(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
+	login := c.operatorAdmission(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
 	if login == "" {
 		return false
 	}

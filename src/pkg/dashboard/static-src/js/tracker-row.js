@@ -678,7 +678,7 @@
        request still on the wire) is a different thing drawn on the chevron;
        this badge appears once the server has recorded the action. */
     const STAGE_TRACKER_ACTED_LABELS = {
-      approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed (read)',
+      approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed',
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
       'queue-merge': 'Approve and let hive merge', 'merge-now': 'Merge now as maintainer',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',

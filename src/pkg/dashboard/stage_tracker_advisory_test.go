@@ -53,6 +53,55 @@ func TestStageTrackerAdvisoryFor(t *testing.T) {
 	if got := stageTrackerAdvisoryFor([]string{"kind/bug"}, "Please fix.", nil); got != nil {
 		t.Errorf("ordinary issue = %+v", got)
 	}
+	// hivecommons/hive#15754: a checklist with task lines is the hive's
+	// own work; the chip counts progress and never asks for a decision.
+	working := "<!-- hive:dedupe-checklist repo=o/r -->\nDecision required: yes\n\n- [x] #1 — close as superseded by #4\n- [ ] #2 — close as superseded by #5\n- [ ] PR #3 add `Fixes #6`\n"
+	if got := stageTrackerAdvisoryFor([]string{"agent/dedupe", "stage/045-needs-decision"}, working, nil); got == nil || got.Resolved != 1 || got.Total != 3 || !got.Working() ||
+		got.Chip != "Advisory · hive is working the items (1/3 resolved)" || !strings.Contains(got.Caption, "(1/3 resolved)") {
+		t.Errorf("working checklist = %+v", got)
+	}
+	done := strings.ReplaceAll(working, "- [ ]", "- [x]")
+	if got := stageTrackerAdvisoryFor(nil, done, nil); got == nil || !got.AllResolved() || got.Chip != StageTrackerAdvisoryResolvedChip || got.Caption != StageTrackerAdvisoryResolvedCaption {
+		t.Errorf("resolved checklist = %+v", got)
+	}
+}
+
+// hivecommons/hive#15734 as the owner saw it: a dedupe checklist parked at
+// 045 with needs-human. The tracker never parks an advisory: stage 0, no
+// decision block, no blocker, no needs-human, progress in the chip.
+func TestStageTrackerAdvisoryChecklistNeverParked(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	created := now.Add(-26 * time.Hour)
+	body := "<!-- hive:dedupe-checklist repo=acme/console -->\nDecision required: yes\n\n## Near-duplicates\n\n- [x] #15312 — close as superseded by #15646\n- [ ] #15433 — close as superseded by #15647\n- [ ] PR #15725 add `Fixes #15700` to its body\n"
+	labels := []string{"help wanted", "agent/dedupe", "stage/045-needs-decision", "needs-human"}
+
+	s.statusMu.Lock()
+	repo := &s.status.Repos[0]
+	repo.NonActionableIssues = []any{
+		github.RepoWorkIssue{Repo: "acme/console", Number: 15734, Title: "triage: duplicate and overlapping open issues/PRs to consolidate", Author: "hive-app[bot]",
+			Labels: labels, Bucket: "needs_decision", Reason: "needs-human", CreatedAt: created, UpdatedAt: created,
+			Advisory: github.IssueAdvisoryFromBody(body)},
+	}
+	s.statusMu.Unlock()
+
+	resp := s.buildStageTracker(s.status, store, now)
+	it := trackerItem(t, resp, "issue", 15734)
+	if it.Advisory == nil || it.Advisory.Resolved != 1 || it.Advisory.Total != 3 {
+		t.Fatalf("#15734 advisory = %+v", it.Advisory)
+	}
+	if it.Stage != 0 || it.StageSlug != "" || it.DecisionNeeded != nil || it.Blocker != nil || it.NeedsHuman {
+		t.Errorf("#15734 parked: stage=%d slug=%q decision=%+v blocker=%+v needs_human=%v", it.Stage, it.StageSlug, it.DecisionNeeded, it.Blocker, it.NeedsHuman)
+	}
+	if hasMod(it, modNeedsHuman) || hasMod(it, modNeedsDecision) || stageTrackerNeedsAttention(it) {
+		t.Errorf("#15734 mods = %v attention=%v", it.Modifiers, stageTrackerNeedsAttention(it))
+	}
+	if it.Advisory.Chip != "Advisory · hive is working the items (1/3 resolved)" || it.Caption != it.Advisory.Caption {
+		t.Errorf("#15734 chip/caption = %q / %q", it.Advisory.Chip, it.Caption)
+	}
+	if it.StageActor == nil || it.StageActor.Kind != StageActorHuman || !strings.Contains(it.StageActor.Why, "ticks each item") {
+		t.Errorf("#15734 actor = %+v", it.StageActor)
+	}
 }
 
 // An advisory row in the built tracker: advisory block set, "read, then
@@ -121,7 +170,7 @@ func TestStageTrackerAdvisoryChipAndAction(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		".ham-seg.active.ham-open-advisory {",
-		"'decide:close-read': 'Close (read)'",
+		"'decide:close-read': 'Close now'",
 		"function stageTrackerAdvisoryOf(item)",
 	} {
 		if !strings.Contains(html, want) {
@@ -231,7 +280,7 @@ assert.strictEqual(stageTrackerHeadline(ordinary), 'Open');
 
 `)
 	// Row action: Close (read) leads and posts the existing decision path.
-	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+jsFunc(t, html, "stageTrackerAdvisoryOf")+`
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+`
 const empty = { repo: 'hivecommons/hive', number: 15381, kind: 'issue', title: 'triage: duplicate and overlapping open issues/PRs to consolidate', author: 'hivecommons-hive[bot]', author_kind: 'hive',
   stage: 0, created_at: '2026-10-29T09:00:00Z', stage_since: '2026-10-26T09:00:00Z', labels: ['help wanted', 'agent/dedupe', 'triage/advisory'], bucket: 'hive_advisory', modifiers: [],
   caption: 'Advisory for maintainers · nothing found · safe to close',
@@ -245,16 +294,23 @@ const ids = as => as.map(a => a.id);
 const ctx = { user: true, canHold: true, canHuman: true };
 const as = stageTrackerRowActions(empty, ctx);
 assert.deepStrictEqual(ids(as), ['decide:close-read', 'hold', 'retry', 'needs-human', 'open', 'copy'], ids(as).join(','));
-assert.strictEqual(as[0].label, 'Close (read)');
+assert.strictEqual(as[0].label, 'Close now');
 assert.ok(as[0].lead && as[0].enabled, JSON.stringify(as[0]));
 assert.ok(as[0].hint.startsWith('nothing found'), as[0].hint);
 assert.ok(stageTrackerRowActions(plainAdvisory, ctx)[0].hint.startsWith('advisory acknowledged'));
+// hivecommons/hive#15754: a checklist the hive is working says closing is optional.
+const working = Object.assign({}, empty, { number: 15734, advisory: { kind: 'advisory', source: 'dedupe-checklist', resolved: 1, total: 3, chip: 'Advisory · hive is working the items (1/3 resolved)', caption: 'x' } });
+const wa = stageTrackerRowActions(working, ctx);
+assert.strictEqual(wa[0].id, 'decide:close-read'); assert.strictEqual(wa[0].label, 'Close now');
+assert.strictEqual(wa[0].hint, 'optional · hive is working 1/3 items; close anyway');
+assert.ok(stageTrackerAdvisoryCloseMessage([working], '#15734', 'me').includes('(1/3 resolved)'));
+assert.ok(stageTrackerAdvisoryCloseMessage([empty], '#15381', 'me').includes('as read'));
 const ro = stageTrackerRowActions(empty, { user: false, canHold: true });
 assert.strictEqual(ro[0].enabled, false); assert.strictEqual(ro[0].why, STAGE_TRACKER_WHY_WRITE);
-assert.strictEqual(ids(stageTrackerRowActions(ordinary, ctx)).indexOf('decide:close-read'), -1, 'no Close (read) on an ordinary issue');
+assert.strictEqual(ids(stageTrackerRowActions(ordinary, ctx)).indexOf('decide:close-read'), -1, 'no Close now on an ordinary issue');
 const req = stageTrackerActionRequest(empty, 'decide:close-read', {});
 assert.deepStrictEqual(req, { url: '/api/repos/hivecommons/hive/items/15381/decision', body: { decision: 'close-read', comment: '', type: 'issue' } });
-assert.strictEqual(stageTrackerActionLabel('decide:close-read'), 'Close (read)');
+assert.strictEqual(stageTrackerActionLabel('decide:close-read'), 'Close now');
 assert.strictEqual(stageTrackerActingCaption('decide:close-read', empty), 'Closing…');
 (async () => {
   assert.deepStrictEqual(await stageTrackerActionPayload([empty], 'decide:close-read'), {});

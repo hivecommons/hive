@@ -110,6 +110,38 @@ func TestStageTrackerAdoptionNeverSaysSo(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#15692: the engine only reads the author's repository
+// permission once adoption is due (automerge_contributor_adopt.go), so a
+// never-policy row that has not reached that moment yet has no
+// AdoptionBlocked record — nothing distinguishes it, in the dashboard's
+// own data, from a row the hive will truly auto-adopt. Before this fix the
+// row read "hive adopts it in Nm" right up to the due moment, then flipped
+// to "not adopted: maintainer_policy is never" for a maintainer's PR. The
+// row now names the exception instead of promising an outcome it cannot
+// back for every author.
+func TestStageTrackerAdoptionNeverHedgesBeforeDue(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyNever, offlinePresence(now.Add(-3*time.Hour)))
+	a := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption
+	if a == nil || a.Due || a.BlockedBy != "" || a.Action != "" || a.Policy != "never" || !a.AutoDue {
+		t.Fatalf("adoption = %+v", a)
+	}
+	if a.Text != "waiting on @hanthor (offline 3h, 2 nudges) — hive adopts it on the next sweep unless the author maintains this repository" {
+		t.Fatalf("text = %q", a.Text)
+	}
+	// Nudged 13 minutes ago, offline: the pending countdown carries the
+	// same hedge.
+	store2 := stagelabels.NewStore("", func() time.Time { return now })
+	key := stagelabels.Key("hivecommons/hive", 14524)
+	store2.Observe(key, stagelabels.ReturnedToContributor, "conflicting")
+	store2.MarkNudged(key, "feed", 1, false, now.Add(-13*time.Minute))
+	s.stageStore = store2
+	s.presenceLookup = offlinePresence(now.Add(-13 * time.Minute))
+	if a = trackerItem(t, s.buildStageTracker(status, store2, now), "pr", 14524).Adoption; a == nil || a.AutoDue || a.AutoAdoptAt == nil || !a.AutoAdoptAt.Equal(now.Add(2*time.Minute)) || a.Text != "waiting on @hanthor (offline 13m, 1 nudge) — hive adopts it in 2m unless a new head lands or the author maintains this repository" {
+		t.Fatalf("pending text = %+v", a)
+	}
+}
+
 // adopt (default): nothing is held, so the row reports the wait, the
 // nudges, the presence and — since the engine's own predicate
 // (automerge.AutoAdoption) is what the row reads — that the hive adopts

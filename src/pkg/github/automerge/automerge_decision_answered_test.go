@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"context"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/review"
@@ -39,7 +40,7 @@ func TestFoldRecordedDecisionAnswersVerdictRoute(t *testing.T) {
 				{Lane: stageLaneSelf, Owner: "hivecommons", Repo: "hive", Number: 14628, HeadSHA: tc.head, Labels: tc.labels, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{VerdictKnown: true, Verdict: asked}},
 				{Lane: stageLaneContributor, Owner: "hivecommons", Repo: "hive", Number: 14628, HeadSHA: tc.head, Labels: tc.labels, Reason: contributorLaneReasonAppAuthored, Detail: stageDetail{VerdictKnown: true, Verdict: asked}},
 			}
-			c.foldRecordedDecision(list)
+			c.foldRecordedDecision(context.Background(), list)
 			got, _, obs := resolveStage(list)
 			if got.Stage != tc.wantStage || got.Reason != tc.wantReason {
 				t.Fatalf("stage=%s reason=%q (lane %s), want %s %q", got.Stage, got.Reason, obs.Lane, tc.wantStage, tc.wantReason)

@@ -718,3 +718,12 @@ func TestAlreadyLandedReasonCaption(t *testing.T) {
 		t.Fatal("other reasons are not already-landed")
 	}
 }
+
+func TestAlreadyLandedAuthorReason(t *testing.T) {
+	if got := AlreadyLandedAuthorReason(authorkind.Human); got != "already-landed:human" {
+		t.Fatalf("human = %q", got)
+	}
+	if got := AlreadyLandedAuthorReason(authorkind.Unknown); got != "already-landed:unknown" {
+		t.Fatalf("unknown = %q", got)
+	}
+}

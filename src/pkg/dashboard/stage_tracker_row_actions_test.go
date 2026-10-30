@@ -163,6 +163,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerClearActionFailure"),
 		jsFunc(t, html, "stageTrackerActionFailureOf"),
 		jsFunc(t, html, "stageTrackerAdvisoryOf"),
+		jsFunc(t, html, "stageTrackerAdvisoryCloseHint"),
+		jsFunc(t, html, "stageTrackerAdvisoryCloseMessage"),
 		jsFunc(t, html, "stageTrackerNothingToActOn"),
 		jsFunc(t, html, "runRowAction"),
 		jsFunc(t, html, "makeToastSticky"),
@@ -1784,7 +1786,7 @@ global.fetch = async (url, init) => {
   // 1. Happy path: confirm → request → busy → terminal caption → gone on the next payload.
   answer = { data: { ok: true, status: 'closed', decision: 'close-read', result: { action: 'closed', target: { repo: 'hivecommons/hive', kind: 'issue', number: 15381, url: 'u15381' }, outcome: 'Closed as read (advisory acknowledged).', next: 'Nothing further to do; the row leaves the tracker on its next refresh.' } } };
   let out = await runRowAction('decide:close-read', [adv]);
-  assert.strictEqual(dialogs.length, 1, 'Close (read) asks once'); assert.strictEqual(dialogs[0].cfg.title, 'Close (read)');
+  assert.strictEqual(dialogs.length, 1, 'Close (read) asks once'); assert.strictEqual(dialogs[0].cfg.title, 'Close advisory');
   assert.strictEqual(calls.length, 1, 'the request is sent'); assert.strictEqual(calls[0].url, '/api/repos/hivecommons/hive/items/15381/decision'); assert.strictEqual(calls[0].body.decision, 'close-read');
   assert.strictEqual(seenBusy, 'Closing…', 'the chevron is busy with the verb from the first byte sent');
   assert.strictEqual(out.results[0].ok, true);
@@ -1814,7 +1816,7 @@ global.fetch = async (url, init) => {
   assert.strictEqual(src.action.detail, answer.data.result.outcome, 'the badge reads the client-noted failure');
   let tip = stageTrackerActedTip(adv, Date.now());
   assert.ok(tip.split('\n')[0].includes('Close refused: repo paused'), 'hover first line: ' + tip);
-  assert.ok(tip.includes('Closed (read)') && tip.includes('failed'), tip);
+  assert.ok(tip.includes('Closed') && tip.includes('failed'), tip);
 
   // 3. GitHub 403: the error toast names it; the badge too.
   calls.length = 0; toasts.length = 0;
@@ -1822,10 +1824,10 @@ global.fetch = async (url, init) => {
   out = await runRowAction('decide:close-read', [adv]);
   assert.strictEqual(acting(K), false);
   assert.strictEqual(out.results[0].ok, false); assert.strictEqual(out.toasts[0].text.type, 'error');
-  assert.strictEqual(out.toasts[0].text.head, 'Close (read) failed on hivecommons/hive#15381');
+  assert.strictEqual(out.toasts[0].text.head, 'Close now failed on hivecommons/hive#15381');
   assert.ok(out.toasts[0].text.outcome.includes('GitHub 403'), out.toasts[0].text.outcome);
   tip = stageTrackerActedTip(adv, Date.now());
-  assert.ok(tip.split('\n')[0].includes('Close (read) failed: GitHub 403'), tip);
+  assert.ok(tip.split('\n')[0].includes('Close now failed: GitHub 403'), tip);
   // A newer server record outranks the client note.
   const later = { ...adv, last_operator_action: { action: 'close-read', actor: 'clubanderson', at: new Date(Date.now() + 1000).toISOString(), outcome: 'applied', detail: 'closed', state: 'addressed' } };
   assert.strictEqual(stageTrackerActionFailureOf(later), null);
@@ -1842,7 +1844,7 @@ global.fetch = async (url, init) => {
   calls.length = 0; toasts.length = 0; dialogs.length = 0;
   out = await runRowAction('decide:close-read', [plain]);
   assert.strictEqual(calls.length, 0); assert.strictEqual(dialogs.length, 0);
-  assert.strictEqual(toasts.length, 1); assert.ok(toasts[0].startsWith('warning:Close (read): nothing to act on'), toasts[0]);
+  assert.strictEqual(toasts.length, 1); assert.ok(toasts[0].startsWith('warning:Close now: nothing to act on'), toasts[0]);
   toasts.length = 0;
   out = await runRowAction('decide:approve', [plain]);
   assert.strictEqual(calls.length, 0);

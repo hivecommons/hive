@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,8 +96,14 @@ type HiveEmptyDiffAutoCloseFacts struct {
 	// already carries its change.
 	Enabled bool
 	// HiveAuthored: this hive's App (or a login HiveIdentity matches)
-	// opened the PR. A person's PR is never closed here.
+	// opened the PR. A person's PR is closed here only when LandingProven.
 	HiveAuthored bool
+	// LandingProven (hivecommons/hive#15732): a merged PR is known to carry
+	// this PR's change — the reviewer named one and it is merged, the issue
+	// this PR closes was closed by a merged PR, or every commit on the head
+	// is already on the base. With an empty diff that is unambiguous for
+	// any author kind; trust changes nothing.
+	LandingProven bool
 	// Merged / Draft / Held / KeptOpen / ParkedByPerson are the guards every
 	// sweep honours.
 	Merged, Draft, Held, KeptOpen, ParkedByPerson bool
@@ -123,9 +130,10 @@ type HiveEmptyDiffAutoCloseFacts struct {
 }
 
 // DecideHiveEmptyDiffAutoClose is the pure rule. It returns "close" when the
-// hive's own PR measurably adds nothing to its base, "human" when the PR is
-// a person's and empty (the caller leaves the decision prompt in place), or
-// "keep" with the guard that held.
+// hive's own PR measurably adds nothing to its base — or anyone's PR does
+// and a merged landing is proven (hivecommons/hive#15732) — "human" when
+// the PR is a person's, empty, and no landing is proven (the caller leaves
+// the decision prompt in place), or "keep" with the guard that held.
 func DecideHiveEmptyDiffAutoClose(f HiveEmptyDiffAutoCloseFacts) (verdict, reason string) {
 	switch {
 	case !f.Enabled:
@@ -138,7 +146,7 @@ func DecideHiveEmptyDiffAutoClose(f HiveEmptyDiffAutoCloseFacts) (verdict, reaso
 		return hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonUnknown
 	case f.DiffFiles > 0 && !f.TreeMatchesBase:
 		return hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonHasDiff
-	case !f.HiveAuthored:
+	case !f.HiveAuthored && !f.LandingProven:
 		return hiveEmptyDiffVerdictHumanNote, hiveEmptyDiffReasonNotHive
 	case f.Held:
 		return hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonHeld
@@ -189,28 +197,53 @@ func PRChangedFilesClaimsEmpty(pr *gh.PullRequest) bool {
 // was cut short. headAt is the newest commit's committer date when the
 // compare listed commits; when it listed none the head is already on the
 // base, so it is the merge base's date. Zero when neither is readable.
-func (c *Client) prDiffAgainstBase(ctx context.Context, owner, name string, pr *gh.PullRequest) (files []*gh.CommitFile, headAt time.Time, known bool) {
+// headOnBase is true when the compare listed no commits: every commit of
+// the head is contained in the base.
+func (c *Client) prDiffAgainstBase(ctx context.Context, owner, name string, pr *gh.PullRequest) (files []*gh.CommitFile, headAt time.Time, known, headOnBase bool) {
 	base := strings.TrimSpace(pr.GetBase().GetRef())
 	head := strings.TrimSpace(pr.GetHead().GetSHA())
 	if base == "" || head == "" {
-		return nil, time.Time{}, false
+		return nil, time.Time{}, false, false
 	}
 	comparison, resp, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, "hive:empty_diff_autoclose"), owner, name, base, head, &gh.ListOptions{PerPage: githubCompareFileLimit})
 	if err != nil || comparison == nil {
-		return nil, time.Time{}, false
+		return nil, time.Time{}, false, false
 	}
 	for _, commit := range comparison.Commits {
 		if at := commit.GetCommit().GetCommitter().GetDate().Time; at.After(headAt) {
 			headAt = at
 		}
 	}
+	headOnBase = len(comparison.Commits) == 0 && comparison.GetMergeBaseCommit() != nil
 	if mb := comparison.GetMergeBaseCommit(); len(comparison.Commits) == 0 && strings.EqualFold(mb.GetSHA(), head) {
 		headAt = mb.GetCommit().GetCommitter().GetDate().Time
 	}
 	if (resp != nil && resp.NextPage != 0) || len(comparison.Files) >= githubCompareFileLimit {
-		return comparison.Files, headAt, false
+		return comparison.Files, headAt, false, headOnBase
 	}
-	return comparison.Files, headAt, true
+	return comparison.Files, headAt, true, headOnBase
+}
+
+// alreadyLandedProof looks for the merged PR that carries pr's change
+// (hivecommons/hive#15732), cheapest evidence first: the PR the reviewer
+// named, when it is merged; else the merged PR that closed the issue this
+// PR claims (detectSupersessionDetail); else the compare having listed no
+// commits (the head is already on the base — no single PR named). landed
+// is the PR to credit, 0 when the base itself is the landing.
+func (c *Client) alreadyLandedProof(ctx context.Context, owner, name string, pr *gh.PullRequest, redundantOf int, headOnBase bool, identity HiveIdentity, now time.Time) (landed int, proven bool) {
+	if redundantOf > 0 && redundantOf != pr.GetNumber() {
+		named, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:empty_diff_autoclose"), owner, name, redundantOf)
+		if err == nil && named != nil && (named.GetMerged() || !named.GetMergedAt().IsZero()) {
+			return redundantOf, true
+		}
+	}
+	if det, err := c.detectSupersessionDetail(ctx, owner+"/"+name, pr, identity, now); err == nil && det.candidate.Issue > 0 && det.closer.Number > 0 {
+		return det.closer.Number, true
+	}
+	if headOnBase {
+		return 0, true
+	}
+	return 0, false
 }
 
 // prFilesIdenticalOnBase proves an already-landed head: every file the
@@ -279,6 +312,13 @@ func (c *Client) CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string
 // closing references are closed through CloseIssue's usual gates, and the
 // originals its body declares it supersedes are reported for the caller's
 // lineage settlement. Redundancy is measured, never taken from the text.
+//
+// Any author's PR is closed this way (hivecommons/hive#15732: #15544 by a
+// trusted contributor sat at 085 for 9h although #15545 had merged the
+// same change) when, besides the empty diff, the landing is proven: the
+// named PR is merged, the issue this PR closes was closed by a merged PR,
+// or the head's commits are all on the base. A person's empty PR with no
+// proven landing keeps the reviewer's question.
 func (c *Client) CloseAlreadyLandedHivePRIfEligible(ctx context.Context, repo string, pr *gh.PullRequest, redundantOf int) (HiveEmptyDiffClose, error) {
 	return c.closeHiveRedundantPR(ctx, repo, pr, redundantOf, true)
 }
@@ -322,15 +362,16 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 		out.Verdict, out.Reason = DecideHiveEmptyDiffAutoClose(facts)
 		return out, nil
 	}
-	if reviewed && !facts.HiveAuthored {
-		// A person's PR is never closed on the hive's reading of a
-		// verdict; no compare is spent on it.
+	if !reviewed && !facts.HiveAuthored {
+		// The sweep's empty-diff rule never closes a person's PR; only
+		// the reviewer's already-landed entry proves a landing.
 		out.Verdict, out.Reason = hiveEmptyDiffVerdictHumanNote, hiveEmptyDiffReasonNotHive
 		return out, nil
 	}
+	headOnBase := false
 	if !facts.DiffKnown {
-		files, headAt, known := c.prDiffAgainstBase(ctx, owner, name, pr)
-		facts.DiffFiles, facts.DiffKnown = len(files), known
+		files, headAt, known, onBase := c.prDiffAgainstBase(ctx, owner, name, pr)
+		facts.DiffFiles, facts.DiffKnown, headOnBase = len(files), known, onBase
 		facts.HeadAge = emptyDiffHeadAge(pr, headAt, now)
 		if known && len(files) > 0 && reviewed {
 			match, matchKnown := c.prFilesIdenticalOnBase(ctx, owner, name, strings.TrimSpace(pr.GetBase().GetRef()), files)
@@ -338,8 +379,18 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 		}
 	}
 	out.Empty = facts.DiffKnown && (facts.DiffFiles == 0 || facts.TreeMatchesBase)
-	if out.Empty && facts.HiveAuthored {
+	if out.Empty {
 		facts.ParkedByPerson = c.supersessionNeedsHumanByPerson(ctx, owner, name, pr)
+	}
+	if out.Empty && !facts.HiveAuthored {
+		// A person's empty PR closes only on proof that the change
+		// landed; the compare alone could be a branch mid-push.
+		landed, proven := c.alreadyLandedProof(ctx, owner, name, pr, redundantOf, headOnBase, identity, now)
+		facts.LandingProven = proven
+		if proven && landed > 0 {
+			redundantOf = landed
+			out.RedundantOf = landed
+		}
 	}
 	out.Verdict, out.Reason = DecideHiveEmptyDiffAutoClose(facts)
 	if out.Verdict != hiveEmptyDiffVerdictClose {
@@ -355,6 +406,9 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 	}
 	closer := supersessionCloser{Repo: repo, Number: redundantOf}
 	why := hiveEmptyDiffCloseReason(redundantOf, shortHeadSHA(pr), strings.TrimSpace(pr.GetBase().GetRef()), facts.TreeMatchesBase)
+	if !facts.HiveAuthored {
+		why = alreadyLandedCloseReason(redundantOf, event.Author, shortHeadSHA(pr), strings.TrimSpace(pr.GetBase().GetRef()), facts.TreeMatchesBase)
+	}
 	if _, err := c.ensureSupersessionComment(ctx, owner, name, pr.GetNumber(), renderEmptyDiffCloseComment(closer, why, facts.TreeMatchesBase)); err != nil {
 		return out, err
 	}
@@ -367,13 +421,14 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 		}
 	}
 	if c.logger != nil {
-		c.logger.Info("empty-diff auto-close: closed hive-authored PR with no diff against its base",
-			slog.String("repo", repo), slog.Int("pr", pr.GetNumber()), slog.Int("redundant_of", redundantOf), slog.String("action", event.Action))
+		c.logger.Info("empty-diff auto-close: closed PR with no diff against its base",
+			slog.String("repo", repo), slog.Int("pr", pr.GetNumber()), slog.Int("redundant_of", redundantOf), slog.String("action", event.Action),
+			slog.Bool("hive_authored", facts.HiveAuthored), slog.Bool("landing_proven", facts.LandingProven))
 	}
 	out.Closed = true
 	if reviewed {
 		out.Supersedes = SupersedesDeclared(pr.GetBody())
-		out.IssuesClosed = c.closeIssuesAlreadyLanded(ctx, owner, name, pr, redundantOf)
+		out.IssuesClosed = c.closeIssuesAlreadyLanded(ctx, owner, name, pr, redundantOf, facts.HiveAuthored)
 	}
 	return out, nil
 }
@@ -385,7 +440,7 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 // landed it — only once the close went through, so a refused close leaves
 // no "done" note on an open issue. Failures are logged, never fatal: the
 // PR close stands.
-func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name string, pr *gh.PullRequest, redundantOf int) []int {
+func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name string, pr *gh.PullRequest, redundantOf int, hiveAuthored bool) []int {
 	repo := owner + "/" + name
 	var closed []int
 	for _, number := range ClosingIssueRefs(pr.GetBody(), repo) {
@@ -406,7 +461,7 @@ func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name strin
 			continue
 		}
 		closed = append(closed, number)
-		note := alreadyLandedIssueNote(pr.GetNumber(), redundantOf, strings.TrimSpace(pr.GetBase().GetRef()))
+		note := alreadyLandedIssueNote(pr.GetNumber(), redundantOf, strings.TrimSpace(pr.GetBase().GetRef()), hiveAuthored)
 		if _, _, err := c.client.Issues.CreateComment(ctx, owner, name, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil && c.logger != nil { // writeback:gated
 			c.logger.Warn("already-landed auto-close: issue note failed", slog.String("repo", repo), slog.Int("issue", number), slog.String("error", err.Error()))
 		}
@@ -416,11 +471,15 @@ func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name strin
 
 // alreadyLandedIssueNote is the one-line note on an issue closed because
 // the PR that claimed it was already landed through another PR.
-func alreadyLandedIssueNote(pr, redundantOf int, base string) string {
-	if redundantOf > 0 {
-		return fmt.Sprintf("%s #%d -->\nThe hive closed its own #%d as superseded: the change it carried is already on `%s` via #%d, so this issue is done. Reopen if that's wrong.", reviewRedundantOfMarker, redundantOf, pr, base, redundantOf)
+func alreadyLandedIssueNote(pr, redundantOf int, base string, hiveAuthored bool) string {
+	whose := "#" + strconv.Itoa(pr)
+	if hiveAuthored {
+		whose = "its own " + whose
 	}
-	return fmt.Sprintf("The hive closed its own #%d as superseded: the change it carried is already on `%s`, so this issue is done. Reopen if that's wrong.", pr, base)
+	if redundantOf > 0 {
+		return fmt.Sprintf("%s #%d -->\nThe hive closed %s as superseded: the change it carried is already on `%s` via #%d, so this issue is done. Reopen if that's wrong.", reviewRedundantOfMarker, redundantOf, whose, base, redundantOf)
+	}
+	return fmt.Sprintf("The hive closed %s as superseded: the change it carried is already on `%s`, so this issue is done. Reopen if that's wrong.", whose, base)
 }
 
 // emptyDiffHeadAge measures from the compare's newest commit (headAt) when
@@ -459,6 +518,24 @@ func hiveEmptyDiffCloseReason(redundantOf int, head, base string, treeMatches bo
 		return fmt.Sprintf("Closing this hive-authored PR as superseded by #%d: head %s is identical to `%s` (%s), so the change it carried is already on the base. Reopen if that's wrong.", redundantOf, head, base, proof)
 	}
 	return fmt.Sprintf("Closing this hive-authored PR: head %s is identical to `%s` (%s), so there is nothing left to merge. Reopen if that's wrong.", head, base, proof)
+}
+
+// alreadyLandedCloseReason is the one-line why of the close comment for a
+// PR the hive did not author (hivecommons/hive#15732): the change landed
+// via another PR, so the PR is closed as superseded with thanks.
+func alreadyLandedCloseReason(redundantOf int, author, head, base string, treeMatches bool) string {
+	proof := "the compare lists no files"
+	if treeMatches {
+		proof = "every file it touches is already byte-identical on the base tip"
+	}
+	thanks := "thank you for the work."
+	if a := strings.TrimSpace(author); a != "" {
+		thanks = "thank you @" + a + "."
+	}
+	if redundantOf > 0 {
+		return fmt.Sprintf("Already landed via #%d — closing as superseded; %s Head %s is identical to `%s` (%s), so the change this PR carried is already on the base. Reopen if that's wrong.", redundantOf, thanks, head, base, proof)
+	}
+	return fmt.Sprintf("Already landed on `%s` — closing as superseded; %s Head %s is identical to the base (%s), so there is nothing left to merge. Reopen if that's wrong.", base, thanks, head, proof)
 }
 
 // renderEmptyDiffCloseComment is the close notice, under the supersession

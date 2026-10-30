@@ -573,11 +573,14 @@ func stageTrackerUntrustedAuthorFix(base, author string) string {
 	return ""
 }
 
-// trackerSoakRemainingRE pulls the time left out of the lane's
-// `contributor-lane:soaking(remaining=12m0s)` reason.
+// trackerSoakRemainingRE pulls the time left out of the
+// `contributor-lane:soaking(remaining=12m0s)` reason the lane wrote before
+// the soak deadline lived on the record (hivecommons/hive#15729). Records
+// of that shape may still be on disk; nothing writes it any more.
 var trackerSoakRemainingRE = regexp.MustCompile(`remaining=([0-9hms.]+)`)
 
-// soakRemainingFromReason parses the soak time left from a soaking reason.
+// soakRemainingFromReason parses the soak time left from a soaking reason
+// of the pre-deadline shape; false for the bare `contributor-lane:soaking`.
 func soakRemainingFromReason(reason string) (time.Duration, bool) {
 	m := trackerSoakRemainingRE.FindStringSubmatch(reason)
 	if m == nil {
@@ -591,41 +594,72 @@ func soakRemainingFromReason(reason string) (time.Duration, bool) {
 }
 
 // stageTrackerSoakCaption is the 095 sentence for a record carrying the
-// lane's soak clock: "soaking — 12m left" while the window runs, aged from
-// the lane's last read so a soak that has run out never says "0s left";
-// past it, "soak complete — merges on the next pass". "" when the record
-// is not at 095 or carries no clock (the generic caption stands).
+// lane's soak clock: "soaking — 12m left" while the window runs, computed
+// at request time from the record's deadline so a soak that has run out
+// never says "0s left"; past it, "soak complete — merges on the next
+// pass". "" when the record is not at 095 or carries no clock (the
+// generic caption stands). The words move each minute, but the note's
+// age (NoteChangedAt) does not: the SPA refreshes them in place.
 func stageTrackerSoakCaption(rec stagelabels.Record, now time.Time) string {
 	const admitted = "Admitted by the automerge lane; "
 	if rec.Stage != stagelabels.PreMergeSoak {
 		return ""
 	}
-	if _, ok := soakRemainingFromReason(rec.Reason); !ok {
+	until, ok := stageTrackerSoakUntil(rec)
+	if !ok {
 		return ""
 	}
-	if left := stageTrackerSoakRemaining(rec, now); left > 0 {
+	if left := until.Sub(now); left > 0 {
 		return admitted + "soaking — " + shortDuration(left) + " left"
 	}
 	return admitted + "soak complete — merges on the next pass"
 }
 
-// stageTrackerSoakRemaining is the soak time left now for a record at 095:
-// the lane's recorded remaining, aged by the time since the sweep wrote it.
-func stageTrackerSoakRemaining(rec stagelabels.Record, now time.Time) time.Duration {
+// stageTrackerSoakUntil is the soak deadline a 095 record carries: the
+// recorded soak's start plus its window (NoteSoak), else — for a record
+// written before the deadline existed — the lane's `soaking(remaining=…)`
+// reason aged from the sweep that wrote it. ok is false when the record
+// is not at 095 or carries no clock.
+func stageTrackerSoakUntil(rec stagelabels.Record) (time.Time, bool) {
 	if rec.Stage != stagelabels.PreMergeSoak {
-		return 0
+		return time.Time{}, false
+	}
+	if _, startedAt, window, ok := rec.Soak(); ok {
+		return startedAt.Add(window), true
 	}
 	left, ok := soakRemainingFromReason(rec.Reason)
+	if !ok || rec.LastSeen.IsZero() {
+		return time.Time{}, false
+	}
+	return rec.LastSeen.Add(left), true
+}
+
+// stageTrackerSoakRemaining is the soak time left now for a record at 095,
+// 0 once the deadline has passed or when the record carries no clock.
+func stageTrackerSoakRemaining(rec stagelabels.Record, now time.Time) time.Duration {
+	until, ok := stageTrackerSoakUntil(rec)
 	if !ok {
 		return 0
 	}
-	if !rec.LastSeen.IsZero() {
-		left -= now.Sub(rec.LastSeen)
+	if left := until.Sub(now); left > 0 {
+		return left
 	}
-	if left < 0 {
-		return 0
+	return 0
+}
+
+// stageTrackerNoteChangedAt is when the row's hive note last changed
+// meaning: the record's reason-class change (or stage entry), or — for a
+// 095 row whose soak has run out — the deadline, since "soak complete"
+// is a different note from "soaking". Never later than now.
+func stageTrackerNoteChangedAt(rec stagelabels.Record, now time.Time) time.Time {
+	at := rec.NoteChangedAt()
+	if until, ok := stageTrackerSoakUntil(rec); ok && !until.After(now) && until.After(at) {
+		at = until
 	}
-	return left
+	if at.After(now) {
+		at = now
+	}
+	return at
 }
 
 // adoptedWorkCaption names what the hive is doing on a PR it adopted in

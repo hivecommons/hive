@@ -34,7 +34,7 @@
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
-      'decide:close-read': 'Close (read)',
+      'decide:close-read': 'Close now',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:re-author': 'Re-author as hive PR',
@@ -376,6 +376,23 @@
       return out;
     }
     // Pure: the actions that apply to one row in its current state.
+    // The Close-now hint and confirm text of an advisory row. A checklist
+    // the hive is working (advisory.total > 0) says so: the sweep ticks the
+    // items and closes it itself, so closing now is optional.
+    function stageTrackerAdvisoryCloseHint(advisory) {
+      if (!advisory) return '';
+      if (advisory.empty) return 'nothing found · closes as completed';
+      if (advisory.total > 0 && advisory.resolved < advisory.total) return 'optional · hive is working ' + advisory.resolved + '/' + advisory.total + ' items; close anyway';
+      if (advisory.total > 0) return 'all items resolved · closes as completed';
+      return 'advisory acknowledged · closes as completed';
+    }
+    function stageTrackerAdvisoryCloseMessage(items, refs, who) {
+      const adv = items && items.length === 1 ? stageTrackerAdvisoryOf(items[0]) : null;
+      if (adv && adv.total > 0 && adv.resolved < adv.total) {
+        return 'Close ' + refs + ' now, as ' + who + '? The hive is working its items (' + adv.resolved + '/' + adv.total + ' resolved) and closes it itself when all are; closing now is optional. The issue closes as completed with a note that you read it.';
+      }
+      return 'Close ' + refs + ' as read, as ' + who + '? It is an advisory for maintainers — nothing waits on it; the issue closes as completed with a note that you read it.';
+    }
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
@@ -403,10 +420,12 @@
       const triage = stageTrackerTriageNeeded(item);
       if (triage) out.push({ id: 'accept-triage', label: 'Accept triage', hint: stageTrackerTriageHint(item, ctx, ctx.nowMs, ctx.governor), enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, lead: true });
       // An advisory issue (hivecommons/hive#15381) asks for one thing:
-      // read it, then close it. "Close (read)" leads; it is the existing
-      // decision close path with the verdict `close-read`.
+      // read it, then close it. "Close now" leads; it is the existing
+      // decision close path with the verdict `close-read`. A checklist the
+      // hive is still working says so: closing it is optional
+      // (hivecommons/hive#15754).
       const advisory = typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
-      if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: advisory.empty ? 'nothing found · closes as completed' : 'advisory acknowledged · closes as completed', lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
+      if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: stageTrackerAdvisoryCloseHint(advisory), lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
       for (const a of lead) out.push(a);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
@@ -1616,7 +1635,7 @@
           return v == null ? null : { comment: v };
         }
         case 'decide:close-read':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Close (read)', message: 'Close ' + refs + ' as read, as ' + who + '? It is an advisory for maintainers — nothing waits on it; the issue closes as completed with a note that you read it.', confirmLabel: 'Close' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Close advisory', message: stageTrackerAdvisoryCloseMessage(items, refs, who), confirmLabel: 'Close' })) ? {} : null;
         case 'decide:merge-now': {
           const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
           if (items.some(stageTrackerNeedsRebase)) {
