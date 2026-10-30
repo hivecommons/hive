@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,8 +56,30 @@ func TestVersionCarriesUpgradeProgressAndHistory(t *testing.T) {
 	if len(p.AgentsInTurn) != 1 || p.AgentsInTurn[0].Agent != "reviewer" || p.AgentsInTurn[0].ElapsedS != 2280 {
 		t.Fatalf("agentsInTurn = %+v", p.AgentsInTurn)
 	}
-	if len(body.UpgradeHistory) != 1 || body.UpgradeHistory[0].Outcome != spoke.UpgradeOutcomeMissed || body.UpgradeHistory[0].Reason != "drain lapsed" {
+	if len(body.UpgradeHistory) != 1 || body.UpgradeHistory[0].Outcome != spoke.UpgradeOutcomeDelayed || body.UpgradeHistory[0].Reason != "drain lapsed" {
 		t.Fatalf("upgradeHistory = %+v", body.UpgradeHistory)
+	}
+
+	// The spoke knows the rollout landed before the hub's next heartbeat.
+	s.SetUpgradeDrainSource(nil)
+	outcome, err := json.Marshal(upgradeOutcome{TargetSHA: "abc1234", CompletedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(upgradeOutcomePath, outcome, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	s.handleVersion(rec, httptest.NewRequest(http.MethodGet, "/api/version", nil))
+	body.UpgradeHistory = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.UpgradeProgress == nil || body.UpgradeProgress.State != spoke.UpgradeStateDone || len(body.UpgradeHistory) != 0 {
+		t.Fatalf("successful upgrade still shows a delay: %+v", body)
+	}
+	if err := os.Remove(upgradeOutcomePath); err != nil {
+		t.Fatal(err)
 	}
 
 	// No policy, no drain, nothing on disk: the keys are absent rather than
@@ -88,6 +111,7 @@ func TestIndexRendersUpgradeProgressPillAndHistory(t *testing.T) {
 		"st.agentsInTurn",
 		".oc-version-state-pill {",
 		".oc-version-state-pill.is-draining",
+		".oc-version-state-pill.is-delayed",
 		".oc-version-state-pill.is-missed",
 		".oc-version-history {",
 		"row('Progress', statePill",
@@ -98,7 +122,7 @@ func TestIndexRendersUpgradeProgressPillAndHistory(t *testing.T) {
 		}
 	}
 	labels := jsFunc(t, html, "versionStateLabels")
-	for _, state := range []string{"scheduled", "draining", "pulling", "rolling", "verifying", "done", "missed"} {
+	for _, state := range []string{"scheduled", "delayed", "draining", "pulling", "rolling", "verifying", "done", "missed"} {
 		if !strings.Contains(labels, state+":") {
 			t.Errorf("versionStateLabels lacks %q", state)
 		}
