@@ -1112,7 +1112,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 		}
 	}
 
-	return ClaimScan{Claims: claims, History: history}, firstErr
+	return ClaimScan{Claims: claims, History: history, StartedAt: now}, firstErr
 }
 
 func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr *gh.PullRequest) string {
@@ -1648,6 +1648,22 @@ func OpenIssuesOf(result *ActionableResult) OpenIssueSet {
 // set — is what starts the settledClaimRetention countdown, not the merge.
 // Unsettled claims ignore the set; their lifetime is the scan's and the TTL's.
 func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet) {
+	l.reconcileOpen(live, authoritative, open, time.Time{})
+}
+
+// ReconcileScan is ReconcileOpen for a complete scan: it additionally carries
+// forward every unsettled claim recorded at or after scan.StartedAt that the
+// scan did not re-list (hivecommons/hive#15559). The webhook path records a
+// PR's claims the moment it opens; a scan whose listing began before that
+// moment never saw the PR, so an authoritative map replacement that dropped
+// the claim re-offered the issue while its PR was open — the hive then opened
+// a second PR for it. The next scan lists the PR itself and confirms or drops
+// the carried claim, so the carry-forward is bounded by one scan interval.
+func (l *ClaimLedger) ReconcileScan(scan ClaimScan, authoritative bool, open OpenIssueSet) {
+	l.reconcileOpen(scan.Claims, authoritative, open, scan.StartedAt)
+}
+
+func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet, listedAt time.Time) {
 	if l == nil {
 		return
 	}
@@ -1663,6 +1679,17 @@ func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open 
 				continue
 			}
 			l.insertLocked(l.anchorFirstObservedLocked(prev, c))
+		}
+		if !listedAt.IsZero() {
+			// A claim recorded after the listing began is newer evidence than
+			// the listing; insertLocked's rank rule still lets a stronger
+			// live claim for the same issue win.
+			for _, c := range prev {
+				if c.Settled() || c.ObservedAt.Before(listedAt) {
+					continue
+				}
+				l.insertLocked(c)
+			}
 		}
 		// Settled claims are carried forward (#7871, #8003). A verdict-
 		// recovered claim describes a settling PR (or commit) that never
@@ -2270,7 +2297,7 @@ func ApplyDuplicatePRGuard(
 			"cached_claims", ledger.Len(),
 		)
 	}
-	ledger.ReconcileOpen(scan.Claims, authoritative, OpenIssuesOf(result))
+	ledger.ReconcileScan(scan, authoritative, OpenIssuesOf(result))
 	// Churn history accumulates from whatever the scan DID return, partial or
 	// not (#7995): a record is an observation that a pull request existed in a
 	// state, which a later failure cannot falsify.

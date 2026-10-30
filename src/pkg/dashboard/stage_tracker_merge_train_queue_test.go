@@ -55,23 +55,23 @@ func TestStageTrackerMergeTrainQueueFacts(t *testing.T) {
 		stalledS  int64
 	}{
 		{name: "2nd behind a soaking head: head soak + next tick", self: member(15319, 2, nil), ahead: []*StageTrackerItem{headSoaking}, head: headSoaking, opts: opts,
-			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 40, basis: "1 ahead · head soaking 12m · next sweep in 40s"},
+			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 40, basis: "1 ahead · head soaking 12m · next pass in 40s"},
 		{name: "3rd: head soak + one sweep for the 2nd + tick", self: member(15374, 3, nil), ahead: []*StageTrackerItem{headSoaking, member(15319, 2, nil)}, head: headSoaking, opts: opts,
-			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 5*60 + 40, basis: "2 ahead · head soaking 12m · next sweep in 40s"},
+			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 5*60 + 40, basis: "2 ahead · head soaking 12m · next pass in 40s"},
 		{name: "3rd with a soaking 2nd: its soak, not a sweep", self: member(15374, 3, nil), ahead: []*StageTrackerItem{headSoaking, member(15319, 2, soaking(7*time.Minute))}, head: headSoaking, opts: opts,
-			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 7*60 + 40, basis: "2 ahead · head soaking 12m · next sweep in 40s"},
+			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 7*60 + 40, basis: "2 ahead · head soaking 12m · next pass in 40s"},
 		{name: "own soak counts too", self: member(15319, 2, soaking(3*time.Minute)), ahead: []*StageTrackerItem{headSoaking}, head: headSoaking, opts: opts,
-			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 3*60 + 40, basis: "1 ahead · head soaking 12m · own soak 3m · next sweep in 40s"},
+			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12*60 + 3*60 + 40, basis: "1 ahead · head soaking 12m · own soak 3m · next pass in 40s"},
 		{name: "a running sweep has no tick", self: member(15319, 2, func(it *StageTrackerItem) {
 			it.MergeGate = &StageTrackerMergeGate{State: MergeGateStateQueuedBehind, SweepRunning: true}
 		}), ahead: []*StageTrackerItem{headSoaking}, head: headSoaking, opts: opts,
-			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12 * 60, basis: "1 ahead · head soaking 12m · sweep running"},
+			headState: mergeTrainHeadSoaking, reason: "soaking, 12m left", etaS: 12 * 60, basis: "1 ahead · head soaking 12m · pass running"},
 		{name: "ready head: one sweep each + tick", self: member(15374, 3, nil), ahead: []*StageTrackerItem{headReady, member(15319, 2, nil)}, head: headReady, opts: opts,
-			headState: mergeTrainHeadReady, reason: "approved and green; merges on hive's next sweep", etaS: 2*5*60 + 40, basis: "2 ahead · next sweep in 40s"},
+			headState: mergeTrainHeadReady, reason: "approved and green; merges on hive's next pass", etaS: 2*5*60 + 40, basis: "2 ahead · next pass in 40s"},
 		{name: "no cadence armed yet: the default floor", self: member(15319, 2, nil), ahead: []*StageTrackerItem{headReady}, head: headReady, opts: mergeTrainQueueOptions{Now: now, StallWarn: time.Hour},
-			headState: mergeTrainHeadReady, reason: "approved and green; merges on hive's next sweep", etaS: int64(mergeTrainDefaultSweepEvery / time.Second), basis: "1 ahead"},
+			headState: mergeTrainHeadReady, reason: "approved and green; merges on hive's next pass", etaS: int64(mergeTrainDefaultSweepEvery / time.Second), basis: "1 ahead"},
 		{name: "merging head: its turn is one sweep away", self: member(15319, 2, nil), ahead: []*StageTrackerItem{headMerging}, head: headMerging, opts: opts,
-			headState: mergeTrainHeadMerging, reason: "merging now", etaS: 5*60 + 40, basis: "1 ahead · head merging · next sweep in 40s"},
+			headState: mergeTrainHeadMerging, reason: "merging now", etaS: 5*60 + 40, basis: "1 ahead · head merging · next pass in 40s"},
 		{name: "head on a human: blocker, no estimate, stalled past the window", self: member(15319, 2, nil), ahead: []*StageTrackerItem{headHuman}, head: headHuman, opts: opts,
 			headState: mergeTrainHeadNeedsHuman, reason: "waiting for a maintainer (untrusted author)", stalled: true, stalledS: 8 * 3600},
 		{name: "head on CI: blocker, no estimate", self: member(15319, 2, nil), ahead: []*StageTrackerItem{headCI}, head: headCI, opts: opts,
@@ -249,7 +249,7 @@ assert.strictEqual(a.word, 'Merge queued · 2nd');
 assert.strictEqual(b.word, a.word, 'sweep_running must not change the chip label');
 assert.strictEqual(a.detail, ''); assert.strictEqual(b.detail, '');
 assert.strictEqual(stageTrackerMergeGateWordHtml(quiet, now), stageTrackerMergeGateWordHtml(busy, now), 'identical chip markup');
-assert.ok(!/queued-behind|front|merge sweep running/i.test(a.word + a.detail + b.word + b.detail), 'no slug, no "front", no sweep words in the label');
+assert.ok(!/queued-behind|front|checking now/i.test(a.word + a.detail + b.word + b.detail), 'no slug, no "front", no sweep words in the label');
 // The sweep lives in the glyph and the tooltip.
 assert.strictEqual(a.cue, 'waiting'); assert.strictEqual(b.cue, 'running');
 assert.ok(b.tip.includes('Checking now…') && !a.tip.includes('Checking now…'), b.tip);
@@ -274,7 +274,7 @@ assert.ok(stageTrackerMergeGateInfo(head, now).tip.startsWith('1st of 3 in the m
 // hive's own #15406 read the bare slug "front" while the front sat in its
 // soak (the mirrored soak clock returned the raw state). A front in soak
 // keeps its place word and its countdown (own soak left + next sweep).
-const frontSoak = mk(15406, 'in soak at the front', { state: 'front', position: 1, size: 4, length: 4, head_number: 15406, front: 15406, ahead: [], head_state: 'soaking', head_reason: 'soaking, 12m left', eta_s: 760, eta_at: new Date(now + 760 * 1000).toISOString(), eta_basis: 'own soak 12m · next sweep in 40s' },
+const frontSoak = mk(15406, 'in soak at the front', { state: 'front', position: 1, size: 4, length: 4, head_number: 15406, front: 15406, ahead: [], head_state: 'soaking', head_reason: 'soaking, 12m left', eta_s: 760, eta_at: new Date(now + 760 * 1000).toISOString(), eta_basis: 'own soak 12m · next pass in 40s' },
   { state: 'front', soak_until: new Date(now + 12 * 60 * 1000).toISOString(), soak_started_at: new Date(now - 18 * 60 * 1000).toISOString(), sweep_running: true });
 const fs = stageTrackerMergeGateInfo(frontSoak, now);
 assert.strictEqual(fs.word, 'Merge queued · 1st', fs.word); assert.strictEqual(fs.detail, '~13m');
@@ -284,10 +284,10 @@ assert.strictEqual(stageTrackerMergeGateWordHtml(frontSoak, now).replace(/<[^>]+
 // the clock so the shared tick keeps counting and a re-render lands on the same
 // instant (no reset on poll).
 const etaAt = new Date(now + 4 * 60 * 1000).toISOString();
-const timed = mk(15319, 'fleetreport: slog feed', { state: 'queued-behind', position: 2, ahead: [15315], head_state: 'soaking', head_reason: 'soaking, 3m left', eta_s: 240, eta_at: etaAt, eta_basis: '1 ahead · head soaking 3m · next sweep in 40s' }, { sweep_running: false });
+const timed = mk(15319, 'fleetreport: slog feed', { state: 'queued-behind', position: 2, ahead: [15315], head_state: 'soaking', head_reason: 'soaking, 3m left', eta_s: 240, eta_at: etaAt, eta_basis: '1 ahead · head soaking 3m · next pass in 40s' }, { sweep_running: false });
 const ti = stageTrackerMergeGateInfo(timed, now);
 assert.strictEqual(ti.word, 'Merge queued · 2nd'); assert.strictEqual(ti.detail, '~4m'); assert.strictEqual(ti.until, now + 4 * 60 * 1000);
-assert.ok(ti.tip.includes('· ETA ~4m (1 ahead · head soaking 3m · next sweep in 40s).'), ti.tip);
+assert.ok(ti.tip.includes('· ETA ~4m (1 ahead · head soaking 3m · next pass in 40s).'), ti.tip);
 const chipHtml = stageTrackerMergeGateWordHtml(timed, now);
 assert.ok(chipHtml.includes('>Merge queued · 2nd <span class="ham-gate-detail" data-ham-until="' + (now + 240000) + '" data-ham-until-kind="queued-behind">· ~4m</span>'), chipHtml);
 assert.strictEqual(chipHtml.replace(/<[^>]+>/g, ''), 'Merge queued · 2nd · ~4m');
@@ -298,7 +298,7 @@ assert.strictEqual(stageTrackerMergeGateInfo(timed, now + 150 * 1000).detail, '~
 const node = { attrs: { 'data-ham-until': String(now + 240000), 'data-ham-until-kind': 'queued-behind' }, textContent: '· ~4m', getAttribute(k) { return this.attrs[k] === undefined ? null : this.attrs[k]; } };
 const el = { querySelectorAll() { return [node]; } };
 stageTrackerGateCountdownSync(el, now + 150 * 1000); assert.strictEqual(node.textContent, '· ~2m');
-stageTrackerGateCountdownSync(el, now + 5 * 60 * 1000); assert.strictEqual(node.textContent, '· any sweep now');
+stageTrackerGateCountdownSync(el, now + 5 * 60 * 1000); assert.strictEqual(node.textContent, '· any moment now');
 // Running late: no clock, the words instead; the estimate stays in the hover.
 const late = mk(15319, 'fleetreport: slog feed', { state: 'queued-behind', position: 2, ahead: [15315], head_state: 'ready', head_reason: 'approved and green; merges on hive\'s next sweep', eta_s: 300, eta_at: etaAt, eta_basis: '1 ahead', late: true });
 const li = stageTrackerMergeGateInfo(late, now);
