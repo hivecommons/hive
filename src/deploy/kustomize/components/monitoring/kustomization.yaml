@@ -11,3 +11,17 @@ resources:
 
 patches:
   - path: patch-deployment.yaml
+
+# Grafana dashboard, imported by the kube-prometheus-stack sidecar (it watches
+# ConfigMaps labelled grafana_dashboard: "1"). The hash suffix is disabled so the
+# name stays stable for Grafana provisioning and for patches.
+configMapGenerator:
+  - name: hive-grafana-dashboard
+    namespace: hive
+    files:
+      - hive-metrics.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+        app.kubernetes.io/name: hive
