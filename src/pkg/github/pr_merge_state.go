@@ -112,11 +112,18 @@ func (c *Client) GetPRMergeState(ctx context.Context, repo string, number int) (
 // CommitByHive reports whether the commit at sha is the hive's own work:
 // its committer resolves to the App bot (by login or noreply address) or to
 // an address in the pane identity domain, or its author resolves by login
-// to the App bot, as on GitHub's update-branch under the App. When GitHub
+// to the App bot on a commit GitHub verified, as on GitHub's update-branch
+// under the App (web-flow commits and signs it). When GitHub
 // resolves no login for the committer, the email-only match also requires
 // the commit's signature to be verified by GitHub, which binds the signing
 // key to the committer address only (hivecommons/hive#15182); the author is
 // free text GitHub never vouches for, so no email-only author match counts.
+// GitHub resolves the author login from that same free-text email, so a
+// pusher setting the App's noreply address gets the bot login on an
+// unsigned commit; the author login therefore counts only on a verified
+// commit. A web-flow committer login is no proof either (it too resolves
+// from an email anyone can set), while update-branch commits are always
+// verified (hivecommons/hive#15421).
 // The fixer's plain-git rebase of a contributor PR is an unsigned,
 // email-only pane committer (the push broker sets commit.gpgsign=false and
 // the signed reconcile pass only walks App-authored PRs), so it does not
@@ -146,9 +153,14 @@ func (c *Client) CommitByHive(ctx context.Context, repo, sha string) (bool, erro
 			return true, nil
 		}
 	}
-	// The author counts only by a login resolved to the App bot: a signature
-	// never covers the author address, so a verified commit proves nothing
-	// about an email-only author match.
+	// The author counts only by a login resolved to the App bot on a commit
+	// GitHub verified: a signature never covers the author address, so a
+	// verified commit proves nothing about an email-only author match, and an
+	// unverified one proves nothing about a login GitHub derived from a
+	// spoofable noreply address.
+	if !rc.GetCommit().GetVerification().GetVerified() {
+		return false, nil
+	}
 	authorLogin := safeGetLogin(rc.GetAuthor())
 	return authorLogin != "" && c.hiveCommitIdentity(authorLogin, rc.GetCommit().GetAuthor().GetEmail()), nil
 }

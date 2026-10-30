@@ -12,7 +12,9 @@ import (
 // hive's own only on a commit GitHub verified; a login resolved to the App
 // bot counts whatever the verification. GitHub's verification binds the
 // signing key to the committer address only, so an email-only author match
-// never counts, verified or not (hivecommons/hive#15182).
+// never counts, verified or not (hivecommons/hive#15182); an author login
+// resolved to the App bot counts only on a verified commit, since GitHub
+// derives it from the free-text author email (hivecommons/hive#15421).
 func TestCommitByHive(t *testing.T) {
 	t.Setenv(signedTrailerDomainEnv, "")
 	type identity struct{ login, email string }
@@ -35,7 +37,13 @@ func TestCommitByHive(t *testing.T) {
 		{"person committer, email-only bot noreply author, verified", identity{"", "1+hive-app[bot]@users.noreply.github.com"}, identity{"alice", "alice@example.com"}, map[string]any{"verified": true}, false},
 		// update-branch under the App: author resolves to the bot, GitHub commits.
 		{"bot login author, web-flow committer", identity{reconcileBot, "1+hive-app[bot]@users.noreply.github.com"}, identity{"web-flow", "noreply@github.com"}, map[string]any{"verified": true}, true},
-		{"bot login author, web-flow committer, unverified", identity{reconcileBot, "1+hive-app[bot]@users.noreply.github.com"}, identity{"web-flow", "noreply@github.com"}, nil, true},
+		{"bot login author, web-flow committer, unverified", identity{reconcileBot, "1+hive-app[bot]@users.noreply.github.com"}, identity{"web-flow", "noreply@github.com"}, nil, false},
+		// A pusher setting user.email to the App's noreply address gets the bot
+		// login resolved as author on an unsigned commit (hivecommons/hive#15421).
+		{"spoofed bot login author, person committer, unverified", identity{reconcileBot, "1+hive-app[bot]@users.noreply.github.com"}, identity{"alice", "alice@example.com"}, map[string]any{"verified": false}, false},
+		{"spoofed bot login author, no committer login, no verification", identity{reconcileBot, "1+hive-app[bot]@users.noreply.github.com"}, identity{"", "alice@example.com"}, nil, false},
+		// The hive's own unsigned push: the committer resolves to the App bot.
+		{"bot login author, bot login committer, unverified", identity{reconcileBot, "1+hive-app[bot]@users.noreply.github.com"}, identity{reconcileBot, "1+hive-app[bot]@users.noreply.github.com"}, map[string]any{"verified": false}, true},
 		// The fixer's rebase keeps the person as author; the hive commits.
 		{"person author, email-only pane committer, verified", identity{"alice", "alice@example.com"}, identity{"", "fixer@hive.kubestellar.io"}, map[string]any{"verified": true}, true},
 		{"person author, email-only pane committer, unverified", identity{"alice", "alice@example.com"}, identity{"", "fixer@hive.kubestellar.io"}, map[string]any{"verified": false}, false},
