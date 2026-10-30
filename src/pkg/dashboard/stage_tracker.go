@@ -3215,8 +3215,30 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 	if it.StageSlug == StageTrackerNewSlug {
 		it.StageSlug = ""
 	}
+	// listed: the PRs under this issue that are still open on GitHub.
+	listed := make(map[int]bool, len(it.LinkedPRs))
+	for _, pr := range it.LinkedPRs {
+		listed[pr.Number] = pr.State != "closed"
+	}
 	progress := make([]string, 0, len(it.LinkedPRs))
 	for _, pr := range it.LinkedPRs {
+		// An adoption pair {original, hive's copy} is one logical PR: the
+		// copy speaks for both, and the superseded original's verdicts
+		// ("changes requested", "fork not editable") never reach the
+		// issue's caption (hivecommons/hive#15495 read as needing a human).
+		if stageTrackerLinkedPRSupersededByListed(pr, listed) {
+			continue
+		}
+		if from := stageTrackerLinkedPRAdoptedFrom(pr, listed); from != "" {
+			text := fmt.Sprintf("#%d (adopted from %s)", pr.Number, from)
+			if phrase := stageTrackerStagePhrase(stageByNumber(pr.Stage)); phrase != "" {
+				text += " — " + phrase
+			} else if pr.Caption != "" {
+				text += " — " + pr.Caption
+			}
+			progress = append(progress, text)
+			continue
+		}
 		text := fmt.Sprintf("PR #%d", pr.Number)
 		if pr.Caption != "" {
 			text += " — " + pr.Caption
@@ -3229,6 +3251,35 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 	}
 	it.Caption = prefix + strings.Join(progress, "; ")
 	it.Actor = "its PR"
+}
+
+// stageTrackerLinkedPRSupersededByListed reports whether lp is the
+// original of an adoption pair whose hive copy is itself listed open under
+// the same issue (or a closed original the copy replaced): the pair is one
+// logical PR and the copy carries the issue. An original whose copy was
+// closed without merging is not superseded — the hive re-adopts or a
+// person decides, and the original speaks for itself again.
+func stageTrackerLinkedPRSupersededByListed(lp StageTrackerLinkedPR, listed map[int]bool) bool {
+	if lp.State == "closed" {
+		return true
+	}
+	if lp.AdoptedBy > 0 && listed[lp.AdoptedBy] && lp.AdoptedByState != stageTrackerAdoptedClosed && lp.AdoptedByState != stageTrackerAdoptedClosedTwice && lp.AdoptedByState != stageTrackerAdoptedCopyFailed {
+		return true
+	}
+	return lp.Lineage != nil && lp.Lineage.Kind == lineageSuperseded && lp.Lineage.ToNumber > 0 && listed[lp.Lineage.ToNumber]
+}
+
+// stageTrackerLinkedPRAdoptedFrom is "@author's #N" for the hive's copy of
+// an adopted PR whose original is listed under the same issue, "" otherwise.
+func stageTrackerLinkedPRAdoptedFrom(lp StageTrackerLinkedPR, listed map[int]bool) string {
+	l := lp.Lineage
+	if l == nil || l.Kind != lineageAdopted || l.FromNumber <= 0 || !listed[l.FromNumber] {
+		return ""
+	}
+	if l.FromAuthor != "" {
+		return "@" + l.FromAuthor + "'s #" + strconv.Itoa(l.FromNumber)
+	}
+	return "#" + strconv.Itoa(l.FromNumber)
 }
 
 // stageTrackerClosedIssueAnchor returns the closed issue a standalone PR

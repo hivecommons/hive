@@ -28,6 +28,7 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerCueClasses"),
 		jsFunc(t, html, "stageTrackerStateMap"),
 		jsFunc(t, html, "stageTrackerStageFell"),
+		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsFunc(t, html, "stageTrackerEventsNext"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
@@ -309,6 +310,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMergedLastParse"),
 		jsFunc(t, html, "stageTrackerMergedLastLoad"),
 		jsFunc(t, html, "stageTrackerMergedLastSave"),
+		jsFunc(t, html, "stageTrackerMergedInFlight"),
 		jsFunc(t, html, "stageTrackerMergedCountDraw"),
 		jsFunc(t, html, "stageTrackerMergedPopDraw"),
 		jsFunc(t, html, "hamMergedToggle"),
@@ -450,10 +452,10 @@ tick(0); assert.strictEqual(flights().length, 1, 'first glyph at once');
 tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS); assert.strictEqual(flights().length, 2, 'second 200 ms later');
 tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS); assert.strictEqual(flights().length, 3);
 tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS); assert.strictEqual(flights().length, 3, 'capped at ' + STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS + ' flights');
-assert.strictEqual(odoText(n), '2', 'the capped one bumped without flying');
+assert.strictEqual(odoText(n), '1', 'the capped ones wait for the glyphs in the air (issue 15568)');
 assert.strictEqual(banners.children.length, STAGE_TRACKER_MERGE_BANNER_MAX, 'banners stack, oldest dropped past the cap');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(flights().length, 0); assert.strictEqual(odoText(n), '6'); assert.deepStrictEqual(zaps, [], 'muted');
+assert.strictEqual(flights().length, 0); assert.strictEqual(odoText(n), '6', 'one draw to the final value once the last glyph lands'); assert.deepStrictEqual(zaps, [], 'muted');
 tick(STAGE_TRACKER_MERGE_BANNER_MS);
 assert.strictEqual(banners.children.length, 0, 'banners leave on their own after ' + STAGE_TRACKER_MERGE_BANNER_MS + ' ms');
 
@@ -746,6 +748,78 @@ chip.remove(); body.appendChild(chip2); byId['activity-monitor-merged'] = chip2;
 stageTrackerMergedCountDraw(false);
 assert.strictEqual(odoText(n2), '1'); assert.strictEqual(rolling(n2).length, 1, 'first draw rolls up from the remembered value'); assert.strictEqual(rolling(sub2).length, 2);
 tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(rolling(n2).length, 0);
+`)
+}
+
+// TestStageTrackerOdometerAfterBeeNode (hivecommons/hive issue 15568): the
+// drum rolls after the bee lands, never under it. While a glyph is in the
+// air neither the total nor the day/week line moves — not for the payload
+// that brought the merge (its today/week already rose), not for a later
+// poll whose all_time the server raised, not for a merge over the flight
+// cap. The glyph's animationend (or stageTrackerAfter's timer) draws once,
+// to the final values, and zaps; several merges in one flight are one
+// roll after the last landing. Reduced motion lands instantly; the first
+// render sets the drum directly.
+func TestStageTrackerOdometerAfterBeeNode(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerCelebrateJS(t, html)+stageTrackerCelebrateFixture+`
+const drum = e => e.children[0];
+const cols = e => drum(e).children.filter(c => c.classList.contains('ham-odo-col'));
+const rolling = e => cols(e).filter(c => c.classList.contains('ham-odo-roll'));
+const srv = (all, today, week, ...recent) => ({ all_time: all, today, total_7d: week, total_30d: week, recent: recent.map(x => ({ repo: 'o/r', number: x, merged_at: new Date(clock).toISOString() })) });
+// First render: the server's numbers, drawn at rest — no bee, no roll.
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 1, stage: 50 }], merged: srv(9127, 3, 40) });
+assert.strictEqual(odoText(n), '9127'); assert.strictEqual(rolling(n).length, 0, 'first draw: set directly'); assert.strictEqual(odoText(sub), '3 today · 40 this week'); assert.strictEqual(rolling(sub).length, 0);
+// #1 merges; the same payload carries the server's raised numbers.
+panel.appendChild(row('o/r/pr#1'));
+stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 1, merged_at: new Date(clock).toISOString() }], merged: srv(9128, 4, 41, 1) });
+tick(0);
+assert.strictEqual(flights().length, 1, 'the bee is in the air');
+assert.strictEqual(odoText(n), '9127', 'the total waits for it'); assert.strictEqual(rolling(n).length, 0);
+assert.strictEqual(odoText(sub), '3 today · 40 this week', 'so does the day/week line (it used to roll here)'); assert.strictEqual(rolling(sub).length, 0);
+assert.deepStrictEqual(zaps, []);
+// A poll mid-flight: the server counted a merge elsewhere too. Still nothing moves.
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS / 2);
+stageTrackerNoteMerges({ items: [], merged: srv(9129, 5, 42, 1, 2) });
+assert.strictEqual(odoText(n), '9127', 'a raised server total does not roll under the bee'); assert.strictEqual(rolling(n).length, 0); assert.strictEqual(rolling(sub).length, 0);
+assert.ok(chip.title.startsWith('Merged: 9128 all time'), 'the tooltip may already know: ' + chip.title);
+// The bee lands (animationend): one roll, to the final numbers, and the zap.
+flights()[0]._ev.animationend();
+assert.strictEqual(flights().length, 0);
+assert.strictEqual(odoText(n), '9129', 'the landing draws the final total'); assert.strictEqual(rolling(n).length, 1, 'and rolls it — one roll 7 → 9, not two queued');
+assert.deepStrictEqual(cols(n)[3].children[0].children.slice(0, 3).map(c => c.textContent), ['7', '8', '9']);
+assert.strictEqual(odoText(sub), '5 today · 42 this week'); assert.strictEqual(rolling(sub).length, 2);
+assert.deepStrictEqual(zaps, [1], 'zap with the roll'); assert.ok(chip.classList.contains('cue-tick'), 'pop with the roll');
+assert.strictEqual(drum(n).style.props['--odo-ms'], STAGE_TRACKER_ODOMETER_MS + 'ms', 'the roll itself is unchanged');
+tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(rolling(n).length, 0);
+// Two merges in one flight: the first landing is folded into the second — one roll, one zap.
+zaps.length = 0; chip.classList.remove('cue-tick');
+panel.appendChild(row('o/r/pr#3')); panel.appendChild(row('o/r/pr#4'));
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 3, stage: 50 }, { repo: 'o/r', kind: 'pr', number: 4, stage: 50 }], merged: srv(9129, 5, 42, 1, 2) });
+stageTrackerNoteMerges({ items: [], recently_merged: [3, 4].map(x => ({ repo: 'o/r', number: x, merged_at: new Date(clock).toISOString() })), merged: srv(9131, 7, 44, 1, 2, 3, 4) });
+tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS);
+assert.strictEqual(flights().length, 2);
+flights()[0]._ev.animationend();
+assert.strictEqual(flights().length, 1); assert.strictEqual(odoText(n), '9129', 'the first landing waits for the second bee'); assert.strictEqual(rolling(n).length, 0); assert.deepStrictEqual(zaps, [], 'no zap yet');
+flights()[0]._ev.animationend();
+assert.strictEqual(odoText(n), '9131', 'the last landing rolls straight to the final value'); assert.strictEqual(rolling(n).length, 2, 'tens and units'); assert.deepStrictEqual(zaps, [1], 'one zap');
+assert.deepStrictEqual(cols(n)[3].children[0].children.slice(0, 3).map(c => c.textContent), ['9', '0', '1'], 'one roll 9 → 1, not two queued');
+tick(STAGE_TRACKER_ODOMETER_MS + 100);
+// No animationend at all: stageTrackerAfter's timer at the flight length lands it.
+panel.appendChild(row('o/r/pr#5'));
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 5, stage: 50 }], merged: srv(9131, 7, 44, 1, 2, 3, 4) });
+stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 5, merged_at: new Date(clock).toISOString() }], merged: srv(9132, 8, 45, 1, 2, 3, 4, 5) });
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS); assert.strictEqual(odoText(n), '9131', 'still held at the flight\'s nominal end');
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS / 2 + 1); assert.strictEqual(odoText(n), '9132', 'the fallback timer lands it'); assert.strictEqual(rolling(n).length, 1);
+tick(STAGE_TRACKER_ODOMETER_MS + 100);
+// Reduced motion: the glyph fades, the drum is set the instant it is gone.
+reduced = true; panel.appendChild(row('o/r/pr#6'));
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 6, stage: 50 }], merged: srv(9132, 8, 45, 1, 2, 3, 4, 5) });
+stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 6, merged_at: new Date(clock).toISOString() }], merged: srv(9133, 9, 46, 1, 2, 3, 4, 5, 6) });
+tick(0); assert.strictEqual(odoText(n), '9132', 'held while the glyph fades');
+flights()[0]._ev.animationend();
+assert.strictEqual(odoText(n), '9133'); assert.strictEqual(rolling(n).length, 0, 'reduced motion: set, not rolled');
+console.log('ok');
 `)
 }
 

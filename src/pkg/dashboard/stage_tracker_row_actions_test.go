@@ -120,6 +120,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_ACTION_NOOP"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTION_NO_EFFECT"),
 		jsConstLine(t, html, "STAGE_TRACKER_RESULT_TOAST_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_RESULT_TOAST_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTING_MAX_MS"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTING_CAPTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_REBASE_MERGE_LABEL"),
@@ -141,6 +142,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLocalStamps"),
 		jsFunc(t, html, "stageTrackerResultText"),
 		jsFunc(t, html, "stageTrackerResultToast"),
+		jsFunc(t, html, "stageTrackerResultToastTimed"),
 		jsFunc(t, html, "stageTrackerResultToastStale"),
 		jsFunc(t, html, "stageTrackerResultToastsSync"),
 		jsFunc(t, html, "stageTrackerPendingKeys"),
@@ -184,6 +186,9 @@ function hamStubEl(tag) {
   return el;
 }
 const hamToastContainer = hamStubEl('div');
+// The shared countdown (toast_countdown_bar_test.go covers the real one):
+// record what a timed result toast arms so tests can fire it by hand.
+global.toastCountdownBar = (el, ms, onExpire) => { el._countdown = { ms, onExpire }; };
 const hamPanel = hamStubEl('div');
 global.document = { getElementById(id) { return id === 'toast-container' ? hamToastContainer : (id === 'activity-monitor-panel' ? hamPanel : null); }, createElement: hamStubEl, createTextNode(v) { return { nodeValue: v, parentNode: null }; } };
 // A tracker row (or nested PR sub-row) as stageTrackerPendingSync sees it.
@@ -1120,6 +1125,18 @@ const tst = stageTrackerResultToast(decided, issue, { id: 'decide:delegate' });
 assert.strictEqual(hamToastContainer.children.length, 1);
 assert.ok(tst.el.className.includes('toast success ham-result-toast sticky'), tst.el.className);
 assert.ok(tst.el.children.some(c => c.className === 'toast-close'), 'has ✕');
+// An informational result closes itself after STAGE_TRACKER_RESULT_TOAST_MS
+// through the sticky guard; × and a state change still close it earlier.
+assert.strictEqual(STAGE_TRACKER_RESULT_TOAST_MS, 15000);
+assert.strictEqual(tst.el._countdown.ms, STAGE_TRACKER_RESULT_TOAST_MS, 'the countdown runs for the result TTL');
+{
+  const timed = stageTrackerResultToast(decided, issue, { id: 'decide:delegate' });
+  assert.strictEqual(hamToastContainer.children.length, 2);
+  timed.el._countdown.onExpire();
+  assert.strictEqual(hamToastContainer.children.length, 1, 'expiry removes the toast');
+  assert.ok(dismissed.pop().force, 'expiry dismisses through the sticky guard');
+  _stageTrackerResultToasts = _stageTrackerResultToasts.filter(e => e !== timed);
+}
 const link = tst.el.children.find(c => c.tagName === 'a'); assert.strictEqual(link.href, 'u947'); assert.strictEqual(link.textContent, 'Open PR #14947 ↗');
 assert.strictEqual(tst.key, 'o/r/pr#14947', 'keyed on the target, not the clicked row');
 stageTrackerResultToastsSync({ items: [issue, held] });
@@ -1141,6 +1158,7 @@ assert.strictEqual(gone.el.parentNode, null, 'target gone from the tracker → d
   runRowAction = async (action, rows) => { ran.push({ action, rows }); return { toasts: [], pending: [] }; };
   const st = stageTrackerResultToast(stuck, issue, { id: 'decide:delegate' });
   assert.ok(st.el.className.includes('toast warning ham-result-toast'), st.el.className);
+  assert.strictEqual(st.el._countdown, undefined, 'a toast offering next actions is a prompt: no countdown');
   const opts = st.el.children.find(c => c.className === 'ham-result-options');
   assert.ok(opts, 'options row rendered'); assert.strictEqual(opts.children.length, 4);
   assert.deepStrictEqual(opts.children.map(b => b.textContent), ['Merge as maintainer', 'Re-run decision', 'Close as superseded', 'Send back for a new commit']);
@@ -1162,6 +1180,7 @@ assert.strictEqual(stageTrackerActionLabel('decide:delegate:rerun'), 'Re-run dec
 // Error toasts are sticky but not tied to a row state.
 const bad = stageTrackerResultToast(stageTrackerErrorResult('hold', held, 'boom'), held, { id: 'hold' });
 assert.ok(bad.el.className.includes('error')); assert.deepStrictEqual(_stageTrackerResultToasts, []);
+assert.strictEqual(bad.el._countdown, undefined, 'an error waits to be acknowledged: no countdown');
 bad.el.remove();
 
 // Acting state: the clicked issue row and its nested PR both act from the click.
