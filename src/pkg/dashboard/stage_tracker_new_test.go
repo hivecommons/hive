@@ -293,6 +293,8 @@ func TestStageTrackerNewRowRendering(t *testing.T) {
 		jsFunc(t, html, "stageTrackerActorTip"),
 		jsFunc(t, html, "stageTrackerHeadline"),
 		jsFunc(t, html, "stageTrackerSegments"),
+		jsFunc(t, html, "stageTrackerHumanReasonOf"),
+		jsFunc(t, html, "stageTrackerHumanReasonHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 	}, "\n") + `

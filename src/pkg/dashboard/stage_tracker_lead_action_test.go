@@ -23,7 +23,7 @@ func TestStageTrackerLeadActionInline(t *testing.T) {
 	for _, want := range []string{
 		`class="ham-lead-act`,
 		`e.target.closest('.ham-lead-act[data-ham-act]')`,
-		`stageTrackerDecisionRun(item, b.dataset.hamAct)`,
+		`stageTrackerDecisionRun(item, b.dataset.hamAct, b)`,
 		`stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')`,
 		`stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '')`,
 		`.ham-lead-act[aria-disabled="true"]`,

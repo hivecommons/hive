@@ -490,9 +490,27 @@
     // button — "Let hive decide" showed twice per item (hive#15320 →
     // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    // A covered issue never offers the decision its PR is parked on
+    // (hivecommons/hive#15773, #15503 "under #15502", covered by #15759):
+    // the PR row carries "Let hive decide"; the issue draws the passive
+    // "decision pending on #N" chip (stageTrackerDecisionPendingChipHtml).
+    function stageTrackerDecisionPendingOn(item) {
+      if (!item || item.kind !== 'issue') return 0;
+      return Number(item.decision_pending_on) || 0;
+    }
+    // Pure: the PR a decision lead acts on is drawn as a sub-row under
+    // ANOTHER issue (a secondary issue's covering PR, drawn_under the
+    // primary): that row carries the button, this one must not.
+    function stageTrackerLeadDrawnElsewhere(item, a) {
+      if (!a || !a.target || a.target.kind !== 'pr' || !/^decide:/.test(String(a.id || '')) || !Array.isArray(item.linked_prs)) return false;
+      const lp = item.linked_prs.find(x => x && Number(x.number) === Number(a.target.number));
+      return !!lp && Number(lp.drawn_under) > 0 && Number(lp.drawn_under) !== Number(item.number);
+    }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
-      if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
+      if (!a || item.kind !== 'issue') return a;
+      if (stageTrackerDecisionPendingOn(item) || stageTrackerLeadDrawnElsewhere(item, a)) return null;
+      if (!a.target || !Array.isArray(subRows) || !subRows.length) return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
       const lp = subRows.find(x => x && Number(x.number) === Number(t.number) && !x.superseded && (!x.repo || !t.repo || x.repo === t.repo));
@@ -504,9 +522,16 @@
     // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
     // '' when the row has no lead. Click handling is delegated in
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
+    function stageTrackerDecisionPendingChipHtml(item) {
+      const n = stageTrackerDecisionPendingOn(item);
+      if (!n) return '';
+      const key = stageTrackerItemKey({ repo: item.repo, kind: 'pr', number: n });
+      const tip = `PR #${n} is parked on a decision — the "Let hive decide" button is on the PR row. Click to show it.`;
+      return `<button type="button" class="ham-chip ham-chip-passive" data-action="hamBannerShowRow" data-arg0="${esc(key)}" data-stop="1" title="${esc(tip)}" aria-label="${esc('Decision pending on PR #' + n + ' — show the PR row')}">decision pending on #${n}</button>`;
+    }
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
-      if (!a) return '';
+      if (!a) return stageTrackerDecisionPendingChipHtml(item);
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';

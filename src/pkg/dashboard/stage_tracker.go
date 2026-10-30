@@ -532,7 +532,16 @@ type StageTrackerItem struct {
 	// draws the stage pill's actor icon from StageActor.Kind only
 	// (stage_tracker_actor.go).
 	StageActor *StageTrackerActor `json:"stage_actor,omitempty"`
-	LinkedPR   int                `json:"linked_pr,omitempty"`
+	// HumanReason, set whenever StageActor is a person, is the ≤40-char
+	// clause the chevron word carries after a middot ("#15759 needs a
+	// decision", "workflow files") so the 👤 marker never ships without
+	// saying what the person is wanted for (hivecommons/hive#15773).
+	HumanReason string `json:"human_reason,omitempty"`
+	// DecisionPendingOn is the covering PR an issue rides while that PR
+	// waits on a decision: the issue draws a passive "decision pending on
+	// #N" chip instead of the PR's actionable one (hivecommons/hive#15773).
+	DecisionPendingOn int `json:"decision_pending_on,omitempty"`
+	LinkedPR          int `json:"linked_pr,omitempty"`
 	// LinkedPRs lists the open pull requests covering an issue (the one
 	// named in the stage reason first) with everything the tracker needs
 	// to draw each as a sub-row nested under the issue.
@@ -702,6 +711,8 @@ type StageTrackerLinkedPR struct {
 	// StageActor mirrors the nested PR's own row field so the sub-row's
 	// pill wears the same actor icon.
 	StageActor *StageTrackerActor `json:"stage_actor,omitempty"`
+	// HumanReason mirrors the PR row's (see StageTrackerItem.HumanReason).
+	HumanReason string `json:"human_reason,omitempty"`
 	// DrawnUnder is the issue whose row draws this PR's full sub-row (the
 	// PR's NestedUnder). A PR that closes several open issues (`Closes
 	// #14910` and `Closes #14911` in one body) is listed by each of them,

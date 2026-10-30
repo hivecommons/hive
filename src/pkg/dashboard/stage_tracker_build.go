@@ -476,6 +476,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
+	stageTrackerResolveHumanReasons(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
 }

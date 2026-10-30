@@ -877,7 +877,9 @@
     // already left the board, say so and offer the list instead.
     function hamBannerShowRow(rowKey) {
       const el = document.getElementById('activity-monitor-panel');
-      const row = el && rowKey ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
+      // A nested PR sub-row answers to its sub-key when it has no row of
+      // its own (a covered issue's "decision pending on #N" chip).
+      const row = el && rowKey ? (el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) || el.querySelector(`[data-ham-sub-key="${CSS.escape(rowKey)}"]`)) : null;
       if (!row) { showToast('That row has left the board — the merge is in the Merged list.', 'info'); hamMergedToggle(true); return false; }
       if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: stageTrackerReducedMotion() ? 'auto' : 'smooth' });
       row.classList.remove('cue-merged'); void row.offsetWidth; stageTrackerTransient(row, 'cue-merged', 1600);

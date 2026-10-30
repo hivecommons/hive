@@ -180,6 +180,20 @@
       const sa = item && item.stage_actor;
       return sa && typeof sa === 'object' && sa.kind ? sa : null;
     }
+    // Pure: the server's human_reason for the row (a PR sub-row carries its
+    // own); '' when the next move is not a person's.
+    function stageTrackerHumanReasonOf(item) {
+      if (!item || stageTrackerActorKind(item) !== 'human') return '';
+      return String(item.human_reason || '').trim();
+    }
+    // Pure: the chevron's " · reason" span, or '' when there is no reason
+    // or the word already says it.
+    function stageTrackerHumanReasonHtml(reason, word) {
+      reason = String(reason || '').trim();
+      if (!reason) return '';
+      if (word && String(word).toLowerCase().indexOf(reason.toLowerCase()) >= 0) return '';
+      return `<span class="ham-human-reason"> · ${esc(reason)}</span>`;
+    }
     function stageTrackerActorKind(item) {
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
       const fresh = typeof stageTrackerNewState === 'function' ? stageTrackerNewState(item) : null;
@@ -351,7 +365,10 @@
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
-      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
+      // The 👤 marker never ships alone (hivecommons/hive#15773): the
+      // server's human_reason rides the icon's title and the chevron word.
+      const humanReason = actorKind === 'human' ? stageTrackerHumanReasonOf(item) : '';
+      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind + (humanReason ? ' — ' + humanReason : '')) : '';
       const actorTip = stageTrackerActorTip(item);
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
@@ -425,7 +442,11 @@
         // A detour word that already names the holder ("Returned to
         // @bob's clanker") does not repeat them after the dot.
         const detourHolder = sg.detour && holderShort && sg.detour.text.indexOf(holderShort) >= 0 ? '' : holderHtml;
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}</span>` : (gateWord || `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${holderHtml}</span>`);
+        // The reason a person is wanted follows the word after a middot
+        // ("PR in progress · #15759 needs a decision"); the full question
+        // stays in the tooltip.
+        const reasonHtml = active && !sg.cap ? stageTrackerHumanReasonHtml(humanReason, sg.detour ? sg.detour.text : sg.short) : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${reasonHtml}${detourHolder}</span>` : (gateWord ? gateWord.replace(/<\/span>\s*$/, reasonHtml + '</span>') : `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${reasonHtml}${holderHtml}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -955,7 +976,7 @@
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, human_reason: lp.human_reason || '', claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /

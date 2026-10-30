@@ -34,6 +34,13 @@
     .ham-chip:hover { color: var(--text); border-color: var(--line-strong); }
     .ham-chip[hidden] { display: none; }
     .ham-chip .ham-chip-n { color: var(--text-faint); margin-left: var(--sp-1); }
+    /* A covered issue's passive "decision pending on #N" chip: muted,
+       never a call to action, scrolls to the PR row that holds the button. */
+    .ham-chip-passive { color: var(--text-faint); border-style: dashed; font-weight: var(--fw-medium); }
+    .ham-chip-passive:hover { color: var(--muted); border-color: var(--line); }
+    /* The reason after the chevron word ("PR in progress · #N needs a
+       decision"): quieter than the word, never wraps on its own. */
+    .ham-human-reason { color: var(--muted); font-weight: var(--fw-medium); white-space: nowrap; }
     .ham-input { flex: 0 1 18em; min-width: 8em; padding: var(--sp-1) var(--sp-3); background: var(--bg); color: var(--text); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); outline: none; }
     .ham-input:focus { border-color: var(--line-strong); }
     .ham-dir { padding: var(--sp-1) var(--sp-2); min-width: 2em; }
@@ -424,7 +431,7 @@
     .ham-plan-finding { color: var(--status-error); }
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
-    /* The preview while the plan is on its way (hivecommons/hive#15773):
+    /* The preview while the plan is on its way (the let-hive-decide busy fix):
        the sentence line carries the tracker's working glyph and "Asking
        the hive…"; placeholder lines shimmer where the why / then will be.
        The clicked lead chip wears the same glyph and label meanwhile. */

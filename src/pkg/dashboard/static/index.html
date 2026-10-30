@@ -1363,6 +1363,13 @@
     .ham-chip:hover { color: var(--text); border-color: var(--line-strong); }
     .ham-chip[hidden] { display: none; }
     .ham-chip .ham-chip-n { color: var(--text-faint); margin-left: var(--sp-1); }
+    /* A covered issue's passive "decision pending on #N" chip: muted,
+       never a call to action, scrolls to the PR row that holds the button. */
+    .ham-chip-passive { color: var(--text-faint); border-style: dashed; font-weight: var(--fw-medium); }
+    .ham-chip-passive:hover { color: var(--muted); border-color: var(--line); }
+    /* The reason after the chevron word ("PR in progress · #N needs a
+       decision"): quieter than the word, never wraps on its own. */
+    .ham-human-reason { color: var(--muted); font-weight: var(--fw-medium); white-space: nowrap; }
     .ham-input { flex: 0 1 18em; min-width: 8em; padding: var(--sp-1) var(--sp-3); background: var(--bg); color: var(--text); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); outline: none; }
     .ham-input:focus { border-color: var(--line-strong); }
     .ham-dir { padding: var(--sp-1) var(--sp-2); min-width: 2em; }
@@ -1753,7 +1760,7 @@
     .ham-plan-finding { color: var(--status-error); }
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
-    /* The preview while the plan is on its way (hivecommons/hive#15773):
+    /* The preview while the plan is on its way (the let-hive-decide busy fix):
        the sentence line carries the tracker's working glyph and "Asking
        the hive…"; placeholder lines shimmer where the why / then will be.
        The clicked lead chip wears the same glyph and label meanwhile. */
@@ -16511,6 +16518,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sa = item && item.stage_actor;
       return sa && typeof sa === 'object' && sa.kind ? sa : null;
     }
+    // Pure: the server's human_reason for the row (a PR sub-row carries its
+    // own); '' when the next move is not a person's.
+    function stageTrackerHumanReasonOf(item) {
+      if (!item || stageTrackerActorKind(item) !== 'human') return '';
+      return String(item.human_reason || '').trim();
+    }
+    // Pure: the chevron's " · reason" span, or '' when there is no reason
+    // or the word already says it.
+    function stageTrackerHumanReasonHtml(reason, word) {
+      reason = String(reason || '').trim();
+      if (!reason) return '';
+      if (word && String(word).toLowerCase().indexOf(reason.toLowerCase()) >= 0) return '';
+      return `<span class="ham-human-reason"> · ${esc(reason)}</span>`;
+    }
     function stageTrackerActorKind(item) {
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
       const fresh = typeof stageTrackerNewState === 'function' ? stageTrackerNewState(item) : null;
@@ -16682,7 +16703,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
-      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
+      // The 👤 marker never ships alone (hivecommons/hive#15773): the
+      // server's human_reason rides the icon's title and the chevron word.
+      const humanReason = actorKind === 'human' ? stageTrackerHumanReasonOf(item) : '';
+      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind + (humanReason ? ' — ' + humanReason : '')) : '';
       const actorTip = stageTrackerActorTip(item);
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
@@ -16756,7 +16780,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // A detour word that already names the holder ("Returned to
         // @bob's clanker") does not repeat them after the dot.
         const detourHolder = sg.detour && holderShort && sg.detour.text.indexOf(holderShort) >= 0 ? '' : holderHtml;
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}</span>` : (gateWord || `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${holderHtml}</span>`);
+        // The reason a person is wanted follows the word after a middot
+        // ("PR in progress · #15759 needs a decision"); the full question
+        // stays in the tooltip.
+        const reasonHtml = active && !sg.cap ? stageTrackerHumanReasonHtml(humanReason, sg.detour ? sg.detour.text : sg.short) : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${reasonHtml}${detourHolder}</span>` : (gateWord ? gateWord.replace(/<\/span>\s*$/, reasonHtml + '</span>') : `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${reasonHtml}${holderHtml}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -17286,7 +17314,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, human_reason: lp.human_reason || '', claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
@@ -19967,9 +19995,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // button — "Let hive decide" showed twice per item (hive#15320 →
     // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    // A covered issue never offers the decision its PR is parked on
+    // (hivecommons/hive#15773, #15503 "under #15502", covered by #15759):
+    // the PR row carries "Let hive decide"; the issue draws the passive
+    // "decision pending on #N" chip (stageTrackerDecisionPendingChipHtml).
+    function stageTrackerDecisionPendingOn(item) {
+      if (!item || item.kind !== 'issue') return 0;
+      return Number(item.decision_pending_on) || 0;
+    }
+    // Pure: the PR a decision lead acts on is drawn as a sub-row under
+    // ANOTHER issue (a secondary issue's covering PR, drawn_under the
+    // primary): that row carries the button, this one must not.
+    function stageTrackerLeadDrawnElsewhere(item, a) {
+      if (!a || !a.target || a.target.kind !== 'pr' || !/^decide:/.test(String(a.id || '')) || !Array.isArray(item.linked_prs)) return false;
+      const lp = item.linked_prs.find(x => x && Number(x.number) === Number(a.target.number));
+      return !!lp && Number(lp.drawn_under) > 0 && Number(lp.drawn_under) !== Number(item.number);
+    }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
-      if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
+      if (!a || item.kind !== 'issue') return a;
+      if (stageTrackerDecisionPendingOn(item) || stageTrackerLeadDrawnElsewhere(item, a)) return null;
+      if (!a.target || !Array.isArray(subRows) || !subRows.length) return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
       const lp = subRows.find(x => x && Number(x.number) === Number(t.number) && !x.superseded && (!x.repo || !t.repo || x.repo === t.repo));
@@ -19981,9 +20027,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
     // '' when the row has no lead. Click handling is delegated in
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
+    function stageTrackerDecisionPendingChipHtml(item) {
+      const n = stageTrackerDecisionPendingOn(item);
+      if (!n) return '';
+      const key = stageTrackerItemKey({ repo: item.repo, kind: 'pr', number: n });
+      const tip = `PR #${n} is parked on a decision — the "Let hive decide" button is on the PR row. Click to show it.`;
+      return `<button type="button" class="ham-chip ham-chip-passive" data-action="hamBannerShowRow" data-arg0="${esc(key)}" data-stop="1" title="${esc(tip)}" aria-label="${esc('Decision pending on PR #' + n + ' — show the PR row')}">decision pending on #${n}</button>`;
+    }
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
-      if (!a) return '';
+      if (!a) return stageTrackerDecisionPendingChipHtml(item);
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
@@ -22710,7 +22763,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // already left the board, say so and offer the list instead.
     function hamBannerShowRow(rowKey) {
       const el = document.getElementById('activity-monitor-panel');
-      const row = el && rowKey ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
+      // A nested PR sub-row answers to its sub-key when it has no row of
+      // its own (a covered issue's "decision pending on #N" chip).
+      const row = el && rowKey ? (el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) || el.querySelector(`[data-ham-sub-key="${CSS.escape(rowKey)}"]`)) : null;
       if (!row) { showToast('That row has left the board — the merge is in the Merged list.', 'info'); hamMergedToggle(true); return false; }
       if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: stageTrackerReducedMotion() ? 'auto' : 'smooth' });
       row.classList.remove('cue-merged'); void row.offsetWidth; stageTrackerTransient(row, 'cue-merged', 1600);
