@@ -617,7 +617,7 @@ The people who lend their computers or AI helpers to your projects, and how far 
 
 **What it tells you.** A contributor is a person who signed up to help. Some connect their own AI worker. This section lists them and their trust level.
 
-**How the numbers are worked out.** The summary shows active contributors and all registered contributors. Active means seen recently.
+**How the numbers are worked out.** The sidebar pill and the section header read **online/total**, for example `3/12`: how many registered contributors are online right now over how many have registered. *Online* means the contributor's relay sent a heartbeat within the presence window — `governor.labels.stage.presence_window`, 15 minutes by default. It is the same test the tracker uses when it says *waiting on @name (offline 13m)*, so the two never disagree. Hover the pill for *N online · M registered (heartbeat within 15m)*. The list puts online contributors first; each card's dot is green when online and grey when offline.
 
 **What it is good for.** Use it to give trusted people more access, or remove access. Share the `/contribute` link to invite people.
 
@@ -952,7 +952,7 @@ The tooltip lists the PRs ahead and the overlapping files. Waiting siblings are 
 
 Before the merge gate, the tracker defers general `sentinel`, `needs human` and `unauthorized` pills so they do not distract from work still in motion. **Exception:** `unauthorized:approve-workflow-runs` appears immediately, because a person must approve the held run before CI can start.
 
-The server splits markers by `ActionableNow` (`stageTrackerModifiers` in `stage_tracker.go`). The payload puts drawn pills in `modifiers` and held-back pills in `deferred_modifiers`.
+The server splits markers by `ActionableNow` (`stageTrackerModifiers` in `stage_tracker_caption.go`). The payload puts drawn pills in `modifiers` and held-back pills in `deferred_modifiers`.
 
 A deferred pill is simply absent — no chip, no breathing chevron, no **Needs attention** count — until the PR's stage reaches the merge-gate band (`stage/080` and later: 080, 085, 090, 095, 100, the same boundary adoption yields at), when it renders exactly as before and counts; the row tooltip alone says "Pending at merge gate: sentinel, needs-human". The merge-gate cell's own words ("Sentinel alert · needs human", "Awaiting human: …") are unchanged — they only appear at the gate anyway.
 

@@ -3247,6 +3247,13 @@
     .spark-row { display: flex; align-items: center; gap: var(--sp-3); overflow: hidden; }
 
     .contributors-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr)); gap:var(--sp-5); }
+    /* Contributors header pill and card presence dot: "online" is the
+       tracker's presence window (governor.labels.stage.presence_window). */
+    .contrib-status-badge { font-size: 0.7rem; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-pill); margin-left: var(--sp-4); background: var(--line); color: var(--fg); }
+    .contrib-status-badge:empty { display: none; }
+    .contrib-status-badge.is-online { background: var(--status-ok); color: var(--bg); }
+    .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
+    .contrib-status-dot.online { background: var(--status-ok); }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;
@@ -7133,7 +7140,7 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Intelligence</div>
@@ -7566,7 +7573,7 @@
     <div style="display:flex;align-items:center;gap:var(--sp-5);margin-bottom:var(--sp-5);flex-wrap:wrap" class="section-header-toggle" data-action="toggleSection" data-arg0="contributors-section">
       <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Contributors section" aria-pressed="false">⠿</button>
       <span class="section-chevron">▼</span>
-      <h2 class="section-label m-0">👥 Contributors <span id="contributors-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+      <h2 class="section-label m-0">👥 Contributors <span id="contributors-status-badge" class="contrib-status-badge" title="0 online · 0 registered"></span></h2>
       <a href="/contribute" target="_blank" data-action="gh3" style="font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-5);background:var(--green);color:var(--bg);border-radius:var(--r);text-decoration:none;font-weight:600">Share /contribute link &rarr;</a>
       <a href="/leaderboard" target="_blank" data-action="gh3" style="font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-5);background:transparent;color:var(--blue);border:1px solid var(--blue);border-radius:var(--r);text-decoration:none">🏆 Leaderboard</a>
     </div>
@@ -8836,7 +8843,7 @@
       'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
-      'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
+      'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
@@ -10006,12 +10013,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function contributorsSectionSummary(contributors, pool) {
       contributors = Array.isArray(contributors) ? contributors : [];
-      const active = contributors.filter(c => c && c.active).length || Number(pool && pool.active) || 0;
+      const online = pool && pool.online != null ? (Number(pool.online) || 0) : contributors.filter(c => c && c.online).length;
       const total = contributors.length || Number(pool && pool.registered) || 0;
       const ranked = contributors.slice().sort((a, b) => (Number(b.total_tasks_completed || b.tasks_completed) || 0) - (Number(a.total_tasks_completed || a.tasks_completed) || 0));
       const top = ranked[0] && (ranked[0].github_username || ranked[0].login);
-      if (top) return `${total} contributors · ${active} active · top: @${top}`;
-      return total ? `${total} contributors · ${active} active` : '0 contributors';
+      if (top) return `${total} contributors · ${online} online · top: @${top}`;
+      return total ? `${total} contributors · ${online} online` : '0 contributors';
     }
     function inceptionSectionSummary() {
       const campaigns = Array.isArray(_campaigns) ? _campaigns : [];
@@ -39787,15 +39794,15 @@ function burnAreaChart() {
 
       // Split into active (non-revoked) and revoked lists
       const showingRevokedFilter = _contributorFilters.has('revoked');
-      const nonRevoked = filtered.filter(c => c.trust_tier !== 'revoked');
+      const nonRevoked = contributorsOnlineFirst(filtered.filter(c => c.trust_tier !== 'revoked'));
       const revoked = filtered.filter(c => c.trust_tier === 'revoked');
 
       // --- Card grid: only non-revoked contributors ---
       let html = '';
       if (nonRevoked.length > 0) {
         const cards = nonRevoked.map(c => {
-          const dotColor = c.active ? 'var(--green)' : 'var(--muted)';
-          const dotTitle = c.active ? 'Online' : 'Offline';
+          const dotClass = c.online ? 'online' : 'offline';
+          const dotTitle = c.online ? 'Online — heartbeat within the presence window' : 'Offline — no heartbeat within the presence window';
           // The face is the profile link. The @username beside it used to be a
           // second anchor to that same profile; it stays as plain text so there
           // is one control per destination.
@@ -39814,7 +39821,7 @@ function burnAreaChart() {
           const initialTint = contribTintReadCache(login) || contribTintFallback(login);
           return `<div class="contrib-card" data-contrib-login="${esc(login)}" data-contrib-avatar="${esc(c.avatar_url || '')}" style="--contrib-accent:${esc(initialTint.accent)};--contrib-accent-2:${esc(initialTint.accent2)}">
             <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4);flex-wrap:wrap">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0" title="${dotTitle}"></span>
+              <span class="contrib-status-dot ${dotClass}" title="${dotTitle}"></span>
               ${avatarHtml}
               <span style="font-weight:600">@${esc(c.github_username)}</span>
               <span class="contrib-role-pill" style="flex-shrink:0"${tierProv ? ` title="${esc(tierProv)}"` : ''}>${trustTierBadge(c.trust_tier)}</span>
@@ -39968,15 +39975,39 @@ function burnAreaChart() {
       const sidebarBadge = document.getElementById('contributors-sidebar-badge');
       const statusBadge = document.getElementById('contributors-status-badge');
       if (!pool) return;
-      const activeCount = pool.active || 0;
-      const totalCount = pool.registered || 0;
-      if (sidebarBadge) setSidebarCountBadge(sidebarBadge, totalCount, `${activeCount} active of ${totalCount} registered`);
+      const onlineCount = Number(pool.online) || 0;
+      const totalCount = Number(pool.registered) || 0;
+      const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
+      // Same two-part pill as Governor / Overview: "online/total".
+      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
-        statusBadge.textContent = `${activeCount} active / ${totalCount} registered`;
-        statusBadge.style.background = activeCount > 0 ? 'var(--green)' : 'var(--line)';
-        statusBadge.style.color = '#fff';
+        statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
+        statusBadge.title = tip;
+        statusBadge.classList.toggle('is-online', onlineCount > 0);
       }
+    }
+
+    // contributorsOnlineTitle is the pill tooltip: "3 online · 12 registered
+    // (heartbeat within 15m)". The window is the hub's presence_window, the
+    // same one the tracker's "(offline 13m)" caption is judged against.
+    function contributorsOnlineTitle(online, total, window) {
+      const o = Number(online) || 0;
+      const t = Number(total) || 0;
+      const w = window ? ` (heartbeat within ${window})` : '';
+      return `${o} online · ${t} registered${w}`;
+    }
+
+    // contributorsOnlineFirst orders a contributor list online first, then by
+    // login, so the people who can take work now sit at the top. Pure; does
+    // not mutate its input.
+    function contributorsOnlineFirst(list) {
+      return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
+        const ao = a && a.online ? 1 : 0;
+        const bo = b && b.online ? 1 : 0;
+        if (ao !== bo) return bo - ao;
+        return String((a && a.github_username) || '').localeCompare(String((b && b.github_username) || ''));
+      });
     }
 
     // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit
