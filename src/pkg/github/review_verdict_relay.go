@@ -417,12 +417,14 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 		report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, auth.HeadSHA, prHead)
 	}
 	report.HiveAuthored = auth.HiveAuthored
-	if !report.HiveAuthored && prSnapshot != nil && c.IsHiveAuthorLogin(prSnapshot().Author) {
+	if !report.HiveAuthored && prSnapshot != nil && (report.DecisionRequested || report.Verdict == review.VerdictRequiresHuman) && c.IsHiveAuthorLogin(prSnapshot().Author) {
 		// The App's own PR under a dispatch record that did not carry
 		// authorship (an adoption with no agent attribution, or a record
 		// written before hive_authored existed): the login settles it, so
 		// the aggregate can self-resolve its decision questions and the
 		// stage engine routes it as the hive's (hivecommons/hive#15499).
+		// Only a verdict whose routing depends on authorship pays for the
+		// PR fetch; an approve or changes_requested never does.
 		report.HiveAuthored = true
 	}
 	// The review head, and whether this is the decision step's reconciled
