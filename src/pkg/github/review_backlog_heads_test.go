@@ -119,7 +119,7 @@ func TestReviewBacklogHeadsModeFilesDecidedReportsOnly(t *testing.T) {
 		t.Fatalf("review 77 edits = %d, want 1", len(edits))
 	}
 	if !strings.HasPrefix(edits[0], "Decided review body.") || !strings.Contains(edits[0], reviewFollowUpsMarker) ||
-		!strings.Contains(edits[0], "[ENG-1](https://tracker.test/ENG-1) — Review backlog (correctness): stale docstring (filed)") {
+		!strings.Contains(edits[0], "[ENG-1](https://tracker.test/ENG-1) — [reviewer] Review backlog (correctness): stale docstring (filed)") {
 		t.Fatalf("follow-ups edit = %q", edits[0])
 	}
 
