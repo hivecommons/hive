@@ -1396,7 +1396,7 @@ func humanizeStageReason(reason string) string {
 	}
 	if strings.HasPrefix(lower, "contributor-lane:soaking") {
 		if left, ok := soakRemainingFromReason(r); ok {
-			return "soaking, " + left.Round(time.Minute).String() + " left at the last sweep"
+			return "soaking, " + left.Round(time.Minute).String() + " left"
 		}
 		return "soaking"
 	}
@@ -1577,6 +1577,25 @@ func soakRemainingFromReason(reason string) (time.Duration, bool) {
 		return 0, false
 	}
 	return d, true
+}
+
+// stageTrackerSoakCaption is the 095 sentence for a record carrying the
+// lane's soak clock: "soaking — 12m left" while the window runs, aged from
+// the lane's last read so a soak that has run out never says "0s left";
+// past it, "soak complete — merges on the next pass". "" when the record
+// is not at 095 or carries no clock (the generic caption stands).
+func stageTrackerSoakCaption(rec stagelabels.Record, now time.Time) string {
+	const admitted = "Admitted by the automerge lane; "
+	if rec.Stage != stagelabels.PreMergeSoak {
+		return ""
+	}
+	if _, ok := soakRemainingFromReason(rec.Reason); !ok {
+		return ""
+	}
+	if left := stageTrackerSoakRemaining(rec, now); left > 0 {
+		return admitted + "soaking — " + shortDuration(left) + " left"
+	}
+	return admitted + "soak complete — merges on the next pass"
 }
 
 // stageTrackerSoakRemaining is the soak time left now for a record at 095:
@@ -2105,6 +2124,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		if c := stageTrackerSoakCaption(rec, now); c != "" {
+			it.Caption = c
+		}
 		if hasAttempt && (attempt.InFlight() || attempt.Merged) {
 			it.Caption, it.Actor = stageTrackerMergingCaption(attempt), StageActorHive
 		}
