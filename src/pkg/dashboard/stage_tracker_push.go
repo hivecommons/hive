@@ -170,7 +170,10 @@ func (s *Server) stageTrackerWaitingPushStale() time.Duration {
 
 // stageTrackerPushOnHead reports whether the row's head is still the pushed
 // one; once the head moves on, the push is old news (hivecommons/hive#15797).
-// A row that carries no head cannot say, so the push stands.
+// A row that carries no head cannot say, so the push stands; so does one
+// whose listed head is the one the enumerate last booked — the webhook
+// re-read books the push ahead of the list, which still shows the head
+// the author pushed over.
 func stageTrackerPushOnHead(it StageTrackerItem, rec stagelabels.Record) bool {
-	return it.Head == "" || strings.EqualFold(it.Head, rec.LastPushSha)
+	return it.Head == "" || strings.EqualFold(it.Head, rec.LastPushSha) || strings.EqualFold(it.Head, rec.ActivityHead)
 }
