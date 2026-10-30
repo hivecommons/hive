@@ -1897,7 +1897,7 @@
        (just the ⟳ and the actor glyph). */
     .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
-    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner { position: relative; overflow: hidden; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
     .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
     .merge-banner-head { font-weight: var(--fw-semibold); }
@@ -19261,7 +19261,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderStageTracker(data) {
-      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerReconcileMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
       // Row-action feedback rides the payload: a result toast leaves and a
       // row stops "acting" once the item it targets reads a new state.
       if (data && typeof data === 'object' && typeof stageTrackerResultToastsSync === 'function') { stageTrackerNoteEvents(data); stageTrackerResultToastsSync(data); stageTrackerPendingExpire(data); }
@@ -21833,10 +21833,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: PR key → merged? for one payload. Issues are not tracked. A
     // recently_merged repo given by its short name is resolved against the
     // owner/name of the items (any kind, any repo) when exactly one matches.
-    function stageTrackerMergeState(d) {
+    function stageTrackerMergeState(d, prev) {
       const out = {};
       if (!d || typeof d !== 'object') return out;
       const byShort = {};
+      // A dropped row (including one from before a reload) still teaches
+      // the short repo alias used by the audit side list.
+      for (const key of Object.keys(prev || {})) {
+        const repo = key.slice(0, key.lastIndexOf('/pr#'));
+        const slash = repo.lastIndexOf('/');
+        if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+      }
       for (const it of (Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         // Every item of every repo (issues too) teaches the short → full
@@ -21876,10 +21883,38 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Object.keys(next).filter(k => next[k] === true && prev[k] === false).sort();
     }
 
+    const STAGE_TRACKER_MERGE_SESSION_KEY = 'hive.tracker.merge-session.v1';
+    var _stageTrackerMergeSessionLoaded = false;
+    // Persist both the last observation and the delivered keys: saving only
+    // delivered keys loses an open→merged transition across a reload. The
+    // first visit still seeds history silently rather than replaying it.
+    function stageTrackerReconcileMerges(d) {
+      if (!_stageTrackerMergeSessionLoaded) {
+        _stageTrackerMergeSessionLoaded = true;
+        try {
+          const saved = JSON.parse(sessionStorage.getItem(STAGE_TRACKER_MERGE_SESSION_KEY));
+          if (saved && saved.state && typeof saved.state === 'object' && !Array.isArray(saved.state)) {
+            const state = {}, delivered = {};
+            for (const key of Object.keys(saved.state)) {
+              if (!/^.+\/pr#[1-9][0-9]*$/.test(key) || typeof saved.state[key] !== 'boolean') continue;
+              state[key] = saved.state[key];
+            }
+            for (const key of Object.keys(saved.delivered || {})) {
+              if (/^.+\/pr#[1-9][0-9]*$/.test(key) && saved.delivered[key] === true) delivered[key] = true;
+            }
+            _stageTrackerMergeState = state;
+            _stageTrackerZapped = delivered;
+          }
+        } catch {} // Storage disabled/corrupt: keep the in-memory path.
+      }
+      stageTrackerNoteMerges(d);
+      try { sessionStorage.setItem(STAGE_TRACKER_MERGE_SESSION_KEY, JSON.stringify({ state: _stageTrackerMergeState, delivered: _stageTrackerZapped })); } catch {}
+    }
+
     function stageTrackerNoteMerges(d) {
       const nowMs = Date.now();
       _stageTrackerMergingHoldMs = stageTrackerMergingHoldMsOf(d, _stageTrackerMergingHoldMs);
-      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d));
+      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d, _stageTrackerMergeState));
       // The merge gate's hold (hivecommons/hive#15245, #15808) keeps a
       // row the payload dropped mid-merge on the board at "Merging" until
       // the merged fact arrives (then the merge is fresh at once) or the
@@ -22033,7 +22068,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergingHoldRelease() {
       _stageTrackerMergingHoldTimer = 0;
       if (!_stageTracker || typeof _stageTracker !== 'object') return;
-      stageTrackerNoteMerges(_stageTracker);
+      stageTrackerReconcileMerges(_stageTracker);
       renderStageTracker();
     }
 
@@ -22771,13 +22806,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
       el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
-      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
-      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), stageTrackerMergeBannerMs());
+      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
+      toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
       return el;
     }
     function stageTrackerMergeBannerDismiss(el) {
       if (!el || !el.parentNode) return;
-      if (el._timer) { clearTimeout(el._timer); el._timer = 0; }
+      toastCountdownCancel(el);
       if (stageTrackerReducedMotion()) { el.remove(); return; }
       el.classList.add('merge-banner-out');
       stageTrackerAfter(el, 'animationend', 180, () => el.remove());
