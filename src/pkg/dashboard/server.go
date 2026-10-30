@@ -2143,7 +2143,20 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		if s.isPublicPath(r.URL.Path) {
 			// Public endpoints remain reachable anonymously, but identity headers are
 			// visible to handlers only when backed by the hub's proxy proof.
-			trustProxyIdentity(true)
+			// With no proxy proof (self-hosted hive, no hub in front), resolve the
+			// session cookie so in-handler gates such as requireContributorWrite see
+			// the caller's role. Anonymous requests are never rejected here.
+			if ok, _ := trustProxyIdentity(true); !ok {
+				if sess := s.sessionFromRequest(r); sess != nil {
+					if role, ok := s.liveSessionRole(sess); ok {
+						r.Header.Set("X-Hive-User", sess.Username)
+						r.Header.Set("X-Hive-Role", role)
+						if isOwnerRole(role) {
+							r.Header.Set(ownerRoleVerifiedHeader, "true")
+						}
+					}
+				}
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
