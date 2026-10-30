@@ -1,0 +1,1 @@
+- `crux logs` now rejects a negative `-n` with a usage error instead of panicking (hivecommons/crux#59).
