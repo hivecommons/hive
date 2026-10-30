@@ -24,7 +24,7 @@ func TestStageTrackerLeadActionInline(t *testing.T) {
 		`class="ham-lead-act`,
 		`e.target.closest('.ham-lead-act[data-ham-act]')`,
 		`stageTrackerDecisionRun(item, b.dataset.hamAct)`,
-		`stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs) : '')`,
+		`stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')`,
 		`stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '')`,
 		`.ham-lead-act[aria-disabled="true"]`,
 	} {
@@ -84,6 +84,35 @@ if (typeof stageTrackerAdoptOffered === 'function') {
   assert.strictEqual(lead.id, 'decide:adopt');
   assert.strictEqual(labelOf(stageTrackerLeadActionHtml(returned, ctx)), 'Adopt…');
 }
+
+// One button per ask (owner: "there are 2 hive decide for each of these
+// items... should only be 1"). An issue with several linked PRs draws one
+// sub-row per PR; when its one parked PR asks (hive#15320 → #15647 at 085),
+// the issue row's lead resolves to that PR too. The sub-row — the row with
+// the Needs-human-decision chevron — carries the button; the parent renders
+// none, while its ⋯ menu keeps "Decide PR #N…".
+const asking = { number: 15647, url: 'https://github.com/o/r/pull/15647', title: 'Fix it', author: 'hive', author_kind: 'hive', stage: 85, modifiers: ['needs-decision'],
+  decision_needed: { question: 'Approve or send back?', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: true }, { action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'hold', label: 'Hold', enabled: true }] } };
+const closedPR = { number: 15600, url: 'https://github.com/o/r/pull/15600', title: 'First try', author: 'hive', author_kind: 'hive', stage: 50, modifiers: [], state: 'closed' };
+const parent = { repo: 'o/r', kind: 'issue', number: 15320, title: 'Tracker lead chips', url: 'https://github.com/o/r/issues/15320', stage: 40, actor: 'maintainer', modifiers: [], linked_prs: [asking, closedPR] };
+const sub = stageTrackerLinkedPRItem(parent, asking);
+const parentLead = stageTrackerLeadAction(parent, ctx);
+assert.strictEqual(parentLead.id, 'decide:delegate');
+assert.strictEqual(parentLead.target.number, 15647, 'the parent row\'s lead acts on the nested PR');
+assert.strictEqual(stageTrackerLeadAction(sub, ctx).id, 'decide:delegate');
+// Without sub-rows (one covering PR, no nested line) the issue row keeps its button.
+assert.strictEqual(buttons(stageTrackerLeadActionHtml(parent, ctx)), 1);
+// With the PR drawn as a sub-row, the parent yields nothing and the pair renders exactly one.
+assert.strictEqual(stageTrackerLeadActionOnRow(parent, ctx, parent.linked_prs), null, 'the sub-row carries the button');
+const pairHtml = stageTrackerLeadActionHtml(parent, ctx, parent.linked_prs) + stageTrackerLeadActionHtml(sub, ctx);
+assert.strictEqual(buttons(pairHtml), 1, 'one Let hive decide per item: ' + pairHtml);
+assert.ok(pairHtml.includes('aria-label="Let hive decide — o/r#15647"'), pairHtml);
+// The parent's ⋯ menu still offers Decide PR #N….
+const parentMenu = stageTrackerRowActions(parent, ctx).find(a => a.id === 'decide');
+assert.ok(parentMenu && parentMenu.label === 'Decide PR #15647…', JSON.stringify(parentMenu));
+// A lead that is the issue's own (045 parked issue, sub-rows that ask nothing) stays on the parent.
+const ownAsk = { ...parked, linked_prs: [{ ...closedPR, number: 15601 }, { ...closedPR, number: 15602 }] };
+assert.strictEqual(stageTrackerLeadActionOnRow(ownAsk, ctx, ownAsk.linked_prs).id, 'decide:delegate');
 
 // Rows that wait on nobody here render no button.
 for (const it of [

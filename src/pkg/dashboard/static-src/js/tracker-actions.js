@@ -461,12 +461,28 @@
       const host = typeof window !== 'undefined' && window.location ? String(window.location.hostname || '') : '';
       if ((host === 'localhost' || host === '127.0.0.1') && typeof console !== 'undefined' && console.warn) console.warn('[tracker] ' + msg);
     }
+    // Pure: the lead the row itself renders. An issue row whose lead acts
+    // on a nested PR (stageTrackerDecisionTarget resolved to the one parked
+    // PR) renders none when that PR has its own sub-row carrying the same
+    // button — "Let hive decide" showed twice per item (hive#15320 →
+    // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
+    // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    function stageTrackerLeadActionOnRow(item, ctx, subRows) {
+      const a = stageTrackerLeadAction(item, ctx);
+      if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
+      const t = a.target;
+      if (t.kind !== 'pr') return a;
+      const lp = subRows.find(x => x && Number(x.number) === Number(t.number) && !x.superseded && (!x.repo || !t.repo || x.repo === t.repo));
+      if (!lp) return a;
+      const sub = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : null;
+      return sub && stageTrackerLeadAction(sub, ctx) ? null : a;
+    }
     // The inline lead button for a row: a real <button> carrying the same
     // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
     // '' when the row has no lead. Click handling is delegated in
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
-    function stageTrackerLeadActionHtml(item, ctx) {
-      const a = stageTrackerLeadAction(item, ctx);
+    function stageTrackerLeadActionHtml(item, ctx, subRows) {
+      const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');

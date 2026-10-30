@@ -96,6 +96,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLeadAction"),
 		jsFunc(t, html, "stageTrackerMaintainerMoved"),
 		jsFunc(t, html, "stageTrackerDevWarn"),
+		jsFunc(t, html, "stageTrackerLeadActionOnRow"),
 		jsFunc(t, html, "stageTrackerLeadActionHtml"),
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
