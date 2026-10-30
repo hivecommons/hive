@@ -460,6 +460,14 @@ type StageTrackerItem struct {
 	// "copy-failed" — a close-first copy failed and the original was
 	// reopened for a person (hivecommons/hive#15135).
 	AdoptedByState string `json:"adopted_by_state,omitempty"`
+	// SupersededBy is, on an adopted original still open while the hive's
+	// copy is live (AdoptedBy with no failed / closed state), that copy:
+	// the SPA folds such a row into the copy's "adopted from" chip instead
+	// of listing it — a superseded PR is closed and not listed, never a
+	// second row for one logical PR (hivecommons/hive#15526 under #15511
+	// read as two PRs). 0 when the copy is gone and the original is live
+	// work again.
+	SupersededBy int `json:"superseded_by,omitempty"`
 	// Supersedes names the closed original this PR replaced (the hive's
 	// close-first supersession, hivecommons/hive#15135). The original is
 	// closed, unmerged, and never a tracker row; this is the only trace of
@@ -641,9 +649,11 @@ type StageTrackerLinkedPR struct {
 	Lineage *StageTrackerLineage `json:"lineage,omitempty"`
 	// State is "closed" for an adopted original the hive (or a person)
 	// closed once its copy existed (hivecommons/hive#15126): the sub-row
-	// is one dimmed line "#N <title> · closed · superseded by #M" with no
-	// chevron track. SupersededBy is the copy; Title is cached from the
-	// copy (same commits, same title), never fetched live.
+	// is one muted line "#N <title> superseded · closed · hive adopted →
+	// #M" with no chevron track, listed only while the copy is listed open
+	// (hivecommons/hive#15511). SupersededBy is the copy (set on an open
+	// original too, once the copy exists); Title is cached from the copy
+	// (same commits, same title), never fetched live.
 	State        string `json:"state,omitempty"`
 	SupersededBy int    `json:"superseded_by,omitempty"`
 	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).
@@ -1938,6 +1948,21 @@ func stageTrackerAdoptedByState(rec stagelabels.Record) string {
 	return ""
 }
 
+// stageTrackerSupersededBy is the live copy that supersedes an adopted
+// original, 0 when the adoption was in place or the copy is closed, failed
+// or being replaced (then the original is live work again). A copy still
+// resolving conflicts is live: the pair stays one logical PR.
+func stageTrackerSupersededBy(rec stagelabels.Record) int {
+	if rec.AdoptedBy <= 0 || rec.AdoptMode == stagelabels.AdoptModeInPlace {
+		return 0
+	}
+	switch stageTrackerAdoptedByState(rec) {
+	case "", stageTrackerAdoptedResolving:
+		return rec.AdoptedBy
+	}
+	return 0
+}
+
 // stageTrackerAdoptionLoopCaption is the 085 caption for the loop guard.
 func stageTrackerAdoptionLoopCaption(rec stagelabels.Record) string {
 	return "The hive's copies of this PR (last #" + strconv.Itoa(rec.AdoptedBy) + ") were closed without merging twice within an hour; the hive stopped opening copies and a person must decide"
@@ -2026,7 +2051,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	if art, err := review.LoadArtifact(""); err == nil {
 		verdictArtifact = &art
 	}
-	verdictFor := stageTrackerVerdictLookup(verdictArtifact)
+	verdictFor := stageTrackerDecisionVerdictLookup(verdictArtifact)
 	// The planner's wait records (review.DispatchState.Waits): a review-
 	// pending head the swarm keeps passing over for lack of a reviewer
 	// says so in its caption instead of a bare "stalled" pill
@@ -2083,6 +2108,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.AdoptedBy = rec.AdoptedBy
 			it.AdoptedByState = stageTrackerAdoptedByState(rec)
+			it.SupersededBy = stageTrackerSupersededBy(rec)
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 			it.AdmittedBy = rec.Admission(it.Head)
 			if total, unsigned, ok := rec.DCOFor(it.Head); ok {
@@ -2352,7 +2378,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 		}
 		var agg *review.Aggregate
-		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
+		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA, stageTrackerParkedOnDecision(it)); ok {
 			agg = &a
 		}
 		if it.Stage == trackerNumberReviewPending && it.Superseded == nil {
@@ -2964,7 +2990,8 @@ type stageTrackerLinkInfo struct {
 	at          time.Time
 }
 
-// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#number.
+// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#issue.
+// The cached closer is unfiltered; each carrying PR excludes itself below.
 type stageTrackerLinkMemo struct {
 	mu sync.Mutex
 	m  map[string]stageTrackerLinkInfo
@@ -3040,7 +3067,7 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				in, hit := s.stageTrackerLinks.get(key, now)
 				if !hit && lookups < stageTrackerLinkLookups && ctx.Err() == nil {
 					lookups++
-					facts, err := s.deps.GHClient.IssueLinkState(ctx, owner, name, li.Number, pr.Number)
+					facts, err := s.deps.GHClient.IssueLinkState(ctx, owner, name, li.Number, 0)
 					in = stageTrackerLinkInfo{title: facts.Title, state: facts.State, stateReason: facts.StateReason, closedBy: facts.ClosedBy, pr: facts.IsPR, ok: err == nil}
 					// Running out of this rebuild's budget says nothing
 					// about the issue: leave it for the next rebuild.
@@ -3054,7 +3081,11 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				if in.ok {
 					li.Title, li.State = in.title, in.state
 					if in.state == "closed" {
-						li.StateReason, li.ClosedBy = in.stateReason, in.closedBy
+						li.StateReason, li.ClosedBy = in.stateReason, 0
+						// Exclude the carrying PR per row, not in the shared lookup.
+						if in.closedBy != pr.Number {
+							li.ClosedBy = in.closedBy
+						}
 					}
 				}
 			}
@@ -3155,7 +3186,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			}
 			seen[lp.Number] = true
 			pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]
-			if pr == nil && (open == nil || !open(it.Repo, lp.Number)) {
+			if pr == nil && (open == nil || !open(it.Repo, lp.Number)) && !stageTrackerClosedOriginalListed(it, lp, prs) {
 				return
 			}
 			if pr != nil {
@@ -3180,6 +3211,9 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				lp.Decided, lp.AdoptedFrom = pr.Decided, pr.AdoptedFrom
 				lp.AdoptedBy, lp.AdoptedByState = pr.AdoptedBy, pr.AdoptedByState
+				if lp.SupersededBy == 0 {
+					lp.SupersededBy = pr.SupersededBy
+				}
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
@@ -3285,6 +3319,15 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 	it.Actor = "its PR"
 }
 
+// stageTrackerClosedOriginalListed keeps a closed adopted original in its
+// issue's list while the hive copy that superseded it is itself listed
+// open there: it draws as one muted "superseded · closed · hive adopted →
+// #M" line (hivecommons/hive#15511). Once the copy merges or closes the
+// original leaves with it.
+func stageTrackerClosedOriginalListed(issue *StageTrackerItem, lp StageTrackerLinkedPR, prs map[string]*StageTrackerItem) bool {
+	return lp.State == "closed" && lp.SupersededBy > 0 && prs[issue.Repo+"#"+strconv.Itoa(lp.SupersededBy)] != nil
+}
+
 // stageTrackerLinkedPRSupersededByListed reports whether lp is the
 // original of an adoption pair whose hive copy is itself listed open under
 // the same issue (or a closed original the copy replaced): the pair is one
@@ -3379,4 +3422,16 @@ func stageTrackerMarkClosedBy(items []StageTrackerItem, closedBy func(repo strin
 			ci.ClosedBy = closedBy(pr.Repo, ci.Number, pr.Number)
 		}
 	}
+}
+
+// stageTrackerParkedOnDecision reports whether a PR row waits at 085 on a
+// reviewer's decision, so the popover may quote the question from the
+// newest decision-requested verdict on any head (hivecommons/hive#15499).
+func stageTrackerParkedOnDecision(it StageTrackerItem) bool {
+	if it.Kind != "pr" || (it.Stage != stagelabels.NeedsDecision.Number() && !slices.Contains(it.Modifiers, modNeedsDecision)) {
+		return false
+	}
+	base, _ := stagelabels.HumanApprovedReason(it.Reason)
+	lower := strings.ToLower(strings.TrimSpace(base))
+	return lower == stageengine.StageReasonVerdictRequiresHuman || lower == stageengine.StageReasonDecisionRequested
 }

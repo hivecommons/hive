@@ -843,18 +843,39 @@
       const lead = who + ' · ' + chose + ', ' + agentNowClockTime(atMs, nowMs);
       return lead + (d.title ? '\n' + d.title : '');
     }
+    // Pure: the PR a nested original was superseded by — `superseded_by`
+    // from the server, or `adopted_by` while the copy is live — when that
+    // copy is itself listed under the issue; else 0.
+    function stageTrackerLinkedSuperseder(lp, issue) {
+      if (!lp) return 0;
+      const live = lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice' && lp.adopted_by_state !== 'copy-failed';
+      const by = Number(lp.superseded_by) || (live ? Number(lp.adopted_by) || 0 : 0);
+      if (!(by > 0) || by === Number(lp.number)) return 0;
+      const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
+      return linked.some(x => x && Number(x.number) === by && String(x.state || '') !== 'closed') ? by : 0;
+    }
     // Pure: an adopted original listed under its issue — closed, or still
-    // open with the hive's copy already in the list — draws as one dimmed
-    // line without a chevron track (hivecommons/hive#15126).
+    // open — with the hive's copy in the list draws as one muted line
+    // without a chevron track (hivecommons/hive#15126, #15511): the note
+    // reads "superseded · hive adopted → #N", "superseded · closed · hive
+    // adopted → #N" once the close landed. '' when the copy is not listed.
     function stageTrackerLinkedSupersededText(lp, issue) {
-      if (!lp) return '';
-      const by = Number(lp.superseded_by || lp.adopted_by) || 0;
-      if (String(lp.state || '') === 'closed') return 'closed · superseded by #' + by;
-      if (by > 0 && lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice') {
-        const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
-        if (linked.some(x => Number(x.number) === by)) return 'Adopted → #' + by + ' · superseded (hive re-authored with sign-off)';
-      }
-      return '';
+      const by = stageTrackerLinkedSuperseder(lp, issue);
+      if (!by) return '';
+      return 'superseded · ' + (String(lp.state || '') === 'closed' ? 'closed · ' : '') + 'hive adopted → #' + by;
+    }
+    // Pure: the hover behind that note — what hive did and what becomes of
+    // this PR.
+    function stageTrackerLinkedSupersededTip(lp) {
+      const by = Number(lp && (lp.superseded_by || lp.adopted_by)) || 0;
+      if (!by) return '';
+      return 'Hive re-authored this PR as #' + by + ' with the same commits and sign-off. ' + (String(lp.state || '') === 'closed' ? 'This PR is closed as superseded.' : 'This PR closes as superseded when #' + by + ' merges.');
+    }
+    // Pure: a closed original whose superseder is no longer listed open
+    // under the issue (merged, closed, filtered) has nothing left to say
+    // and is not drawn.
+    function stageTrackerLinkedSupersededGone(lp, issue) {
+      return !!lp && String(lp.state || '') === 'closed' && !stageTrackerLinkedSuperseder(lp, issue);
     }
     function stageTrackerCoveringPR(item) {
       if (!item || item.kind === 'pr') return null;

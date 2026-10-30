@@ -58,9 +58,23 @@ type supersededCloserTransport interface {
 	CloseSupersededHivePRIfEligible(ctx context.Context, repo string, pr *gh.PullRequest) (hgithub.HiveSupersededClose, error)
 }
 
+// emptyDiffCloserTransport is the optional transport hook that closes a
+// hive-authored PR whose compare against its base lists no files
+// (hgithub.Client.CloseEmptyDiffHivePRIfEligible; hivecommons/hive#15499).
+// The lane calls it when GitHub's GET payload reports changed_files 0 and
+// the stage reconciler calls it before parking the hive's own PR on a
+// person, so no review cycle or decision is spent on nothing to merge.
+type emptyDiffCloserTransport interface {
+	CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string, pr *gh.PullRequest, redundantOf int) (hgithub.HiveEmptyDiffClose, error)
+}
+
 // autoMergeReasonClosedSuperseded is the skip reason of a conflicting
 // self-authored PR the lane closed as superseded.
 const autoMergeReasonClosedSuperseded = "closed-superseded"
+
+// autoMergeReasonClosedEmptyDiff is the skip reason of a self-authored PR
+// the lane closed because its diff against the base is empty.
+const autoMergeReasonClosedEmptyDiff = "closed-empty-diff"
 
 // autoMergeReasonLabelNeedsRebase is labelBlockReason's answer for the
 // needs-rebase label.
@@ -1259,7 +1273,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonClosedSuperseded, autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod, autoMergeReasonMergeTrainQueued, autoMergeReasonMergeTrainRebasing}
+			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonClosedSuperseded, autoMergeReasonClosedEmptyDiff, autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod, autoMergeReasonMergeTrainQueued, autoMergeReasonMergeTrainRebasing}
 			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
 				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
 			}
@@ -1809,6 +1823,22 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			} else if res.Closed {
 				c.info("self-authored sweep: conflicting PR closed as superseded", "repo", displayRepo, "pr", number, "closer", res.CloserPR, "issue", res.Issue, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason)
 				return AutoMergeSweepEvent{}, autoMergeReasonClosedSuperseded, nil
+			}
+		}
+	}
+	// A head GitHub reports as changing no files has nothing to merge: the
+	// change is already on the base. The closer proves it with the compare
+	// and closes the hive's own PR as superseded (hivecommons/hive#15499)
+	// before a review cycle is spent asking a person to.
+	if lane == "self-authored" && hgithub.PRChangedFilesClaimsEmpty(pr) {
+		if closer, ok := c.transport.(emptyDiffCloserTransport); ok {
+			verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA())
+			res, err := closer.CloseEmptyDiffHivePRIfEligible(ctx, owner+"/"+repo, pr, verdict.RedundantOf)
+			if err != nil {
+				c.warn("self-authored sweep: empty-diff check failed", "repo", displayRepo, "pr", number, "error", err)
+			} else if res.Closed {
+				c.info("self-authored sweep: empty-diff PR closed as superseded", "repo", displayRepo, "pr", number, "redundant_of", res.RedundantOf, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason)
+				return AutoMergeSweepEvent{}, autoMergeReasonClosedEmptyDiff, nil
 			}
 		}
 	}

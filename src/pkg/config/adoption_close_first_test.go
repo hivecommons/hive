@@ -27,3 +27,27 @@ func TestStageAdoptionSupersedeCloseFirst(t *testing.T) {
 		}
 	}
 }
+
+// governor.labels.stage.adoption.close_superseded (hivecommons/hive#15586):
+// on_adopt by default; on_merge keeps an agent-authored original open until
+// the copy merges; unknown or oddly-cased values read as the default.
+func TestStageAdoptionCloseSuperseded(t *testing.T) {
+	if got := (StageAdoptionConfig{}).EffectiveCloseSuperseded(); got != AdoptionCloseSupersededOnAdopt {
+		t.Fatalf("close_superseded default = %q, want %q", got, AdoptionCloseSupersededOnAdopt)
+	}
+	for in, want := range map[string]string{
+		"{}\n":                             AdoptionCloseSupersededOnAdopt,
+		"close_superseded: on_adopt\n":     AdoptionCloseSupersededOnAdopt,
+		"close_superseded: ' On_Merge '\n": AdoptionCloseSupersededOnMerge,
+		"close_superseded: on_merge\n":     AdoptionCloseSupersededOnMerge,
+		"close_superseded: whenever\n":     AdoptionCloseSupersededOnAdopt,
+	} {
+		var cfg StageAdoptionConfig
+		if err := yaml.NewDecoder(strings.NewReader(in)).Decode(&cfg); err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if got := cfg.EffectiveCloseSuperseded(); got != want {
+			t.Errorf("%q: EffectiveCloseSuperseded = %q, want %q", in, got, want)
+		}
+	}
+}

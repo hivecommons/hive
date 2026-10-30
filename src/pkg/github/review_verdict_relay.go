@@ -78,6 +78,7 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 	}
 	decisionRequested, decisionQuestion := reviewDecisionRequestFromBody(req.Body)
 	decisionRiskHigh := reviewDecisionRiskHighFromBody(req.Body)
+	redundantOf := reviewRedundantOfNumber(req.Body)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		c.logger.Warn("review-request watcher: could not create report dir",
 			slog.String("dir", dir), slog.String("error", err.Error()))
@@ -99,6 +100,9 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 			report.DecisionQuestion = decisionQuestion
 			report.DecisionRiskHigh = decisionRiskHigh
 			report.Verdict = review.VerdictRequiresHuman
+		}
+		if redundantOf > 0 {
+			report.RedundantOf = redundantOf
 		}
 		report.PermissionsTighteningOnly = tightening
 		if written, ok, dispatched := c.writeOneVerdict(ctx, req, report, dir, prHead, prSnapshot); ok {
@@ -160,6 +164,8 @@ func (c *Client) canonicalVerdictHead(req ReviewRequest, reported, dispatchHead 
 type reviewedPRSnapshot struct {
 	Head       string
 	BodyDigest string
+	// Author is the PR's login author, for the hive-authored fallback.
+	Author string
 }
 
 // reviewedPRSnapshotFunc returns a memoized lookup of req's PR head SHA and
@@ -191,6 +197,7 @@ func (c *Client) reviewedPRSnapshotFunc(ctx context.Context, req ReviewRequest) 
 		snap = reviewedPRSnapshot{
 			Head:       strings.TrimSpace(pr.GetHead().GetSHA()),
 			BodyDigest: review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
+			Author:     safeGetLogin(pr.GetUser()),
 		}
 		return snap
 	}
@@ -279,6 +286,25 @@ func hiddenMarkerValue(body, prefix string) string {
 		}
 	}
 	return ""
+}
+
+// reviewRedundantOfNumber reads the PR number from the
+// `<!-- hive-redundant-of: #N -->` marker, 0 when absent or unparseable.
+func reviewRedundantOfNumber(body string) int {
+	v := strings.TrimSpace(hiddenMarkerValue(body, reviewRedundantOfMarker))
+	v = strings.TrimPrefix(v, "#")
+	if i := strings.IndexAny(v, " \t,;)"); i >= 0 {
+		v = v[:i]
+	}
+	// owner/repo#N and .../pull/N both end in the number.
+	if i := strings.LastIndexAny(v, "/#"); i >= 0 {
+		v = v[i+1:]
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // decisionQuestionFromBody reads the `<!-- hive-decision-question: ... -->`
@@ -391,6 +417,16 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 		report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, auth.HeadSHA, prHead)
 	}
 	report.HiveAuthored = auth.HiveAuthored
+	if !report.HiveAuthored && prSnapshot != nil && (report.DecisionRequested || report.Verdict == review.VerdictRequiresHuman) && c.IsHiveAuthorLogin(prSnapshot().Author) {
+		// The App's own PR under a dispatch record that did not carry
+		// authorship (an adoption with no agent attribution, or a record
+		// written before hive_authored existed): the login settles it, so
+		// the aggregate can self-resolve its decision questions and the
+		// stage engine routes it as the hive's (hivecommons/hive#15499).
+		// Only a verdict whose routing depends on authorship pays for the
+		// PR fetch; an approve or changes_requested never does.
+		report.HiveAuthored = true
+	}
 	// The review head, and whether this is the decision step's reconciled
 	// report, come from the dispatch record this verdict bound to, never the
 	// reviewer's own JSON: a head cannot claim to be another head or to have
@@ -502,6 +538,13 @@ type verdictAuthorization struct {
 	Decided bool
 }
 
+// dispatchRecordHiveAuthored is the authorship a dispatch record vouches
+// for: the planner's hive_authored flag (hivecommons/hive#15499) or, for
+// records written before it existed, an agent attribution.
+func dispatchRecordHiveAuthored(authorAgent string, hiveAuthored bool) bool {
+	return hiveAuthored || strings.TrimSpace(authorAgent) != ""
+}
+
 func verdictRefused(reason string) verdictAuthorization {
 	return verdictAuthorization{Reason: reason}
 }
@@ -522,7 +565,7 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 		if c.sameVerdictAuthor(verdictAuthorAgent(p.AuthorAgent, report), req.Agent) {
 			return verdictRefused("author_self_approval")
 		}
-		return verdictAuthorization{OK: true, Dispatched: true, HeadSHA: p.HeadSHA, BodyDigest: p.BodyDigest, HiveAuthored: strings.TrimSpace(p.AuthorAgent) != "", ReviewHead: strings.TrimSpace(p.Head), Decided: p.Decision}
+		return verdictAuthorization{OK: true, Dispatched: true, HeadSHA: p.HeadSHA, BodyDigest: p.BodyDigest, HiveAuthored: dispatchRecordHiveAuthored(p.AuthorAgent, p.HiveAuthored), ReviewHead: strings.TrimSpace(p.Head), Decided: p.Decision}
 	}
 	cutoff := now.Add(-review.RecentDispatchTTL)
 	for _, r := range state.Recent {
@@ -535,7 +578,7 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 		if c.sameVerdictAuthor(verdictAuthorAgent(r.AuthorAgent, report), req.Agent) {
 			return verdictRefused("author_self_approval")
 		}
-		return verdictAuthorization{OK: true, Dispatched: true, HeadSHA: r.HeadSHA, BodyDigest: r.BodyDigest, HiveAuthored: strings.TrimSpace(r.AuthorAgent) != "", ReviewHead: strings.TrimSpace(r.Head), Decided: r.Decision}
+		return verdictAuthorization{OK: true, Dispatched: true, HeadSHA: r.HeadSHA, BodyDigest: r.BodyDigest, HiveAuthored: dispatchRecordHiveAuthored(r.AuthorAgent, r.HiveAuthored), ReviewHead: strings.TrimSpace(r.Head), Decided: r.Decision}
 	}
 	// Queue-mode reviewer prompts can reach the relay through the ordinary
 	// PR-list comment path rather than a review-swarm dispatch. That still is

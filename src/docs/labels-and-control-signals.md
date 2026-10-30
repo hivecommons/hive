@@ -2045,7 +2045,13 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      table in
      [operator-reference.md](operator-reference.md#what-hive-writes-to-github-and-when)):
      refused, nothing is written and the original stays open on the
-     keep-open path below until the copy merges. `close_first: false` restores the keep-open behaviour
+     keep-open path below until the copy merges. A clanker- or
+     hive-authored original does not need the label: the gate admits its
+     close as `superseded-agent-pr` by policy
+     (`governor.labels.stage.adoption.close_superseded`, `on_adopt` by
+     default, `on_merge` to keep it open until the copy merges), because
+     the copy carries the same commits and sign-off
+     (hivecommons/hive#15526). `close_first: false` restores the keep-open behaviour
      below: the note has no `close_first` field, the original moves to
      `stage/074-adopted-by-hive` (its linked issue mirrors the stage) and
      closes only when the copy merges. The hub drops the PR from the

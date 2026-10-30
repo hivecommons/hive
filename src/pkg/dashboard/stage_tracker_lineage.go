@@ -28,6 +28,12 @@ const (
 	lineageRebasedByHive = "rebased-by-hive"
 )
 
+// Lineage from_state values.
+const (
+	lineageFromStateOpen   = "open"
+	lineageFromStateClosed = "closed"
+)
+
 // Lineage reason slugs the SPA words its hover from.
 const (
 	lineageReasonCIRedOffline      = "ci-red-contributor-offline"
@@ -47,6 +53,12 @@ type StageTrackerLineage struct {
 	FromURL        string `json:"from_url,omitempty"`
 	FromAuthor     string `json:"from_author,omitempty"`
 	FromAuthorKind string `json:"from_author_kind,omitempty"`
+	// FromState is the original's state on the hive's copy: "closed" once
+	// the hive closed it as superseded, "open" while it is still open
+	// (it closes when the copy merges), "" when unknown. The copy's chip
+	// is the only place the superseded original is drawn
+	// (hivecommons/hive#15526), so its hover says which.
+	FromState string `json:"from_state,omitempty"`
 	// ToNumber / ToURL name the hive's copy on the original.
 	ToNumber int    `json:"to_number,omitempty"`
 	ToURL    string `json:"to_url,omitempty"`
@@ -132,8 +144,12 @@ func stageTrackerLineageIndex(store *stagelabels.Store, baseURL string) map[stri
 			}
 		}
 		reason := stageTrackerLineageReason(rec.AdoptReason)
+		fromState := ""
+		if rec.Superseded() && !rec.SupersededOpen {
+			fromState = lineageFromStateClosed
+		}
 		out[copyKey] = StageTrackerLineage{Kind: kind, FromNumber: number, FromURL: overviewItemURL("", repo, number, "pr", baseURL),
-			FromAuthor: rec.Author, FromAuthorKind: stageTrackerLineageAuthorKind(rec.AdoptReason), At: at, Reason: reason}
+			FromAuthor: rec.Author, FromAuthorKind: stageTrackerLineageAuthorKind(rec.AdoptReason), FromState: fromState, At: at, Reason: reason}
 		out[key] = StageTrackerLineage{Kind: lineageSuperseded, ToNumber: by, ToURL: overviewItemURL("", repo, by, "pr", baseURL), At: at, Reason: reason}
 	}
 	return out
@@ -163,8 +179,9 @@ func stageTrackerLineageFor(idx map[string]StageTrackerLineage, repo string, num
 }
 
 // stageTrackerLineageFillAuthors completes from_author / from_author_kind
-// on each copy whose original is itself a row (close_first off): the
-// row's own author fields beat the record's guess.
+// on each copy whose original is itself a row (close_first off, or the
+// write-back gate kept it open): the row's own author fields beat the
+// record's guess, and from_state reads open.
 func stageTrackerLineageFillAuthors(items []StageTrackerItem) {
 	prs := map[string]*StageTrackerItem{}
 	for i := range items {
@@ -187,5 +204,6 @@ func stageTrackerLineageFillAuthors(items []StageTrackerItem) {
 		if orig.AuthorKind != "" {
 			l.FromAuthorKind = orig.AuthorKind
 		}
+		l.FromState = lineageFromStateOpen
 	}
 }

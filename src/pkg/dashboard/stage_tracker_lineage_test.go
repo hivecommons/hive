@@ -95,6 +95,7 @@ func TestStageTrackerLineageChipJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerAgoText"),
 		jsConstBlock(t, html, "STAGE_TRACKER_LINEAGE_REASON_TIP"),
 		jsFunc(t, html, "stageTrackerLineageText"),
+		jsFunc(t, html, "stageTrackerSupersededOriginalClause"),
 		jsFunc(t, html, "stageTrackerLineageTip"),
 		jsFunc(t, html, "stageTrackerLineageChipHtml"),
 		jsFunc(t, html, "stageTrackerLineageClause"),
