@@ -14625,6 +14625,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const mt = item && item.merge_train;
       return mt && typeof mt === 'object' && mt.state ? mt : null;
     }
+    // Pure: why a PR at stage, with reason, is somebody's to repair right
+    // now — '' when nothing is. Mirrors stageTrackerTrainUnderRepair in
+    // Go (the rule that seats a PR in, or drops it from, its merge train)
+    // so the chevron column and train membership read one predicate: a
+    // PR being fixed (070), waiting on its author (071) or contributor
+    // (072), freshly adopted (074), parked on a decision (085), or whose
+    // required checks are red rides no train; all but the decision park
+    // light CI / Review whatever the gate or the planner last recorded.
+    const STAGE_TRACKER_REPAIR_STAGE_WHY = { 70: 'fixing', 71: 'needs-author', 72: 'returned-to-contributor', 74: 'adopted-by-hive', 85: 'needs-decision' };
+    function stageTrackerUnderRepair(stage, reason) {
+      const why = STAGE_TRACKER_REPAIR_STAGE_WHY[Number(stage) || 0];
+      if (why) return why;
+      const lower = String(reason || '').trim().toLowerCase();
+      if (lower.indexOf('required-check-failing:') === 0 || lower.indexOf('check-failing:') === 0 || lower === 'ci-red') return 'checks-failing';
+      return '';
+    }
     // The first merge-ready stage (080 awaiting merge admission). A train
     // member below it holds a provisional slot: the planner has ordered
     // it, but CI / the review verdict / the fixer still stand in front.
@@ -15888,11 +15904,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // The waiting-on pill for a row with presence but no adoption line (071
     // Needs author, 072 before the first nudge, a human's PR): "waiting on
-    // [person] @zoe" — the glyph says who, the title says the rest.
+    // [person] @zoe" — the glyph says who, the title says the rest. A
+    // person's own PR reads "waiting on @zoe to push": the hive waits for
+    // their commit, it is not asking anyone to close it.
     function stageTrackerPresenceChipText(item) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
-      const text = 'waiting on @' + p.login;
+      const ownPR = item && item.kind === 'pr' && item.author_kind === 'human' && p.kind === 'human' && String(item.author || '').toLowerCase() === String(p.login).toLowerCase();
+      const text = 'waiting on @' + p.login + (ownPR ? ' to push' : '');
       // Guarded: the test harnesses load helpers by name.
       return typeof stageTrackerReworkSuffix === 'function' ? stageTrackerReworkSuffix(text, item) : text;
     }
@@ -16095,9 +16114,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // merge-failed) the outcome is a Merge gate matter whatever numeric
     // stage the lane fell back to — hivecommons/docs#512 drew "Merge
     // failed" in CI / Review because the PR sat at 060.
+    //
+    // The column follows the CURRENT state, never the highest stage the
+    // row once reached: a PR under repair (stageTrackerUnderRepair) lights
+    // CI / Review even when a stale merge_gate ("merge-failed" from the
+    // attempt that found the conflict) or a planner-ordered merge_train
+    // still rides on the record — hive's own #15574 read "Fixing" under
+    // Merge queue after "fell back to Fixing — conflicting".
     function stageTrackerAnchor(stage, stages, kind, item) {
       const cur = Number(stage) || 0;
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
+      // Under repair past 030 → CI / Review, before any gate or train
+      // promotion. The one park the predicate also names, 085 needs
+      // decision, stays at the gate: the person decides there.
+      const repairing = typeof stageTrackerUnderRepair === 'function' && !!stageTrackerUnderRepair(cur, item && item.reason);
+      if (repairing && cur > STAGE_TRACKER_PR_COLUMN && cur !== STAGE_TRACKER_NEEDS_DECISION) return 50;
       const mg = item && item.merge_gate;
       if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       // A merge-train member is a Merge queue matter too, 1st included:
@@ -17023,7 +17054,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null,
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
@@ -17129,12 +17160,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // stageTrackerLeadActionHtml), computed against the viewer's own
     // permissions on the item's repo; '' where the actions module or a
     // viewer context is absent (the node harness lifts this file alone).
-    function stageTrackerLeadButtonHtml(item, nowMs) {
+    // subRows: the linked PRs drawn as sub-rows under an issue row — a lead
+    // that acts on one of them renders there, never on both rows.
+    function stageTrackerLeadButtonHtml(item, nowMs, subRows) {
       if (typeof stageTrackerLeadActionHtml !== 'function' || typeof stageTrackerActionCtx !== 'function' || !item) return '';
       const ctx = stageTrackerActionCtx(item.repo);
       if (!ctx) return '';
       ctx.nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
-      return stageTrackerLeadActionHtml(item, ctx);
+      return stageTrackerLeadActionHtml(item, ctx, subRows);
     }
     // PR link, then the lineage chip (null = none), then the base pill.
     function stageTrackerPRPillsHtml(ref, lineage, baseRef) {
@@ -17224,13 +17257,30 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
 
+    // The stage a covering PR drives its issue's strip at: its own, or 040
+    // covered-by-PR while it has none yet (an open PR filed seconds ago,
+    // still waiting for the stage-label pass). One rule for the strip and
+    // the list order — hive's own #15654 (000 New, nested #15655 drawn as
+    // "PR in progress") sat at the bottom among the New rows because the
+    // sort key fell back to the parent's unlabelled stage while the strip
+    // did not.
+    const STAGE_TRACKER_COVERED_BY_PR = 40;
+    function stageTrackerLeadStage(lp) {
+      return Number(lp && lp.stage) || STAGE_TRACKER_COVERED_BY_PR;
+    }
+    // Pure: the row whose live work drives an issue's strip and list place
+    // — its furthest covering PR, else the issue itself.
+    function stageTrackerLead(item, stages) {
+      const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
+      if (!linked.length) return { lead: item, kind: item.kind, stage: Number(item.stage) || 0, since: item.stage_since || '' };
+      const lp = linked[0];
+      return { lead: lp, kind: 'pr', stage: stageTrackerLeadStage(lp), since: lp.stage_since || item.stage_since || '' };
+    }
     // List order: furthest along the strip first — a covered issue counts as
     // far along as its furthest covering PR — then longest-waiting first.
     function stageTrackerSortKey(item, stages) {
-      const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
-      const lead = linked.length && linked[0].stage ? linked[0] : item;
-      const kind = lead === item ? item.kind : 'pr';
-      return { anchor: stageTrackerAnchor(lead.stage, stages, kind, lead), since: Date.parse(lead.stage_since || '') || Infinity };
+      const l = stageTrackerLead(item, stages);
+      return { anchor: stageTrackerAnchor(l.stage, stages, l.kind, l.lead), since: Date.parse(l.since) || Infinity };
     }
 
     /* ---- Repo chip and group-by-repo (pure; run under node by
@@ -17369,7 +17419,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nowMs = Number(ctx.nowMs) || Date.now();
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
-      let prRefs = [], shown = item, range = null, subs = '';
+      let prRefs = [], shown = item, range = null, subs = '', subRows = null;
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
         if (linked.length === 1) {
@@ -17377,14 +17427,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '') || null, lp.base_ref)];
-          shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
+          shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
           range = { to: 20 };
           if (stageTrackerAnchor(item.stage, stages, item.kind) <= 20) shown = Object.assign({}, item, { stage: 40 });
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs, ctx)).join('');
+          subRows = linked;
         }
       }
       // Invariant (owner): the issue slot on the left never holds a PR. A
@@ -17430,7 +17481,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs) : ''))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
@@ -19435,11 +19486,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const server = d && Array.isArray(d.options) ? d.options : [];
       const out = [];
       for (const o of server) {
-        if (!o || !o.action || STAGE_TRACKER_GENERIC_ACTIONS.indexOf(o.action) >= 0 || o.action.indexOf('decide:') !== 0 || (taken && taken[o.action])) continue;
+        // A server-marked lead (`lead`) heads the menu even when the
+        // Decide… submenu lists the same verb generically: the row's
+        // answer is this one, with its consequence.
+        if (!o || !o.action || STAGE_TRACKER_GENERIC_ACTIONS.indexOf(o.action) >= 0 || o.action.indexOf('decide:') !== 0 || (taken && taken[o.action] && !o.lead)) continue;
         const allowed = stageTrackerActionAllowed(o.action, ctx);
         const enabled = !!o.enabled && allowed.enabled;
         const why = enabled ? '' : (o.enabled ? allowed.why : (o.reason_if_disabled || 'Not available on this row'));
-        out.push({ id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, hint: o.consequence || '', enabled, why, danger: /^decide:close-/.test(o.action), lead: true, target: dec.item });
+        // A destructive option never leads the row on its own: only when
+        // the server marks it (`lead`, the reviewer named the PR that
+        // supersedes this one) does a close become the inline button. It
+        // still sits in the ⋯ menu either way.
+        const danger = /^decide:close-/.test(o.action);
+        out.push({ id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, hint: o.consequence || '', enabled, why, danger, lead: !danger || !!o.lead, target: dec.item });
       }
       return out;
     }
@@ -19511,8 +19570,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const lead = actions.find(a => a.lead);
       if (lead) return lead;
       const decide = actions.find(a => a.id === 'decide');
-      if (decide && Array.isArray(decide.submenu) && decide.submenu.length) {
-        const o = decide.submenu.find(x => x.enabled) || decide.submenu[0];
+      const safe = decide && Array.isArray(decide.submenu) ? decide.submenu.filter(x => x && !x.danger) : [];
+      if (safe.length) {
+        const o = safe.find(x => x.enabled) || safe[0];
         const enabled = !!decide.enabled && !!o.enabled;
         return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
       }
@@ -19532,12 +19592,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const host = typeof window !== 'undefined' && window.location ? String(window.location.hostname || '') : '';
       if ((host === 'localhost' || host === '127.0.0.1') && typeof console !== 'undefined' && console.warn) console.warn('[tracker] ' + msg);
     }
+    // Pure: the lead the row itself renders. An issue row whose lead acts
+    // on a nested PR (stageTrackerDecisionTarget resolved to the one parked
+    // PR) renders none when that PR has its own sub-row carrying the same
+    // button — "Let hive decide" showed twice per item (hive#15320 →
+    // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
+    // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    function stageTrackerLeadActionOnRow(item, ctx, subRows) {
+      const a = stageTrackerLeadAction(item, ctx);
+      if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
+      const t = a.target;
+      if (t.kind !== 'pr') return a;
+      const lp = subRows.find(x => x && Number(x.number) === Number(t.number) && !x.superseded && (!x.repo || !t.repo || x.repo === t.repo));
+      if (!lp) return a;
+      const sub = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : null;
+      return sub && stageTrackerLeadAction(sub, ctx) ? null : a;
+    }
     // The inline lead button for a row: a real <button> carrying the same
     // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
     // '' when the row has no lead. Click handling is delegated in
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
-    function stageTrackerLeadActionHtml(item, ctx) {
-      const a = stageTrackerLeadAction(item, ctx);
+    function stageTrackerLeadActionHtml(item, ctx, subRows) {
+      const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
