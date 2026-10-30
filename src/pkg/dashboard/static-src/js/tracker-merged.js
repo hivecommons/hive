@@ -55,6 +55,8 @@
     }
 
     const STAGE_TRACKER_MERGE_SESSION_KEY = 'hive.tracker.merge-session.v1';
+    // Shape of a stageTrackerPRKey() key as stored in the session record.
+    const STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE = /^.+\/pr#[1-9][0-9]*$/;
     var _stageTrackerMergeSessionLoaded = false;
     // Persist both the last observation and the delivered keys: saving only
     // delivered keys loses an open→merged transition across a reload. The
@@ -67,11 +69,11 @@
           if (saved && saved.state && typeof saved.state === 'object' && !Array.isArray(saved.state)) {
             const state = {}, delivered = {};
             for (const key of Object.keys(saved.state)) {
-              if (!/^.+\/pr#[1-9][0-9]*$/.test(key) || typeof saved.state[key] !== 'boolean') continue;
+              if (!STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) || typeof saved.state[key] !== 'boolean') continue;
               state[key] = saved.state[key];
             }
             for (const key of Object.keys(saved.delivered || {})) {
-              if (/^.+\/pr#[1-9][0-9]*$/.test(key) && saved.delivered[key] === true) delivered[key] = true;
+              if (STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) && saved.delivered[key] === true) delivered[key] = true;
             }
             _stageTrackerMergeState = state;
             _stageTrackerZapped = delivered;
