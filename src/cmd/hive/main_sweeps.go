@@ -814,16 +814,18 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	ctx, sweepSpan := tracing.StartSpan(ctx, "governor.automerge")
 	defer sweepSpan.End()
 	opts := automerge.Options{
-		Logger:                  logger,
-		MergerAuthorizer:        trustedMergerFunc(cfg),
-		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
-		TrustedAuthorizer:       trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(cfg),
-		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
-		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
-		ContributorRegistryTier: contributorRegistryTierFunc(),
-		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
-		StageEngine:             stageEngineOptions(cfg, logger),
+		IntegrationAdmission:     dashSrv.IntegrationNativeAdmission,
+		IntegrationFilesObserved: dashSrv.IntegrationObserveFiles,
+		Logger:                   logger,
+		MergerAuthorizer:         trustedMergerFunc(cfg),
+		HumanChangeRequests:      review.DefaultHumanChangeRequests(),
+		TrustedAuthorizer:        trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:      trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:    contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict:   contributorLaneVerdictFunc(cfg, logger),
+		ContributorRegistryTier:  contributorRegistryTierFunc(),
+		StageLabelPolicy:         stageLabelPolicyFunc(cfg),
+		StageEngine:              stageEngineOptions(cfg, logger),
 	}
 	syncStageEngineMode(cfg, ghClient, logger)
 	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink

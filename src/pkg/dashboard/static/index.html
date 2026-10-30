@@ -3284,6 +3284,7 @@
     .contrib-status-badge.is-online { background: var(--status-ok); color: var(--bg); }
     .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
     .contrib-status-dot.online { background: var(--status-ok); }
+    .contrib-abandoned { color: var(--status-error); font-weight: 600; }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;
@@ -41003,6 +41004,15 @@ function burnAreaChart() {
       });
     }
 
+    function contributorAbandonedBadge(c) {
+      const count = Number(c.abandoned) || 0;
+      if (count <= 0) return '';
+      const recent = (Array.isArray(c.abandoned_prs) ? c.abandoned_prs : []).slice()
+        .sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
+      const tooltip = recent.map(r => `${r.repo}#${r.pr} → ${r.adopted_into_pr ? '#' + r.adopted_into_pr : 'in-place'} · ${r.reason || 'unknown'} · ${r.at || 'unknown time'}`).join('\n') || 'PRs adopted by the hive';
+      return `<span class="contrib-abandoned" title="${esc(tooltip)}">Abandoned ${count}</span>`;
+    }
+
     function renderContributors(contributors) {
       refreshSectionCardShell('contributors-section');
       setSectionSummary('contributors-section', contributorsSectionSummary(contributors, null));
@@ -41076,8 +41086,9 @@ function burnAreaChart() {
             </div>
             ${tierProv ? `<div class="fs-sm text-muted mb-3 contrib-tier-provenance">${esc(tierProv)}</div>` : ''}
             ${cliLine ? `<div class="fs-sm text-muted mb-3">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div class="fs-sm text-muted mb-3">${roleLine}</div>` : '')}
-            <div style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
+            <div style="display:flex;flex-wrap:wrap;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
               <span>Completed: <strong class="text-default">${c.total_tasks_completed || 0}</strong></span>
+              ${contributorAbandonedBadge(c)}
               <span>Failed: <strong style="color:${(c.total_tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--fg)'}">${c.total_tasks_failed || 0}</strong></span>
             </div>
             ${(c.active_tasks && c.active_tasks.length > 0) ? '<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current tasks</div>' + c.active_tasks.map(t => `<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-2);padding:6px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(t.kind)}</span> <a href="https://github.com/${esc(t.repo)}/issues/${t.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(t.repo)}#${t.number} ↗</a> — ${esc(t.title)}</div>`).join('') : (c.current_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current task</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:8px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(c.current_task.kind)}</span> <a href="https://github.com/${esc(c.current_task.repo)}/issues/${c.current_task.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(c.current_task.repo)}#${c.current_task.number} ↗</a> — ${esc(c.current_task.title)}</div>` : (c.last_completed_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Last completed</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:6px 10px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-success">${esc(c.last_completed_task.kind)}</span> <a href="https://github.com/${esc(c.last_completed_task.repo)}/issues/${c.last_completed_task.number}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:underline">${esc(c.last_completed_task.repo)}#${c.last_completed_task.number} ↗</a> — ${esc(c.last_completed_task.title)}</div>` : (c.active ? '<div style="font-size:var(--fs-sm);color:var(--green);margin-bottom:10px">Idle — waiting for task</div>' : '')))}
@@ -43894,6 +43905,7 @@ function burnAreaChart() {
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
+        case 'loadIntegrationOrchestration': loadIntegrationOrchestration(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'loadUpstreamWatch': loadUpstreamWatch(); break;
@@ -44742,7 +44754,6 @@ function burnAreaChart() {
         el.disabled = false;
       }
     }
-
     // ── Plan review view (#7537) ─────────────────────────────────────────
     // The governor PLANNING tile links here: openPlanList() enumerates every
     // plan (GET /api/plans, drafts first) and openPlanReview(epicID) shows one
@@ -57814,6 +57825,7 @@ function burnAreaChart() {
       am = am || {};
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
+      const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -58815,6 +58827,48 @@ function burnAreaChart() {
           <div class="config-help">Checkpoint, triage and recheck settings are applied live; no restart is needed.</div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Integration orchestration</div>
+          <div class="config-help">Default OFF. Coordinates authoring admission above existing preparation and native queues; never replaces CI, review, holds or current-base guards. Advisory cannot block. Enforce requires explicit repository/base scopes and complete runner telemetry. No native queue jumping or GitHub build-window control. 5,000/day is a capacity target, not a measured result.</div>
+          <div class="config-field"><label>Mode ${yamlHint('integration_orchestration.mode')} ${settingHelpMark('settings', 'features', 'Integration mode', `Off preserves existing dispatch. Advisory records observations but cannot block. Enforce applies only enrolled, authoritative constraints; it never replaces merge gates.`)}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(m => `<option value="${esc(m)}" ${io.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Exact scopes (one owner/repo#base per line) ${yamlHint('integration_orchestration.scopes[].repo')} ${yamlHint('integration_orchestration.scopes[].base')} ${settingHelpMark('settings', 'features', 'Integration scopes', `At most eight exact repository/base destinations. No wildcard enrollment. Multiple enrolled bases leave issue destination unknown rather than guessing.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="scope_lines" data-arg-types="s,s,v">${esc((io.scopes || []).map(s => s.repo + '#' + s.base).join('\n'))}</textarea>
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['max_active','Active admissions',2,'integration_orchestration.max_active'],
+              ['max_jobs','Executed jobs per window',20,'integration_orchestration.max_jobs'],
+              ['max_runner_minutes','Runner minutes per window',60,'integration_orchestration.max_runner_minutes'],
+              ['max_attempts','Attempt bound',2,'integration_orchestration.max_attempts'],
+              ['admission_jobs','Job allocation per admission',1,'integration_orchestration.admission_jobs'],
+              ['admission_runner_minutes','Minute allocation per admission',10,'integration_orchestration.admission_runner_minutes']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Validated static admission bound, not a capacity measurement. Outstanding allocations count conservatively alongside actual assigned-runner execution. Missing accounting freezes growth; retries never rerun or cancel GitHub jobs.`)}</label><input type="number" min="1" value="${esc(String(io[key] || def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['lease_ttl','Reservation TTL (minutes)',5,'integration_orchestration.lease_ttl'],
+              ['window','Accounting window (minutes)',60,'integration_orchestration.window'],
+              ['max_observation_age','Maximum observation age (minutes)',30,'integration_orchestration.max_observation_age']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Lease TTL is 1–15 minutes and clipped to live ownership. Accounting window is 1 minute–24 hours. Maximum observation age is 1–60 minutes; stale observations are unknown, not zero.`)}</label><input type="number" min="1" value="${esc(String(io[key] ? io[key] / (60 * 1e9) : def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}_minutes" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field"><label>Pinned workflow evidence contracts (JSON array) ${settingHelpMark('settings', 'features', 'Integration workflow contracts', `Pins a separately reviewed workflow blob, event engine, exact required job names and producer App ID. Empty means policy evidence remains unknown. This does not activate native queues or replace full CI, review, DCO or other gates.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="policy_json" data-arg-types="s,s,v">${esc(JSON.stringify(io.policies || [], null, 2))}</textarea>
+          </div>
+          <div class="config-help">${[
+            'integration_orchestration.policies[].repo', 'integration_orchestration.policies[].base',
+            'integration_orchestration.policies[].engine', 'integration_orchestration.policies[].workflow',
+            'integration_orchestration.policies[].blob', 'integration_orchestration.policies[].app_id',
+            'integration_orchestration.policies[].jobs[]'
+          ].map(path => yamlHint(path)).join(' ')} Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
+          <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
+          <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
           <div class="config-field">
             <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
@@ -58830,7 +58884,6 @@ function burnAreaChart() {
         </div>
         `)}`;
     }
-
     function markReleaseSentinelList(key, value) {
       markDirty('release-sentinel', key, splitConfigLines(value));
     }
@@ -60723,6 +60776,7 @@ function burnAreaChart() {
             : 'No soak telemetry recorded yet — it accumulates one row per eval cycle, so give it a few cycles.';
           return;
         }
+
         const groups = {};
         for (const e of entries) {
           const k = `${e.commit || '?'} / ${e.mode || '?'} (gen ${e.generation || 0})`;
@@ -60755,6 +60809,32 @@ function burnAreaChart() {
         out.innerHTML = rows.join('');
       } catch (err) {
         out.textContent = `Failed to load soak telemetry: ${err.message}`;
+      }
+    }
+
+    async function loadIntegrationOrchestration() {
+      const out = document.getElementById('integration-orchestration-summary');
+      if (!out) return;
+      out.textContent = 'Loading authoritative observations…';
+      try {
+        const res = await fetch('/api/integration-orchestration', { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const preparation = await fetch('/api/stage-tracker', { headers: _inceptionAuthHeaders() });
+        if (preparation.ok) {
+          const tracker = await preparation.json();
+          data.preparation = {
+            source: '/api/stage-tracker.base_preparation',
+            state: Array.isArray(tracker.base_preparation) ? 'observed' : 'unavailable',
+            queues: Array.isArray(tracker.base_preparation) ? tracker.base_preparation : null,
+            meaning: 'Preparation ownership/backlog only; not green or approved train seats, and not native queue membership.'
+          };
+        } else {
+          data.preparation = { state: 'unavailable', reason: `Tracker HTTP ${preparation.status}` };
+        }
+        out.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        out.textContent = `Integration observations unknown: ${e.message}`;
       }
     }
 
@@ -60921,7 +61001,6 @@ function burnAreaChart() {
       if (!await hiveConfirm({ title: `Stop watching ${repo}?`, message: 'The watch stops polling its upstream. Recorded state and issues already filed are kept.', confirmLabel: 'Stop watching', danger: true })) return;
       putUpstreamWatch({ repos: { [repo]: null } }, `Stopped watching ${repo}`);
     }
-
     // ── Linear agent (RFC #4492 Part 2) ─────────────────────────────────────
     // loadLinearAgentStatus paints install/workspace/session state from the
     // owner-only status endpoint into the Features tab's Linear Agent panel.
@@ -61692,6 +61771,33 @@ function burnAreaChart() {
             });
             if (!slaRes.ok) throw new Error(await saveErrorMessage(slaRes));
             _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
+          } else if (_configState.type === 'governor' && section === 'integration_orchestration') {
+            const body = Object.assign({}, (_configState.data || {}).integration_orchestration || {}, values);
+            const integrationMinuteNanoseconds = 60 * 1e9;
+            for (const key of ['lease_ttl', 'window', 'max_observation_age']) {
+              if (Object.prototype.hasOwnProperty.call(body, key + '_minutes')) {
+                body[key] = Number(body[key + '_minutes']) * integrationMinuteNanoseconds;
+                delete body[key + '_minutes'];
+              }
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'policy_json')) {
+              body.policies = JSON.parse(body.policy_json);
+              if (!Array.isArray(body.policies)) throw new Error('Integration workflow contracts must be a JSON array');
+              delete body.policy_json;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'scope_lines')) {
+              body.scopes = String(body.scope_lines).split('\n').map(s => s.trim()).filter(Boolean).map(s => {
+                const at = s.indexOf('#');
+                if (at < 1 || at === s.length - 1) throw new Error('Each integration scope must be owner/repo#base');
+                return { repo: s.slice(0, at), base: s.slice(at + 1) };
+              });
+              delete body.scope_lines;
+            }
+            const ioRes = await fetch('/api/config/integration-orchestration', {
+              method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify(body)
+            });
+            if (!ioRes.ok) throw new Error(await saveErrorMessage(ioRes));
+            _configState.data.integration_orchestration = await ioRes.json();
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence
@@ -61855,7 +61961,6 @@ function burnAreaChart() {
         })
         .catch(() => {});
     }
-
     // --- Chat rich formatting ---
     function sanitizeChatText(raw) {
       return String(raw || '')

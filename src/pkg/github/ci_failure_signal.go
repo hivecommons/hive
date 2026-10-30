@@ -26,6 +26,8 @@ type CIFailurePR struct {
 // check_suite / status delivery, carried on WebhookEventResult.CIFailure so
 // the receiver can react now rather than on the next sweep.
 type WebhookCIFailure struct {
+	SuiteID    int64         `json:"suite_id,omitempty"`
+	CheckRunID int64         `json:"check_run_id,omitempty"`
 	HeadSHA    string        `json:"head_sha"`
 	Check      string        `json:"check"`
 	Conclusion string        `json:"conclusion"`
@@ -37,17 +39,32 @@ type WebhookCIFailure struct {
 // observation. Agent is the hive agent the PR is attributed to (empty for a
 // contributor PR or an unattributed one).
 type CIFailureSignal struct {
-	Repo         string    `json:"repo"`
-	Number       int       `json:"number"`
-	HeadSHA      string    `json:"head_sha"`
-	Check        string    `json:"check"`
-	Conclusion   string    `json:"conclusion,omitempty"`
-	DetailsURL   string    `json:"details_url,omitempty"`
-	Title        string    `json:"title,omitempty"`
-	Author       string    `json:"author,omitempty"`
-	HiveAuthored bool      `json:"hive_authored"`
-	Agent        string    `json:"agent,omitempty"`
-	At           time.Time `json:"at"`
+	Repo         string                     `json:"repo"`
+	Number       int                        `json:"number"`
+	HeadSHA      string                     `json:"head_sha"`
+	Check        string                     `json:"check"`
+	Conclusion   string                     `json:"conclusion,omitempty"`
+	DetailsURL   string                     `json:"details_url,omitempty"`
+	Title        string                     `json:"title,omitempty"`
+	Author       string                     `json:"author,omitempty"`
+	HiveAuthored bool                       `json:"hive_authored"`
+	Agent        string                     `json:"agent,omitempty"`
+	At           time.Time                  `json:"at"`
+	Integration  *IntegrationFailureContext `json:"integration,omitempty"`
+}
+
+type IntegrationFailureContext struct {
+	CandidateID string   `json:"candidate_id"`
+	TestedSHA   string   `json:"tested_sha"`
+	TestedTree  string   `json:"tested_tree"`
+	BaseSHA     string   `json:"base_sha"`
+	Members     []string `json:"ordered_members"`
+	Policy      string   `json:"policy"`
+	Producer    string   `json:"producer"`
+	Attempt     int      `json:"attempt"`
+	RunID       int64    `json:"run_id,omitempty"`
+	SuiteID     int64    `json:"suite_id,omitempty"`
+	Source      string   `json:"source,omitempty"`
 }
 
 // CIFailureSignalsStatus is the /api/status view of the store.

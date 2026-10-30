@@ -939,6 +939,10 @@ func runEvalCycle(
 	// policy, dashboard status, PR/review dispatch, escalation, and every path
 	// not explicitly enrolled.
 	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
+	if err := dashSrv.ReconcileIntegration(ctx); err != nil {
+		logger.Warn("integration observations incomplete", "error", err)
+	}
+	kickActionable = dashSrv.IntegrationKickAdmission(kickActionable)
 
 	sched.SetLastActionable(kickActionable)
 	// The filter compacts agentsDue in place, so snapshot it first to report

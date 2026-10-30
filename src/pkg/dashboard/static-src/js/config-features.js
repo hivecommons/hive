@@ -143,6 +143,7 @@
       am = am || {};
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
+      const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -1144,6 +1145,48 @@
           <div class="config-help">Checkpoint, triage and recheck settings are applied live; no restart is needed.</div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Integration orchestration</div>
+          <div class="config-help">Default OFF. Coordinates authoring admission above existing preparation and native queues; never replaces CI, review, holds or current-base guards. Advisory cannot block. Enforce requires explicit repository/base scopes and complete runner telemetry. No native queue jumping or GitHub build-window control. 5,000/day is a capacity target, not a measured result.</div>
+          <div class="config-field"><label>Mode ${yamlHint('integration_orchestration.mode')} ${settingHelpMark('settings', 'features', 'Integration mode', `Off preserves existing dispatch. Advisory records observations but cannot block. Enforce applies only enrolled, authoritative constraints; it never replaces merge gates.`)}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(m => `<option value="${esc(m)}" ${io.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Exact scopes (one owner/repo#base per line) ${yamlHint('integration_orchestration.scopes[].repo')} ${yamlHint('integration_orchestration.scopes[].base')} ${settingHelpMark('settings', 'features', 'Integration scopes', `At most eight exact repository/base destinations. No wildcard enrollment. Multiple enrolled bases leave issue destination unknown rather than guessing.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="scope_lines" data-arg-types="s,s,v">${esc((io.scopes || []).map(s => s.repo + '#' + s.base).join('\n'))}</textarea>
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['max_active','Active admissions',2,'integration_orchestration.max_active'],
+              ['max_jobs','Executed jobs per window',20,'integration_orchestration.max_jobs'],
+              ['max_runner_minutes','Runner minutes per window',60,'integration_orchestration.max_runner_minutes'],
+              ['max_attempts','Attempt bound',2,'integration_orchestration.max_attempts'],
+              ['admission_jobs','Job allocation per admission',1,'integration_orchestration.admission_jobs'],
+              ['admission_runner_minutes','Minute allocation per admission',10,'integration_orchestration.admission_runner_minutes']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Validated static admission bound, not a capacity measurement. Outstanding allocations count conservatively alongside actual assigned-runner execution. Missing accounting freezes growth; retries never rerun or cancel GitHub jobs.`)}</label><input type="number" min="1" value="${esc(String(io[key] || def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['lease_ttl','Reservation TTL (minutes)',5,'integration_orchestration.lease_ttl'],
+              ['window','Accounting window (minutes)',60,'integration_orchestration.window'],
+              ['max_observation_age','Maximum observation age (minutes)',30,'integration_orchestration.max_observation_age']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Lease TTL is 1–15 minutes and clipped to live ownership. Accounting window is 1 minute–24 hours. Maximum observation age is 1–60 minutes; stale observations are unknown, not zero.`)}</label><input type="number" min="1" value="${esc(String(io[key] ? io[key] / (60 * 1e9) : def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}_minutes" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field"><label>Pinned workflow evidence contracts (JSON array) ${settingHelpMark('settings', 'features', 'Integration workflow contracts', `Pins a separately reviewed workflow blob, event engine, exact required job names and producer App ID. Empty means policy evidence remains unknown. This does not activate native queues or replace full CI, review, DCO or other gates.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="policy_json" data-arg-types="s,s,v">${esc(JSON.stringify(io.policies || [], null, 2))}</textarea>
+          </div>
+          <div class="config-help">${[
+            'integration_orchestration.policies[].repo', 'integration_orchestration.policies[].base',
+            'integration_orchestration.policies[].engine', 'integration_orchestration.policies[].workflow',
+            'integration_orchestration.policies[].blob', 'integration_orchestration.policies[].app_id',
+            'integration_orchestration.policies[].jobs[]'
+          ].map(path => yamlHint(path)).join(' ')} Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
+          <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
+          <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
           <div class="config-field">
             <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
@@ -1159,4 +1202,3 @@
         </div>
         `)}`;
     }
-
