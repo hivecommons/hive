@@ -183,18 +183,17 @@ func TestStageTrackerNoteTuckWiring(t *testing.T) {
 		`stageTrackerNoteVisibility(document.visibilityState !== 'visible')`,
 		`ctx.noteTuck = stageTrackerNoteTuckSetting();`,
 		`if (typeof stageTrackerNoteSync === 'function') stageTrackerNoteSync(el, nowMs);`,
-		`.cue-event.cue-event-tuckable { display: grid; grid-template-columns: auto 1fr;`,
-		`.cue-event.cue-event-tuckable.cue-event-tucked { grid-template-columns: auto 0fr; }`,
-		`transition: grid-template-columns 400ms ease-in-out;`,
-		`.cue-event-tucked .cue-event-body { opacity: 0; transform: translateX(-6px) scaleX(0.96); pointer-events: none; }`,
-		`@media (prefers-reduced-motion: reduce) { .cue-event.cue-event-tuckable, .cue-event-body, .cue-event-ico { transition: none; } }`,
+		`.cue-event.cue-event-tuckable { display: flex; align-items: center;`,
+		`transition: clip-path 400ms ease-in-out, opacity 350ms ease-in-out, transform 400ms ease-in-out;`,
+		`.cue-event-tucked .cue-event-body { opacity: 0; transform: translateX(-8px); clip-path: inset(0 100% 0 0); pointer-events: none; }`,
+		`@media (prefers-reduced-motion: reduce) { .cue-event-body, .cue-event-ico { transition: none; } }`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html lacks %q", want)
 		}
 	}
 	// The line keeps one fixed height either way so the chevrons never shift.
-	if !strings.Contains(html, `.cue-event.cue-event-tuckable { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 0; height: 1.6em; line-height: 1.6em;`) {
+	if !strings.Contains(html, `.cue-event.cue-event-tuckable { display: flex; align-items: center; gap: 0; height: 1.6em; line-height: 1.6em;`) {
 		t.Errorf("tuckable line has no fixed height")
 	}
 }
