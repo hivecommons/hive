@@ -129,3 +129,53 @@ test('hivecommons/docs#512 keeps its column: a merge outcome at 050/060 with not
   assert.strictEqual(lifted.anchor(50, STAGES, 'pr', row(50)), COLUMN.MERGE_GATE);
   assert.strictEqual(lifted.anchor(30, STAGES, 'pr', row(30)), COLUMN.PR, 'a stale gate never jumps a PR back in progress forward');
 });
+
+// hive's own #15654: an issue filed seconds ago (000 New, no label yet)
+// whose nested PR #15655 is already open. The strip draws the row via
+// the PR ("PR in progress · @clubanderson"), so the list order must ride
+// the same live work — not the parent's unlabelled stage, which sank the
+// row to the bottom among the New rows. stageTrackerLead is the one rule
+// the strip (stageTrackerLeadStage) and the sort key share.
+const leadSrc = [
+  pick(/const STAGE_TRACKER_COVERED_BY_PR = \d+;/, 'STAGE_TRACKER_COVERED_BY_PR'),
+  pick(/function stageTrackerLinkedDrawnHere\(lp, item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerLinkedDrawnHere'),
+  // One covering PR per case: the tie-breakers never run, so stubs do.
+  'function stageTrackerLinkedSupersededGone(lp) { return String(lp && lp.state || "") === "closed"; }',
+  'function stageTrackerAttentionTier() { return 0; }',
+  pick(/function stageTrackerLinkedSorted\(item, stages\) \{[\s\S]*?\n    \}\n/, 'stageTrackerLinkedSorted'),
+  pick(/function stageTrackerLeadStage\(lp\) \{[\s\S]*?\n    \}\n/, 'stageTrackerLeadStage'),
+  pick(/function stageTrackerLead\(item, stages\) \{[\s\S]*?\n    \}\n/, 'stageTrackerLead'),
+  pick(/function stageTrackerSortKey\(item, stages\) \{[\s\S]*?\n    \}\n/, 'stageTrackerSortKey'),
+].join('\n');
+
+test('#15654: a New issue whose nested PR is open sorts and anchors by the PR, not the unlabelled parent', () => {
+  let l;
+  try {
+    l = new Function(src + '\n' + leadSrc + '; return { lead: stageTrackerLead, leadStage: stageTrackerLeadStage, sortKey: stageTrackerSortKey, anchor: stageTrackerAnchor };')();
+  } catch (e) {
+    assert.fail('lifting the lead helpers: ' + e.message);
+  }
+  const issue = { repo: 'hivecommons/hive', number: 15654, kind: 'issue', stage: 0, stage_since: '', created_at: '2026-10-30T23:59:50Z',
+    caption: 'Covered by PR #15655 — waiting for the stage-label pass', modifiers: [],
+    linked_prs: [{ number: 15655, title: 'Fix', author: 'clubanderson', author_kind: 'human', stage: 0, stage_since: '' }] };
+  const lead = l.lead(issue, STAGES);
+  assert.strictEqual(lead.kind, 'pr');
+  assert.strictEqual(lead.lead.number, 15655);
+  assert.strictEqual(lead.stage, 40, 'an open PR with no stage yet drives the strip at 040 covered-by-PR');
+  assert.strictEqual(l.leadStage(issue.linked_prs[0]), 40);
+  assert.strictEqual(l.leadStage({ stage: 50 }), 50, 'a staged PR keeps its own stage');
+  const key = l.sortKey(issue, STAGES);
+  assert.strictEqual(key.anchor, COLUMN.PR, 'list place = the PR column, the same the strip lights');
+  assert.ok(key.anchor > l.sortKey({ kind: 'issue', stage: 0, linked_prs: [] }, STAGES).anchor, 'sorts above a New issue with no PR');
+  // The strip and the sort key never disagree: whatever the nested PR's stage,
+  // the sort anchor equals the anchor of the stage the strip draws.
+  for (const stage of [0, 30, 40, 50, 60, 70, 80, 90, 110]) {
+    const it = Object.assign({}, issue, { linked_prs: [Object.assign({}, issue.linked_prs[0], { stage })] });
+    const ld = l.lead(it, STAGES);
+    assert.strictEqual(l.sortKey(it, STAGES).anchor, l.anchor(ld.stage, STAGES, 'pr', ld.lead), 'nested PR stage ' + stage);
+  }
+  // No covering PR: the issue is its own lead.
+  const bare = l.lead({ kind: 'issue', stage: 10, stage_since: '2026-10-30T00:00:00Z' }, STAGES);
+  assert.strictEqual(bare.kind, 'issue');
+  assert.strictEqual(bare.stage, 10);
+});

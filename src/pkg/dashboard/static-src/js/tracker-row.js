@@ -1150,13 +1150,30 @@
       });
     }
 
+    // The stage a covering PR drives its issue's strip at: its own, or 040
+    // covered-by-PR while it has none yet (an open PR filed seconds ago,
+    // still waiting for the stage-label pass). One rule for the strip and
+    // the list order — hive's own #15654 (000 New, nested #15655 drawn as
+    // "PR in progress") sat at the bottom among the New rows because the
+    // sort key fell back to the parent's unlabelled stage while the strip
+    // did not.
+    const STAGE_TRACKER_COVERED_BY_PR = 40;
+    function stageTrackerLeadStage(lp) {
+      return Number(lp && lp.stage) || STAGE_TRACKER_COVERED_BY_PR;
+    }
+    // Pure: the row whose live work drives an issue's strip and list place
+    // — its furthest covering PR, else the issue itself.
+    function stageTrackerLead(item, stages) {
+      const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
+      if (!linked.length) return { lead: item, kind: item.kind, stage: Number(item.stage) || 0, since: item.stage_since || '' };
+      const lp = linked[0];
+      return { lead: lp, kind: 'pr', stage: stageTrackerLeadStage(lp), since: lp.stage_since || item.stage_since || '' };
+    }
     // List order: furthest along the strip first — a covered issue counts as
     // far along as its furthest covering PR — then longest-waiting first.
     function stageTrackerSortKey(item, stages) {
-      const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
-      const lead = linked.length && linked[0].stage ? linked[0] : item;
-      const kind = lead === item ? item.kind : 'pr';
-      return { anchor: stageTrackerAnchor(lead.stage, stages, kind, lead), since: Date.parse(lead.stage_since || '') || Infinity };
+      const l = stageTrackerLead(item, stages);
+      return { anchor: stageTrackerAnchor(l.stage, stages, l.kind, l.lead), since: Date.parse(l.since) || Infinity };
     }
 
     /* ---- Repo chip and group-by-repo (pure; run under node by
@@ -1303,7 +1320,7 @@
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '') || null, lp.base_ref)];
-          shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
+          shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
