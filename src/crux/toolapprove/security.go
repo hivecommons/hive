@@ -107,7 +107,9 @@ func NewDefaultSecurityScanner() *DefaultSecurityScanner {
 }
 
 var (
-	destructiveCmdRe  = regexp.MustCompile(`(?i)\b(rm\s+-[rRfF]+\s+(/|\*|/\*|\$HOME|~)|mkfs\b|dd\s+if=/dev/zero|:\(\)\{\s*:\|:&\s*\};:)\b`)
+	// Path arguments need shell terminators, not word boundaries: /, * and ~
+	// are non-word characters. The fork bomb likewise needs no word boundary.
+	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+-[rRfF]+\s+(/|\*|/\*|\$HOME|~)(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
 )
 
