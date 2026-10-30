@@ -227,6 +227,7 @@
     const LAYOUT_TITLES = { dark: 'Switch to Light Mode', light: 'Switch to Dark Mode' };
     function getLayout() {
       let stored = localStorage.getItem(LAYOUT_KEY) || 'light';
+      if (window.hiveKioskMode && window.hiveKioskMode()) { let kt = null; try { kt = new URL(window.location.href).searchParams.get('theme'); } catch (e) {} stored = kt === 'light' ? 'light' : 'dark'; }
       if (stored === 'openclaw') { stored = 'light'; setLayout(stored); }
       if (stored === 'classic') { stored = 'dark'; setLayout(stored); }
       return LAYOUT_MODES.includes(stored) ? stored : 'light';

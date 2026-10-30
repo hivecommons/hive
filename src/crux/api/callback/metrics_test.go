@@ -2,6 +2,7 @@ package callback
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -152,5 +153,81 @@ func TestRequestMetricsCountUnauthorizedAsUnknown(t *testing.T) {
 	points := counterPoints(t, reader)
 	if len(points) != 1 || points[attrSet(capabilityUnknown, statusClass4xx, CodeUnauthorized)] != 1 {
 		t.Errorf("points = %v, want one unknown/4xx/unauthorized", points)
+	}
+}
+
+// A boundary failure is a 502 CodeUpstream; the counter must file it under
+// 5xx with that code, not under the 4xx class a refusal gets.
+func TestRequestMetricsClassifyUpstreamFailureAs5xx(t *testing.T) {
+	reader := useTestMetrics(t)
+	h := NewServer(&fakeCaps{fail: errors.New("github said no")}, testBearer).Handler()
+
+	if rr := serve(h, http.MethodPost, PathTokens, testBearer); rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rr.Code)
+	}
+
+	points := counterPoints(t, reader)
+	if len(points) != 1 || points[attrSet(CapabilityTokens, statusClass5xx, CodeUpstream)] != 1 {
+		t.Errorf("points = %v, want one tokens/5xx/upstream", points)
+	}
+}
+
+func TestStatusClassBoundaries(t *testing.T) {
+	for status, want := range map[int]string{
+		http.StatusOK:                  statusClass2xx,
+		http.StatusNoContent:           statusClass2xx,
+		399:                            statusClass2xx,
+		http.StatusBadRequest:          statusClass4xx,
+		499:                            statusClass4xx,
+		http.StatusInternalServerError: statusClass5xx,
+		http.StatusBadGateway:          statusClass5xx,
+	} {
+		if got := statusClass(status); got != want {
+			t.Errorf("statusClass(%d) = %q, want %q", status, got, want)
+		}
+	}
+}
+
+// The recorder keeps the first status a handler commits, defaults an
+// implicit Write to 200, and is absent when a handler runs uninstrumented.
+func TestStatusRecorderFirstStatusWins(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rec := &statusRecorder{ResponseWriter: rr}
+	rec.WriteHeader(http.StatusBadGateway)
+	rec.WriteHeader(http.StatusOK)
+	if rec.status != http.StatusBadGateway || rr.Code != http.StatusBadGateway {
+		t.Errorf("status = %d (recorder %d), want first WriteHeader 502 kept", rec.status, rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	rec = &statusRecorder{ResponseWriter: rr}
+	if _, err := rec.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if rec.status != http.StatusOK || rr.Body.String() != "ok" {
+		t.Errorf("implicit Write: status = %d body %q, want 200 \"ok\"", rec.status, rr.Body.String())
+	}
+	if rec.Unwrap() != rr {
+		t.Error("Unwrap should return the wrapped ResponseWriter")
+	}
+	if recorderOf(rr) != nil {
+		t.Error("recorderOf(plain writer) should be nil")
+	}
+	if recorderOf(rec) != rec {
+		t.Error("recorderOf(recorder) should return it")
+	}
+}
+
+// A handler invoked without instrument must still answer; writeError and
+// capability tolerate the missing recorder.
+func TestWriteErrorWithoutRecorder(t *testing.T) {
+	s := NewServer(&fakeCaps{}, testBearer)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, PathTokens, strings.NewReader("{}"))
+	s.capability(CapabilityTokens, func(w http.ResponseWriter, r *http.Request) {
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "nope")
+	})(rr, req)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), CodeBadRequest) {
+		t.Errorf("uninstrumented writeError: status %d body %q", rr.Code, rr.Body.String())
 	}
 }
