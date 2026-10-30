@@ -190,7 +190,7 @@ func injectOriginLabel(method, path string, body []byte, agentName string) ([]by
 	if raw, present := payload["title"]; present {
 		var title string
 		if err := json.Unmarshal(raw, &title); err == nil && title != "" {
-			if tagged := issueshape.TitleFor(lane, title); tagged != title {
+			if tagged := issueshape.AgentIssueTitle(lane, title); tagged != title {
 				encoded, err := json.Marshal(tagged)
 				if err != nil {
 					return body, false
