@@ -89,36 +89,42 @@ func baseRefreshKey(owner, repo string, number int, oldHead, newHead string) str
 	return owner + "/" + repo + "#" + strconv.Itoa(number) + "@" + newHead + "<-" + oldHead
 }
 
-// headIsBaseRefreshChainOf is the single-hop check first, then a walk back
-// along the first-parent chain: every hop must itself pass the single-hop
-// check (App-authored merge, base parent on the base branch, diff
-// unchanged), and the walk reaches oldHead within baseRefreshMaxHops.
+// headIsBaseRefreshChainOf walks back from newHead along the first-parent
+// chain for at most baseRefreshMaxHops hops. Each commit is fetched exactly
+// once and must itself be a hive base refresh of its first parent
+// (App-authored merge, base parent on the base branch, diff unchanged); the
+// walk succeeds when a hop's non-base parent is oldHead. The first hop keeps
+// the single-refresh tolerance of oldHead in either parent position.
 func headIsBaseRefreshChainOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef, oldHead, newHead, appBotLogin string) bool {
-	if headIsBaseRefreshOf(ctx, api, owner, repo, baseRef, oldHead, newHead, appBotLogin) {
-		return true
-	}
+	ctx = WithRESTCaller(ctx, "hive:decision_base_refresh")
 	cur := newHead
 	for hop := 0; hop < baseRefreshMaxHops; hop++ {
-		commit, _, err := api.GetCommit(WithRESTCaller(ctx, "hive:decision_base_refresh"), owner, repo, cur, nil)
+		commit, _, err := api.GetCommit(ctx, owner, repo, cur, nil)
 		if err != nil || commit == nil || len(commit.Parents) != baseRefreshMergeParents {
 			return false
 		}
-		parent := strings.TrimSpace(commit.Parents[0].GetSHA())
-		if parent == "" || parent == cur || !headIsBaseRefreshOf(ctx, api, owner, repo, baseRef, parent, cur, appBotLogin) {
+		first, second := strings.TrimSpace(commit.Parents[0].GetSHA()), strings.TrimSpace(commit.Parents[1].GetSHA())
+		prev := first
+		if oldHead == first || oldHead == second {
+			prev = oldHead
+		}
+		if prev == "" || prev == cur || !mergeIsBaseRefreshOf(ctx, api, owner, repo, baseRef, commit, prev, cur, appBotLogin) {
 			return false
 		}
-		if parent == oldHead {
+		if prev == oldHead {
 			return true
 		}
-		cur = parent
+		cur = prev
 	}
 	return false
 }
 
-func headIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef, oldHead, newHead, appBotLogin string) bool {
-	ctx = WithRESTCaller(ctx, "hive:decision_base_refresh")
-	commit, _, err := api.GetCommit(ctx, owner, repo, newHead, nil)
-	if err != nil || commit == nil || len(commit.Parents) != baseRefreshMergeParents {
+// mergeIsBaseRefreshOf is the single-hop check over an already-fetched
+// commit (the merge commit at newHead): authored by the App, oldHead is one
+// parent and the other parent is the merge-base with baseRef, and the
+// three-dot diff against baseRef is unchanged from oldHead's.
+func mergeIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef string, commit *gh.RepositoryCommit, oldHead, newHead, appBotLogin string) bool {
+	if commit == nil || len(commit.Parents) != baseRefreshMergeParents {
 		return false
 	}
 	if !CommitByGitHubLogin(commit, appBotLogin) {

@@ -224,7 +224,12 @@ that does not supersede it is the hive's own `require_current_base` refresh:
 a merge commit authored by the App whose parents are the decided head and a
 commit on the base branch, and whose three-dot diff against the base is
 file-for-file (name, status, blob, line counts, patch) identical to the
-decided head's. Before any gate reads the new head — the reviewer-verdict
+decided head's. Up to five such refreshes may stack before any gate reads
+the PR: the carry walks the first-parent chain back from the new head and
+every hop must itself pass the same check, so two App merge-from-base
+commits in a row still carry while a content commit anywhere in the chain
+does not ([#15766](https://github.com/hivecommons/hive/issues/15766)).
+Before any gate reads the new head — the reviewer-verdict
 stage route, the automerge review gate, operator admission and the hold
 guard — the decision is re-recorded on it with `carried_from_head` naming
 the original, and one INFO line `decision carried over base refresh` is
