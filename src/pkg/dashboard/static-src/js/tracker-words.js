@@ -397,10 +397,22 @@
       else if (why) tip += ' · no estimate until #' + p.head + ' moves';
       return tip + '.' + order;
     }
-    // Tooltip lines: the queue ahead and the overlapping files.
+    // The muted hover note on a PR the server took out of its merge train
+    // while it is under repair (left_train: {why, note} — fixing, needs
+    // author, needs decision, red checks). The row rides no train and
+    // wears no ordinal; this line is the only trace.
+    const STAGE_TRACKER_LEFT_TRAIN_NOTE = 'left the merge train while being fixed; rejoins when green';
+    // Pure: the left-train note for a row, '' when it rides or never rode.
+    function stageTrackerLeftTrainNote(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.note || STAGE_TRACKER_LEFT_TRAIN_NOTE);
+    }
+    // Tooltip lines: the queue ahead and the overlapping files — or, for a
+    // PR that left its train, the one muted note.
     function stageTrackerTrainLines(item) {
       const mt = stageTrackerTrain(item);
-      if (!mt) return [];
+      if (!mt) { const left = stageTrackerLeftTrainNote(item); return left ? ['Merge train: ' + left] : []; }
       const ahead = Array.isArray(mt.ahead) ? mt.ahead.filter(n => Number(n) > 0) : [];
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
       const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
