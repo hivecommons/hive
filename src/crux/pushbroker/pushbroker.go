@@ -453,20 +453,22 @@ func (b *Broker) validate() error {
 // control character, `"` or `\` and wraps it in double quotes, and that
 // leading quote would defeat the prefix match in ProtectedPathViolations
 // (`".github/workflows/d\303\251pl.yml"` is not under `.github/workflows/`).
-// NUL-separated output carries the exact on-disk path instead.
+// NUL-separated output carries the exact on-disk path instead. --no-renames
+// lists a rename as a deletion plus an addition so both paths are checked,
+// even when workspace config enables rename detection.
 func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 	if base := strings.TrimSpace(b.BaseRef); base != "" {
 		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-			out, err := b.git(ctx, "diff", "--name-only", "-z", base+"...HEAD")
+			out, err := b.git(ctx, "diff", "--no-renames", "--name-only", "-z", base+"...HEAD")
 			return splitNUL(out), err
 		}
 	}
 	base := b.remoteRef()
 	if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-		out, err := b.git(ctx, "diff", "--name-only", "-z", base+"...HEAD")
+		out, err := b.git(ctx, "diff", "--no-renames", "--name-only", "-z", base+"...HEAD")
 		return splitNUL(out), err
 	}
-	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "HEAD")
+	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--no-renames", "--name-only", "-r", "-z", "HEAD")
 	return splitNUL(out), err
 }
 
