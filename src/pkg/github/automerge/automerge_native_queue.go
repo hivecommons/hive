@@ -259,6 +259,12 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 		}
 	}
 	if !state.IsInMergeQueue {
+		if c.integrationAdmission != nil {
+			reason, err := c.integrationAdmission(ctx, claim.Repo, pr)
+			if reason != "" || err != nil {
+				return "integration-admission: " + reason, err
+			}
+		}
 		// Each removal starts a new queue attempt, even at the same head.
 		// The previous applied journal entry must never suppress re-enqueue.
 		cycle := ""

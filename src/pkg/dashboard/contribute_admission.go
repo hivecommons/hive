@@ -175,6 +175,15 @@ const (
 // it" signal. External work bypasses that GitHub-only observer and evaluates
 // the source-native dependency edges carried by its enumeration snapshot.
 func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributorAdmissionSweep, candidate contributorAdmissionCandidate) contributorAdmissionDecision {
+	if h != nil && h.server != nil {
+		ref := candidate.ref
+		if ref == (worksource.Ref{}) {
+			ref = worksource.Ref{Repo: candidate.repoFull, Number: candidate.number}
+		}
+		if d := h.server.integrationDispatchDecision(ref); !d.Allowed {
+			return contributorAdmissionDecision{reason: "integration_orchestration: " + d.Reason}
+		}
+	}
 	if label, ok := h.contributeSkipLabel(candidate.labels); ok {
 		if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
 			return blockedWorkflowAdmissionDecision(label)
