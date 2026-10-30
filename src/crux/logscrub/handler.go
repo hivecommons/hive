@@ -147,9 +147,11 @@ func scrubAttr(a slog.Attr) slog.Attr {
 }
 
 // renderAny returns the text slog.TextHandler would render for a KindAny
-// value that implements a text interface, matching its precedence
-// (TextAppender, then TextMarshaler, then fmt for error/Stringer). ok is
-// false when the value has no text form and should pass through unchanged.
+// value that implements a text interface, using the precedence of Go 1.27+
+// (TextAppender, then TextMarshaler, then fmt for error/Stringer). Go 1.26
+// and earlier slog ignores TextAppender and renders MarshalText instead; the
+// text differs there but is scrubbed either way. ok is false when the value
+// has no text form and should pass through unchanged.
 func renderAny(v any) (text string, ok bool) {
 	defer func() {
 		if r := recover(); r != nil {

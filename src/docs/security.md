@@ -12,7 +12,7 @@ The current redaction pattern replaces matches with `[REDACTED]` in:
 
 - log messages,
 - string-valued attributes,
-- `encoding.TextAppender` and `encoding.TextMarshaler` attributes (including scrubbed marshal errors), checked in the same order as `slog.TextHandler` so the scrubbed text matches what would otherwise have been rendered,
+- `encoding.TextAppender` and `encoding.TextMarshaler` attributes (including scrubbed marshal errors), checked in the order `slog.TextHandler` uses on Go 1.27+ (TextAppender first; Go 1.26 slog ignores TextAppender and renders MarshalText) so the scrubbed text matches what would otherwise have been rendered,
 - `error` and `fmt.Stringer` attributes rendered to text,
 - resolved `slog.LogValuer` attributes, recursively scrubbed by their resolved kind,
 - attributes nested inside slog groups, and
