@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,9 +14,11 @@ import (
 func TestStageTrackerMergeGateLabelsHelpCoverage(t *testing.T) {
 	html := indexHTML(t)
 	labels := jsConstObject(t, html, "const STAGE_TRACKER_ACTION_LABELS")
-	raw, err := os.ReadFile(dashboardSectionsDoc)
+	// The merge-gate legend lives on the Activity Monitor page of the split help.
+	helpDoc := filepath.Join("..", "..", "docs", "dashboard-sections", "activity-monitor.md")
+	raw, err := os.ReadFile(helpDoc)
 	if err != nil {
-		t.Fatalf("reading %s: %v", dashboardSectionsDoc, err)
+		t.Fatalf("reading %s: %v", helpDoc, err)
 	}
 	help := string(raw)
 	for action, label := range map[string]string{
@@ -26,7 +29,7 @@ func TestStageTrackerMergeGateLabelsHelpCoverage(t *testing.T) {
 			t.Errorf("STAGE_TRACKER_ACTION_LABELS lacks %s: %s", want, labels)
 		}
 		if !strings.Contains(help, "**"+label+"**") {
-			t.Errorf("%s has no help entry for %q", dashboardSectionsDoc, label)
+			t.Errorf("%s has no help entry for %q", helpDoc, label)
 		}
 	}
 	if strings.Index(labels, "'"+decisionActionQueueMerge+"'") > strings.Index(labels, "'"+decisionActionMergeNow+"'") {
