@@ -41,6 +41,8 @@ func stageTrackerDecidedUIJS(t *testing.T, html string) string {
 		"var _stageTrackerPending = [];",
 		jsFunc(t, html, "stageTrackerRowDeciding"),
 		jsFunc(t, html, "stageTrackerSetPending"),
+		jsConstLine(t, html, "STAGE_TRACKER_LEAD_BUSY_TEXT"),
+		jsFunc(t, html, "stageTrackerLeadBusySync"),
 		jsFunc(t, html, "stageTrackerPendingSync"),
 		stageTrackerDomStubJS,
 		stageTrackerRowsFixtureJS,

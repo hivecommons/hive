@@ -514,7 +514,10 @@
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
-      if (a.passive) return `<span class="ham-badge ham-decision-pending" title="${esc('The decision is on PR #' + a.passive + ' — Let hive decide lives on its row')}">decision pending on #${Number(a.passive) || 0}</span>`;
+      // The covering PR has its own row: the decision — whatever its lead
+      // (Let hive decide, Merge now, Adopt…) — is taken there, so this row
+      // shows a passive chip that names that lead rather than a second button.
+      if (a.passive) return `<span class="ham-badge ham-decision-pending" title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on its row')}">decision pending on #${Number(a.passive) || 0}</span>`;
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
@@ -1584,8 +1587,10 @@
     // recorded on the ledger).
     async function stageTrackerDelegatePreview(items, rows) {
       // The plan gathers the PR live (seconds): the row reads "acting…" and
-      // its button busy from the click until the preview can open.
-      const pend = stageTrackerSetPending([].concat(...items.map(it => stageTrackerPendingKeys(it, rows))).filter((k, i, a) => a.indexOf(k) === i), stageTrackerActingCaption('decide:delegate'));
+      // its Let hive decide button busy from the click until the preview can
+      // open. The pend is tagged with the button it busies: a confirmed
+      // action's pend (or any other ⋯ action on the row) leaves it alone.
+      const pend = stageTrackerSetPending([].concat(...items.map(it => stageTrackerPendingKeys(it, rows))).filter((k, i, a) => a.indexOf(k) === i), stageTrackerActingCaption('decide:delegate'), undefined, 'decide:delegate');
       let plans;
       try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { stageTrackerClearPending(pend); }
       const failed = plans.filter(pl => pl.error);
@@ -1983,8 +1988,10 @@
       pend.caption = stageTrackerDecidedActing(result, item);
       stageTrackerPendingSync(document.getElementById('activity-monitor-panel'));
     }
-    function stageTrackerSetPending(keys, caption, now) {
-      const pend = { keys: keys.slice(), caption, key: '', state: null, decided: false, at: typeof now === 'number' ? now : Date.now() };
+    // busy: the data-ham-act of the row's lead button that reads busy while
+    // this entry is pending ('' — the default — busies no button).
+    function stageTrackerSetPending(keys, caption, now, busy) {
+      const pend = { keys: keys.slice(), caption, key: '', state: null, decided: false, at: typeof now === 'number' ? now : Date.now(), busy: busy || '' };
       _stageTrackerPending.push(pend);
       stageTrackerPendingSync(document.getElementById('activity-monitor-panel'));
       return pend;
@@ -2010,29 +2017,41 @@
       });
     }
     function stageTrackerPendingExpire(d, now) { _stageTrackerPending = stageTrackerPendingLive(_stageTrackerPending, d, typeof now === 'number' ? now : Date.now()); }
+    // The row's lead button while a tagged pend (busyAct, its data-ham-act)
+    // waits: busy, spinner, "Asking the hive…", not clickable again. The
+    // button's own aria-disabled / title are kept and put back when the
+    // pend clears, so a lead the row rendered disabled stays disabled.
+    const STAGE_TRACKER_LEAD_BUSY_TEXT = ' Asking the hive…';
+    function stageTrackerLeadBusySync(lead, busyAct) {
+      if (!lead) return;
+      const on = !!busyAct && lead.getAttribute('data-ham-act') === busyAct;
+      const isBusy = lead.getAttribute('aria-busy') === 'true';
+      if (on && !isBusy) {
+        lead.dataset.hamLabel = lead.textContent;
+        lead.dataset.hamWasDisabled = lead.getAttribute('aria-disabled') === 'true' ? 'true' : '';
+        lead.dataset.hamTitle = lead.getAttribute('title') || '';
+        lead.setAttribute('aria-busy', 'true'); lead.setAttribute('aria-disabled', 'true'); lead.removeAttribute('title');
+        lead.textContent = '';
+        const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; lead.appendChild(sp);
+        lead.appendChild(document.createTextNode(STAGE_TRACKER_LEAD_BUSY_TEXT));
+      } else if (!on && isBusy) {
+        lead.removeAttribute('aria-busy');
+        if (lead.dataset.hamWasDisabled === 'true') lead.setAttribute('aria-disabled', 'true'); else lead.removeAttribute('aria-disabled');
+        if (lead.dataset.hamTitle) lead.setAttribute('title', lead.dataset.hamTitle); else lead.removeAttribute('title');
+        lead.textContent = lead.dataset.hamLabel || '';
+      }
+    }
     // Mark rows / sub-rows acting; captions are real nodes so a kept row
     // keeps its caption and a re-rendered one gets it back.
     function stageTrackerPendingSync(el) {
       if (!el || typeof el.querySelectorAll !== 'function') return;
-      const want = {};
-      for (const p of _stageTrackerPending) for (const k of p.keys) want[k] = p.caption;
+      const want = {}, busy = {};
+      for (const p of _stageTrackerPending) for (const k of p.keys) { want[k] = p.caption; if (p.busy) busy[k] = p.busy; }
       const nodes = Array.from(el.querySelectorAll('[data-ham-key], [data-ham-sub-key]'));
       for (const n of nodes) {
         const key = n.getAttribute('data-ham-sub-key') || n.getAttribute('data-ham-key');
         const cap = want[key];
-        // A pending Let hive decide shows on its button too: busy, not clickable again.
-        const lead = n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act^="decide:delegate"]');
-        if (lead) {
-          if (cap && lead.getAttribute('aria-busy') !== 'true') {
-            lead.dataset.hamLabel = lead.textContent;
-            lead.setAttribute('aria-busy', 'true'); lead.setAttribute('aria-disabled', 'true');
-            lead.textContent = '';
-            const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; lead.appendChild(sp);
-            lead.appendChild(document.createTextNode(' Asking the hive…'));
-          } else if (!cap && lead.getAttribute('aria-busy') === 'true') {
-            lead.removeAttribute('aria-busy'); lead.removeAttribute('aria-disabled'); lead.textContent = lead.dataset.hamLabel || '';
-          }
-        }
+        stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] || '');
         const strip = n.querySelector(':scope > .ham-strip-row');
         // The caption lives inside the lit chevron (the pill), never as a
         // separate element beside the ✓ badge (#15126); a row without a
