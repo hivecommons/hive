@@ -51,13 +51,13 @@ func TestStageTrackerMergeTrainCIReviewPairRidesNoTrain(t *testing.T) {
 	if rider.Overlap == nil || rider.Overlap.Behind != 15637 || strings.Join(rider.Overlap.Files, ",") != "sidebar.html,index.html" {
 		t.Fatalf("rider overlap = %+v", rider.Overlap)
 	}
-	if want := "overlaps #15637 (sidebar.html, index.html) — will queue behind it"; rider.Overlap.Note != want {
+	if want := "overlaps #15637 (sidebar.html, index.html) — joins the merge train behind it when green"; rider.Overlap.Note != want {
 		t.Errorf("rider note = %q, want %q", rider.Overlap.Note, want)
 	}
 	if front.Overlap == nil || front.Overlap.Behind != 0 || len(front.Overlap.With) != 1 || front.Overlap.With[0] != 15633 {
 		t.Fatalf("front overlap = %+v", front.Overlap)
 	}
-	if want := "overlaps #15633 (sidebar.html, index.html) — merges ahead of it once both are ready"; front.Overlap.Note != want {
+	if want := "overlaps #15633 (sidebar.html, index.html) — no member of the train is merge-ready yet; provisionally 1st, merges ahead of it if it is green first"; front.Overlap.Note != want {
 		t.Errorf("front note = %q, want %q", front.Overlap.Note, want)
 	}
 	raw, err := json.Marshal(rider)
@@ -112,7 +112,8 @@ func TestStageTrackerMergeTrainCountsOnlyMergeQueueMembers(t *testing.T) {
 
 // Two overlapping PRs, the planner's front still at 050 and the sibling
 // at 080: no train (one merge-queue member is no train), the 080 row
-// back to its own caption, the 050 row with the hint.
+// back to its own caption, the 050 row with the hint — naming the 080
+// row as the PR it joins behind: the lane merges the ready one first.
 func TestStageTrackerMergeTrainPendingFrontLeavesLoneRider(t *testing.T) {
 	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 	s, store := stageTrackerFixture(t, now)
@@ -131,8 +132,11 @@ func TestStageTrackerMergeTrainPendingFrontLeavesLoneRider(t *testing.T) {
 	if front.MergeTrain != nil || rider.MergeTrain != nil {
 		t.Fatalf("no train of one: front=%+v rider=%+v", front.MergeTrain, rider.MergeTrain)
 	}
-	if front.Overlap == nil || front.Overlap.Behind != 0 || len(front.Overlap.With) != 1 || front.Overlap.With[0] != 15578 {
+	if front.Overlap == nil || front.Overlap.Behind != 15578 || len(front.Overlap.With) != 1 || front.Overlap.With[0] != 15578 {
 		t.Errorf("front overlap = %+v", front.Overlap)
+	}
+	if want := "overlaps #15578 (tracker-words.js) — joins the merge train behind it when green"; front.Overlap.Note != want {
+		t.Errorf("front note = %q, want %q", front.Overlap.Note, want)
 	}
 	if rider.Overlap != nil || rider.Caption != stageTrackerAwaitingAdmissionCaption {
 		t.Errorf("080 rider: overlap=%+v caption=%q", rider.Overlap, rider.Caption)
@@ -176,4 +180,92 @@ func TestStageTrackerMergeTrainSizeCountsRidersInPayload(t *testing.T) {
 	if front.MergeGate == nil || !strings.Contains(front.MergeGate.Reason, "1st of 2") {
 		t.Errorf("front gate = %+v", front.MergeGate)
 	}
+}
+
+// Owner, hive's own page, 2026-10-30: "if 15741 is in ci/review, how can
+// it be first in a train? isn't that clogging up the train? and why is
+// ci/review in the merge queue column?" The planner had seated #15741
+// (CI / Review) first and #15748 / #15755 (both green at 080) behind it.
+// The lane now orders readiness first, and the view agrees with it: the
+// train is the two ready rows with #15748 at its head, in the Merge queue
+// column; #15741 keeps its chevron in the CI / Review column with a train
+// hint that names #15748 as the PR it joins behind when green — never
+// "1st", never a Merge-queue chip.
+func TestStageTrackerMergeTrainReadyMembersLeadPendingPlannerFront(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	overlap := []string{"hive-merge.md"}
+	queued := func(pos int) string {
+		return prstage.MergeTrain{State: prstage.MergeTrainStateQueuedBehind, Front: 15741, Position: pos, Size: 3, OverlapFiles: overlap}.Reason()
+	}
+	store.Observe(stagelabels.Key("acme/console", 15741), stagelabels.ReviewPending, "required-check-pending:build-and-test")
+	store.Observe(stagelabels.Key("acme/console", 15748), stagelabels.AwaitingMergeAdmission, queued(2))
+	store.Observe(stagelabels.Key("acme/console", 15755), stagelabels.AwaitingMergeAdmission, queued(3))
+	s.statusMu.Lock()
+	for n, stage := range map[int]stagelabels.Stage{15741: stagelabels.ReviewPending, 15748: stagelabels.AwaitingMergeAdmission, 15755: stagelabels.AwaitingMergeAdmission} {
+		s.status.Repos[0].OpenPrs = append(s.status.Repos[0].OpenPrs,
+			FrontendPR{PullRequest: github.PullRequest{Number: n, Title: "Merge docs", Author: "someone", BaseRef: "v5", Labels: []string{stage.Label()}}})
+	}
+	s.statusMu.Unlock()
+	resp := s.buildStageTracker(s.status, store, now)
+
+	pending := trackerItem(t, resp, "pr", 15741)
+	head := trackerItem(t, resp, "pr", 15748)
+	tail := trackerItem(t, resp, "pr", 15755)
+	if head.MergeTrain == nil || tail.MergeTrain == nil {
+		t.Fatalf("the ready rows ride: head=%+v tail=%+v", head.MergeTrain, tail.MergeTrain)
+	}
+	if head.MergeTrain.State != MergeGateStateTrainFront || head.MergeTrain.Position != 1 || head.MergeTrain.Front != 15748 || tail.MergeTrain.Front != 15748 || tail.MergeTrain.Position != 2 || head.MergeTrain.Size != 2 {
+		t.Errorf("the ready member leads: head=%+v tail=%+v", head.MergeTrain, tail.MergeTrain)
+	}
+	if head.MergeGate == nil || !strings.Contains(head.MergeGate.Reason, "1st of 2") || strings.Contains(head.MergeGate.Reason, "once it is ready") {
+		t.Errorf("head gate = %+v", head.MergeGate)
+	}
+	for _, it := range []StageTrackerItem{head, tail} {
+		if col := stageTrackerItemColumn(&it); col != trackerColumnMergeGate {
+			t.Errorf("#%d column = %d, want merge queue (%d)", it.Number, col, trackerColumnMergeGate)
+		}
+	}
+	if pending.MergeTrain != nil || pending.LeftTrain != nil {
+		t.Fatalf("the CI / Review row rides no train: train=%+v left=%+v", pending.MergeTrain, pending.LeftTrain)
+	}
+	if col := stageTrackerItemColumn(&pending); col != trackerColumnReview {
+		t.Errorf("#15741 column = %d, want CI / Review (%d)", col, trackerColumnReview)
+	}
+	if pending.Overlap == nil || pending.Overlap.Behind != 15748 || len(pending.Overlap.With) != 2 {
+		t.Fatalf("#15741 joins behind the ready front: %+v", pending.Overlap)
+	}
+	if want := "overlaps #15748 (hive-merge.md) — joins the merge train behind it when green"; pending.Overlap.Note != want {
+		t.Errorf("#15741 note = %q, want %q", pending.Overlap.Note, want)
+	}
+	if pending.MergeGate != nil && (pending.MergeGate.State == MergeGateStateTrainFront || pending.MergeGate.State == MergeGateStateQueuedBehind) {
+		t.Errorf("#15741 keeps a train gate: %+v", pending.MergeGate)
+	}
+}
+
+// The SPA's secondary train chip on a CI / Review row: "train · joins
+// behind #15748 when green" with the server's note as hover, "train ·
+// 1st once green" when no member is ready; nothing on a row that rides
+// a train or overlaps nothing.
+func TestStageTrackerOverlapChipWording(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, "function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }\nconst assert = require('assert');\n"+
+		"function stageTrackerTrain(item) { return item && item.merge_train ? item.merge_train : null; }\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_OVERLAP_CHIP_LEAD")+"\n"+
+		jsFunc(t, html, "stageTrackerOverlap")+"\n"+
+		jsFunc(t, html, "stageTrackerOverlapBadgeText")+"\n"+
+		jsFunc(t, html, "stageTrackerOverlapTip")+"\n"+
+		jsFunc(t, html, "stageTrackerOverlapBadgeHtml")+"\n"+`
+const joins = { number: 15741, stage: 50, overlap: { behind: 15748, with: [15748, 15755], files: ['hive-merge.md'], note: 'overlaps #15748 (hive-merge.md) — joins the merge train behind it when green' } };
+assert.strictEqual(stageTrackerOverlapBadgeText(joins), 'train · joins behind #15748 when green');
+assert.strictEqual(stageTrackerOverlapTip(joins), joins.overlap.note);
+const html1 = stageTrackerOverlapBadgeHtml(joins);
+assert.ok(html1.includes('ham-badge-overlap') && html1.includes('train · joins behind #15748 when green') && html1.includes('Not in the merge queue yet: overlaps #15748'), html1);
+const provisional = { number: 15741, stage: 50, overlap: { with: [15748], files: ['a.go'] } };
+assert.strictEqual(stageTrackerOverlapBadgeText(provisional), 'train · 1st once green');
+assert.strictEqual(stageTrackerOverlapTip(provisional), 'overlaps #15748 (a.go) — no member of the train is merge-ready yet; provisionally 1st, merges ahead of it if it is green first');
+assert.strictEqual(stageTrackerOverlapTip({ number: 1, overlap: { behind: 7, with: [7] } }), 'overlaps #7 — joins the merge train behind it when green');
+assert.strictEqual(stageTrackerOverlapBadgeText({ number: 15748, stage: 80, merge_train: { state: 'front' }, overlap: joins.overlap }), '');
+assert.strictEqual(stageTrackerOverlapBadgeText({ number: 1, stage: 50 }), '');
+`)
 }

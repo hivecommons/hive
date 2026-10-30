@@ -57,6 +57,10 @@
       _stageTrackerMergingHold = stageTrackerMergingHoldNext(_stageTrackerMergingHold, d, _stageTrackerMergeState, raw, _stageTrackerPRItems, nowMs);
       const masked = stageTrackerMergingHoldMask(raw, _stageTrackerMergingHold, nowMs);
       if (masked.until) stageTrackerMergingHoldSchedule(masked.until - nowMs);
+      // The Merged chip holds the masked merges back too: the server
+      // already counts them, their glyph has not even launched yet.
+      _stageTrackerMergedHeld = {};
+      masked.held.forEach(k => { _stageTrackerMergedHeld[k] = true; });
       _stageTrackerPRItems = stageTrackerPRItemsOf(d);
       const next = masked.state;
       const fresh = stageTrackerNewlyMerged(_stageTrackerMergeState, next).filter(k => !_stageTrackerZapped[k]);
@@ -390,6 +394,12 @@
     // Merges whose glyph is still on its way: the count holds them back
     // until stageTrackerCelebrateTick lands them.
     var _stageTrackerCelebratePending = {};
+    // Merges the merge-gate hold (#15245) still masks as open: the server
+    // counts them already, the SPA has not read them as fresh yet, so no
+    // glyph is pending for them. Without this the drum rolled on the poll
+    // that brought the merge — a full banner-lifetime before the bee
+    // launched — and the landing found nothing left to roll.
+    var _stageTrackerMergedHeld = {};
     // Stateful: fold one payload into the state and redraw the chip. The
     // count only bumps (pop + zap) through stageTrackerCelebrateTick; a
     // plain reload draws the server's number without a flourish.
@@ -407,13 +417,16 @@
       stageTrackerMergedChip.node = document.getElementById('activity-monitor-merged') || have || null;
       return stageTrackerMergedChip.node;
     }
-    // Pure: how many in-flight merges the server already counts — the
-    // chip holds those back so the landing is when it bumps.
-    function stageTrackerMergedHoldback(state, pending) {
+    // Pure: how many merges the server already counts whose bump the chip
+    // still owes the bee — a glyph pending or in the air, or a merge the
+    // merge-gate hold masks until its flight can launch — so the landing
+    // is when it bumps.
+    function stageTrackerMergedHoldback(state, pending, held) {
       const known = {};
       for (const e of ((state && state.server && state.server.recent) || [])) known[stageTrackerMergedIdent(e.repo, e.number)] = true;
+      const keys = Object.assign({}, held || {}, pending || {});
       let n = 0;
-      for (const key of Object.keys(pending || {})) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
+      for (const key of Object.keys(keys)) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
       return n;
     }
     // Pure: the odometer columns for a change of text from `from` to `to`,
@@ -567,15 +580,18 @@
     }
     // Stateful: whether a celebration glyph is in the air or about to be
     // (stageTrackerCelebrateMerges staggers the launches; a merge is
-    // pending from the payload that brought it). The drum and the zap
-    // wait on this; the flight's own end — its animationend, or
-    // stageTrackerAfter's timer at STAGE_TRACKER_CELEBRATE_FLY_MS when the
-    // event never fires — is what clears it.
-    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0; }
+    // pending from the payload that brought it, or masked by the merge
+    // gate's hold until then). The drum and the zap wait on this; the
+    // flight's own end — its animationend, or stageTrackerAfter's timer
+    // at STAGE_TRACKER_CELEBRATE_FLY_MS when the event never fires — is
+    // what clears it.
+    // A merge the merge-gate hold still masks counts as a flight to come:
+    // its glyph launches when the hold ends and re-reads it as fresh.
+    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0 || Object.keys(_stageTrackerMergedHeld).length > 0; }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
       const now = Date.now();
-      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending));
+      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending, _stageTrackerMergedHeld));
       // Never backwards within a tab: a server that has not caught up yet
       // (or lost a merge) does not make the number drop.
       if (txt.count > _stageTrackerMergedShown || tick) _stageTrackerMergedShown = Math.max(_stageTrackerMergedShown, txt.count);

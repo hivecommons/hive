@@ -47,7 +47,7 @@ const (
 )
 
 func standingMetaIssueKindFor(title, author string, labels []string) standingMetaIssueKind {
-	if title == advisoryTitle {
+	if isAdvisoryTitle(title) {
 		return standingMetaHiveAdvisory
 	}
 	for _, label := range labels {

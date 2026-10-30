@@ -12,13 +12,18 @@ import (
 	"github.com/hivecommons/hive/pkg/issueshape"
 )
 
+// Agent is the agent lane a hotspot issue is filed for: the title's
+// `[ci-maintainer]` tag and the agent/ci-maintainer label name the same
+// agent, the one that works the split.
+const Agent = "ci-maintainer"
+
 // Labels applied to every modularize issue. Both exist on hivecommons/hive;
 // the writer's label-ensure step creates them elsewhere.
-var Labels = []string{"agent/ci-maintainer", "kind/cleanup"}
+var Labels = []string{config.AgentLaneLabel(Agent), "kind/cleanup"}
 
-// Title is the issue title for a hotspot. The governor's hotspot advisor
-// files it, so it carries the `[governor]` tag every hive-filed issue title
-// starts with; the agent/ci-maintainer label says who works it.
+// Title is the issue title for a hotspot. It starts with the `[ci-maintainer]`
+// tag every hive-filed issue title carries, matching its agent/ci-maintainer
+// label (the governor's hotspot advisor files it on that lane's behalf).
 func Title(h Hotspot, units int) string {
 	var title string
 	switch h.Recommendation {
@@ -29,7 +34,7 @@ func Title(h Hotspot, units int) string {
 	default:
 		title = fmt.Sprintf("refactor: %s is a merge hotspot — split into %d units", h.File, units)
 	}
-	return issueshape.TitleFor(config.OriginSourceGovernor, title)
+	return issueshape.AgentIssueTitle(Agent, title)
 }
 
 // Body renders the issue body: plain-language summary (≤ 300 words),

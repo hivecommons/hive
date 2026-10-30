@@ -10,6 +10,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/crux/logscrub"
 )
 
@@ -96,7 +97,7 @@ func (c *Client) PostRecommendations(ctx context.Context, repo, title, body stri
 			}
 		}
 		created, _, err := c.client.Issues.Create(ctx, owner, repoName, &gh.IssueRequest{
-			Title:  gh.Ptr(title),
+			Title:  gh.Ptr(issueshape.AgentIssueTitle(config.OriginSourceGovernor, title)),
 			Body:   gh.Ptr(body),
 			Labels: gh.Ptr(labels),
 		})
@@ -174,7 +175,7 @@ func (c *Client) findRecommendationsIssue(ctx context.Context, owner, repo, titl
 			return nil, err
 		}
 		for _, is := range issues {
-			if is.IsPullRequest() || strings.TrimSpace(is.GetTitle()) != title {
+			if is.IsPullRequest() || !issueshape.SameTitle(is.GetTitle(), title) {
 				continue
 			}
 			if c.appAuth == nil {
