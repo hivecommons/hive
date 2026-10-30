@@ -127,21 +127,27 @@ How busy Hive thinks your projects are right now, and how often it wakes its wor
 
 ## PRs by model
 
-Which AI models wrote the pull requests Hive opened, and how often each model's work was merged without extra fixes.
+Which AI models wrote the pull requests Hive opened, how well each model's work landed, and how the models rank against each other.
 
-**What it tells you.** This part of the Governor section compares the AI models your workers use. It shows how many pull requests each model wrote and how they ended.
+**What it tells you.** This part of the Governor section compares the AI models your workers use. It shows how many pull requests each model wrote, how they ended, and a rank that favours models with a long, clean record over models with a short, lucky one.
 
 **How the numbers are worked out.**
 
-- Each row is one model. The bar splits its pull requests into merged, still open, and closed without merging.
-- **First-pass rate** is the share of merged pull requests that needed no follow-up fixes.
-- **Failure rate** and **nothing to ship** count runs that failed or finished without a pull request.
-- A model gets a **rank** only after it has at least 5 merged pull requests in the window. With fewer, the sample is too small to compare.
+- Each row is one model. Model ids are normalised so one model gets one row: a provider prefix (`openai-codex/gpt-6.1-sol`), a `:variant` suffix (`gpt-5.6-sol:high`) and a dash between version digits (`claude-opus-5-5`) are folded into `gpt-6.1-sol`, `gpt-5.6-sol` and `claude-opus-5.5`. The backends that drove the model appear as chips under its name; hover the row to see the raw ids and how many pull requests each contributed.
+- The bar splits a model's pull requests into merged, still open, and closed without merging.
+- **Merged** is the number of merged pull requests in the window.
+- **1st pass** is the share of merged pull requests that merged without a review-requested fix round.
+- **PR runs** is the share of recorded task runs (from the contributor run log) that ended with a verified pull request.
+- **Fail** is the share of recorded task runs that failed: crashed, timed out, or exited non-zero.
+- **No ship** is the share of recorded task runs that completed but opened no pull request.
+- **Rank** orders models by a score that combines those columns and penalises small samples: `score = Wilson 95% lower bound(1st-pass merged ÷ merged) × (1 − Fail) × (1 − No ship)`. The Wilson lower bound is the pessimistic end of the confidence interval for the first-pass rate, so 5 of 5 (lower bound 0.57) scores below 21 of 22 (0.78) and well below 203 of 313 (0.60 after the bound, but with no failures). A model with no recorded runs keeps its bound as the score.
+- A model gets a rank only after it has at least 5 merged pull requests in the window. With fewer, the sample is too small to compare and the row is listed without a rank.
+- Rows whose pull requests carry no model id are shown last, muted, as **unattributed**. They are counted but never ranked.
 - You can show the last 7 days, the last 30 days, or all time. You can sort by rank or by count.
 
-**What it is good for.** Use it when choosing which model a worker should use. A model with a low first-pass rate costs more review time.
+**What it is good for.** Use it when choosing which model a worker should use. A model with a low first-pass rate or a high failure rate costs more review and retry time; the rank already weighs both.
 
-**Example.** Model A has 40 pull requests and a 70% first-pass rate. Model B has 6 pull requests and a 30% rate. Model A is the safer default.
+**Example.** Model A has 40 merged pull requests, 28 of them first pass, and 2% failed runs. Model B has 5 merged pull requests, all first pass, and 51% failed runs. A scores about 0.54 and B about 0.28, so A ranks higher even though B shows 100% first pass.
 
 **When it appears.** Inside the Governor section, so at autonomy level L2 and above.
 

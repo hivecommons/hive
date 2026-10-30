@@ -2267,14 +2267,14 @@
     .gov-pr-model-metric { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
     /* Column labels live once in the sticky header row; per-cell data-label is
        surfaced only at the narrow breakpoint where the header is hidden. */
-    .gov-pr-model-head { position:sticky; top:0; z-index:1; margin:0 0 var(--sp-1); padding:var(--sp-1) 0; background:var(--surface-3); border-bottom:1px solid var(--border); color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; font-weight:700; }
+    .gov-pr-model-head { position:sticky; top:0; z-index:1; margin:0 0 var(--sp-1); padding-block:var(--sp-1); background:var(--surface-3); border-bottom:1px solid var(--border); color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; font-weight:700; }
     .gov-pr-model-head .gov-pr-model-metric, .gov-pr-model-head .gov-pr-model-share { color:var(--muted); }
     .gov-pr-model-col { cursor:help; white-space:nowrap; }
-    .gov-pr-model-help { display:inline-flex; align-items:center; justify-content:center; width:11px; height:11px; margin-left:3px; border:1px solid var(--border); border-radius:50%; font-size:8px; line-height:1; text-transform:none; letter-spacing:0; vertical-align:middle; }
+    .gov-pr-model-help { display:inline-flex; align-items:center; justify-content:center; width:11px; height:11px; margin-left:3px; border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); line-height:1; text-transform:none; letter-spacing:0; vertical-align:middle; }
     .gov-pr-model-row.unattributed { opacity:0.6; }
     .gov-pr-model-row.unattributed .gov-pr-model-name { color:var(--muted); font-weight:500; }
     .gov-pr-model-rank.unattributed { background:transparent; color:var(--muted); border:1px solid var(--border); text-transform:uppercase; letter-spacing:0.06em; font-size:var(--fs-2xs); font-weight:600; }
-    .gov-pr-model-backend { display:inline-block; margin:2px 4px 0 0; padding:0 6px; border:1px solid var(--border); border-radius:var(--r-pill); color:var(--muted); font-size:var(--fs-2xs); }
+    .gov-pr-model-backend { display:inline-block; margin:2px 4px 0 0; padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); color:var(--muted); font-size:var(--fs-2xs); }
     .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; }
     .gov-pr-model-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.72rem; }
     .gov-pr-model-table th, .gov-pr-model-table td { padding:5px 6px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; }
@@ -8826,7 +8826,7 @@
     const DASHBOARD_SECTION_HELP = Object.freeze({
       'overview-section': { heading: 'Overview', help: 'How many issues and pull requests Hive is tracking right now, and how many of them it can work on.' },
       'governor': { heading: 'Governor', help: 'How busy Hive thinks your projects are right now, and how often it wakes its workers as a result.' },
-      'governor-pr-models-section': { heading: 'PRs by model', help: "Which AI models wrote the pull requests Hive opened, and how well each one's work landed. Model ids are normalised (provider prefix, ':variant' suffix and dash-vs-dot version spellings folded together); hover a row for the raw ids. Rank mode orders models by score = Wilson 95% lower bound of (1st pass merged ÷ merged) × (1 − fail) × (1 − no ship), so a perfect score on a handful of PRs ranks below a near-perfect score on many. A model needs the minimum merged PRs shown in the subtitle to be ranked; rows with no recorded model are listed as unattributed and never ranked. Columns: Merged = merged PRs in the window; 1st pass = share of merged PRs that merged without a review-requested fix round; PR runs = share of recorded task runs that ended in a verified PR; Fail = share of runs that failed; No ship = share of runs that completed without opening a PR." },
+      'governor-pr-models-section': { heading: 'PRs by model', help: "Which AI models wrote the pull requests Hive opened, how well each model's work landed, and how the models rank against each other." },
       'advisory-section': { heading: 'Advisory', help: 'Reports, advice and suggestions Hive has written about your projects and about how it is running.' },
       'advisory-digest-section': { heading: 'Advisory Digest', help: "The open findings Hive's workers have written down, such as bugs, ideas and advice, grouped by who wrote them." },
       'hive-advice-section': { heading: 'Hive Advice', help: 'A short weekly list of things Hive recommends you do to keep work moving on your projects.' },
