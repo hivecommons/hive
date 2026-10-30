@@ -70,6 +70,10 @@ type CloseOnMergeOptions struct {
 	// GitHub under its slug (hivecommons/hive#14150). nil means every repo is
 	// on GitHub.
 	RepoOnGitHub func(repo string) bool
+	// DisableAdvisoryAutoclose turns off the item pass over hive-authored
+	// advisory checklists (dedupe.advisory_autoclose: false,
+	// hivecommons/hive#15754); the triage/advisory rules still run.
+	DisableAdvisoryAutoclose bool
 }
 
 func (o CloseOnMergeOptions) now() time.Time {
@@ -159,6 +163,7 @@ var closeOnMergeTransientReasons = map[string]bool{
 	"awaiting_comment_failed": true,
 	"close_comment_failed":    true,
 	"close_failed":            true,
+	"advisory_tick_failed":    true,
 }
 
 // Settles reports whether the result is a final verdict for its PR/issue

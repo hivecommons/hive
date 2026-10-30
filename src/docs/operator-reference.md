@@ -977,6 +977,31 @@ someone re-runs it. The shared-CI rerun sweep
 |---|---|---|
 | `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
 
+## Advisory checklist auto-close (`dedupe`)
+
+The dedupe agent files one checklist per repository (body opens with
+`<!-- hive:dedupe-checklist repo=… -->`). Its items are usually resolved by
+the hive's own merges and supersessions, so a checklist parked on a person
+asked for a click nothing needed
+([#15754](https://github.com/hivecommons/hive/issues/15754)). On every
+close-on-merge backfill, for each open checklist this hive authored:
+
+- each `- [ ] #N …` line (also `- [ ] PR #N …`, `owner/repo#N`) is ticked to
+  `- [x]` once #N is closed or merged; a line that does not lead with a
+  reference waits for a person to tick it;
+- once every task-list line is resolved, one comment ("All N items resolved
+  (#a closed, #b merged …) — closing this advisory.") is posted and the
+  checklist closes as *completed*. A checklist a person reopened after that
+  comment is left alone.
+
+The stage tracker draws such a row as **Advisory · hive is working the items
+(k/N resolved)** with an optional **Close now**, never as *Needs human
+decision*.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `dedupe.advisory_autoclose` | `true` (unset) | Set `false` to leave dedupe checklists for a person; `triage/advisory` checklists still close on their own rules. |
+
 ## Open-PR dispatch guard and duplicate-fix sweep (`scanner`)
 
 An issue whose fix is already open must not be dispatched again

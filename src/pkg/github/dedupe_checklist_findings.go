@@ -94,6 +94,11 @@ type IssueAdvisory struct {
 	// Empty is true when the body is a dedupe checklist with nothing
 	// actionable in it (DedupeChecklistFindings.Actionable is false).
 	Empty bool `json:"empty,omitempty"`
+	// Items / Resolved count a dedupe checklist's task-list lines and the
+	// ticked ones (hivecommons/hive#15754): the tracker reads "k/N
+	// resolved" while the hive works them.
+	Items    int `json:"items,omitempty"`
+	Resolved int `json:"resolved,omitempty"`
 }
 
 // dedupeDecisionNoLinePattern finds a "Decision required: no" line anywhere
@@ -108,7 +113,8 @@ func IssueAdvisoryFromBody(body string) *IssueAdvisory {
 		return nil
 	}
 	if f, ok := ParseDedupeChecklistFindings(body); ok {
-		return &IssueAdvisory{DedupeChecklist: true, DecisionNo: !f.DecisionRequired, Empty: !f.Actionable()}
+		items, resolved := AdvisoryChecklistProgress(body)
+		return &IssueAdvisory{DedupeChecklist: true, DecisionNo: !f.DecisionRequired, Empty: !f.Actionable(), Items: items, Resolved: resolved}
 	}
 	if dedupeDecisionNoLinePattern.MatchString(stripFencedCode(body)) {
 		return &IssueAdvisory{DecisionNo: true}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // An advisory issue (hivecommons/hive#15381): a `triage/advisory` issue, a
@@ -44,6 +45,14 @@ type StageTrackerAdvisory struct {
 	Empty   bool   `json:"empty,omitempty"`
 	Chip    string `json:"chip"`
 	Caption string `json:"caption"`
+	// Items / Resolved count a dedupe checklist's task-list lines and the
+	// ticked ones. Working is true while the hive ticks and closes them
+	// itself (hivecommons/hive#15754); Lead is then the row's optional
+	// human action, "Close now".
+	Items    int    `json:"items,omitempty"`
+	Resolved int    `json:"resolved,omitempty"`
+	Working  bool   `json:"working,omitempty"`
+	Lead     string `json:"lead,omitempty"`
 }
 
 // stageTrackerAdvisoryFor classifies an issue from its labels, its body
@@ -65,6 +74,9 @@ func stageTrackerAdvisoryFor(labels []string, body string, hint *github.IssueAdv
 		return nil
 	}
 	adv.Empty = hint != nil && hint.Empty
+	if hint != nil && hint.DedupeChecklist {
+		adv.Items, adv.Resolved = hint.Items, hint.Resolved
+	}
 	adv.Chip, adv.Caption = StageTrackerAdvisoryChip, StageTrackerAdvisoryCaption
 	if adv.Empty {
 		adv.Chip, adv.Caption = StageTrackerAdvisoryEmptyChip, StageTrackerAdvisoryEmptyCaption
@@ -79,7 +91,11 @@ var stageTrackerAdvisoryMods = []string{modStalled, modRegressed}
 // applyStageTrackerAdvisory marks it as an advisory: the caption and the
 // actor say "read, then close", the stall/regression pills come off, the
 // 000-new block (which would say "waiting for triage") is dropped, and the
-// stage actor is a human with nothing blocking on them.
+// stage actor is a human with nothing blocking on them. An advisory is
+// never parked on a person (hivecommons/hive#15754): a 045 park, its
+// needs-decision pill and its decision_needed / blocker blocks come off
+// too, so the row reads as the advisory it is. While the hive works the
+// checklist's items the actor is the hive.
 func applyStageTrackerAdvisory(it *StageTrackerItem, adv *StageTrackerAdvisory) {
 	if it == nil || adv == nil {
 		return
@@ -87,12 +103,23 @@ func applyStageTrackerAdvisory(it *StageTrackerItem, adv *StageTrackerAdvisory) 
 	it.Advisory = adv
 	it.Caption = adv.Caption
 	it.Actor = "maintainer"
-	it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerAdvisoryMods, m) })
+	it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool {
+		return slices.Contains(stageTrackerAdvisoryMods, m) || m == modNeedsDecision
+	})
 	if it.New != nil {
 		it.New = nil
 		if it.StageSlug == StageTrackerNewSlug {
 			it.StageSlug = ""
 		}
+	}
+	if it.Stage == stagelabels.IssueNeedsDecision.Number() {
+		it.Stage, it.StageSlug, it.StageLabel = 0, "", ""
+	}
+	it.DecisionNeeded, it.Blocker = nil, nil
+	if adv.Working {
+		it.Actor = StageActorHive
+		it.StageActor = &StageTrackerActor{Kind: StageActorHive, Why: stageTrackerAdvisoryWorkingWhy, Since: it.StageSince}
+		return
 	}
 	it.StageActor = &StageTrackerActor{Kind: StageActorHuman, Why: stageTrackerAdvisoryWhy, Since: it.StageSince}
 }

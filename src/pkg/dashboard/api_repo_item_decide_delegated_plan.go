@@ -149,6 +149,7 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 		plan.Acting = verb.Acting
 	}
 	plan.Summary, plan.Consequences = delegatedPlanWording(in, d)
+	plan.Summary, plan.Consequences = delegatedPlanIssueWording(in, d, plan.Summary, plan.Consequences)
 	plan.Why = delegatedPlanWhy(in, d)
 	plan.Ladder = d.Ladder
 	plan.MergeableAsIs = delegatedPlanMergeableAsIs(in, d)

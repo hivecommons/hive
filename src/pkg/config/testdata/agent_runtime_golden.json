@@ -736,6 +736,7 @@
   "good_first_issue": {},
   "supersession_sweep": {},
   "shared_ci_rerun": {},
+  "dedupe": {},
   "scanner": {},
   "upstream_watch": {},
   "convergence": {},

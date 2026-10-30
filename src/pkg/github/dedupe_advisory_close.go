@@ -107,15 +107,26 @@ func dedupeChecklistRefs(body, defaultRepo, selfRepo string, self int) []Claimed
 }
 
 // sweepDedupeAdvisoryChecklist handles one open issue for the close-on-merge
-// backfill. It reports handled=false for anything that is not an open
-// triage/advisory dedupe checklist, so the backfill's own checks still run.
+// backfill. It reports handled=false for anything that is neither an open
+// triage/advisory dedupe checklist nor a hive-authored checklist with
+// task-list items, so the backfill's own checks still run.
 // Otherwise it reclassifies a checklist whose verdict turned to "Decision
 // required: yes", or closes it once it is older than DedupeAdvisoryMaxAge or
 // every item it references is closed or merged.
 func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, issue *gh.Issue, opts CloseOnMergeOptions) (CloseOnMergeResult, bool) {
 	res := CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber()}
 	labels := issueLabelNames(issue.Labels)
-	if !labelPresent(labels, dedupeAdvisoryLabelName) {
+	advisory := labelPresent(labels, dedupeAdvisoryLabelName)
+	// Every hive-authored checklist first gets the item pass
+	// (hivecommons/hive#15754). A triage/advisory one whose items are still
+	// open falls through to the rules below.
+	if items, ok := c.sweepAdvisoryChecklistItems(ctx, repo, issue, opts); ok {
+		pending := items.Action == CloseOnMergeNoop && (items.Reason == advisoryItemsOpenReason || items.Reason == advisoryItemsTickedReason)
+		if !advisory || !pending {
+			return items, true
+		}
+	}
+	if !advisory {
 		return res, false
 	}
 	refRepo, verdict, ok := parseDedupeChecklist(issue.GetBody())
@@ -163,21 +174,26 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 		}
 		comment, reason = dedupeAdvisoryRefsClosedComment, "dedupe_advisory_refs_closed"
 	}
+	return c.closeDedupeAdvisory(ctx, res, repo, owner, repoName, number, comment, reason), true
+}
 
+// closeDedupeAdvisory posts comment and closes the checklist as completed,
+// unless the hive closed it once before and a person reopened it.
+func (c *Client) closeDedupeAdvisory(ctx context.Context, res CloseOnMergeResult, repo, owner, repoName string, number int, comment, reason string) CloseOnMergeResult {
 	comments, err := c.listIssueComments(ctx, owner, repoName, number)
 	if err != nil {
 		res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
-		return res, true
+		return res
 	}
 	for _, cm := range comments {
 		if cm != nil && strings.Contains(cm.GetBody(), dedupeAdvisoryCloseMarker) {
 			res.Action, res.Reason = CloseOnMergeSkipped, "reopened_after_close"
-			return res, true
+			return res
 		}
 	}
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(comment)}); err != nil {
 		res.Action, res.Reason = CloseOnMergeNoop, "close_comment_failed"
-		return res, true
+		return res
 	}
 	if err := c.CloseIssue(ctx, repo, number, IssueCloseOptions{
 		OverrideReason:          "advisory dedupe checklist",
@@ -187,10 +203,10 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 		StateReason: IssueStateReasonCompleted,
 	}); err != nil {
 		res.Action, res.Reason = CloseOnMergeNoop, "close_failed"
-		return res, true
+		return res
 	}
 	res.Action, res.Reason = CloseOnMergeClosed, reason
-	return res, true
+	return res
 }
 
 // dedupeRefOpen reports whether a referenced issue or PR is still open; the

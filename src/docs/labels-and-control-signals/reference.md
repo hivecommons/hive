@@ -322,6 +322,8 @@ Hive advisory report is never actionable and never appears on the Hold list.
 
 Advisory-only dedupe checklist (`Decision required: no`, #11864) is never actionable and never appears on the Hold list; action-required checklists are parked with `needs-decision` instead. The close-on-merge backfill closes it once every `#N` it references is closed or merged, or after 7 days, and swaps it for `needs-decision` plus the "What to reply" notice if line two turns to `Decision required: yes` (#11871).
 
+Every hive-authored dedupe checklist — labelled or not, including one parked at 045 with `Decision required: yes` — also gets an item pass on each backfill (#15754): a `- [ ] #N …` line is ticked to `- [x]` once #N is closed or merged, and once every task-list line is resolved the hive posts one comment ("All N items resolved (#a closed, #b merged …) — closing this advisory.") and closes the checklist as *completed*. A line that does not lead with a reference waits for a person to tick it. Set `dedupe.advisory_autoclose: false` (default on) to turn the item pass off; the `triage/advisory` rules above still apply.
+
 **Who applies it:** Dedupe agent.
 
 **Checked by:** Standing meta classifier. **When:** Before holds/exempts.

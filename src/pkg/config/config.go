@@ -174,6 +174,9 @@ type Config struct {
 	// `<!-- hive-shared-ci-<n> -->` once incident #n closes
 	// (hivecommons/hive#12253). Default on.
 	SharedCIRerun SharedCIRerunConfig `yaml:"shared_ci_rerun,omitempty" json:"shared_ci_rerun,omitempty"`
+	// Dedupe tunes what the hive does with the dedupe agent's advisory
+	// checklists (hivecommons/hive#15754); see DedupeConfig.
+	Dedupe DedupeConfig `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
 	// Scanner tunes the pre-dispatch guards every automated claim producer
 	// runs before an issue is handed out (hivecommons/hive#14799).
 	Scanner ScannerConfig `yaml:"scanner,omitempty" json:"scanner,omitempty"`

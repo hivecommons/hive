@@ -289,6 +289,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
 		advisory := stageTrackerAdvisoryFor(issue.Labels, issue.Body, advisoryHint)
+		stageTrackerAdvisoryWorking(advisory, stageTrackerAdvisoryAutoclose(cfg))
 		if advisory == nil {
 			applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
 		}

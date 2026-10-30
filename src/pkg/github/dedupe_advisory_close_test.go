@@ -30,6 +30,7 @@ type dedupeFixture struct {
 	labels    []string
 	createdAt time.Time
 	refStates map[int]string
+	refMerged map[int]bool
 	comments  []string
 	failRefs  bool
 	failPost  bool
@@ -38,6 +39,7 @@ type dedupeFixture struct {
 	refGets  int
 	posted   []string
 	patched  bool
+	edits    []string
 	added    []string
 	removed  []string
 	unexpect []string
@@ -95,6 +97,19 @@ func (f *dedupeFixture) server() *httptest.Server {
 			f.comments = append(f.comments, c.Body)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": len(f.comments)})
 		case r.Method == http.MethodPatch && path == checklist:
+			var edit struct {
+				Body  *string `json:"body"`
+				State *string `json:"state"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&edit)
+			if edit.Body != nil {
+				f.body = *edit.Body
+				f.edits = append(f.edits, *edit.Body)
+			}
+			if edit.State == nil && edit.Body != nil {
+				_ = json.NewEncoder(w).Encode(f.issueJSON())
+				return
+			}
 			f.patched = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": dedupeTestChecklist, "state": "closed"})
 		case r.Method == http.MethodDelete && strings.HasPrefix(path, checklist+"/labels/"):
@@ -133,7 +148,11 @@ func (f *dedupeFixture) server() *httptest.Server {
 				return
 			}
 			f.refGets++
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": state})
+			ref := map[string]any{"number": n, "state": state}
+			if f.refMerged[n] {
+				ref["pull_request"] = map[string]any{"merged_at": dedupeTestNow.Add(-time.Hour).Format(time.RFC3339)}
+			}
+			_ = json.NewEncoder(w).Encode(ref)
 		default:
 			f.unexpect = append(f.unexpect, r.Method+" "+path)
 			w.WriteHeader(http.StatusNotFound)

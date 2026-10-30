@@ -110,6 +110,8 @@ func closeOnMergeOptionsFor(cfg *config.Config, logger *slog.Logger, now func() 
 		Now:          now,
 		LabelDriven:  cfg.RepoLabelDriven,
 		RepoOnGitHub: cfg.RepoOnGitHub,
+
+		DisableAdvisoryAutoclose: !cfg.Dedupe.AdvisoryAutocloseEnabled(),
 	}
 }
 

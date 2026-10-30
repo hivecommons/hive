@@ -19710,7 +19710,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // read it, then close it. "Close (read)" leads; it is the existing
       // decision close path with the verdict `close-read`.
       const advisory = typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
-      if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: advisory.empty ? 'nothing found · closes as completed' : 'advisory acknowledged · closes as completed', lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
+      // While the hive works the checklist's items (hivecommons/hive#15754)
+      // the same close is the optional "Close now".
+      if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: advisory.lead || STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: advisory.working ? 'optional · hive closes it once every item is resolved' : advisory.empty ? 'nothing found · closes as completed' : 'advisory acknowledged · closes as completed', lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
       for (const a of lead) out.push(a);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
