@@ -3,7 +3,7 @@ package stageengine
 import "github.com/hivecommons/hive/pkg/stagelabels"
 
 // diagramEdges is the expected-transition table, generated from the
-// `stateDiagram-v2` block in src/docs/labels-and-control-signals.md. One
+// `stateDiagram-v2` block in src/docs/labels-and-control-signals/stage-labels.md. One
 // entry per `sNNN --> sMMM` line, in diagram order; `[*]` edges are
 // implied by Expected (None is always expected). transition_table_test.go
 // parses the fenced block and fails when this table and the diagram drift,
