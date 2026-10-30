@@ -155,84 +155,21 @@ func (c *Engine) contributorPresence(ctx context.Context, login string) (Contrib
 	return src.Presence(ctx, login), true
 }
 
-// adoptionDue reports whether the PR at head has sat nudged long enough with
-// no new head, and was not already adopted at this head; reason says which
-// rule fired. With live presence: a registered relay that is online keeps
-// the online grace (its hive may be mid-fix); a registered relay that is
-// offline is adopted once it has been gone AdoptAfterOffline (counted from
-// its last heartbeat or the first nudge, whichever is later); an author with
-// no profile here (another hive posted the PR) is adopted after
-// AdoptAfterUnregistered. Without presence the nudge-time graces apply.
+// adoptionDue reports whether the PR at head is due for automatic
+// adoption and which rule fired. It is AutoAdoption — the one predicate
+// the tracker's Adopt offer and adopt-at projection also read
+// (automerge_adoption_clock.go) — under the policy's clock.
 func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time, presence ContributorPresence, hasPresence bool) (bool, string) {
-	start := rec.NudgeStart()
-	if head == "" || rec.NudgeHead != head || rec.NudgeCount == 0 || start.IsZero() {
+	v := AutoAdoption(rec, head, policy.AdoptionClock(), now, presence, hasPresence)
+	if !v.Due {
 		return false, ""
 	}
-	if rec.Adopted(head) || rec.AdoptedInPlace() {
-		if adoptionRetryDue(rec, head, policy, now, presence, hasPresence) {
-			return true, adoptionRetryReason(presence, hasPresence)
-		}
-		return false, ""
-	}
-	if !hasPresence {
-		return now.Sub(start) >= adoptionGrace(rec, policy), AdoptReasonGrace
-	}
-	switch {
-	case presence.Registered && presence.Online:
-		grace := policy.GraceOnline
-		if grace <= 0 {
-			grace = 2 * time.Hour
-		}
-		return now.Sub(start) >= grace, AdoptReasonGrace
-	case presence.Registered:
-		wait := policy.AdoptAfterOffline
-		if wait <= 0 {
-			wait = 15 * time.Minute
-		}
-		since := start
-		if presence.LastSeen.After(since) {
-			since = presence.LastSeen
-		}
-		return now.Sub(since) >= wait, AdoptReasonOffline
-	default:
-		wait := policy.AdoptAfterUnregistered
-		if wait <= 0 {
-			wait = 15 * time.Minute
-		}
-		return now.Sub(start) >= wait, AdoptReasonUnregistered
-	}
+	return true, v.Reason
 }
 
 // adoptionOfflineGrace is policy.AdoptOfflineGrace with its default.
 func adoptionOfflineGrace(policy StageLabelPolicy) time.Duration {
-	if policy.AdoptOfflineGrace > 0 {
-		return policy.AdoptOfflineGrace
-	}
-	return 30 * time.Minute
-}
-
-// adoptionRetryDue is the stage-stalled escape for a recorded adoption
-// attempt that opened nothing (hivecommons/hive#15307: the supersede's
-// replay onto the base conflicted and the attempt was recorded for the
-// head, so adoptionDue never fired again while the PR sat at 072/085).
-// When the author's clanker is still offline or unregistered — nobody on
-// the contributor side can rebase — the head is admitted again once
-// AdoptOfflineGrace has passed since the attempt or the clanker's last
-// heartbeat, whichever is later. An online clanker keeps the PR: it can
-// still push. An adoption that opened a copy or holds the branch in place
-// is live, not stalled, and is never re-admitted here.
-func adoptionRetryDue(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time, presence ContributorPresence, hasPresence bool) bool {
-	if !rec.AdoptionAttemptedNothingOpened(head) || rec.AdoptedAt.IsZero() {
-		return false
-	}
-	if hasPresence && presence.Registered && presence.Online {
-		return false
-	}
-	since := rec.AdoptedAt
-	if hasPresence && presence.LastSeen.After(since) {
-		since = presence.LastSeen
-	}
-	return now.Sub(since) >= adoptionOfflineGrace(policy)
+	return policy.AdoptionClock().offlineGrace()
 }
 
 // adoptionRetryReason names why a retried adoption fired.
@@ -777,7 +714,11 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.warn("stage labels: cannot adopt contributor PR, App login unknown", "repo", obs.Display, "pr", obs.Number)
 		return 0, nil
 	}
-	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason, "fence", fence)
+	// One line per adoption naming the trigger: automatic (the
+	// AutoAdoption predicate fired on this sweep — the offer the tracker
+	// showed, performed by the hive itself), operator-forced, or an
+	// operator's adoption/supersede request.
+	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "trigger", adoptionTrigger(reason, obs.Reason), "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason, "fence", fence)
 
 	if policy.AdoptInPlace && canPushInPlace && !dcoRehome {
 		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
@@ -796,6 +737,30 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		online = presence.Online
 	}
 	return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, reason, grace, online, dcoRehome, now)
+}
+
+// Adoption triggers, the `trigger` field of the adoption log line.
+const (
+	AdoptTriggerAutomatic = "automatic"
+	AdoptTriggerForced    = "operator-forced"
+	AdoptTriggerRequested = "operator-requested"
+)
+
+// adoptionTrigger names what fired an adoption: the operator's forced
+// Adopt now, the operator's adoption/supersede request, or the automatic
+// predicate — qualified by the lane reason that returned the PR to its
+// author ("automatic:conflicting", "automatic:fork-not-editable").
+func adoptionTrigger(reason, laneReason string) string {
+	switch reason {
+	case AdoptReasonOperatorForced:
+		return AdoptTriggerForced
+	case AdoptReasonOperator:
+		return AdoptTriggerRequested
+	}
+	if laneReason = strings.TrimSpace(laneReason); laneReason != "" {
+		return AdoptTriggerAutomatic + ":" + laneReason
+	}
+	return AdoptTriggerAutomatic
 }
 
 // AdoptionSelfRefusedMarker stamps the note a delegated supersede of the

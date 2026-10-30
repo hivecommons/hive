@@ -214,3 +214,53 @@ func TestReviewRelay_NoHiveIdentityLeavesEventAlone(t *testing.T) {
 		t.Errorf("PR fetched %d time(s) with the guard inactive", prGets)
 	}
 }
+
+// GitHub refuses an App's APPROVE on its own pull request (422 "Can not
+// approve your own pull request"). That is policy, not a fault: the relay
+// posts the same text once more as a COMMENT, the request completes
+// instead of retrying to quarantine, and the result note says why
+// (hivecommons/hive#15666).
+func TestReviewRelay_OwnPRApproveRefusedBecomesComment(t *testing.T) {
+	var events []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			var body struct {
+				Event string `json:"event"`
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			events = append(events, body.Event)
+			w.Header().Set("Content-Type", "application/json")
+			if body.Event != "COMMENT" {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = io.WriteString(w, `{"message":"Unprocessable Entity","errors":["Review Can not approve your own pull request"]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"id":1,"html_url":"https://example.test/pr/5#review-1"}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pulls/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":5,"user":{"login":"hive-bot","type":"User"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.SetHiveIdentity(HiveIdentity{AIAuthor: "hive-bot"})
+	dir := withReviewDir(t)
+
+	reqPath, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "approve", Agent: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+
+	if strings.Join(events, ",") != "APPROVE,COMMENT" {
+		t.Fatalf("review events = %v, want APPROVE refused then COMMENT", events)
+	}
+	resp := readReviewResult(t, reqPath)
+	if !resp.OK || resp.State != "commented" || !strings.Contains(resp.Note, "own pull request") {
+		t.Fatalf("result = %+v, want ok, commented, with the own-PR note", resp)
+	}
+}

@@ -1897,6 +1897,41 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      base tip — is updated from the base when behind, or has its failed
      jobs re-run when current, once per (head, base tip), before the dwell
      escalates it to 085 (hivecommons/hive#14500).
+   **When hive adopts automatically.** One predicate —
+   `automerge.AutoAdoption` — answers both "may the activity monitor offer
+   Adopt / say when hive adopts" and "does this sweep adopt". Whenever the
+   tracker would say `hive adopts it on the next sweep`, that sweep does it;
+   no click is needed (owner rule, 2026-10-29 on hivecommons/hive#15565,
+   #15566, #15609 and #15312: PRs by an offline clanker sat at 072 with
+   "waiting on @author (offline 13m, 1 nudge)" until a person pressed
+   Adopt, while the sweep's own clock ran from a later heartbeat). The hive
+   adopts an `author/clanker` PR on its own when **all** of these hold:
+   - the PR is at 072 with work its author's clanker is not doing: a
+     conflict with the base, changes requested by the review swarm, a
+     failing check — required, or an optional one the merge gate reads
+     (`optional-check-failing:<name>`), DCO / sign-off, a diff the lane
+     cannot read, or a fork the App cannot push to (`fork-not-editable`:
+     hive cannot rebase it, so re-authoring on a hive branch is the only
+     mover; the caption reads *fork not editable by hive*);
+   - the author was nudged on **this** head and the head has not moved
+     since — a clanker that is pushing is never adopted; a new head
+     restarts the nudge and the clock;
+   - the author is unavailable by the clock above: offline for
+     `adoption.after_offline` (15m) counted from the later of the first
+     nudge and the last heartbeat, where a heartbeat after the nudge
+     ("acknowledged") buys **one** window at most — a relay that
+     reconnects every few minutes without pushing no longer resets it;
+     online but silent for `contributor_grace_online` (2h); unregistered
+     for `adoption.after_unregistered` (15m). A `mode=queued` nudge (the
+     task waits server-side) counts as offline, not online;
+   - nothing holds it: no `hold` / `do-not-merge`, not person-authored, and
+     `maintainer_policy` is `adopt` (the default) or the owner answered `ask`.
+   The adoption log line carries `trigger=automatic:<reason>`
+   (`operator-forced` / `operator-requested` for the manual paths); the
+   tracker's 072 pill reads `… — hive adopts it in 3m unless a new head
+   lands` while the clock runs and `… — hive adopts it on the next sweep`
+   once it has. **Adopt now** stays as the override for a clock that has
+   not run out yet.
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
    A PR whose diff trips the contributor lane's diff fences — it touches
@@ -2423,7 +2458,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `adoption-executing` | the adoption engine is carrying it out | The decision is recorded and the adoption engine picks it up on its next stage pass (a few minutes): it pushes the commits to a hive branch and opens the hive's copy. Nothing to do yet. |
 | `adoption-stalled:contributor-lane:workflow-path`, `capability:workflows-permission`, `contributor-lane:workflow-path`, `workflow-path` | the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it | The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded. |
 | `adoption-undone` | the hive's copy was closed without merging and the adoption was undone | The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub. |
-| `author-association`, `contributor-lane:author-association`, `human-merge`, `ready-for-human-merge`, `untrusted-author` | no merge lane vouches for this PR's author; a maintainer merges | The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors. |
+| `author-association`, `contributor-lane:author-association`, `human-merge`, `ready-for-human-merge`, `untrusted-author` | no merge lane vouches for this PR's author; a maintainer merges | The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors. |
 | `author-online` | the author's clanker or hive is connected, so hive won't take the PR over | Adoption is for authors whose clanker or hive has gone offline; this author's is connected, so the hive leaves the PR with them. |
 | `blocker`, `capability`, `human-only` | the hive can't do this itself | The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099). |
 | `behind` | the branch is behind the base branch | The branch is behind the base branch and must be updated before it can merge. |
