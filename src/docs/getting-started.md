@@ -160,7 +160,7 @@ Read it like a weekly digest, not a to-do list. You don't have to act on everyth
 
 ## How to read hive-filed issues
 
-Every issue a hive agent opens has the agent's name in the title — for example `[scanner] Possible nil pointer dereference in handler.go:142` or `[quality] Missing test coverage for payment flow`.
+Every issue a hive agent opens has the agent's name in the title — for example `[scanner] Possible nil pointer dereference in handler.go:142` or `[quality] Missing test coverage for payment flow`. The same holds for issues the hive files on its own behalf: `[reviewer] Review backlog (security): …`, `[dedupe] triage: …`, `[ci-maintainer] refactor: … is a merge hotspot`, `[selfreport] …`, `[governor] 🐝 Hive Advisory Report`. The tag always comes first, before any emoji, and the Activity Monitor draws it as a chip ahead of the title.
 
 When you see a new issue in your project, check the title prefix — it tells you which agent filed it and what kind of finding it is:
 

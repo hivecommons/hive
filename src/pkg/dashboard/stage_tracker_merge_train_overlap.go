@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,8 +28,12 @@ type StageTrackerOverlap struct {
 }
 
 // stageTrackerOverlapHint builds the hint for a PR at number, out of a
-// train whose planner's front is front and whose other members are
-// others (number excluded by the caller).
+// train whose front is front and whose other members are others (number
+// excluded by the caller). front is the PR this one joins behind when it
+// is green — the ready member the lane merges first — or number itself
+// when no member is ready yet: the lane orders a train readiness first
+// (automerge_merge_train.go), so a PR at CI / Review never merges ahead
+// of a green one; it is "1st" only provisionally, while nobody is ready.
 func stageTrackerOverlapHint(number, front int, others []int, files []string) *StageTrackerOverlap {
 	o := &StageTrackerOverlap{With: append([]int(nil), others...), Files: append([]string(nil), files...)}
 	paren := ""
@@ -37,7 +42,7 @@ func stageTrackerOverlapHint(number, front int, others []int, files []string) *S
 	}
 	if number != front && front > 0 {
 		o.Behind = front
-		o.Note = "overlaps #" + strconv.Itoa(front) + paren + " — will queue behind it"
+		o.Note = "overlaps #" + strconv.Itoa(front) + paren + " — " + stageTrackerOverlapJoinsNote
 		return o
 	}
 	names := make([]string, 0, len(others))
@@ -48,11 +53,40 @@ func stageTrackerOverlapHint(number, front int, others []int, files []string) *S
 	if len(others) > 1 {
 		them = "them"
 	}
-	o.Note = "overlaps " + strings.Join(names, ", ") + paren + " — merges ahead of " + them + " once both are ready"
-	if len(others) > 1 {
-		o.Note = strings.Replace(o.Note, "once both are ready", "once all are ready", 1)
-	}
+	o.Note = "overlaps " + strings.Join(names, ", ") + paren + " — " + stageTrackerOverlapProvisionalNote + " merges ahead of " + them + " if it is green first"
 	return o
+}
+
+// stageTrackerOverlapProvisionalNote leads the hint on a PR the planner
+// ordered first while no member of its train is merge-ready.
+const stageTrackerOverlapProvisionalNote = "no member of the train is merge-ready yet; provisionally 1st,"
+
+// stageTrackerOverlapJoinsNote is the hint's tail on a PR that joins a
+// train behind its ready front once green.
+const stageTrackerOverlapJoinsNote = "joins the merge train behind it when green"
+
+// stageTrackerOverlapJoinBehind re-points a below-queue PR's hint at the
+// front that actually rides: the planner may have seated this PR first
+// while it was still at CI / Review, but the lane merges the ready member
+// first and this one joins behind it when green (hive's own #15741 at CI /
+// Review was drawn "1st" over #15748 and #15755, both green at 080).
+func stageTrackerOverlapJoinBehind(it *StageTrackerItem, front int) {
+	if it == nil || it.Overlap == nil || front <= 0 || front == it.Number {
+		return
+	}
+	o := it.Overlap
+	others := make([]int, 0, len(o.With)+1)
+	seen := map[int]bool{it.Number: true}
+	for _, n := range append([]int{front}, o.With...) {
+		if !seen[n] {
+			seen[n] = true
+			others = append(others, n)
+		}
+	}
+	sort.Ints(others)
+	trainID, pos := o.trainID, o.position
+	it.Overlap = stageTrackerOverlapHint(it.Number, front, others, o.Files)
+	it.Overlap.trainID, it.Overlap.position = trainID, pos
 }
 
 // stageTrackerLeaveMergeTrainBelowQueue takes a PR short of the merge

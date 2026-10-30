@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -89,6 +90,61 @@ func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map
 		kept[name] = agent
 	}
 	return kept
+}
+
+// LaunchCmdDegradation records one agent whose base-config launch_cmd the
+// loader dropped because it contradicted the agent's backend.
+type LaunchCmdDegradation struct {
+	Agent     string
+	Backend   string
+	LaunchCmd string
+	Error     string
+}
+
+// DegradeContradictingLaunchCmds drops, from every agent in the merged map,
+// a launch_cmd that contradicts the agent's backend, and records each drop in
+// c.LaunchCmdDegradations. It is the base-config counterpart of
+// RejectInvalidAgentOverlays: that gate skips a contradictory per-agent FILE
+// and "falls back to base config", which is useless when the base entry has
+// the same defect — and the base config has no further layer to fall back
+// to, so validation used to exit the process and the hive crash-looped until
+// someone hand-edited the PVC.
+//
+// backend is the operator-owned field; launch_cmd is the stale derived one
+// (the dashboard fills it from the backend when it is empty), so dropping
+// launch_cmd is always the safe direction: the agent launches on its declared
+// backend's default command. Should clearing not satisfy the gate, the entry
+// is left alone and validation fails as before.
+//
+// Every drop is logged at ERROR in the same shape as the overlay rejection,
+// because the config the hive is running is now knowingly not the config on
+// disk; the dashboard raises a banner from the recorded list.
+func (c *Config) DegradeContradictingLaunchCmds() []LaunchCmdDegradation {
+	var degraded []LaunchCmdDegradation
+	for name, agent := range c.Agents {
+		err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd)
+		if err == nil {
+			continue
+		}
+		if c.Governor.ValidateLaunchCmdBackend(agent.Backend, "") != nil {
+			continue
+		}
+		d := LaunchCmdDegradation{Agent: name, Backend: agent.Backend, LaunchCmd: agent.LaunchCmd, Error: err.Error()}
+		slog.Default().Error("config: dropped launch_cmd that contradicts the agent's backend - the hive is booting WITHOUT it so its dashboard stays reachable; the agent launches on its backend's default command until launch_cmd is fixed via the dashboard API",
+			"hive_id", c.HiveID,
+			"agent", name,
+			"file", agent.SourceFile(),
+			"backend", agent.Backend,
+			"launch_cmd", agent.LaunchCmd,
+			"error", err.Error(),
+		)
+		agent.LaunchCmd = ""
+		c.Agents[name] = agent
+		degraded = append(degraded, d)
+	}
+	sort.Slice(degraded, func(i, j int) bool { return degraded[i].Agent < degraded[j].Agent })
+	c.LaunchCmdDegradations = append(c.LaunchCmdDegradations, degraded...)
+	return degraded
 }
 
 // validateAgentOverlay runs the per-agent gates that an overlay file can
@@ -211,9 +267,18 @@ func (c *Config) ClearAgentRemoved(name string) bool {
 }
 
 // SaveAgentFile writes a single agent config to dir/<name>.yaml.
+//
+// It refuses a backend/launch_cmd contradiction: the loader rejects such a
+// file on the next boot (RejectInvalidAgentOverlays), so writing it would
+// only defer the failure to a restart. The gateway-aware half of the gate
+// needs the governor config; callers that have it should also run
+// Config.ValidateAgentLaunchCmds before calling this.
 func SaveAgentFile(dir, name string, agent AgentConfig) error {
 	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return fmt.Errorf("invalid agent name %q", name)
+	}
+	if err := (GovernorConfig{}).ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
+		return fmt.Errorf("refusing to save agent overlay %s: %w", name, err)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating agent overlay dir: %w", err)

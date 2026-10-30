@@ -24,6 +24,7 @@ const src = [
   "const STAGE_TRACKER_LEFT_TRAIN_NOTE = 'left the merge train while being fixed; rejoins when green';",
   "const STAGE_TRACKER_TRAIN_STATE_FRONT = 'front', STAGE_TRACKER_TRAIN_STATE_REBASING = 'rebasing', STAGE_TRACKER_TRAIN_STATE_EXHAUSTED = 'rebase-exhausted';",
   "const STAGE_TRACKER_TERMINAL = 110;",
+  pick(/const STAGE_TRACKER_OVERLAP_CHIP_LEAD = '[^']*';/, 'STAGE_TRACKER_OVERLAP_CHIP_LEAD'),
   "function stageTrackerOrdinal(n) { return String(n); }",
   fn('stageTrackerTrain'),
   fn('stageTrackerLeftTrainNote'),
@@ -38,7 +39,10 @@ const src = [
 
 const api = new Function(src + '; return { badgeText: stageTrackerOverlapBadgeText, tip: stageTrackerOverlapTip, badgeHtml: stageTrackerOverlapBadgeHtml, lines: stageTrackerTrainLines, trainKey: stageTrackerTrainKey };')();
 
-// The two records as /api/stage-tracker now emits them.
+// The two records as /api/stage-tracker now emits them. The chip names the
+// train and the condition (#15761: a CI / Review member joins behind the
+// ready front when it goes green; a pair with no ready member has a
+// provisional front) but never a Merge-queue ordinal or rail.
 const files = ['sidebar.html', 'index.html'];
 const rider15633 = { repo: 'hivecommons/hive', number: 15633, kind: 'pr', stage: 50, modifiers: [], caption: 'Review swarm requested; waiting for a verdict on the current head',
   overlap: { behind: 15637, with: [15637], files, note: 'overlaps #15637 (sidebar.html, index.html) — will queue behind it' } };
@@ -49,14 +53,14 @@ test('a CI / Review pair with overlapping files draws no train, only the hint', 
   for (const it of [rider15633, front15637]) {
     assert.strictEqual(api.trainKey(it), '', '#' + it.number + ' must group into no train');
   }
-  assert.strictEqual(api.badgeText(rider15633), 'overlaps #15637');
-  assert.strictEqual(api.badgeText(front15637), 'overlaps #15633');
+  assert.strictEqual(api.badgeText(rider15633), 'train · joins behind #15637 when green');
+  assert.strictEqual(api.badgeText(front15637), 'train · 1st once green');
   assert.strictEqual(api.tip(rider15633), 'overlaps #15637 (sidebar.html, index.html) — will queue behind it');
   const badge = api.badgeHtml(rider15633);
   assert.match(badge, /class="ham-badge ham-badge-overlap"/);
-  assert.match(badge, />overlaps #15637</);
+  assert.match(badge, />train · joins behind #15637 when green</);
   assert.match(badge, /title="Not in the merge queue yet: overlaps #15637 \(sidebar.html, index.html\) — will queue behind it"/);
-  assert.ok(!/merge train|1st|rail/.test(badge), badge);
+  assert.ok(!/merge train|1st|2nd|rail/.test(badge), badge);
   assert.deepStrictEqual(api.lines(rider15633), ['Not in the merge queue yet: overlaps #15637 (sidebar.html, index.html) — will queue behind it']);
 });
 
@@ -71,8 +75,8 @@ test('the hint yields to a train, a left-train note, and nothing', () => {
   assert.deepStrictEqual(api.lines({ kind: 'pr', number: 1, stage: 50 }), []);
   // An older payload without the note still reads the same sentence.
   const bare = { kind: 'pr', number: 2, stage: 50, overlap: { behind: 7, with: [7], files: ['a.go'] } };
-  assert.strictEqual(api.tip(bare), 'overlaps #7 (a.go) — will queue behind it');
+  assert.strictEqual(api.tip(bare), 'overlaps #7 (a.go) — joins the merge train behind it when green');
   const bareFront = { kind: 'pr', number: 7, stage: 50, overlap: { with: [2, 3], files: ['a.go'] } };
-  assert.strictEqual(api.badgeText(bareFront), 'overlaps #2 +1');
-  assert.strictEqual(api.tip(bareFront), 'overlaps #2, #3 (a.go) — merges ahead of them once all are ready');
+  assert.strictEqual(api.badgeText(bareFront), 'train · 1st once green');
+  assert.strictEqual(api.tip(bareFront), 'overlaps #2, #3 (a.go) — no member of the train is merge-ready yet; provisionally 1st, merges ahead of them if it is green first');
 });

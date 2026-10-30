@@ -596,7 +596,7 @@ func reviewBacklogIssueTitle(p review.Perspective, f outputschema.Finding) strin
 	if title == "" {
 		title = "out-of-scope review finding"
 	}
-	return issueshape.TitleFor(config.OriginSourceReviewer, fmt.Sprintf("Review backlog (%s): %s", p, title))
+	return issueshape.AgentIssueTitle(config.OriginSourceReviewer, fmt.Sprintf("Review backlog (%s): %s", p, title))
 }
 
 func reviewBacklogSummaryComment(issues []reviewBacklogFiled, cap int) string {
