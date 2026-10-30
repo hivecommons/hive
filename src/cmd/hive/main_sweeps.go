@@ -2477,9 +2477,13 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	for _, f := range plan.ForcedFixes {
 		logger.Warn("review fix forced: changes_requested head starved by the revisit path", "repo", f.Repo, "pr", f.Number, "head", f.HeadSHA, "reason", f.Reason, "cycles", f.Cycles, "limit", review.RevisitStarvationCycles)
 	}
+	promotedNow := map[string]struct{}{}
 	for _, w := range plan.Promoted {
-		logger.Warn("review dispatch promoted: head starved of a reviewer walked ahead of the queue", "repo", w.Repo, "pr", w.Number, "head", w.HeadSHA, "reason", w.Reason, "cycles", w.Cycles, "since", w.FirstAt, "limit", review.ReviewWaitStarvationCycles)
+		key := prWarnKey(w.Repo, w.Number)
+		promotedNow[key] = struct{}{}
+		logger.Log(context.Background(), reviewPromotedWarn.level(key), "review dispatch promoted: head starved of a reviewer walked ahead of the queue", "repo", w.Repo, "pr", w.Number, "head", w.HeadSHA, "reason", w.Reason, "cycles", w.Cycles, "since", w.FirstAt, "limit", review.ReviewWaitStarvationCycles)
 	}
+	reviewPromotedWarn.retain(promotedNow)
 	for _, w := range plan.Waiting {
 		logger.Info("review dispatch waiting: perspectives still owed, no reviewer this cycle", "repo", w.Repo, "pr", w.Number, "head", w.HeadSHA, "reason", w.Reason)
 	}
