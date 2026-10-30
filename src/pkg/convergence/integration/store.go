@@ -109,16 +109,20 @@ func (s *Store) ForFailure(repo, head string, suite, check int64) []Evidence {
 		if !strings.EqualFold(receipt.Subject.Repo, repo) {
 			continue
 		}
-		matched := receipt.Subject.TestedSHA == head
-		if !matched && suite > 0 && receipt.SuiteID == suite {
-			checkKnown := check == 0
-			for _, id := range receipt.CheckIDs {
-				if id == check {
-					checkKnown = true
-				}
+		bound := receipt.RunID > 0 || receipt.SuiteID > 0 || len(receipt.CheckIDs) > 0
+		checkKnown := false
+		for _, id := range receipt.CheckIDs {
+			if id == check && check > 0 {
+				checkKnown = true
 			}
+		}
+		if bound && (suite <= 0 || receipt.SuiteID != suite || !checkKnown) {
+			continue
+		}
+		matched := receipt.Subject.TestedSHA == head
+		if !matched && bound {
 			for _, member := range receipt.Subject.Members {
-				if member.Head == head && checkKnown {
+				if member.Head == head {
 					matched = true
 				}
 			}
@@ -230,7 +234,7 @@ func (s *Store) validate(e Event) error {
 		for _, previous := range s.evidence {
 			next := e.Evidence
 			if (next.Source == "github-actions-bound-v1" || next.Source == "github-actions-attested-v1") && next.State != Unknown && next.RunID > 0 &&
-				previous.State != Unknown && strings.EqualFold(previous.Subject.Repo, next.Subject.Repo) &&
+				previous.ObservedState != Unknown && strings.EqualFold(previous.Subject.Repo, next.Subject.Repo) &&
 				previous.Source == next.Source && previous.RunID == next.RunID && previous.Subject.Attempt == next.Subject.Attempt &&
 				previous.Subject.Policy == next.Subject.Policy && previous.Subject.Workflow == next.Subject.Workflow &&
 				previous.Subject.Authority == next.Subject.Authority && previous.Subject.ID() != next.Subject.ID() {
@@ -308,10 +312,12 @@ func (s *Store) apply(e Event) {
 			old, next := prior.Subject, v.Subject
 			sameProducer := id != k && strings.EqualFold(old.Repo, next.Repo) && old.Base == next.Base && old.Engine == next.Engine &&
 				old.Authority == next.Authority && old.Policy == next.Policy && old.Producer == next.Producer && old.Workflow == next.Workflow
-			if sameProducer && (next.Generation > old.Generation || next.Generation == old.Generation && next.Attempt > old.Attempt) {
+			completesUnknown := old.Generation == next.Generation && old.Attempt == next.Attempt && prior.State == Unknown && v.State != Unknown
+			lateUnknown := old.Generation == next.Generation && old.Attempt == next.Attempt && prior.State != Unknown && v.State == Unknown
+			if sameProducer && (completesUnknown || next.Generation > old.Generation || next.Generation == old.Generation && next.Attempt > old.Attempt) {
 				prior.State, prior.InvalidatedBy, prior.Reason = Superseded, e.ID, "authoritative workflow attempt superseded"
 				s.evidence[id] = prior
-			} else if sameProducer && (old.Generation > next.Generation || old.Generation == next.Generation && old.Attempt > next.Attempt) {
+			} else if sameProducer && (lateUnknown || old.Generation > next.Generation || old.Generation == next.Generation && old.Attempt > next.Attempt) {
 				if supersededBy == "" || old.Generation > supersedingGeneration || old.Generation == supersedingGeneration &&
 					(old.Attempt > supersedingAttempt || old.Attempt == supersedingAttempt && id < supersededBy) {
 					supersededBy, supersedingGeneration, supersedingAttempt = id, old.Generation, old.Attempt
@@ -321,6 +327,7 @@ func (s *Store) apply(e Event) {
 		old, found := s.evidence[k]
 		if !found || (old.State != Superseded && v.ObservedAt.After(old.ObservedAt)) {
 			next := cloneEvidence(*v)
+			next.ObservedState = v.State
 			if supersededBy != "" {
 				next.State, next.InvalidatedBy, next.Reason = Superseded, supersededBy, "newer authoritative workflow attempt already observed"
 			}

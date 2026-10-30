@@ -87,6 +87,7 @@ type Input struct {
 	PlanRevision     int
 	IntentGeneration uint64
 	Dependencies     map[string]Dependency
+	LiveKeys         []string
 	Claim            string
 	ClaimGeneration  uint64
 	ClaimExpiresAt   time.Time
@@ -169,8 +170,17 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 				}
 			}
 		}
-		for key, r := range s.reservations {
-			if key == in.Key || !r.ExpiresAt.After(in.Now) {
+		liveKeys := map[string]bool{}
+		for key, reservation := range s.reservations {
+			if reservation.ExpiresAt.After(in.Now) {
+				liveKeys[key] = true
+			}
+		}
+		for _, key := range in.LiveKeys {
+			liveKeys[key] = true
+		}
+		for key := range liveKeys {
+			if key == in.Key {
 				continue
 			}
 			other, ok := s.intents[key]
@@ -183,6 +193,7 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 				out.Hints = append(out.Hints, "same-file overlap with "+key+" (advisory; not an exclusive lock"+relationDisposition(intent, key, "file")+")")
 			}
 		}
+		sort.Strings(out.Hints)
 	}
 	coverage := s.coverage[scopeKey(in.Repo, in.Base)]
 	through := coverage.Through
@@ -231,7 +242,7 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 	}
 	out.ActiveLimit = cfg.MaxActive
 	for _, receipt := range s.evidence {
-		if strings.EqualFold(receipt.Subject.Repo, in.Repo) && receipt.Subject.Base == in.Base && receipt.State == Rejected &&
+		if strings.EqualFold(receipt.Subject.Repo, in.Repo) && receipt.Subject.Base == in.Base && receipt.ObservedState == Rejected &&
 			receipt.Source == "github-actions-bound-v1" && len(receipt.Subject.Members) > 1 && receipt.Subject.Validate() == nil &&
 			!receipt.ObservedAt.Before(in.Now.Add(-cfg.Window)) && !receipt.ObservedAt.After(in.Now) {
 			out.FailureBackoff++

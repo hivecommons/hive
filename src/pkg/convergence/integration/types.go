@@ -87,6 +87,7 @@ func (s Subject) ID() string {
 type Evidence struct {
 	Subject       Subject   `json:"subject"`
 	State         State     `json:"state"`
+	ObservedState State     `json:"observed_state,omitempty"`
 	ObservedAt    time.Time `json:"observed_at"`
 	Source        string    `json:"source"`
 	RunID         int64     `json:"run_id"`

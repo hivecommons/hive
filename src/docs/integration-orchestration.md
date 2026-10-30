@@ -84,7 +84,13 @@ claim/lease remains ownership authority; shared prerequisite work is not cloned.
 Reservations renew only with a live authoritative lease, expire after a bounded
 TTL, and are released on intent generation changes, failed lease persistence,
 claim release/takeover or rollback. Same-file and cross-file semantic relations
-are distinct advisory hints, never global file locks.
+are distinct advisory hints, never global file locks. Shadow evaluation compares
+existing live-claim scopes without taking reservations. The inspector's
+`dispatch_advice` exposes the last actual internal/contributor evaluations,
+including semantic hints, false-positive assessments and would-withhold reasons.
+These bounded, boot-local diagnostics are historical advice, not durable merge
+proof or a new queue; OFF records none. The durable ledger retains the underlying
+intent, claim-bound reservation and candidate evidence contracts separately.
 
 The existing head-keyed merge-train file probe feeds observed scope drift without
 another GitHub file scanner. Its head freshness is explicitly unverified, so drift

@@ -30,6 +30,7 @@ type integrationRuntime struct {
 	path                 string
 	lastReconcile        time.Time
 	reconcileScopeOffset int
+	advice               map[string]integrationDispatchObservation
 }
 
 func (s *Server) IntegrationNativeAdmission(_ context.Context, repo string, pr *gh.PullRequest) (string, error) {
@@ -303,9 +304,9 @@ func (s *Server) integrationInput(key, repo, base string, now time.Time) integra
 // integrationDispatchDecision is shared by the internal and contributor lanes.
 // The scope's base is explicit because issue enumerations do not carry a base.
 // An ambiguous multi-base issue is not silently assigned to either cohort.
-func (s *Server) integrationDispatchDecision(ref worksource.Ref) integration.Decision {
+func (s *Server) integrationDispatchDecision(ref worksource.Ref) (out integration.Decision) {
 	cfg := s.integrationConfig()
-	out := integration.Decision{Allowed: true}
+	out = integration.Decision{Allowed: true}
 	if cfg.Mode == config.IntegrationOff {
 		return out
 	}
@@ -319,13 +320,17 @@ func (s *Server) integrationDispatchDecision(ref worksource.Ref) integration.Dec
 	if len(bases) == 0 {
 		return out
 	}
+	base := ""
+	if len(bases) == 1 {
+		base = bases[0]
+	}
+	defer func() { s.rememberIntegrationDispatch(ref, base, cfg.Mode, out) }()
 	store, err := s.integrationStore()
 	if err != nil {
 		out.Reason = "integration ledger unavailable: " + err.Error()
 		out.WouldBlock, out.Allowed = true, cfg.Mode != config.IntegrationEnforce
 		return out
 	}
-	base := bases[0]
 	if len(bases) > 1 {
 		intent, known := store.Intent(ref.Key())
 		if !known || !cfg.Allows(ref.Repo, intent.Base) {
@@ -343,6 +348,13 @@ func (s *Server) integrationDispatchDecision(ref worksource.Ref) integration.Dec
 		}
 	}
 	in := s.integrationInput(ref.Key(), ref.Repo, base, time.Now())
+	if ledger := s.claimsLedger(); ledger != nil {
+		for _, claim := range ledger.List() {
+			if strings.EqualFold(claim.Repo, ref.Repo) {
+				in.LiveKeys = append(in.LiveKeys, claim.Key())
+			}
+		}
+	}
 	out, err = store.Decide(cfg, in)
 	if err != nil {
 		out = integration.Decision{Allowed: cfg.Mode != config.IntegrationEnforce, WouldBlock: true, Reason: err.Error()}
@@ -558,6 +570,9 @@ func (s *Server) handleIntegrationGet(w http.ResponseWriter, r *http.Request) {
 		bindings = append(bindings, map[string]any{"policy": policy, "fingerprint": policy.Fingerprint()})
 	}
 	resp["policy_bindings"] = bindings
+	resp["dispatch_advice"] = s.integrationDispatchAdvice()
+	resp["dispatch_advice_contract"] = "last actual internal/contributor evaluations; bounded boot-local diagnostics, not durable merge proof"
+	resp["aging_policy"] = "oldest intent within existing priority/own-work bands; per-repository/base active and budget bounds; no native reordering"
 	store, err := s.integrationStore()
 	if err != nil {
 		resp["state"] = "unknown"
