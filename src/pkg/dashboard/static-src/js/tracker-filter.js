@@ -763,7 +763,7 @@
         ? { key: e.group.key, html: stageTrackerGroupHeaderHtml(e.group, stages, ctx) }
         : itemRow(pageItems[i], i);
       const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]
-        .concat(stageTrackerTrainRows(page.rows, rowOf)), nowMs);
+        .concat(stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null)), nowMs);
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
