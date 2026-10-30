@@ -20,6 +20,8 @@ func TestAlreadyLandedPRFromReviewerWording(t *testing.T) {
 		{name: "15648 since", text: alreadyLandedQuestion15648, want: 15341},
 		{name: "owner/repo ref", text: "This is a no-op: the identical fix merged via hivecommons/hive#15301.", want: 15301},
 		{name: "pull url", text: "Already landed through https://github.com/hivecommons/hive/pull/15301 — close?", want: 15301},
+		// hivecommons/hive#15732: the question that parked #15544.
+		{name: "15544 merged annotation", text: "@clubanderson should decide whether #15544 can be closed as a no-op now that #15545 (merged) carries this change", want: 15545},
 		{name: "question mentions a PR but not redundancy", text: "@clubanderson should decide whether the flag introduced in #15506 should default on before this PR merges.", want: 0},
 		{name: "lineage mention only", text: "@clubanderson should decide whether to close this adoption of #15324 as already landed.", want: 0},
 		{name: "two different landing refs are ambiguous", text: "Already landed via #15506 and via #15507.", want: 0},
