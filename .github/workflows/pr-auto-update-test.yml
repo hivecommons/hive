@@ -48,6 +48,8 @@ jobs:
       - name: Ensure YAML parser for workflow contracts
         run: |
           python3 -c 'import yaml' 2>/dev/null && exit 0
-          python3 -m pip install --user --break-system-packages 'PyYAML==6.0.3'
+          # Match v2-ci's lean-runner setup; these images need not carry pip.
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq python3-yaml
       - name: Check native queue workflow contracts
         run: python3 .github/scripts/test-native-queue-workflows.py
