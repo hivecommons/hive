@@ -270,17 +270,17 @@ func (s *Service) submitInceptionBuffer(ctx context.Context, state *inceptionSta
 	key := inceptionRunKey(state)
 	s.mu.Lock()
 	var batch map[string]string
-	var skipped map[string]bool
+	skipped := 0
 	if buf := s.inceptionBuffers[key]; buf != nil {
 		batch = make(map[string]string, len(buf.Answers))
 		for id, v := range buf.Answers {
 			batch[id] = v
 		}
-		skipped = buf.Skipped
+		skipped = len(buf.Skipped)
 	}
 	s.mu.Unlock()
 	if len(batch) == 0 {
-		if len(skipped) > 0 {
+		if skipped > 0 {
 			return "❌ " + inceptionNeedsOneAnswer, nil
 		}
 		return "❌ No buffered answers to submit. Use `!inception answer <n> <text>` first.", nil
@@ -367,12 +367,8 @@ func countInceptionAnswered(questions []inceptionQuestion, answers map[string]st
 }
 
 func inceptionInterviewDone(questions []inceptionQuestion, answers map[string]string, skipped map[string]bool) bool {
-	for _, q := range questions {
-		if strings.TrimSpace(answers[q.ID]) == "" && !skipped[q.ID] {
-			return false
-		}
-	}
-	return true
+	_, open := nextOpenInceptionQuestion(questions, answers, skipped)
+	return !open
 }
 
 func (s *Service) cmdInceptionFacts(ctx context.Context, args string) (string, error) {
@@ -416,8 +412,23 @@ func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, 
 		return
 	}
 	key := s.pendingKey(msg.AuthorID)
-	if msg.TrustedRole != "" {
-		s.seedPendingInterviewFromState(ctx, key)
+	s.mu.Lock()
+	_, hasPending := s.pendingInterviews[key]
+	s.mu.Unlock()
+	if !hasPending && msg.TrustedRole == "" {
+		return
+	}
+	// The live state supplies the run key the answer buffer is scoped by and
+	// confirms the engine still accepts answers.
+	state, err := s.fetchInceptionState(ctx)
+	if err != nil {
+		if hasPending {
+			s.enqueue(fmt.Sprintf("❌ Failed to load inception questions: %s", err))
+		}
+		return
+	}
+	if !hasPending {
+		s.seedPendingInterviewFromState(state, key)
 	}
 	s.mu.Lock()
 	pending := s.pendingInterviews[key]
@@ -425,41 +436,70 @@ func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, 
 		s.mu.Unlock()
 		return
 	}
-	q, ok := pending.lowestUnanswered()
-	if !ok {
+	if _, ok := pending.lowestUnanswered(); !ok {
 		delete(s.pendingInterviews, key)
 		s.mu.Unlock()
 		return
 	}
 	s.mu.Unlock()
-
-	body, _ := json.Marshal(map[string]map[string]string{"answers": map[string]string{q.ID: content}})
-	reply := fmt.Sprintf("✅ Answered question %s.", q.ID)
-	if err := s.dashboardPost(ctx, "/api/inception/answer", body); err != nil {
-		reply = fmt.Sprintf("❌ Failed to submit inception answer: %s", inceptionErrorText(err))
-	} else {
-		s.mu.Lock()
-		if pending := s.pendingInterviews[key]; pending != nil {
-			pending.Answers[q.ID] = content
-		}
-		s.mu.Unlock()
+	if !inceptionAcceptsAnswers(state.State.Phase) {
+		s.enqueue(fmt.Sprintf("❌ cannot submit answers in phase %s; remaining questions use their defaults", state.State.Phase))
+		return
 	}
-	s.enqueue(reply)
+
+	answers, skipped := s.mergedInceptionAnswers(state)
+	q, ok := nextOpenInceptionQuestion(state.State.Questions, answers, skipped)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	buf := s.inceptionBufferLocked(inceptionRunKey(state))
+	buf.Answers[q.ID] = content
+	delete(buf.Skipped, q.ID)
+	if pending := s.pendingInterviews[key]; pending != nil {
+		pending.Answers[q.ID] = content
+	}
+	s.mu.Unlock()
+
+	// Same one-call rule as `!inception answer`: the engine leaves clarify on
+	// the first submission, so the reply is buffered until the interview is
+	// complete (or `!inception submit`) rather than posted on its own.
+	answers, skipped = s.mergedInceptionAnswers(state)
+	if inceptionInterviewDone(state.State.Questions, answers, skipped) {
+		reply, _ := s.submitInceptionBuffer(ctx, state)
+		s.enqueue(reply)
+		return
+	}
+	s.enqueue(fmt.Sprintf("✅ Recorded answer %d (%d of %d). Reply to the next question, or use `!inception submit` to send them now.",
+		inceptionQuestionNumber(state.State.Questions, q.ID), countInceptionAnswered(state.State.Questions, answers), len(state.State.Questions)))
+}
+
+// nextOpenInceptionQuestion returns the first question that is neither
+// answered (on the server or in the buffer) nor skipped.
+func nextOpenInceptionQuestion(questions []inceptionQuestion, answers map[string]string, skipped map[string]bool) (inceptionQuestion, bool) {
+	for _, q := range questions {
+		if strings.TrimSpace(answers[q.ID]) == "" && !skipped[q.ID] {
+			return q, true
+		}
+	}
+	return inceptionQuestion{}, false
+}
+
+func inceptionQuestionNumber(questions []inceptionQuestion, id string) int {
+	for i, q := range questions {
+		if q.ID == id {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // seedPendingInterviewFromState seeds key's interview from the live
 // inception state when none is pending yet. The dashboard only forwards an
 // unprefixed reply (TrustedRole set) while the engine is in clarify, which can
 // be before the next status snapshot reaches diffInception (#13215).
-func (s *Service) seedPendingInterviewFromState(ctx context.Context, key pendingInterviewKey) {
-	s.mu.Lock()
-	_, exists := s.pendingInterviews[key]
-	s.mu.Unlock()
-	if exists {
-		return
-	}
-	state, err := s.fetchInceptionState(ctx)
-	if err != nil || !state.Active || state.State.Phase != "clarify" || len(state.State.Questions) == 0 {
+func (s *Service) seedPendingInterviewFromState(state *inceptionStateResponse, key pendingInterviewKey) {
+	if !state.Active || state.State.Phase != "clarify" || len(state.State.Questions) == 0 {
 		return
 	}
 	answers := make(map[string]string, len(state.State.Answers))

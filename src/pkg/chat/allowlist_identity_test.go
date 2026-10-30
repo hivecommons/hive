@@ -49,13 +49,17 @@ func TestRouteMessage_AllowlistMatchesIdentityLikeDashboard(t *testing.T) {
 func TestRouteMessage_PendingInterviewAnswerMatchesNormalizedIdentity(t *testing.T) {
 	var got map[string]map[string]string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/inception/answer" {
-			t.Errorf("path = %q, want /api/inception/answer", r.URL.Path)
+		switch r.URL.Path {
+		case "/api/inception/state":
+			writeClarifyState(t, w, []map[string]string{{"id": "q1", "text": "First?"}})
+		case "/api/inception/answer":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Errorf("decode answer body: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Errorf("decode answer body: %v", err)
-		}
-		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
 
