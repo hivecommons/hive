@@ -545,7 +545,43 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 	// "awaiting review approval", and combined verdict arrays from the
 	// reviewer recorded only the one perspective whose dispatch happened to be
 	// assigned to that same agent.
+	c.logAdvisoryFallbackCandidates(state, report, req)
 	return c.advisoryVerdictAuthorized(report, req)
+}
+
+// logAdvisoryFallbackCandidates records why a verdict from an agent this hive
+// dispatched to for the PR bound to no dispatch row and fell back to advisory:
+// what the verdict claimed, and every row for that repo and number it was
+// compared with (hivecommons/hive#15559). A verdict from an agent with no row
+// for the PR is an ordinary advisory review and logs nothing.
+func (c *Client) logAdvisoryFallbackCandidates(state review.DispatchState, report review.PerspectiveReport, req ReviewRequest) {
+	agent := strings.TrimSpace(req.Agent)
+	var candidates []string
+	agentHasRow := false
+	add := func(kind, repo string, number int, rowAgent string, perspective review.Perspective, headSHA string, decision bool) {
+		if number != report.Number || !strings.EqualFold(strings.TrimSpace(repo), strings.TrimSpace(report.Repo)) {
+			return
+		}
+		if strings.TrimSpace(rowAgent) == agent {
+			agentHasRow = true
+		}
+		candidates = append(candidates, fmt.Sprintf("%s agent=%s perspective=%s head=%s decision=%t", kind, strings.TrimSpace(rowAgent), perspective, strings.TrimSpace(headSHA), decision))
+	}
+	for _, p := range state.Pending {
+		add("pending", p.Repo, p.Number, p.Agent, p.Perspective, p.HeadSHA, p.Decision)
+	}
+	for _, r := range state.Recent {
+		add("recent", r.Repo, r.Number, r.Agent, r.Perspective, r.HeadSHA, r.Decision)
+	}
+	if !agentHasRow || c.logger == nil {
+		return
+	}
+	c.logger.Info("review-request watcher: verdict matched no dispatch row for its agent, falling back to advisory",
+		slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
+		slog.String("agent", agent),
+		slog.String("perspective", string(report.Perspective)),
+		slog.String("reported_head", strings.TrimSpace(report.HeadSHA)),
+		slog.String("candidates", strings.Join(candidates, "; ")))
 }
 
 // advisoryVerdictAuthorized admits a verdict no dispatch row binds. The

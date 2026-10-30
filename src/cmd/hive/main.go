@@ -7841,7 +7841,7 @@ func runEvalCycle(
 			onReviewDelivered: func(msg scheduler.KickMessage) {
 				if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
 					deliveredReviewKicks = append(deliveredReviewKicks, k)
-					persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
+					persistReviewDispatchStateInProgress(reviewPlan, deliveredReviewKicks, logger)
 				}
 			},
 			onFailed: func(msg scheduler.KickMessage, err error) {
@@ -11411,11 +11411,28 @@ func postReviewAcknowledgements(ctx context.Context, poster reviewCommentPoster,
 }
 
 func persistReviewDispatchState(plan review.DispatchPlan, delivered []review.DispatchKick, logger *slog.Logger) {
+	writeReviewDispatchState(plan, func(planned []review.DispatchKick) review.DispatchState {
+		return review.ConfirmDelivered(plan.State, planned, delivered)
+	}, logger)
+}
+
+// persistReviewDispatchStateInProgress is the persist made while the kick pass
+// is still delivering: it keeps the pending rows of planned kicks not yet
+// confirmed, so a verdict from a kick still in flight binds to its dispatch
+// (hivecommons/hive#15559). The end-of-pass persistReviewDispatchState drops
+// the kicks that never landed.
+func persistReviewDispatchStateInProgress(plan review.DispatchPlan, delivered []review.DispatchKick, logger *slog.Logger) {
+	writeReviewDispatchState(plan, func([]review.DispatchKick) review.DispatchState {
+		return review.ConfirmDeliveredInProgress(plan.State, delivered)
+	}, logger)
+}
+
+func writeReviewDispatchState(plan review.DispatchPlan, confirm func(planned []review.DispatchKick) review.DispatchState, logger *slog.Logger) {
 	planned := append(append([]review.DispatchKick(nil), plan.ReviewKicks...), plan.FixKicks...)
 	if plan.State.GeneratedAt.IsZero() && len(planned) == 0 {
 		return
 	}
-	state := review.ConfirmDelivered(plan.State, planned, delivered)
+	state := confirm(planned)
 	if err := review.WriteDispatchState("", state); err != nil {
 		logger.Warn("failed to persist review dispatch state", "error", err)
 	}
