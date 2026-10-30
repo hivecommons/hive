@@ -215,6 +215,15 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 		text += " — not adopted: a maintainer approved this head; the hive merges it as-is"
 	case a.BlockedBy != "":
 		text += " — not adopted: " + a.BlockedBy
+	case a.Policy == config.AdoptionMaintainerPolicyNever && a.AutoDue:
+		// The engine has not read the author's repository permission yet
+		// (it only does so once due): under never, a maintainer's head
+		// never reaches this moment at all, so the row cannot promise
+		// adoption the way the non-never case below does
+		// (hivecommons/hive#15692).
+		text += " — hive adopts it on the next sweep unless the author maintains this repository"
+	case a.Policy == config.AdoptionMaintainerPolicyNever && a.AutoAdoptAt != nil && a.AutoAdoptAt.After(now):
+		text += " — hive adopts it in " + stageTrackerShortDuration(max(a.AutoAdoptAt.Sub(now), time.Minute)) + " unless a new head lands or the author maintains this repository"
 	case a.AutoDue:
 		text += " — hive adopts it on the next sweep"
 	case a.AutoAdoptAt != nil && a.AutoAdoptAt.After(now):
