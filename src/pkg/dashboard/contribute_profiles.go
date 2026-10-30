@@ -189,6 +189,8 @@ type ContributorProfile struct {
 	LastActive         string                `json:"last_active,omitempty"`
 	LastCompletedTask  *WSTaskAssign         `json:"last_completed_task,omitempty"`
 	RateLimits         ContributorRateLimits `json:"rate_limits"`
+	// Abandoned counts this contributor's PRs adopted by the hive, once per PR.
+	Abandoned int `json:"abandoned"`
 	// LabelInterests is the contributor's OPT-IN list of GitHub issue labels they
 	// want to help with (issue #2637) — e.g. a contributor with an NVIDIA machine
 	// subscribes to "nvidia" so nvidia-labelled work surfaces first for them. It is

@@ -17,6 +17,7 @@ type LeaderboardEntry struct {
 	TrustTier      string                   `json:"trust_tier"`
 	TasksCompleted int                      `json:"tasks_completed"`
 	TasksFailed    int                      `json:"tasks_failed"`
+	Abandoned      int                      `json:"abandoned"`
 	Findings       int                      `json:"findings,omitempty"`
 	RegisteredAt   string                   `json:"registered_at"`
 	Team           *ContributorTeamMetadata `json:"team,omitempty"`
@@ -65,6 +66,7 @@ func buildLeaderboardWithInputs(inputs achievement2Inputs) []LeaderboardEntry {
 			TrustTier:      p.TrustTier,
 			TasksCompleted: p.TasksCompleted,
 			TasksFailed:    p.TasksFailed,
+			Abandoned:      p.Abandoned,
 			RegisteredAt:   p.RegisteredAt,
 			Team:           team,
 			EquippedTitle:  p.EquippedTitle,
