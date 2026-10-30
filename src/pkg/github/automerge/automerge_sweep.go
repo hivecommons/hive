@@ -82,6 +82,9 @@ const autoMergeReasonLabelNeedsRebase = "label:needs-rebase"
 
 // Options carries policy dependencies owned by the caller.
 type Options struct {
+	// BasePreparation persists front-only final preparation across all lanes.
+	// nil uses the shared durable store.
+	BasePreparation  *BasePreparationStore
 	Logger           *slog.Logger
 	MergerAuthorizer MergerAuthorizer
 	RequiredChecks   map[string]bool
@@ -239,9 +242,10 @@ type Options struct {
 
 // Engine owns the automerge sweep policy state.
 type Engine struct {
-	transport Transport
-	gh        *gh.Client
-	logger    *slog.Logger
+	basePreparation *BasePreparationStore
+	transport       Transport
+	gh              *gh.Client
+	logger          *slog.Logger
 
 	inactiveQueueMu   sync.Mutex
 	inactiveQueueLast map[string]time.Time
@@ -393,6 +397,7 @@ func New(transport Transport, opts Options) *Engine {
 		ghClient = transport.GoGitHub()
 	}
 	e := &Engine{
+		basePreparation:                   opts.BasePreparation,
 		transport:                         transport,
 		gh:                                ghClient,
 		logger:                            opts.Logger,
@@ -1931,7 +1936,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// current-base gate stays in force unless the operator explicitly set
 	// auto_merge.native_merge_queue.skip_current_base_gate.
 	queueSkipsBase := sync.OnceValue(func() bool { return c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
-	if strings.EqualFold(pr.GetMergeableState(), "behind") && !queueSkipsBase() {
+	if strings.EqualFold(pr.GetMergeableState(), "behind") && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) {
 		if !branchUpdateAllowed {
 			// Keep the cause: still behind, retried next tick, not CI
 			// state and not author work (hivecommons/hive#12607).
@@ -2010,7 +2015,10 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// head policy refuses would be updated for nothing. Sits before the desk
 	// so the desk is only asked about a head that would merge this tick.
 	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
-		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted, c.isForkPR(pr)); stop {
+		if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, lane, number, pr, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
+			return AutoMergeSweepEvent{}, reviewReason, nil
+		}
+		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted, c.isForkPR(pr), stageLaneSelf); stop {
 			return ev, reason, err
 		}
 	}
@@ -2434,7 +2442,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in.
 	queueSkipsBase := sync.OnceValue(func() bool { return c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
-	if mergeableState == "behind" && !queueSkipsBase() {
+	if mergeableState == "behind" && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) {
 		headSHA := ""
 		if pr.GetHead() != nil {
 			headSHA = pr.GetHead().GetSHA()
@@ -2489,7 +2497,10 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	// Current-base gate (hivecommons/hive#13634): only a green head that
 	// every gate above lets through is worth an update-branch commit.
 	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
-		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind", c.isForkPR(pr)); stop {
+		if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, stageLaneTrusted, number, pr, headSHA, priorApprover, priorChecked); reviewReason != "" {
+			return AutoMergeSweepEvent{}, reviewReason, nil
+		}
+		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind", c.isForkPR(pr), stageLaneTrusted); stop {
 			return ev, reason, err
 		}
 	}
@@ -2599,6 +2610,12 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 
 func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string, fork bool) (AutoMergeSweepEvent, string, error) {
 	if err := c.executeUpdateBranchEffect(ctx, owner, repo, number, headSHA, reason); err != nil {
+		if wait := preparationWaitReason(err); wait != "" {
+			return AutoMergeSweepEvent{}, wait, nil
+		}
+		if c.requireCurrentBaseFor(owner+"/"+repo) && hgithub.IsUpdateBranchStaleHead(err) {
+			return AutoMergeSweepEvent{}, basePreparationPrefix + "snapshot-changed", nil
+		}
 		switch classifyUpdateBranchError(err, fork) {
 		case updateBranchUpToDate:
 			return AutoMergeSweepEvent{}, "check-pending", nil
@@ -2611,6 +2628,9 @@ func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, re
 		return AutoMergeSweepEvent{}, "update-branch", err
 	}
 	c.info("automerge update-branch", "repo", displayRepo, "pr", number, "reason", reason)
+	if c.requireCurrentBaseFor(owner + "/" + repo) {
+		return AutoMergeSweepEvent{Repo: displayRepo, Number: number, HeadSHA: headSHA, BranchUpdated: true}, basePreparationReady, nil
+	}
 	return AutoMergeSweepEvent{Repo: displayRepo, Number: number, HeadSHA: headSHA, BranchUpdated: true}, "check-pending", nil
 }
 
@@ -2661,6 +2681,11 @@ func classifyUpdateBranchError(err error, fork bool) updateBranchFailure {
 }
 
 func (c *Engine) executeUpdateBranchEffect(ctx context.Context, owner, repo string, number int, headSHA, reason string) error {
+	if c.requireCurrentBaseFor(owner + "/" + repo) {
+		if err := c.claimBasePreparationUpdate(ctx, owner, repo, number, headSHA); err != nil {
+			return err
+		}
+	}
 	inputs := map[string]string{"expected_head_sha": headSHA, "reason": reason}
 	observe := func(ctx context.Context) (effects.ExternalState, error) {
 		pr, _, getErr := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_reconcile_branch_update"), owner, repo, number)
@@ -2690,6 +2715,11 @@ func (c *Engine) executeUpdateBranchEffect(ctx context.Context, owner, repo stri
 		}
 		return effects.Result{Provenance: owner + "/" + repo + "#" + strconv.Itoa(number)}, nil
 	})
+	var rejected *gh.ErrorResponse
+	if c.requireCurrentBaseFor(owner+"/"+repo) && errors.As(err, &rejected) && rejected.Response != nil &&
+		(rejected.Response.StatusCode == http.StatusForbidden || rejected.Response.StatusCode == http.StatusUnprocessableEntity) {
+		c.forgetRejectedPreparationUpdate(owner, repo, number, headSHA)
+	}
 	return err
 }
 
