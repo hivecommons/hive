@@ -165,6 +165,19 @@ func TestStageTrackerAdoptionAskHedgesBeforeDue(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#15742: the hedge clause per maintainer policy.
+func TestStageTrackerAdoptionHedgeByPolicy(t *testing.T) {
+	for _, tc := range []struct{ policy, want string }{
+		{config.AdoptionMaintainerPolicyNever, " unless the author maintains this repository"},
+		{config.AdoptionMaintainerPolicyAsk, " unless the author maintains this repository, then it asks"},
+		{config.AdoptionMaintainerPolicyAdopt, ""},
+	} {
+		if got := stageTrackerAdoptionNeverHedge(StageTrackerAdoption{Policy: tc.policy}, " unless"); got != tc.want {
+			t.Errorf("policy %q: hedge = %q, want %q", tc.policy, got, tc.want)
+		}
+	}
+}
+
 // adopt (default): nothing is held, so the row reports the wait, the
 // nudges, the presence and — since the engine's own predicate
 // (automerge.AutoAdoption) is what the row reads — that the hive adopts
