@@ -84,7 +84,7 @@ hub read that store and nothing else (`stageStoreOrShared`,
    parking stages through the label relay (`agentMayAddLabel`,
    `src/pkg/github/issue_request_label.go:75`), so a clanker can set a stage
    label and only the next sweep's self-heal corrects it. The docs admit the
-   arrangement (`src/docs/labels-and-control-signals.md:313-316`). The PR-D
+   arrangement (`src/docs/labels-and-control-signals/reference.md:313-316`). The PR-D
    vocabulary cleanup makes claim labels and review adoption checks use
    `stagelabels` directly; their fact-submission migration remains separate.
 3. *No explicit transition model.* `Store.Observe` records that a stage
