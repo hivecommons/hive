@@ -1353,7 +1353,8 @@ const sentBack = { repo: 'o/r', kind: 'pr', number: 15626, url: 'u', author: 'cl
 let leadSB = stageTrackerLeadAction(sentBack, writer);
 assert.ok(leadSB && !/^decide:close-/.test(leadSB.id), 'sent-back PR never leads with a close: ' + JSON.stringify(leadSB));
 assert.ok(!leadSB.danger);
-assert.ok(ids(stageTrackerRowActions(sentBack, writer)).includes('decide:close-superseded'), 'the ⋯ menu still offers the close');
+const sbDecide = stageTrackerRowActions(sentBack, writer).find(a => a.id === 'decide');
+assert.ok(sbDecide && sbDecide.submenu.some(o => o.id === 'decide:close-superseded' && o.danger), 'the Decide… submenu still offers the close');
 
 // When the server says the close IS the answer (lead: the reviewer named
 // the PR that supersedes this one — RedundantOf), Close as superseded
