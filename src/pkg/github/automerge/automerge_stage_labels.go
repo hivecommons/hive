@@ -463,6 +463,7 @@ func (c *Engine) removeNonStageLabel(ctx context.Context, owner, repo string, nu
 // reason it settled on (""+merged for a merge). It is a no-op when the
 // policy is off so lanes never pay for it.
 func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullRequest, reason string, merged bool, err error) {
+	c.observeBasePreparation(lane, owner, repo, pr, reason, merged, err)
 	policy := c.stagePolicy()
 	if !policy.Enabled || pr == nil || pr.GetNumber() <= 0 {
 		return

@@ -207,6 +207,46 @@
       if (wrap && e.target && wrap.contains(e.target)) return;
       btn.setAttribute('aria-expanded', 'false');
     });
+    /* ── Onboarding → Getting Started guide tips ────────────────────────
+       Server classifies setup problems (StatusPayload.onboardingIssues,
+       SystemAlert.onboarding/guideStep, deepHealth checks[].guideStep). Every
+       surface that renders one appends this tip, whose link opens the 🧭 Guide
+       at the matching step. A new operator (GHE, no welcome checklist in
+       sight) asked Slack for the install URL and "where is the guide?" — the
+       dashboard must answer that itself. */
+    var ONBOARDING_GUIDE_STEP_TITLES = {
+      'github-app': 'Install the Forge App (GitHub App)',
+      'repos': 'Add projects & mark the primary',
+      'add-agent': 'Add a custom agent',
+      'welcome': 'Welcome to your hive'
+    };
+    function onboardingGuideTipHtml(stepId, extra) {
+      var step = ONBOARDING_GUIDE_STEP_TITLES[stepId] ? stepId : 'github-app';
+      var what = step === 'github-app' ? ' for the install URL and permissions checklist' : '';
+      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open the 🧭 Guide</a> (top navbar) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
+        + (extra ? ' ' + extra : '');
+    }
+    function onboardingGuideTipFill(id, stepId, extra) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = onboardingGuideTipHtml(stepId, extra);
+    }
+    /* Why the Governor Config gear may be missing for a new operator: the
+       Guide, its entry points and the settings gear all require a non-read
+       role (/api/role), granted via Manage Access on the hub. */
+    var ONBOARDING_ROLE_NOTE = 'Settings (⚙️ Governor Config) and this guide require a read-write or owner role — ask the hive owner for access via Manage Access if you cannot see them.';
+    /* Keep the Guide chip reachable while any onboarding problem is active,
+       even if the checklist was dismissed earlier. Read-only roles stay
+       gated (the guide drives write actions). */
+    var _welcomeRoleIsRead = false;
+    function renderOnboardingGuideChip(data) {
+      var issues = (data && Array.isArray(data.onboardingIssues)) ? data.onboardingIssues : [];
+      if (!issues.length || _welcomeRoleIsRead) return;
+      var topBtn = document.getElementById('welcome-topbar-btn');
+      if (topBtn && topBtn.style.display === 'none') topBtn.style.display = '';
+      var navItem = document.getElementById('welcome-nav-item');
+      if (navItem && navItem.style.display === 'none') navItem.style.display = '';
+    }
+
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
@@ -260,6 +300,7 @@
         }
         var staleDetails = document.getElementById('gh-app-perm-details');
         if (staleDetails) staleDetails.remove();
+        onboardingGuideTipFill('gh-app-guide-tip', 'github-app', 'The step explains which parts are yours and which the hub operator supplies.');
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
         return;
@@ -373,6 +414,7 @@
             }
           }
         }
+        onboardingGuideTipFill('gh-app-guide-tip', 'github-app');
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
@@ -390,6 +432,7 @@
       if (data && data.repoTargetMisconfigured) {
         var desc = document.getElementById('repo-target-banner-desc');
         if (desc) desc.textContent = data.repoTargetIssue || 'Project target misconfigured — expected owner/name. Fix in Settings → Projects.';
+        onboardingGuideTipFill('repo-target-guide-tip', 'repos', ONBOARDING_ROLE_NOTE);
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
@@ -549,9 +592,10 @@
         var dismiss = (a.id || '').indexOf('plan-stall-') === 0
           ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(a.id || '') + '" data-stop="1" title="Dismiss this needs-human plan alert">Dismiss</button>'
           : '';
+        var guideTip = a.onboarding ? '<div class="onboarding-guide-tip">' + onboardingGuideTipHtml(a.guideStep || 'github-app') + '</div>' : '';
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + ';flex:1">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + '</span>'
+          + '<span style="color:' + textColor + ';flex:1">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + guideTip + '</span>'
           + dismiss
           + '</div>';
       }).join('');

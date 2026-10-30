@@ -81,6 +81,17 @@ type StageTrackerResponse struct {
 	// the SPA tell "merged" from "closed" between two polls and play its
 	// opt-in merge sound for the right rows.
 	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
+	// RecentlyClosed lists the pull requests that left Items closed but
+	// not merged within stageTrackerMergedWindow — superseded, withdrawn,
+	// closed by a decision — as the webhook / sweep / audit paths saw them
+	// (stage_tracker_recently_closed.go). With RecentlyMerged it lets the
+	// SPA tell a close from a merge when a row vanishes between two polls
+	// and say so instead of staying silent (hivecommons/hive#15808).
+	RecentlyClosed []StageTrackerClosed `json:"recently_closed,omitempty"`
+	// MergedHoldMS is dashboard.stage_tracker.merged_hold_s in
+	// milliseconds: how long the SPA may keep a vanished row at "Merging ·
+	// merge landed" while it waits for the merged fact.
+	MergedHoldMS int `json:"merged_hold_ms"`
 	// Merged24h is the same list over the last 24 hours, newest first. It
 	// seeded the SPA's former "Merged today" counter; the Merged chip now
 	// reads Merged (the durable ledger) and this stays for older SPAs.
@@ -91,6 +102,20 @@ type StageTrackerResponse struct {
 	// the last few merges. Unlike RecentlyMerged it survives a roll, so it
 	// is what the "Merged" chip shows.
 	Merged StageTrackerMergedSummary `json:"merged"`
+	// Settings carries the operator-tunable timings the tracker's settings
+	// modal edits (hivecommons/hive#15813), so every viewer — not only the
+	// owner who may read /api/config/dashboard — sees the live values.
+	Settings StageTrackerSettings `json:"settings"`
+}
+
+// StageTrackerSettings is the live value of the timing knobs the Activity
+// Monitor settings modal edits: dashboard.stage_tracker.toast_info_s,
+// dashboard.stage_tracker.toast_error_s and
+// auto_merge.contributor_lane.soak_minutes.
+type StageTrackerSettings struct {
+	ToastInfoS  int `json:"toast_info_s"`
+	ToastErrorS int `json:"toast_error_s"`
+	SoakMinutes int `json:"soak_minutes"`
 }
 
 // StageTrackerMerged is one recently merged pull request.
@@ -100,7 +125,14 @@ type StageTrackerMerged struct {
 	MergedAt time.Time `json:"merged_at"`
 }
 
-// stageTrackerMergedWindow bounds RecentlyMerged. It is deliberately much
+// StageTrackerClosed is one recently closed, unmerged pull request.
+type StageTrackerClosed struct {
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	ClosedAt time.Time `json:"closed_at"`
+}
+
+// stageTrackerMergedWindow bounds RecentlyMerged (and RecentlyClosed). It is deliberately much
 // longer than the cache TTL plus the SPA's 30 s poll: a tab that missed a
 // few polls (throttled in the background) still sees the merge it was
 // watching for, and the SPA dedupes per PR so a longer list never replays.
@@ -369,6 +401,12 @@ type StageTrackerItem struct {
 	// behalf: which attempt of the loop guard this is, or that the hive
 	// ran out and a person must resolve it.
 	Rebase *StageTrackerRebase `json:"rebase,omitempty"`
+	// ciRed is the listing's CI verdict on the current head (failure or
+	// named failing checks), unexported: the merge train view drops such
+	// a row from its train (hivecommons/hive#15825) whatever its record
+	// says — a header read "8 PRs" over seven seats because a red 090
+	// row was counted.
+	ciRed bool
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head

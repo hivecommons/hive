@@ -477,7 +477,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
 		if stage == stagelabels.None {
-			store.Forget(key)
+			store.ForgetStage(key)
 		} else {
 			tr = store.ObserveProgress(key, stage, reason, d.Progress)
 			noteIssueCoveringPR(client, store, key, in, stage)

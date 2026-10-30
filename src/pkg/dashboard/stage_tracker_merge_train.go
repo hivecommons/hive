@@ -1,8 +1,10 @@
 package dashboard
 
 import (
+	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -172,6 +174,14 @@ func stageTrackerApplyMergeTrain(it *StageTrackerItem) {
 		stageTrackerApplyDuplicateHold(it, mt)
 		return
 	}
+	if mt.State == prstage.MergeTrainStateClaimConflict {
+		stageTrackerApplyClaimConflict(it, mt)
+		return
+	}
+	if mt.State == prstage.MergeTrainStateAdmitted {
+		stageTrackerApplyAdmittedHold(it, mt)
+		return
+	}
 	mt.ID = it.BaseRef + "#" + strconv.Itoa(mt.Front)
 	it.MergeTrain = mt
 	parsed, _ := prstage.ParseMergeTrain(it.Reason)
@@ -208,6 +218,112 @@ func stageTrackerApplyDuplicateHold(it *StageTrackerItem, mt *StageTrackerMergeT
 	}
 }
 
+// stageTrackerApplyClaimConflict decorates a PR the sweep held because an
+// open PR in another lane claims the same issue and nobody has decided
+// which lands (hivecommons/hive#15810): the gate reads
+// "claim-conflict:<other>" with the other PR and the issue on the gate,
+// the row rides no train, the caption says "held · duplicate of #<other>
+// · needs decision", and it wears needs-decision so the row offers the
+// keep / close choice by name.
+func stageTrackerApplyClaimConflict(it *StageTrackerItem, mt *StageTrackerMergeTrain) {
+	parsed, _ := prstage.ParseMergeTrain(it.Reason)
+	if it.MergeGate == nil {
+		it.MergeGate = &StageTrackerMergeGate{}
+	}
+	it.MergeGate.State = MergeGateStateClaimConflict(mt.Front)
+	it.MergeGate.Reason = parsed.Sentence()
+	it.MergeGate.DuplicateOf = mt.Front
+	it.MergeGate.DuplicateIssue = mt.Position
+	it.MergeTrain = nil
+	if !slices.Contains(it.Modifiers, modNeedsDecision) {
+		it.Modifiers = append(it.Modifiers, modNeedsDecision)
+	}
+}
+
+// stageTrackerClaimConflictCaption is the row caption of a PR held on an
+// undecided same-issue claim, "" for every other row.
+func stageTrackerClaimConflictCaption(it *StageTrackerItem) string {
+	if it == nil || it.MergeGate == nil {
+		return ""
+	}
+	other := mergeGateClaimConflictOf(it.MergeGate.State)
+	if other <= 0 {
+		return ""
+	}
+	return prstage.ClaimConflictCaption(other)
+}
+
+// stageTrackerApplyAdmittedHold decorates a PR the lane found green and
+// approved while it shares files with a train (hivecommons/hive#15825):
+// it holds no seat yet — the next plan seats it at the back — so the row
+// rides no train (no ordinal, never the front) and carries the overlap
+// hint instead, pointed at the front it joins behind.
+func stageTrackerApplyAdmittedHold(it *StageTrackerItem, mt *StageTrackerMergeTrain) {
+	parsed, _ := prstage.ParseMergeTrain(it.Reason)
+	if it.MergeGate == nil {
+		it.MergeGate = &StageTrackerMergeGate{}
+	}
+	it.MergeGate.State = MergeGateStateReady
+	it.MergeGate.Reason = parsed.Sentence()
+	it.MergeTrain = nil
+	it.Overlap = stageTrackerOverlapHint(it.Number, mt.Front, nil, mt.OverlapFiles)
+	it.Overlap.Note = "green and approved; takes a seat at the back of the merge train behind #" + strconv.Itoa(mt.Front) + " on the lane's next pass"
+	it.Overlap.Badge = "train · joins behind #" + strconv.Itoa(mt.Front) + " next pass"
+}
+
+// Ejection captions (hivecommons/hive#15825): what the merge train's
+// ejection means for this row, by the engine's why token. The chevron
+// caption says what is owed; the gray pill carries the lineage.
+var stageTrackerEjectionCaptions = map[string]string{
+	"head-moved":   "left the merge train — new push, CI re-running after push; review re-run owed",
+	"ci-pending":   "left the merge train — CI re-running on this head",
+	"ci-red":       "left the merge train — a required check is red on this head",
+	"verdict-owed": "left the merge train — review re-run owed for this head",
+	"conflicting":  "left the merge train — conflicting with the base",
+	"under-repair": "left the merge train — being fixed; rejoins when green",
+	"human-merge":  "left the merge train — a person merges this one",
+	"held":         "left the merge train — held",
+}
+
+// stageTrackerEjectionReasonPrefix prefixes the LeftTrain.Reason token the
+// SPA derives its words from: `merge-train:ejected:<why>`.
+const stageTrackerEjectionReasonPrefix = "merge-train:ejected:"
+
+// stageTrackerApplyTrainEjection decorates a PR the merge train ejected
+// (hivecommons/hive#15825) while it sits back in the CI / Review column:
+// no merge_train, a left_train that names the why and the lineage pill
+// ("left merge train · pushed 3m ago"), and a caption that says what is
+// owed before it rides again. A row the view already seats (the record
+// is stale) or one at 080+ keeps its own words.
+func stageTrackerApplyTrainEjection(it *StageTrackerItem, rec stagelabels.Record, hasRec bool, now time.Time) {
+	if it == nil || it.Kind != "pr" || !hasRec || it.MergeTrain != nil || it.Stage >= stagelabels.AwaitingMergeAdmission.Number() {
+		return
+	}
+	why, head, at, ok := rec.TrainEjected()
+	if !ok || (head != "" && it.Head != "" && !strings.EqualFold(head, it.Head) && why != "head-moved") {
+		return
+	}
+	caption := stageTrackerEjectionCaptions[why]
+	if caption == "" {
+		caption = "left the merge train — " + why
+	}
+	lineage := "left merge train"
+	switch {
+	case why == "head-moved" && !rec.LastPushAt.IsZero():
+		lineage += " · pushed " + shortDuration(now.Sub(rec.LastPushAt)) + " ago"
+	case !at.IsZero():
+		lineage += " · " + shortDuration(now.Sub(at)) + " ago"
+	}
+	it.LeftTrain = &StageTrackerLeftTrain{Why: why, Note: caption, Reason: stageTrackerEjectionReasonPrefix + why, Badge: lineage}
+	it.Caption = caption
+	if it.MergeGate != nil && it.MergeGate.State == MergeGateStateReady {
+		it.MergeGate.State = ""
+		if reflect.DeepEqual(*it.MergeGate, StageTrackerMergeGate{}) {
+			it.MergeGate = nil
+		}
+	}
+}
+
 // stageTrackerLeftTrainNote is the muted hover note on a PR the view
 // dropped from its merge train while a person or the fixer has it
 // (hivecommons/hive#15405 led a train header as "1st: #15405" while its
@@ -225,6 +341,11 @@ const stageTrackerAwaitingAdmissionCaption = "Green and approved; waiting for th
 type StageTrackerLeftTrain struct {
 	Why  string `json:"why"`
 	Note string `json:"note"`
+	// Reason is the engine's ejection token (`merge-train:ejected:<why>`)
+	// when the merge train itself ejected the PR (hivecommons/hive#15825);
+	// Badge is the gray lineage pill ("left merge train · pushed 3m ago").
+	Reason string `json:"reason,omitempty"`
+	Badge  string `json:"badge,omitempty"`
 	// trainID and position remember the slot it held so the survivors
 	// can close ranks (stageTrackerMergeTrainPostPass).
 	trainID  string

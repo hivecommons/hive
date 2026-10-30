@@ -32,6 +32,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	qualify := stageTrackerRepoQualifier(status)
 	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, qualify)
+	resp.RecentlyClosed = s.stageTrackerRecentlyClosed(now)
+	resp.MergedHoldMS = int(s.stageTrackerMergedHold() / time.Millisecond)
 	resp.Merged24h = s.stageTrackerMergedSince(now, stageTrackerMergedDayWindow, qualify)
 	resp.Merged = s.mergedSummaryNow(now)
 	if status == nil {
@@ -80,7 +82,14 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if store == nil {
 			return stagelabels.Record{}, false
 		}
-		return store.Get(stagelabels.Key(repo, number))
+		rec, ok := store.Get(stagelabels.Key(repo, number))
+		if ok && rec.Stage == stagelabels.None {
+			// A stage-less record only remembers the blocked sweep's lift
+			// (hivecommons/hive#15779): the row is still unstaged, but its
+			// since-time starts at the lift rather than at creation.
+			return stagelabels.Record{UnblockedAt: rec.UnblockedAt}, false
+		}
+		return rec, ok
 	}
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
 	fixWork := s.stageTrackerFixWorkLookup()
@@ -111,7 +120,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		if hasRec && rec.Stage != stagelabels.None {
 			stage = rec.Stage
-			t := rec.EnteredAt
+			t := rec.StageSinceAt()
 			it.StageSince = &t
 			it.Reason = rec.Reason
 			stageTrackerRegression(it, rec)
@@ -174,6 +183,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if c := stageTrackerSoakCaption(rec, now); c != "" {
 			it.Caption = c
 		}
+		if c := stageTrackerClaimConflictCaption(it); c != "" {
+			it.Caption, it.Actor = c, StageActorHuman
+		}
 		if hasRec && rec.Stage != stagelabels.None {
 			if at := stageTrackerNoteChangedAt(rec, now); !at.IsZero() {
 				it.NoteChangedAt = &at
@@ -209,6 +221,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if pushed {
 			it.Adoption = nil
 		}
+		stageTrackerApplyTrainEjection(it, rec, hasRec, now)
 		if login := stageTrackerWaitingOn(*it, stage); login != "" && !pushed {
 			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
 			it.Rework = stageTrackerReworkFor(*it, login, stage, rec, hasRec, fixWork, now)
@@ -311,6 +324,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
+		stageTrackerSinceUnblock(&it, rec, ok)
 		advisory := stageTrackerAdvisoryFor(issue.Labels, issue.Body, advisoryHint)
 		if advisory == nil {
 			applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
@@ -358,6 +372,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
 		it.BaseRef = pr.BaseRef
+		it.ciRed = strings.EqualFold(pr.CIStatus, "failure") || len(pr.FailingChecks) > 0
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
@@ -824,6 +839,7 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 	resp := build(status, s.stageStoreOrShared(), now)
 	s.stageTrackerEnrichSoftLinks(resp.Items, stageTrackerRepoQualifier(status), now)
 	resp.CacheTTLSeconds = int64(ttl / time.Second)
+	resp.Settings = s.stageTrackerSettings()
 	// The encoded body carries source=cache: that is what every later hit
 	// serves verbatim, and what the ETag validates. The building request
 	// alone rewrites the marker to fresh on its way out (handleStageTracker).
@@ -931,4 +947,15 @@ func stageTrackerParkedOnDecision(it StageTrackerItem) bool {
 	base, _ := stagelabels.HumanApprovedReason(it.Reason)
 	lower := strings.ToLower(strings.TrimSpace(base))
 	return lower == stageengine.StageReasonVerdictRequiresHuman || lower == stageengine.StageReasonDecisionRequested
+}
+
+// stageTrackerSinceUnblock ages an unstaged, no-longer-blocked issue from
+// the blocked sweep's lift rather than from creation
+// (hivecommons/hive#15779). A row blocked again keeps its own age.
+func stageTrackerSinceUnblock(it *StageTrackerItem, rec stagelabels.Record, hasRec bool) {
+	if hasRec || rec.UnblockedAt.IsZero() || it.BlockedOnPR != nil || len(it.BlockedOn) > 0 || slices.Contains(it.Modifiers, modBlocked) {
+		return
+	}
+	t := rec.UnblockedAt
+	it.StageSince = &t
 }

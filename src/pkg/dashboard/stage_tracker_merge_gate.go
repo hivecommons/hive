@@ -51,6 +51,9 @@ type StageTrackerMergeGate struct {
 	// SweepRunning is true while an automerge pass that evaluates this PR
 	// is in flight.
 	SweepRunning bool `json:"sweep_running,omitempty"`
+	// SweepingSince is when that pass started, so the SPA can say
+	// "waiting for GitHub…" once it has been on the PR a while (#15808).
+	SweepingSince *time.Time `json:"sweeping_since,omitempty"`
 	// LastSweepAt is when the lane last evaluated this PR (the stage
 	// record's LastSeen).
 	LastSweepAt *time.Time `json:"last_sweep_at,omitempty"`
@@ -105,6 +108,27 @@ func MergeGateStateDuplicateOf(n int) string {
 	return MergeGateStateDuplicateOfPrefix + strconv.Itoa(n)
 }
 
+// MergeGateStateClaimConflictPrefix opens the gate state of a PR the merge
+// queue holds because an open PR in another lane claims the same issue and
+// no decision is recorded (hivecommons/hive#15810): "claim-conflict:15793".
+const MergeGateStateClaimConflictPrefix = prstage.MergeTrainStateClaimConflict + ":"
+
+// MergeGateStateClaimConflict is the gate state for a PR held against n.
+func MergeGateStateClaimConflict(n int) string {
+	return MergeGateStateClaimConflictPrefix + strconv.Itoa(n)
+}
+
+// mergeGateClaimConflictOf reads the other claimant out of a
+// claim-conflict gate state, 0 for any other state.
+func mergeGateClaimConflictOf(state string) int {
+	rest, ok := strings.CutPrefix(state, MergeGateStateClaimConflictPrefix)
+	if !ok {
+		return 0
+	}
+	n, _ := strconv.Atoi(rest)
+	return n
+}
+
 // stageTrackerMergeGateState maps a stage to its merge-gate state; "" off
 // the gate.
 func stageTrackerMergeGateState(stage stagelabels.Stage) string {
@@ -143,6 +167,10 @@ func stageTrackerMergeGate(repo string, number int, stage stagelabels.Stage, rec
 	}
 	if sweep.OnPR(repo, number) {
 		mg.SweepRunning = true
+		if !sweep.StartedAt.IsZero() {
+			t := sweep.StartedAt
+			mg.SweepingSince = &t
+		}
 	} else if !sweep.NextFloorAt.IsZero() && sweep.NextFloorAt.After(now) {
 		t := sweep.NextFloorAt
 		mg.NextSweepAt = &t

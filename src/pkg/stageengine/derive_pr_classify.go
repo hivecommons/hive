@@ -372,11 +372,21 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if stageHandoffReasons[reason] {
 		return stageVerdict{}
 	}
+	if strings.HasPrefix(reason, "base-refresh:") {
+		// Preparation/queued is not ready-to-merge or a merge train seat.
+		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned, Reason: reason}
+	}
 	if train, ok := prstage.ParseMergeTrain(reason); ok {
 		// The merge train parked this PR behind an overlapping front
 		// (hivecommons/hive#15117): a hive-side wait at the merge gate,
 		// never a human stage — unless the train gave up rebasing it.
 		if train.State == prstage.MergeTrainStateRebaseExhausted {
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+		}
+		if train.State == prstage.MergeTrainStateClaimConflict {
+			// Another lane's open PR claims the same issue and nobody has
+			// decided which lands (hivecommons/hive#15810): a person's
+			// call, so 085 — not a turn in the queue.
 			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 		}
 		if train.State == prstage.MergeTrainStateDuplicateOf {
@@ -385,6 +395,22 @@ func ClassifyStage(o stageObservation) stageVerdict {
 			// — 072 for a relay contributor, 071 for a person, 070 for
 			// the App's own — as superseded, never "waiting its turn".
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		// Items that have not passed the review or CI is not green should
+		// not be (a) ready for merge, (b) in a merge train
+		// (hivecommons/hive#15825): the train seats only heads the lane
+		// found green and reviewed, and a seat never outranks what this
+		// head's own evidence says.
+		if VerdictBlocks(o.Detail) {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: StageVerdictReason(o.Detail)}
+		}
+		if name := o.Detail.RedCheck(o.HeadSHA); name != "" {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+		}
+		if train.State == prstage.MergeTrainStateRebasing {
+			// The hive is rebasing it: the head it pushes has no CI and no
+			// verdicts yet, so it is being fixed (070), not merge-queued.
+			return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned}
 		}
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
 	}

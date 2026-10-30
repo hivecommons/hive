@@ -93,6 +93,9 @@
     // it alone); stage_tracker_merge_gate_test.go pins the two equal.
     const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
     // merge_gate.merge_path (the merge call's issuer) in words (#15245).
+    // A merge call (or a sweep's pass on a soaked PR) older than this says
+    // "waiting for GitHub…" rather than spinning without a reason (#15808).
+    const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
     const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
@@ -163,6 +166,16 @@
     // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
     // / duplicate_issue carry the numbers).
     const STAGE_TRACKER_GATE_DUPLICATE_PREFIX = 'duplicate-of:';
+    // merge_gate.state of a PR the queue holds because an open PR in
+    // another lane claims the same issue and nobody has decided which
+    // lands (hivecommons/hive#15810): "claim-conflict:15793".
+    const STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX = 'claim-conflict:';
+    // Pure: the other claimant of a "claim-conflict:<n>" gate state; 0 for
+    // any other state.
+    function stageTrackerGateClaimConflictOf(state) {
+      state = String(state || '');
+      return state.indexOf(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX) === 0 ? Number(state.slice(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX.length)) || 0 : 0;
+    }
     // Pure: the PR number a "duplicate-of:<n>" gate state yields to; 0 for
     // any other state.
     function stageTrackerGateDuplicateOf(state) {
@@ -177,6 +190,12 @@
       if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
       const dup = stageTrackerGateDuplicateOf(state);
       if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
+      // Inline prefix read (hivecommons/hive#15810): this function is
+      // lifted alone into node by the Go tests.
+      if (state.indexOf('claim-conflict:') === 0) {
+        const conflict = Number(state.slice('claim-conflict:'.length)) || 0;
+        if (conflict) return 'Held · duplicate of #' + conflict + ' · needs decision';
+      }
       if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
       const plain = state.replace(/[-_]+/g, ' ').trim();
       return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';
@@ -459,6 +478,9 @@
     function stageTrackerOverlapBadgeText(item) {
       const o = stageTrackerOverlap(item);
       if (!o) return '';
+      // The server may pin the words (an admitted candidate reads "joins
+      // behind #N next pass" — it is green already, hive#15825).
+      if (o.badge) return String(o.badge);
       if (Number(o.behind) > 0) return STAGE_TRACKER_OVERLAP_CHIP_LEAD + 'joins behind #' + Number(o.behind) + ' when green';
       return STAGE_TRACKER_OVERLAP_CHIP_LEAD + '1st once green';
     }
@@ -474,10 +496,25 @@
       const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
       return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — no member of the train is merge-ready yet; provisionally 1st, merges ahead of ' + (withPRs.length > 1 ? 'them' : 'it') + ' if it is green first';
     }
+    // Pure: the gray lineage pill for a PR the merge train ejected
+    // (hive#15825): `left_train.badge` ("left merge train · pushed 3m
+    // ago"); the hover carries the why ("left the merge train — new push,
+    // CI re-running after push"). '' when the row rides a train or the
+    // server sent no lineage.
+    function stageTrackerLeftTrainBadgeText(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.badge || '');
+    }
     // Pure: the muted badge beside the row's chips; '' without a hint.
     function stageTrackerOverlapBadgeHtml(item) {
       const text = stageTrackerOverlapBadgeText(item);
-      if (!text) return '';
+      if (!text) {
+        const left = stageTrackerLeftTrainBadgeText(item);
+        if (!left) return '';
+        const leftTip = 'Merge train: ' + stageTrackerLeftTrainNote(item);
+        return `<span class="ham-badge ham-badge-overlap" title="${esc(leftTip)}" aria-label="${esc(leftTip)}">${esc(left)}</span>`;
+      }
       const tip = 'Not in the merge queue yet: ' + stageTrackerOverlapTip(item);
       return `<span class="ham-badge ham-badge-overlap" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(text)}</span>`;
     }
