@@ -503,7 +503,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if pr102.Stage != 95 || pr102.Lane != laneHive || pr102.AuthorKind != authorKindHive || pr102.AuthorKindSource != authorKindSrcLabel || pr102.Tier != "trusted" {
 		t.Fatalf("pr102 = %+v", pr102)
 	}
-	if pr102.Caption != "Admitted by the automerge lane; the pre-merge soak window is running — soaking, 12m0s left at the last sweep" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
+	if pr102.Caption != "Admitted by the automerge lane; soaking — 7m left" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
 		t.Fatalf("pr102 caption=%q actor=%q mods=%v", pr102.Caption, pr102.Actor, pr102.Modifiers)
 	}
 	// 12m left when the sweep wrote it 5m ago → 7m now; the 40m-old entry
@@ -953,6 +953,7 @@ func TestStageTrackerStaleDecisionRecord(t *testing.T) {
 		{"045 record backed by needs-human", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"Needs-Human"}, false},
 		{"045 record backed by retired spelling", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"needs-decision"}, false},
 		{"085 record backed by 085 label", stagelabels.Record{Stage: stagelabels.NeedsDecision}, []string{"stage/085-needs-decision"}, false},
+		{"085 record whose labels the write-back gate held off GitHub", stagelabels.Record{Stage: stagelabels.NeedsDecision, LabelsSuppressed: true}, []string{"dco-signoff: yes", "size/M"}, false},
 		{"other stage, no labels", stagelabels.Record{Stage: stagelabels.Claimed}, nil, false},
 	}
 	for _, tc := range cases {

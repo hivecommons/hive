@@ -225,5 +225,5 @@ func stageTrackerMergingCaption(a github.MergeAttempt) string {
 	case github.PRAuditPathForge:
 		return "Merging now — the forge adapter's merge call is in flight"
 	}
-	return "Merging now — the automerge sweep's merge call is in flight"
+	return "Merging now — the automerge lane's merge call is in flight"
 }

@@ -1,0 +1,146 @@
+# stream-image (#15594): build and publish the headless Twitch streamer image
+# (src/deploy/stream/Dockerfile) that puts the hive Activity Monitor on a 24/7
+# stream.
+#
+# ── Why a sibling of docker.yml, not a row in it ────────────────────────────
+#
+# docker.yml builds the hive binary image: multi-arch, cosign-signed, release
+# channels, a test-image lane. The streamer is Xvfb + Chromium + ffmpeg plus a
+# 100-line Go proxy — none of that machinery applies, and bolting a second
+# Dockerfile onto docker.yml's matrix would make the hive image's publish gate
+# depend on apt mirrors for chromium. ci-runner-image.yml is the precedent for
+# a small, separately-published operator image; this follows it.
+#
+# ── Triggers ────────────────────────────────────────────────────────────────
+#
+# push (v5)          path-filtered to src/deploy/stream/** and this file. Pushes
+#                    ghcr.io/<owner>/hive-stream:<sha> (immutable) and
+#                    ghcr.io/<owner>/hive-stream:v5-latest (moving — what the
+#                    Kustomize overlay references, so a merged fix rolls on the
+#                    next pod restart).
+# pull_request       builds only (no login, no push), same path filter. The
+#                    Dockerfile compiles the auth proxy and runs its tests, so
+#                    this is the CI gate for src/deploy/stream changes.
+# workflow_dispatch  builds AND pushes from whatever ref it is run on; the
+#                    moving tag is `<ref>-latest`.
+#
+# `branches: [v5]` only: the dashboard's `?kiosk=1` mode the streamer depends
+# on lives on v5 and v4 is feature-frozen, so it is listed as `[-v4]` under
+# `pinned` in .github/release-lines.yml.
+#
+# ── Where it runs ───────────────────────────────────────────────────────────
+#
+# `ubuntu-latest`, like ci-runner-image.yml: the build is one apt-get of
+# chromium/ffmpeg and a Go compile; GitHub-hosted runners have the egress and
+# docker.yml already proves the GITHUB_TOKEN → GHCR push path from them.
+#
+# ── Cache policy ────────────────────────────────────────────────────────────
+#
+# No `type=gha` cache — same reasoning as ci-runner-image.yml (the Actions
+# cache is the resource #7206 measured as full). This builds rarely.
+name: Stream Image
+
+on:
+  push:
+    branches: [v5]
+    paths:
+      - 'src/deploy/stream/**'
+      - '.github/workflows/stream-image.yml'
+  pull_request:
+    paths:
+      - 'src/deploy/stream/**'
+      - '.github/workflows/stream-image.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: stream-image-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/hive-stream
+
+jobs:
+  build:
+    name: ${{ github.event_name == 'pull_request' && 'Build (PR gate, no push)' || 'Build and push' }}
+    # GitHub-hosted on purpose — see the header. Do not route this through
+    # HIVE_RUNNER_LABELS.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve tags
+        id: ref
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            echo "tags=${IMAGE}:pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Moving tag is "<branch>-latest"; a branch name with "/" is not a
+          # valid tag component, so flatten it.
+          line="$(printf '%s' "$REF_NAME" | tr '/' '-')"
+          {
+            echo "tags=${IMAGE}:${SHA}"$'\n'"${IMAGE}:${line}-latest"
+            echo "push=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: steps.ref.outputs.push == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build${{ steps.ref.outputs.push == 'true' && ' and push' || '' }}
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          # Repo root: the Dockerfile compiles src/deploy/stream/authproxy.
+          context: .
+          file: src/deploy/stream/Dockerfile
+          platforms: linux/amd64
+          push: ${{ steps.ref.outputs.push == 'true' }}
+          tags: ${{ steps.ref.outputs.tags }}
+          provenance: false
+          sbom: false
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=hivecommons/hive headless Twitch streamer for the Activity Monitor (#15594)
+
+      - name: Summary
+        env:
+          TAGS: ${{ steps.ref.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          PUSHED: ${{ steps.ref.outputs.push }}
+        run: |
+          {
+            echo "## hive-stream image"
+            echo
+            if [ "$PUSHED" = "true" ]; then
+              echo "Pushed:"
+              printf '%s\n' "$TAGS" | sed 's/^/- `/; s/$/`/'
+              echo
+              echo "Digest: \`$DIGEST\`"
+              echo
+              echo 'Roll it: `kubectl -n hive-stream rollout restart deploy/hive-stream` (the overlay tracks `v5-latest`).'
+            else
+              echo "Built (not pushed): \`$TAGS\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

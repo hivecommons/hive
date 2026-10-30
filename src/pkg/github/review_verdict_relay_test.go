@@ -1,9 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -310,6 +312,49 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWhenDispatchStateHasNoMatch(t 
 	}
 	if len(artifact.Items) != 1 || artifact.Items[0].Repo != "o/r" || artifact.Items[0].Number != 1 || artifact.Items[0].HeadSHA != "abc123" {
 		t.Fatalf("advisory verdict with unrelated dispatch state was not collected: %+v", artifact.Items)
+	}
+}
+
+// A verdict from an agent that does hold dispatch rows for the PR, but binds to
+// none of them, logs what it was compared with before it falls back to
+// advisory, so a lost decision row can be traced (hivecommons/hive#15559).
+func TestRecordReviewVerdictLogsCandidatesOnAdvisoryFallback(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	var logBuf bytes.Buffer
+	c := &Client{logger: slog.New(slog.NewTextHandler(&logBuf, nil))}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")
+	row := pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "reviewer")
+	row.HeadSHA = "abc123"
+	row.Decision = true
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{row}})
+
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	out := logBuf.String()
+	for _, want := range []string{"falling back to advisory", "agent=reviewer", "perspective=security", "reported_head=abc123", "pending agent=reviewer perspective=correctness head=abc123 decision=true"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("advisory fallback log missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// An agent with no dispatch row for the PR is an ordinary advisory reviewer;
+// its fallback is not worth a diagnostic line.
+func TestRecordReviewVerdictAdvisoryFallbackQuietWithoutAgentRows(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	var logBuf bytes.Buffer
+	c := &Client{logger: slog.New(slog.NewTextHandler(&logBuf, nil))}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 1, review.PerspectiveSecurity, "other-reviewer"),
+	}})
+
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	if strings.Contains(logBuf.String(), "falling back to advisory") {
+		t.Fatalf("advisory fallback logged for an agent with no dispatch rows:\n%s", logBuf.String())
 	}
 }
 
