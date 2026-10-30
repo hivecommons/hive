@@ -2013,6 +2013,7 @@
     .ham-lead-act { padding: 0 var(--sp-3); border: var(--line-width) solid var(--cue-state, var(--accent)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cue-state, var(--accent)) 10%, transparent); color: var(--cue-state, var(--accent)); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.4; cursor: pointer; white-space: nowrap; }
     .ham-lead-act:hover, .ham-lead-act:focus-visible { background: color-mix(in srgb, var(--cue-state, var(--accent)) 22%, transparent); outline: none; }
     .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
+    .ham-lead-act[aria-busy="true"] { cursor: progress; opacity: 1; border-style: solid; color: var(--cue-work); }
     .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
     .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
     /* The technical background folds behind one collapsed Details. */
@@ -16633,11 +16634,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // " · Next move: hive @fixer — fixer commented · 3m ago", or, with
     // nobody on it, " · no one is working on this right now — <why>".
+    // A person's move with no stage_actor.why says why from the row's own
+    // reason, so the 👤 marker never leaves the question unanswered.
+    function stageTrackerHumanWhy(item, kind) {
+      if (kind !== 'human' && kind !== 'maintainer') return '';
+      return String(item.human_merge_reason_text || item.reason || '').trim();
+    }
     function stageTrackerActorTip(item) {
       const sa = stageTrackerStageActor(item);
-      if (!sa) { const k = stageTrackerActorKind(item); return k ? ' · Next move: ' + k : ''; }
+      if (!sa) { const k = stageTrackerActorKind(item); const w = stageTrackerHumanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
       if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
-      return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (sa.why ? ' — ' + sa.why : '');
+      const why = sa.why || stageTrackerHumanWhy(item, sa.kind);
+      return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
     // Who holds the row: the payload's claimant {kind, login, agent, hive,
     // since, source} (hivecommons/hive#15422). The chevron gets one short
@@ -20074,8 +20082,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // button — "Let hive decide" showed twice per item (hive#15320 →
     // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    // Pure: is the covering PR also a row of its own in the tracker (a
+    // top-level item, not a sub-row)? Then only that row carries the button.
+    function stageTrackerPRListedOwnRow(issue, t) {
+      const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'pr', number: t.number });
+      return !!_stageTracker && Array.isArray(_stageTracker.items) && _stageTracker.items.some(it => stageTrackerItemKey(it) === key);
+    }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
+      if (a && a.target && item.kind === 'issue' && a.target.kind === 'pr' && stageTrackerPRListedOwnRow(item, a.target)) return Object.assign({}, a, { passive: a.target.number });
       if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
@@ -20091,6 +20106,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
+      if (a.passive) return `<span class="ham-badge ham-decision-pending" title="${esc('The decision is on PR #' + a.passive + ' — Let hive decide lives on its row')}">decision pending on #${Number(a.passive) || 0}</span>`;
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
@@ -21158,8 +21174,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // or null when cancelled or when the operator took the merge
     // alternative (which runs as its own row action with the chosen button
     // recorded on the ledger).
-    async function stageTrackerDelegatePreview(items) {
-      const plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan));
+    async function stageTrackerDelegatePreview(items, rows) {
+      // The plan gathers the PR live (seconds): the row reads "acting…" and
+      // its button busy from the click until the preview can open.
+      const pend = stageTrackerSetPending([].concat(...items.map(it => stageTrackerPendingKeys(it, rows))).filter((k, i, a) => a.indexOf(k) === i), stageTrackerActingCaption('decide:delegate'));
+      let plans;
+      try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { stageTrackerClearPending(pend); }
       const failed = plans.filter(pl => pl.error);
       if (failed.length) { showToast('Could not preview ' + failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', '), 'error'); return null; }
       const picked = await stageTrackerDelegatePlanDialog(plans, stageTrackerSentinelPreface(items));
@@ -21170,7 +21190,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return { chosen: picked.chosen };
     }
-    async function stageTrackerActionPayload(items, id) {
+    async function stageTrackerActionPayload(items, id, rows) {
       const refs = items.map(stageTrackerRefOf).join(', ');
       const who = window._hiveUser || 'you';
       const prs = items.length > 0 && items.every(it => it.kind === 'pr');
@@ -21180,7 +21200,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'decide:delegate':
           // Preview first (hivecommons/hive#15126): nothing is written
           // until the operator picks a button.
-          return stageTrackerDelegatePreview(items);
+          return stageTrackerDelegatePreview(items, rows);
         case 'decide:delegate-all': {
           // Confirms as Let hive decide (same opt-out key), naming each PR.
           const prs = [].concat(...items.map(stageTrackerNestedOpenPRs));
@@ -21592,6 +21612,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const n of nodes) {
         const key = n.getAttribute('data-ham-sub-key') || n.getAttribute('data-ham-key');
         const cap = want[key];
+        // A pending Let hive decide shows on its button too: busy, not clickable again.
+        const lead = n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act^="decide:delegate"]');
+        if (lead) {
+          if (cap && lead.getAttribute('aria-busy') !== 'true') {
+            lead.dataset.hamLabel = lead.textContent;
+            lead.setAttribute('aria-busy', 'true'); lead.setAttribute('aria-disabled', 'true');
+            lead.textContent = '';
+            const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; lead.appendChild(sp);
+            lead.appendChild(document.createTextNode(' Asking the hive…'));
+          } else if (!cap && lead.getAttribute('aria-busy') === 'true') {
+            lead.removeAttribute('aria-busy'); lead.removeAttribute('aria-disabled'); lead.textContent = lead.dataset.hamLabel || '';
+          }
+        }
         const strip = n.querySelector(':scope > .ham-strip-row');
         // The caption lives inside the lit chevron (the pill), never as a
         // separate element beside the ✓ badge (#15126); a row without a
@@ -21685,7 +21718,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
-      const payload = await stageTrackerActionPayload(items, id);
+      const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
       const results = await stageTrackerRunActions(items, id, payload, rows);
       return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };
