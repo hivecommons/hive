@@ -454,7 +454,7 @@ advanced into the merge path.
 | `auto_merge.trusted_authors.require_github_permission` | `true` | Also require GitHub to report author write access; API errors fail closed. Fork PRs still need this check even if the setting is false. |
 | `auto_merge.trusted_authors.exclude_labels` | `hold`, `do-not-merge`, `needs-human` | Labels that keep a PR out of trusted-author auto-merge. |
 | `auto_merge.contributor_lane.enabled` | `true` | Enables the contributor-lane tier: Hive merges a green, soaked, reviewer-approved PR whose author holds a `require_tiers` tier in the contributor registry (`registry_tiers_sufficient`), or whose linked issue carries this hive's App-authored `hive:claim kind=contributor` marker naming the PR author with a `tier=` in `require_tiers` and `verified=true`. Grants unattended merge only to contributors an operator granted such a tier and whose GitHub login was proven; set `false` to make every contributor PR wait for a human `/lgtm` + `/approve`. See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
-| `auto_merge.contributor_lane.soak_minutes` | `30` | How long the current head must stay green before the tier merges it; a new push restarts the soak. `0`/unset means the default (30); the shortest real soak is `1`. |
+| `auto_merge.contributor_lane.soak_minutes` | `30` | How long the current head must stay green before the tier merges it; a new push restarts the soak. `0`/unset means the default (30); the shortest real soak is `1`. Also editable from the Activity Monitor's ⚙ → Toasts & timing ("Pre-merge soak"), which writes through `PUT /api/config/auto-merge`; the lane re-reads it on every pass, so a running soak follows the new window. |
 | `auto_merge.contributor_lane.require_reviewer_verdict` | `true` | Require an approving aggregate reviewer verdict for the current head. Independently of this key, a hive with no reviewer agent never merges through the tier (`contributor-lane:no-reviewer`). |
 | `auto_merge.contributor_lane.require_tiers` | `trusted`, `merger` | Contributor trust tiers whose verified claims the tier may merge. Only operator-granted tiers (`trusted`, `merger`, `advisor`) are accepted; `newcomer` and `contributor` are rejected at validation. |
 | `auto_merge.contributor_lane.registry_tiers_sufficient` | `true` | Admit a PR whose author's contributor-registry profile carries a `require_tiers` tier without a linked issue or `hive:claim` marker (logged as `contributor-lane:registry-trusted`). All other gates still apply. `false` requires the claim marker for every contributor. |
@@ -2016,6 +2016,8 @@ dashboard:
     webhook_refresh_replay_window_s: 1800   # re-apply re-reads to snapshots published meanwhile
     closed_sweep_interval_s: 300   # list items closed since the last look and evict rows still shown; -1 disables
     waiting_push_stale_h: 4        # hours without a push on a CI / Review row before the pill's age turns muted-amber
+    toast_info_s: 15               # how long the tracker's result / waiting-on-you toasts stay (3-120 s); the merge banner stays twice as long
+    toast_error_s: 30              # how long a failed row action's toast stays (3-120 s); editable from the Activity Monitor's ⚙ → Toasts & timing
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

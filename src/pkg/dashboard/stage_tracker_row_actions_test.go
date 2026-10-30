@@ -121,7 +121,14 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_ACTION_NOOP"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTION_NO_EFFECT"),
 		jsConstLine(t, html, "STAGE_TRACKER_RESULT_TOAST_MAX"),
-		jsConstLine(t, html, "STAGE_TRACKER_RESULT_TOAST_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_TOAST_DEFAULT_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_TOAST_MIN_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_TOAST_MAX_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_TOAST_KEY"),
+		jsFunc(t, html, "stageTrackerToastSecondsValid"),
+		jsFunc(t, html, "stageTrackerToastSeconds"),
+		jsFunc(t, html, "stageTrackerToastLocal"),
+		jsFunc(t, html, "stageTrackerToastMs"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTING_MAX_MS"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTING_CAPTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_REBASE_MERGE_LABEL"),
@@ -1131,10 +1138,11 @@ const tst = stageTrackerResultToast(decided, issue, { id: 'decide:delegate' });
 assert.strictEqual(hamToastContainer.children.length, 1);
 assert.ok(tst.el.className.includes('toast success ham-result-toast sticky'), tst.el.className);
 assert.ok(tst.el.children.some(c => c.className === 'toast-close'), 'has ✕');
-// An informational result closes itself after STAGE_TRACKER_RESULT_TOAST_MS
+// An informational result closes itself after the info toast duration
+// (15 s unless the hive's settings say otherwise — hivecommons/hive#15813)
 // through the sticky guard; × and a state change still close it earlier.
-assert.strictEqual(STAGE_TRACKER_RESULT_TOAST_MS, 15000);
-assert.strictEqual(tst.el._countdown.ms, STAGE_TRACKER_RESULT_TOAST_MS, 'the countdown runs for the result TTL');
+assert.strictEqual(stageTrackerToastMs('info'), 15000);
+assert.strictEqual(tst.el._countdown.ms, 15000, 'the countdown runs for the result TTL');
 {
   const timed = stageTrackerResultToast(decided, issue, { id: 'decide:delegate' });
   assert.strictEqual(hamToastContainer.children.length, 2);
@@ -1183,11 +1191,26 @@ const rerunReq = stageTrackerActionRequest(prRow, 'decide:delegate:rerun', {});
 assert.strictEqual(rerunReq.body.force, true); assert.strictEqual(rerunReq.body.reason, 'contributor-lane:changes-requested'); assert.ok(rerunReq.poll); assert.ok(rerunReq.url.endsWith('/items/14947/decide-delegated'));
 assert.strictEqual(stageTrackerActionRequest(prRow, 'decide:delegate', {}).body.force, undefined, 'a first click never forces');
 assert.strictEqual(stageTrackerActionLabel('decide:delegate:rerun'), 'Re-run decision');
-// Error toasts are sticky but not tied to a row state.
+// Error toasts are sticky (×) but not tied to a row state; they close
+// after the error toast duration, 30 s by default, and both durations
+// follow the tracker payload's settings block live.
 const bad = stageTrackerResultToast(stageTrackerErrorResult('hold', held, 'boom'), held, { id: 'hold' });
 assert.ok(bad.el.className.includes('error')); assert.deepStrictEqual(_stageTrackerResultToasts, []);
-assert.strictEqual(bad.el._countdown, undefined, 'an error waits to be acknowledged: no countdown');
+assert.strictEqual(bad.el._countdown.ms, 30000, 'an error closes after the error toast duration');
 bad.el.remove();
+_stageTracker = { items: [issue, held], settings: { toast_info_s: 7, toast_error_s: 45 } };
+{
+  const tuned = stageTrackerResultToast(decided, issue, { id: 'decide:delegate' });
+  assert.strictEqual(tuned.el._countdown.ms, 7000, 'info duration from the hive');
+  tuned.el.remove(); _stageTrackerResultToasts = _stageTrackerResultToasts.filter(e => e !== tuned);
+  const tunedErr = stageTrackerResultToast(stageTrackerErrorResult('hold', held, 'boom'), held, { id: 'hold' });
+  assert.strictEqual(tunedErr.el._countdown.ms, 45000, 'error duration from the hive');
+  tunedErr.el.remove();
+  assert.strictEqual(stageTrackerToastSeconds('info', { toast_info_s: 500 }, null), 120, 'server values clamp to the 3..120 s range');
+  assert.strictEqual(stageTrackerToastSeconds('info', { toast_info_s: 7 }, { info: 20, fallback: true }), 20, 'the browser fallback (write refused) wins over the payload');
+  assert.strictEqual(stageTrackerToastSeconds('error', { toast_error_s: 'x' }, { info: 20 }), 30, 'garbage falls back to the default');
+}
+_stageTracker = { items: [issue, held] };
 
 // Acting state: the clicked issue row and its nested PR both act from the click.
 const keys = stageTrackerPendingKeys({ repo: 'o/r', kind: 'pr', number: 14947 }, [issue]);

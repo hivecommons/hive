@@ -622,7 +622,10 @@ A PR merges through this tier only when all of the following hold:
   the soak. The skip reason is the stable `contributor-lane:soaking`; the
   soak head, start and window are recorded once on the stage record, so the
   stage tracker computes "N left" from that deadline at request time instead
-  of the hive re-stamping its note every pass.
+  of the hive re-stamping its note every pass. The window is also editable
+  from the Activity Monitor's ⚙ → Toasts & timing ("Pre-merge soak"), which
+  writes `soak_minutes` through `PUT /api/config/auto-merge`; the lane reads
+  the knob on every pass, so a running soak follows the new window.
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
 log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
