@@ -324,6 +324,9 @@ func humanizeStageReason(reason string) string {
 	if clause, ok := humanizeCoverReason(r); ok {
 		return clause
 	}
+	if clause, ok := stagelabels.AlreadyLandedCaption(r); ok {
+		return clause
+	}
 	switch lower {
 	case stagelabels.LaneReasonAdoptionChildClosedTwice:
 		return "the hive's copies of this PR were closed without merging twice within an hour"
@@ -415,6 +418,11 @@ func humanizeStageReason(reason string) string {
 		return "human-merge path"
 	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return "human merge"
+	case stageengineprstage.AutoMergeReasonForkNotEditable:
+		// The App cannot update a fork the author did not open to
+		// maintainer edits; only adoption (hive re-authoring on its own
+		// branch) moves it (hivecommons/hive#15312).
+		return "fork not editable by hive"
 	}
 	if rest, ok := strings.CutPrefix(lower, "contributor-lane:"); ok {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")

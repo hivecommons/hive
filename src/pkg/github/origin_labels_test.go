@@ -13,8 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func TestOriginLabelDefinitionsShareOneColour(t *testing.T) {
@@ -434,5 +436,64 @@ func TestOriginLabelDefinitionCoversEverySource(t *testing.T) {
 	}
 	if _, ok := originLabelDefinition("origin/brand-new-lane"); ok {
 		t.Fatal("unknown origin source must not be auto-created")
+	}
+}
+
+// Every description Hive writes to the labels API must fit GitHub's cap;
+// an over-long one makes ensure-label 422 and drops the label from every
+// CreateIssue (selfreport #15681).
+func TestCatalogLabelDescriptionsFitGitHubCap(t *testing.T) {
+	type entry struct{ name, description string }
+	var entries []entry
+	for _, source := range config.KnownOriginSources() {
+		name := config.OriginLabel(source)
+		def, ok := originLabelDefinition(name)
+		if !ok {
+			t.Fatalf("originLabelDefinition(%q) unknown", name)
+		}
+		entries = append(entries, entry{name, def.description})
+	}
+	for name, def := range escalationIssueLabelDefinitions {
+		entries = append(entries, entry{name, def.description})
+	}
+	for _, def := range stagelabels.AllLabelDefs() {
+		entries = append(entries, entry{def.Name, def.Description})
+	}
+	for _, e := range []entry{
+		{HasOpenPRLabel, hasOpenPRLabelDescription},
+		{SupersededLabel, supersededLabelDescription},
+		{SupersessionKeepOpenLabel, keepOpenLabelDescription},
+		{CoveredByPRLabel, CoveredByPRLabelDescription},
+		{InProgressLabel, inProgressLabelDescription},
+		{advisoryLabelName, advisoryLabelDesc},
+	} {
+		entries = append(entries, e)
+	}
+	if len(entries) < 10 {
+		t.Fatalf("catalog unexpectedly small: %d entries", len(entries))
+	}
+	for _, e := range entries {
+		if n := utf8.RuneCountInString(e.description); n > githubLabelDescriptionMax {
+			t.Errorf("label %q description is %d runes (max %d): %q", e.name, n, githubLabelDescriptionMax, e.description)
+		}
+	}
+}
+
+func TestClampLabelDescription(t *testing.T) {
+	short := "  fits  "
+	if got := clampLabelDescription(short); got != "fits" {
+		t.Fatalf("short: got %q", got)
+	}
+	exact := strings.Repeat("x", githubLabelDescriptionMax)
+	if got := clampLabelDescription(exact); got != exact {
+		t.Fatalf("exact: changed %q", got)
+	}
+	long := strings.Repeat("é", githubLabelDescriptionMax+20)
+	got := clampLabelDescription(long)
+	if n := utf8.RuneCountInString(got); n != githubLabelDescriptionMax {
+		t.Fatalf("long: %d runes, want %d: %q", n, githubLabelDescriptionMax, got)
+	}
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "…") || !strings.HasPrefix(got, strings.Repeat("é", githubLabelDescriptionMax-1)) {
+		t.Fatalf("long: unexpected clamp %q", got)
 	}
 }

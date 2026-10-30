@@ -296,7 +296,10 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return 0, err
 	}
-	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt" || out.Mode == "queued", now)
+	// "queued" only says the author has a relay registered here; the work
+	// sits in its queue whether or not that relay is connected. Counting it
+	// as online gave an offline clanker the 2h online grace (#15566).
+	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt", now)
 	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
 	return 1, nil
 }

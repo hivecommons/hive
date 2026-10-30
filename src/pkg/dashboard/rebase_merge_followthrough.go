@@ -14,7 +14,7 @@ import (
 )
 
 // "Rebase, then merge as maintainer" (hivecommons/hive: #14822 sat 14h at
-// 085 behind v5 and "Approve & merge as maintainer" on it would have been a
+// 085 behind v5 and "Merge now as maintainer" on it would have been a
 // GitHub 405). When the operator's merge-now lands on a PR GitHub reports
 // behind or dirty, the dashboard records the approval, arms a follow-through
 // in pkg/rebasemerge and answers 202 rebase-queued. The hive's merge-
@@ -46,7 +46,7 @@ var rebaseAttemptsStore = func() *rebasemerge.Attempts { return rebasemerge.Shar
 var rebaseMergeNow = time.Now
 
 // rebaseMergeFollowThroughLabel / Consequence are the option text the
-// decision menu shows instead of "Approve & merge as maintainer" when the
+// decision menu shows instead of "Merge now as maintainer" when the
 // PR needs a rebase first.
 const rebaseMergeFollowThroughLabel = "Rebase, then merge as maintainer"
 

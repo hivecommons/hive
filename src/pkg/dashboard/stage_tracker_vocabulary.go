@@ -50,6 +50,43 @@ func stageTrackerColumn(stage stagelabels.Stage) int {
 	return trackerColumnOpen
 }
 
+// stageTrackerItemColumn is the chevron a PR row lights given its CURRENT
+// state — never the highest stage it once reached. The ladder is:
+//
+//   - merged (≥ 110) → Merged;
+//   - under repair past 030 (stageTrackerTrainUnderRepair: 070/071/072/
+//     074, or red required checks) → CI / Review, whatever a stale merge
+//     gate ("merge-failed" from the attempt that found the conflict) or a
+//     planner-ordered merge train still says — except the 085 decision
+//     park, which stays at the gate where the person decides;
+//   - a live merge attempt (merging / merge-failed past 030) or a seated
+//     train member → Merge queue (hivecommons/docs#512, hive#15395);
+//   - otherwise the stage's own column (stageTrackerColumn).
+//
+// The "fell back to …" caption keeps the history; the column follows the
+// fallback. The SPA's stageTrackerAnchor applies the same order.
+func stageTrackerItemColumn(it *StageTrackerItem) int {
+	if it == nil {
+		return trackerColumnOpen
+	}
+	if it.Stage >= trackerColumnMerged {
+		return trackerColumnMerged
+	}
+	st := stageByNumber(it.Stage)
+	if it.Kind == "pr" && it.Stage > trackerColumnPR && st != stagelabels.NeedsDecision && stageTrackerTrainUnderRepair(it.Stage, it.Reason) != "" {
+		return trackerColumnReview
+	}
+	if it.Stage > trackerColumnPR {
+		if mg := it.MergeGate; mg != nil && (mg.State == MergeGateStateMerging || mg.State == MergeGateStateMergeFailed) {
+			return trackerColumnMergeGate
+		}
+		if mt := it.MergeTrain; mt != nil && mt.State != "" {
+			return trackerColumnMergeGate
+		}
+	}
+	return stageTrackerColumn(st)
+}
+
 // stageTrackerStagePhrase is the stage as a lowercase clause for the
 // middle of a sentence ("its PR is reviewed · waiting for merge
 // admission"), from the same words the chevron shows.

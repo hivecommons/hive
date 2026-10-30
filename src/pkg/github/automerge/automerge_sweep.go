@@ -1354,7 +1354,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			if lane, _ := c.sweepLaneForAuthor(login); lane == stageLaneSelf {
 				return trustedAuthorReasonAppAuthored
 			}
-			return c.prefilterTrustedAuthorPR(pr, policy)
+			return c.prefilterTrustedAuthorPR(owner, repoName, pr, policy)
 		})
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
@@ -1405,7 +1405,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				stage(trustedAuthorReasonAppAuthored, false, nil)
 				continue
 			}
-			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
+			if reason := c.prefilterTrustedAuthorPR(owner, repoName, pr, policy); reason != "" {
 				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", reason, "tier", "trusted-author")
 				result.Skipped++
 				stage(reason, false, nil)
@@ -2228,7 +2228,7 @@ func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
 	return ""
 }
 
-func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuthorPolicy) string {
+func (c *Engine) prefilterTrustedAuthorPR(owner, repo string, pr *gh.PullRequest, policy TrustedAuthorPolicy) string {
 	if pr == nil {
 		return "missing-head-sha"
 	}
@@ -2259,10 +2259,41 @@ func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuth
 	if pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
 		return "missing-head-sha"
 	}
-	if decision := c.trustedAuthorDecision(hgithub.SafeGetLogin(pr.GetUser()), policy.RequireRole); !decision.Allowed {
+	if _, ok := c.trustedAuthorOrOperatorDecision(owner, repo, pr, policy); !ok {
 		return "untrusted-author-role"
 	}
 	return ""
+}
+
+// trustedAuthorRoleOperatorApprovedPrefix is the Role recorded on a
+// TrustedAuthorDecision when an operator's "Approve and let hive merge"
+// admitted the head of a PR whose author holds no trusted-author role. The
+// merge audit comment and log carry it, so the merge is attributed to the
+// person who approved it, never to the author's trust.
+const trustedAuthorRoleOperatorApprovedPrefix = "operator-approved:"
+
+// trustedAuthorOrOperatorDecision is trustedAuthorDecision with the one
+// exception the maintainer's last word allows: an untrusted author's PR
+// whose current head an operator admitted (the dashboard's "Approve and
+// let hive merge") is treated as trusted for this head, attributed to the
+// operator. Any other untrusted author stays refused (ok=false).
+func (c *Engine) trustedAuthorOrOperatorDecision(owner, repo string, pr *gh.PullRequest, policy TrustedAuthorPolicy) (TrustedAuthorDecision, bool) {
+	author := hgithub.SafeGetLogin(pr.GetUser())
+	decision := c.trustedAuthorDecision(author, policy.RequireRole)
+	if decision.Allowed {
+		return decision, true
+	}
+	login := c.operatorAdmission(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA())
+	if login == "" {
+		return decision, false
+	}
+	return TrustedAuthorDecision{Allowed: true, Role: trustedAuthorRoleOperatorApprovedPrefix + login}, true
+}
+
+// operatorApprovedDecision reports whether a decision came from
+// trustedAuthorOrOperatorDecision's operator-admission exception.
+func operatorApprovedDecision(d TrustedAuthorDecision) bool {
+	return strings.HasPrefix(d.Role, trustedAuthorRoleOperatorApprovedPrefix)
 }
 
 func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, label string) ([]*gh.Issue, error) {
@@ -2298,20 +2329,27 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if lane, _ := c.sweepLaneForAuthor(author); lane == stageLaneSelf {
 		return AutoMergeSweepEvent{}, trustedAuthorReasonAppAuthored, nil
 	}
-	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
+	if reason := c.prefilterTrustedAuthorPR(owner, repo, pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	decision := c.trustedAuthorDecision(author, policy.RequireRole)
-	if !decision.Allowed {
+	decision, ok := c.trustedAuthorOrOperatorDecision(owner, repo, pr, policy)
+	if !ok {
 		return AutoMergeSweepEvent{}, "untrusted-author-role", nil
 	}
-	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
+	if operatorApprovedDecision(decision) {
+		c.info("trusted-author lane admitted by operator approval", "repo", displayRepo, "pr", number, "author", author, "admitted_by", strings.TrimPrefix(decision.Role, trustedAuthorRoleOperatorApprovedPrefix), "head", pr.GetHead().GetSHA())
+	} else {
+		c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
+	}
 	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA())
 	c.noteStageVerdict(owner, repo, number, verdict)
 	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, pr.GetHead().GetSHA(), verdict)
 	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
 	permission := trustedAuthorPermission{Allowed: true, Level: "not-required"}
-	if policy.RequireGitHubPermission {
+	if operatorApprovedDecision(decision) {
+		permission.Level = "operator-approved"
+	}
+	if policy.RequireGitHubPermission && !operatorApprovedDecision(decision) {
 		var err error
 		permission, err = c.authorRepoPermission(ctx, owner, repo, author)
 		if err != nil {
@@ -2321,7 +2359,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 			return AutoMergeSweepEvent{}, "author-permission-missing", nil
 		}
 	}
-	if c.isForkPR(pr) && !policy.RequireGitHubPermission {
+	if c.isForkPR(pr) && !policy.RequireGitHubPermission && !operatorApprovedDecision(decision) {
 		var err error
 		permission, err = c.authorRepoPermission(ctx, owner, repo, author)
 		if err != nil {
@@ -2626,6 +2664,9 @@ func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo
 
 func (c *Engine) commentTrustedAuthorMerge(ctx context.Context, owner, repo string, number int, author, role, permission, sha string) error {
 	body := fmt.Sprintf("merged by Hive trusted-author auto-merge: author @%s holds role %s and GitHub permission %s on repo; CI green at %s.", author, role, permission, sha)
+	if login := strings.TrimPrefix(role, trustedAuthorRoleOperatorApprovedPrefix); login != role {
+		body = fmt.Sprintf("merged by Hive on behalf of @%s, who approved this head (%s) with \"Approve and let hive merge\": author @%s holds no trusted-author role; CI green at %s.", login, stagelabels.OperatorApprovalAdmission(login), author, sha)
+	}
 	_, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	return err
 }
