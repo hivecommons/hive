@@ -180,8 +180,9 @@ func TestBootHeartbeatWith_PublishesIdentityBeforeTheLoopAndWiresEveryCallback(t
 	heartbeatCallback[spoke.GatewayConfigCallback](t, f)
 	heartbeatCallback[spoke.ClusterIDCallback](t, f)
 	heartbeatCallback[spoke.FreshStatusCollector](t, f)
-	if len(f.callbacks) != 14 {
-		t.Fatalf("registered %d callbacks, want 14 (one of each)", len(f.callbacks))
+	heartbeatCallback[spoke.UpgradeAnnounceCallback](t, f)
+	if len(f.callbacks) != 15 {
+		t.Fatalf("registered %d callbacks, want 15 (one of each)", len(f.callbacks))
 	}
 
 	// The collector honours a runtime hub.enabled=false without being torn
@@ -230,6 +231,12 @@ func TestBootHeartbeatWith_CallbacksReconcileRunningConfig(t *testing.T) {
 	banner(nil)
 	heartbeatCallback[spoke.UpgradePolicyCallback](t, f)(&spoke.HeartbeatUpgradePolicy{HubManaged: true})
 	heartbeatCallback[spoke.UpgradePolicyCallback](t, f)(nil)
+	// A hub roll announce (#15788) lands on the dashboard as an in-flight
+	// upgrade so the operator sees the animation before the kill.
+	heartbeatCallback[spoke.UpgradeAnnounceCallback](t, f)(&spoke.UpgradeAnnounce{Target: "0123456789abcdef", Source: spoke.UpgradeSourceHub})
+	if p := b.dashSrv.AnnounceRestart(time.Now()); p.Target != "0123456" || p.Source != spoke.UpgradeSourceHub {
+		t.Fatalf("announce did not reach the dashboard: %+v", p)
+	}
 
 	// Unknown agent: warn, never panic — the hub may name an agent this
 	// spoke's pack no longer has.

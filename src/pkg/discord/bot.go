@@ -202,7 +202,10 @@ func (b *Bot) SendMessageTo(channelID, content string) error {
 	if strings.TrimSpace(channelID) == "" {
 		return fmt.Errorf("discord send: channel id not configured")
 	}
-	payload := map[string]string{"content": content}
+	payload := map[string]any{
+		"content":          content,
+		"allowed_mentions": map[string]any{"parse": []string{}},
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err

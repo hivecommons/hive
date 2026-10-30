@@ -165,6 +165,7 @@ func (c *Client) classifyWebhookPR(repo string, pr *gh.PullRequest, labels []str
 		HivePlan:            planRef,
 		ScopeContract:       scopeContract,
 		BodyDigest:          review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
+		Supersedes:          prSupersedesNumberOrZero(pr.GetBody()),
 		MergeableState:      pr.GetMergeableState(),
 		HeadSHA:             prHeadSHA(pr),
 		HeadRef:             headRef,
