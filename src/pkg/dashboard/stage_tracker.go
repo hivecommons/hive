@@ -81,6 +81,17 @@ type StageTrackerResponse struct {
 	// the SPA tell "merged" from "closed" between two polls and play its
 	// opt-in merge sound for the right rows.
 	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
+	// RecentlyClosed lists the pull requests that left Items closed but
+	// not merged within stageTrackerMergedWindow — superseded, withdrawn,
+	// closed by a decision — as the webhook / sweep / audit paths saw them
+	// (stage_tracker_recently_closed.go). With RecentlyMerged it lets the
+	// SPA tell a close from a merge when a row vanishes between two polls
+	// and say so instead of staying silent (hivecommons/hive#15808).
+	RecentlyClosed []StageTrackerClosed `json:"recently_closed,omitempty"`
+	// MergedHoldMS is dashboard.stage_tracker.merged_hold_s in
+	// milliseconds: how long the SPA may keep a vanished row at "Merging ·
+	// merge landed" while it waits for the merged fact.
+	MergedHoldMS int `json:"merged_hold_ms"`
 	// Merged24h is the same list over the last 24 hours, newest first. It
 	// seeded the SPA's former "Merged today" counter; the Merged chip now
 	// reads Merged (the durable ledger) and this stays for older SPAs.
@@ -114,7 +125,14 @@ type StageTrackerMerged struct {
 	MergedAt time.Time `json:"merged_at"`
 }
 
-// stageTrackerMergedWindow bounds RecentlyMerged. It is deliberately much
+// StageTrackerClosed is one recently closed, unmerged pull request.
+type StageTrackerClosed struct {
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	ClosedAt time.Time `json:"closed_at"`
+}
+
+// stageTrackerMergedWindow bounds RecentlyMerged (and RecentlyClosed). It is deliberately much
 // longer than the cache TTL plus the SPA's 30 s poll: a tab that missed a
 // few polls (throttled in the background) still sees the merge it was
 // watching for, and the SPA dedupes per PR so a longer list never replays.

@@ -169,7 +169,7 @@
       const el = document.getElementById("project-name");
       if (el && repoDisplay) {
         el.textContent = "for " + repoDisplay;
-        document.title = "Hive Dashboard for " + repoDisplay;
+        if (!(window.hivePopoutMode && window.hivePopoutMode())) document.title = "Hive Dashboard for " + repoDisplay;
       }
       const ocEl = document.getElementById("oc-project-name");
       if (ocEl && repoDisplay) ocEl.textContent = repoDisplay;

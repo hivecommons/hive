@@ -32,6 +32,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	qualify := stageTrackerRepoQualifier(status)
 	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, qualify)
+	resp.RecentlyClosed = s.stageTrackerRecentlyClosed(now)
+	resp.MergedHoldMS = int(s.stageTrackerMergedHold() / time.Millisecond)
 	resp.Merged24h = s.stageTrackerMergedSince(now, stageTrackerMergedDayWindow, qualify)
 	resp.Merged = s.mergedSummaryNow(now)
 	if status == nil {
