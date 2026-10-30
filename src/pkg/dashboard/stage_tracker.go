@@ -401,6 +401,12 @@ type StageTrackerItem struct {
 	// behalf: which attempt of the loop guard this is, or that the hive
 	// ran out and a person must resolve it.
 	Rebase *StageTrackerRebase `json:"rebase,omitempty"`
+	// ciRed is the listing's CI verdict on the current head (failure or
+	// named failing checks), unexported: the merge train view drops such
+	// a row from its train (hivecommons/hive#15825) whatever its record
+	// says — a header read "8 PRs" over seven seats because a red 090
+	// row was counted.
+	ciRed bool
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -741,6 +747,12 @@ type StageTrackerLinkedPR struct {
 	// parent shows a compact "↳ #N · under #M" reference instead of a
 	// second identical row (hivecommons/hive#14921 drew twice).
 	DrawnUnder int `json:"drawn_under,omitempty"`
+	// AlsoCloses is set only on the listing drawn here (DrawnUnder == the
+	// parent issue): the other listed open issues this PR also closes
+	// (number, title, url), lowest number first, so the PR's sub-row can
+	// name them back — the reciprocal of the "↳ #N · under #M" chip
+	// (hivecommons/hive#15806).
+	AlsoCloses []StageTrackerLinkedIssue `json:"also_closes,omitempty"`
 	// Presence mirrors the nested PR's own row field (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
 	// Rework mirrors the nested PR's own row field (hivecommons/hive#15280).

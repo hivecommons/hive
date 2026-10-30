@@ -244,6 +244,8 @@ func stageTrackerMergeTrainCaption(reason string) string {
 		return "Conflicts with " + onto + "; the hive is rebasing this PR (attempt " + strconv.Itoa(mt.Attempt) + " of " + strconv.Itoa(mt.MaxAttempts) + ")"
 	case prstage.MergeTrainStateRebaseExhausted:
 		return "The rebase onto " + onto + " failed " + strconv.Itoa(mt.Attempt) + " times; a maintainer rebases and merges"
+	case prstage.MergeTrainStateAdmitted:
+		return "Green and approved; takes a seat at the back of the merge train behind #" + strconv.Itoa(mt.Front) + " on the lane's next pass"
 	default:
 		return "Approved; waiting its turn in the merge train — " + mt.Sentence()
 	}
