@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -103,5 +104,96 @@ func TestOperatorAdmissionAbsent(t *testing.T) {
 	}
 	if got := h.e.operatorAdmission("acme", "widget", 7, ""); got != "" {
 		t.Fatalf("empty head admitted: %q", got)
+	}
+}
+
+// An approval on a head the lane cannot merge as-is (the fork is not
+// editable and sits behind the base) must not lock the PR into "merge
+// as-is": that deadlocked hive#15312 and friends between "a maintainer
+// approved this head; the hive merges it as-is" and "fork-not-editable".
+// Approval means approved to proceed — the hive adopts, and the approval
+// travels to its copy.
+func TestOperatorAdmissionDoesNotBlockUnmergeableHead(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.e.humanChangeRequests = review.NewHumanChangeRequests("")
+	h.observe(adoptPR(7, "aaa"), autoMergeReasonForkNotEditable)
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	if !store.NoteAdmission(key, "aaa", stagelabels.OperatorApprovalAdmission("octo"), h.clock.now()) {
+		t.Fatalf("NoteAdmission refused a known key")
+	}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(5 * time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), autoMergeReasonForkNotEditable)
+	rec, _ := store.Get(key)
+	if rec.AdoptedHead != "aaa" || rec.AdoptedBy == 0 || len(h.adopt.pulls) != 1 {
+		t.Fatalf("approved fork-not-editable head not adopted: pulls=%d rec=%+v", len(h.adopt.pulls), rec)
+	}
+	if got := rec.AdoptionBlocked("aaa"); got != "" {
+		t.Fatalf("adoption blocked %q on a head the lane cannot merge as-is", got)
+	}
+	if body, _ := h.adopt.pulls[0]["body"].(string); !strings.Contains(body, "**Approval carried over:** @octo approved #7") {
+		t.Fatalf("copy body lacks the carried approval:\n%s", body)
+	}
+	req, ok := h.e.humanChangeRequests.For("acme/widget", rec.AdoptedBy, "aaa")
+	if !ok || !req.IsApproval() || req.Actor != "octo" {
+		t.Fatalf("approval not carried to copy #%d: %+v ok=%v", rec.AdoptedBy, req, ok)
+	}
+}
+
+// A mergeable admitted head still stands down (the person merges it as-is);
+// the lane reasons that make a head unmergeable as-is are named.
+func TestHeadNotMergeableAsIs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		obs  stageObservation
+		want string
+	}{
+		{name: "check failing only", obs: stageObservation{Reason: "check-failing:unit"}, want: ""},
+		{name: "fork not editable", obs: stageObservation{Reason: autoMergeReasonForkNotEditable}, want: autoMergeReasonForkNotEditable},
+		{name: "lane reason conflicting", obs: stageObservation{Reason: "decision-requested", LaneReason: "conflicting"}, want: "conflicting"},
+		{name: "needs-rebase label", obs: stageObservation{Labels: []string{"needs-rebase"}}, want: "label:needs-rebase"},
+		{name: "dco missing", obs: stageObservation{Detail: stageDetail{DCO: stagelabels.DCONo}}, want: stagelabels.LaneReasonDCOMissing},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := headNotMergeableAsIs(tc.obs); got != tc.want {
+				t.Fatalf("headNotMergeableAsIs = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Approve, then Adopt now: the forced adoption wins. The recorded
+// "operator-admission" blocker clears the moment Adopt now is recorded (the
+// row stops saying "not adopted") and the next pass supersedes the PR.
+func TestForcedAdoptionOverridesAdmission(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	store.NoteAdmission(key, "aaa", stagelabels.OperatorApprovalAdmission("octo"), h.clock.now())
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(5 * time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if rec, _ := store.Get(key); rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedOperatorAdmission || rec.AdoptedHead != "" {
+		t.Fatalf("precondition: mergeable admitted head should be blocked, got %+v", rec)
+	}
+	store.NoteAdoptionForced(key, "octo", h.clock.now())
+	if rec, _ := store.Get(key); rec.AdoptionBlocked("aaa") != "" {
+		t.Fatalf("Adopt now left the admission blocker standing: %+v", rec)
+	}
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	rec, _ := store.Get(key)
+	if rec.AdoptedHead != "aaa" || rec.AdoptedBy == 0 || rec.AdoptReason != AdoptReasonOperatorForced {
+		t.Fatalf("forced adoption did not run over the admission: %+v", rec)
+	}
+	if _, pending := rec.AdoptionForced(); pending {
+		t.Fatalf("forced adoption still pending after it ran: %+v", rec)
 	}
 }
