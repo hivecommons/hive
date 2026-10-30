@@ -221,6 +221,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		Cause:            cause,
 		CauseReason:      decisionCauseFor(obs.Reason, workflowManual),
 		DecisionQuestion: strings.TrimSpace(contributorVerdict.DecisionQuestion),
+		DecisionFinding:  strings.TrimSpace(contributorVerdict.DecisionFinding),
 		HumanSummaries:   append([]string(nil), contributorVerdict.HumanSummaries...),
 		SelfAuthored:     obs.Lane == stageLaneSelf,
 		AuthorKind:       obs.AuthorKind,

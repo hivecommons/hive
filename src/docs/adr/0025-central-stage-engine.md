@@ -44,7 +44,7 @@ records transitions, regressions and history hops
 (`src/pkg/stagelabels/store.go:397`, `IsRegression` at
 `src/pkg/stagelabels/store.go:540`). The dashboard activity tracker and the
 hub read that store and nothing else (`stageStoreOrShared`,
-`src/pkg/dashboard/stage_tracker.go:1927-1933`).
+`src/pkg/dashboard/stage_tracker_caption.go:951-956`).
 
 **What is not central — three gaps.**
 
