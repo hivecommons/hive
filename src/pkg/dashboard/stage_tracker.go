@@ -436,6 +436,11 @@ type StageTrackerItem struct {
 	// (hivecommons/hive#15117): its position, the front, the PRs ahead and
 	// the overlapping files. See stage_tracker_merge_train.go.
 	MergeTrain *StageTrackerMergeTrain `json:"merge_train,omitempty"`
+	// LeftTrain is set on a PR the view took out of its merge train
+	// because it is under repair — being fixed, waiting on its author,
+	// parked on a decision, or red (stageTrackerTrainUnderRepair). The
+	// row rides no train and wears no ordinal; the hover says so.
+	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`
 	// BlockedOn lists the open GitHub "blocked by" dependencies ("repo#N")
 	// of an issue the scheduler withholds from every kick until they close
 	// (scheduler.partitionBlockedIssues). Without it a sequenced sub-issue
@@ -1773,7 +1778,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		if c := stageTrackerMergeTrainCaption(reason); c != "" {
 			return c, "automerge lane"
 		}
-		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
+		return joinClause(stageTrackerAwaitingAdmissionCaption, clause), "automerge lane"
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
 		switch stageTrackerAdoptedByState(rec) {
 		case stageTrackerAdoptedClosedTwice:
@@ -2128,7 +2133,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.StageSlug = stage.Slug()
 		it.StageLabel = stage.Label()
 		if it.Kind == "pr" {
-			it.MergeGate = stageTrackerMergeGateAttempt(stageTrackerMergeGate(it.Repo, it.Number, stage, rec, hasRec, sweep, now), attempt, hasAttempt)
+			it.MergeGate = stageTrackerMergeGateAttempt(stageTrackerMergeGate(it.Repo, it.Number, stage, rec, hasRec, sweep, now), attempt, hasAttempt, it.Head, stage, rec, hasRec)
 			it.Soak = stageTrackerSoakFrom(rec, hasRec, it.Head, soakWindow, now)
 		}
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {

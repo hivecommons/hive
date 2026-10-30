@@ -383,6 +383,11 @@
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
           // The reason is the whole story; the stage description would only repeat it (hivecommons/hive#15394).
           else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim();
+          // A refusal on an earlier head is history, not the word: the
+          // chevron reads the live stage and the hover keeps "merge attempt
+          // on previous head failed: branch protection".
+          const priorNote = !sg.cap && typeof stageTrackerPriorHeadMergeFailedNote === 'function' ? stageTrackerPriorHeadMergeFailedNote(item) : '';
+          if (priorNote) tip += ' — ' + priorNote;
           if (actorTip && !sg.cap) tip += actorTip;
           if (claimant && !sg.cap) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
           // The sentinel's reason leads the lane tooltip so the security

@@ -623,3 +623,48 @@ func TestMergeTrainHumanMergeNeverMember(t *testing.T) {
 		t.Fatal("a clean verdict re-admits the PR")
 	}
 }
+
+// TestPlanMergeTrainsExcludesUnderRepair: hive's own #15405 led a train's
+// header as "1st: #15405" while a maintainer's changes-requested had it at
+// 070 fixing. A PR at 070 / 071 / 085 — by label or by the stage store —
+// is somebody's to repair and takes no slot; the survivors form the train
+// among themselves.
+func TestPlanMergeTrainsExcludesUnderRepair(t *testing.T) {
+	t0 := time.Date(2026, 10, 30, 20, 0, 0, 0, time.UTC)
+	api := &mergeTrainAPI{
+		files: map[int][]string{15405: {"operator-reference.md"}, 15406: {"operator-reference.md"}, 15407: {"operator-reference.md"}, 15408: {"operator-reference.md"}},
+		state: map[int]string{15405: "clean", 15406: "clean", 15407: "clean", 15408: "clean"},
+	}
+	srv := newMergeTrainServer(t, api)
+	defer srv.Close()
+	c, logs := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, RebaseResolverFunc(func(context.Context, RebaseRequest) error { return nil }))
+	c.stageStore = stagelabels.NewStore("", func() time.Time { return t0 })
+	c.stageStore.Observe(stagelabels.Key("acme/widget", 15407), stagelabels.NeedsDecision, "rebase-failed-twice")
+	fixing := mtPR(15405, t0, "")
+	fixing.Labels = []*gh.Label{{Name: gh.Ptr(stagelabels.Fixing.Label())}}
+	needsAuthor := mtPR(15408, t0.Add(3*time.Minute), "")
+	needsAuthor.Labels = []*gh.Label{{Name: gh.Ptr(stagelabels.NeedsAuthor.Label())}}
+	prs := []*gh.PullRequest{fixing, mtPR(15406, t0.Add(time.Minute), ""), mtPR(15407, t0.Add(2*time.Minute), ""), needsAuthor}
+	plan := plan0(c, prs)
+	for _, n := range []int{15405, 15407, 15408} {
+		if plan.isSibling(n) || plan.isFront(n) {
+			t.Errorf("#%d is under repair and must be out of every train: %+v", n, plan.groups)
+		}
+	}
+	if len(plan.groups) != 0 {
+		t.Fatalf("only #15406 is left, and one PR is no train: %+v", plan.groups)
+	}
+	for _, want := range []string{"why=fixing", "why=needs-decision", "why=needs-author"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("missing skip log %q\n%s", want, logs.String())
+		}
+	}
+	// Once the fixer is done (label gone) the two clean PRs form the train
+	// and #15405 leads it by age.
+	fixing.Labels = nil
+	plan = plan0(c, prs)
+	g, ok := plan.group(15405)
+	if !ok || !reflect.DeepEqual(g.Order, []int{15405, 15406}) {
+		t.Fatalf("train = %+v", plan.groups)
+	}
+}

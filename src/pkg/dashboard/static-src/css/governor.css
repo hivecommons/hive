@@ -16,6 +16,20 @@
     /* planning-alert: plans awaiting human review — amber, to draw the eye like
        the "N Issues" / on-hold indicators. */
     .gov-stat .val.planning-alert { color: var(--yellow); }
+    /* RUNNING tile cost rotor (#15614): the four window phrases share one
+       grid cell, so the tile is always as wide as its widest phrase and the
+       amount + window crossfades in place while the agent count stays put.
+       nowrap + ellipsis is the fallback when the tile is narrower still. */
+    .fleet-run-stat .val, .fleet-run-stat .gm-val { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .fleet-run-count { color: var(--text); }
+    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; vertical-align: bottom; max-width: 100%; overflow: hidden; color: var(--text); }
+    .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
+    .fleet-cost-rotor .fcr-phrase.is-cur { opacity: 1; transform: translateY(0); }
+    .fleet-cost-rotor .fcr-phrase.is-out { opacity: 0; transform: translateY(-0.5em); }
+    .fleet-cost-rotor .fcr-window { color: var(--amber); font-weight: 600; }
+    @media (prefers-reduced-motion: reduce) {
+      .fleet-cost-rotor .fcr-phrase { transition: none; transform: none; }
+    }
     .governor-subsection { margin: var(--sp-5) 0 0; }
     .governor-subsection .section-body { overflow: hidden; }
     .gov-pr-models-subheader { width: 100%; display: grid !important; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-3); cursor: pointer; user-select: none; }
@@ -35,7 +49,9 @@
     .gov-pr-model-sub { overflow-wrap:anywhere; color:var(--muted); font-size:var(--fs-xs); font-weight:400; }
     @container (max-width: 42rem) {
       .gov-pr-model-row { grid-template-columns: minmax(0, 1fr); }
+      .gov-pr-model-head { display: none; }
       .gov-pr-model-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .gov-pr-model-row:not(.gov-pr-model-head) .gov-pr-model-metric::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; }
       .gov-pr-model-share { justify-self: start; }
     }
     .gov-pr-model-sub-spaced { margin-top:var(--sp-2); }
@@ -46,7 +62,16 @@
     .gov-pr-model-seg.closed { background:var(--yellow); }
     .gov-pr-model-metrics { display:grid; grid-template-columns:repeat(5, minmax(42px, 1fr)); gap:5px; }
     .gov-pr-model-metric { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
-    .gov-pr-model-metric span { display:block; color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; }
+    /* Column labels live once in the sticky header row; per-cell data-label is
+       surfaced only at the narrow breakpoint where the header is hidden. */
+    .gov-pr-model-head { position:sticky; top:0; z-index:1; margin:0 0 var(--sp-1); padding-block:var(--sp-1); background:var(--surface-3); border-bottom:1px solid var(--border); color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; font-weight:700; }
+    .gov-pr-model-head .gov-pr-model-metric, .gov-pr-model-head .gov-pr-model-share { color:var(--muted); }
+    .gov-pr-model-col { cursor:help; white-space:nowrap; }
+    .gov-pr-model-help { display:inline-flex; align-items:center; justify-content:center; width:11px; height:11px; margin-left:3px; border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); line-height:1; text-transform:none; letter-spacing:0; vertical-align:middle; }
+    .gov-pr-model-row.unattributed { opacity:0.6; }
+    .gov-pr-model-row.unattributed .gov-pr-model-name { color:var(--muted); font-weight:500; }
+    .gov-pr-model-rank.unattributed { background:transparent; color:var(--muted); border:1px solid var(--border); text-transform:uppercase; letter-spacing:0.06em; font-size:var(--fs-2xs); font-weight:600; }
+    .gov-pr-model-backend { display:inline-block; margin:2px 4px 0 0; padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); color:var(--muted); font-size:var(--fs-2xs); }
     .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; }
     .gov-pr-model-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.72rem; }
     .gov-pr-model-table th, .gov-pr-model-table td { padding:5px 6px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; }
@@ -83,8 +108,10 @@
         min-width: 0 !important;
       }
       .gov-pr-model-row { grid-template-columns:minmax(0, 1fr) !important; gap:var(--sp-2); }
+      .gov-pr-model-head { display: none; }
       .gov-pr-model-metrics { grid-template-columns:repeat(2, minmax(90px, 1fr)); }
       .gov-pr-model-metric { text-align: left; }
+      .gov-pr-model-row:not(.gov-pr-model-head) .gov-pr-model-metric::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; }
       .gov-pr-model-share { justify-self:start; }
       .gov-pr-model-table {
         width: 100% !important;
