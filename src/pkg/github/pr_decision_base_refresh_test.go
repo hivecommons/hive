@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -222,6 +223,87 @@ func TestDecisionCarrierResolvesBaseOnDemand(t *testing.T) {
 	got, ok := carrier.Carry(context.Background(), "hivecommons", "hive", 1, "", newHead)
 	if !ok || got.HeadSHA != newHead || resolved != 1 {
 		t.Fatalf("carry = %+v ok=%v resolved=%d", got, ok, resolved)
+	}
+}
+
+// refreshChain builds n consecutive App base refreshes on top of "aaaa":
+// h1 refreshes aaaa, h2 refreshes h1, and so on. broken, when > 0, makes
+// that hop's author someone other than the App.
+func refreshChain(n, broken int, app string) (*fakeBaseRefreshRepos, string) {
+	same := []*gh.CommitFile{refreshFile("a.go", "blob1", "@@")}
+	api := &fakeBaseRefreshRepos{commits: map[string]*gh.RepositoryCommit{}, compares: map[string]*gh.CommitsComparison{"v5...aaaa": refreshCompare("0ld", same...)}}
+	prev := "aaaa"
+	for i := 1; i <= n; i++ {
+		sha, tip, login := "h"+strconv.Itoa(i), "tip"+strconv.Itoa(i), app
+		if i == broken {
+			login = "mendezr"
+		}
+		api.commits[sha] = refreshCommit(sha, login, prev, tip)
+		api.compares["v5..."+sha] = refreshCompare(tip, same...)
+		prev = sha
+	}
+	return api, prev
+}
+
+// hivecommons/hive#15766: two (or more) App refreshes landed before any
+// lane read the PR, so the decided head is not a direct parent.
+func TestDecisionCarrierCarriesAcrossConsecutiveBaseRefreshes(t *testing.T) {
+	const app = "kubestellar-hive[bot]"
+	for _, tc := range []struct {
+		name   string
+		hops   int
+		broken int
+		want   bool
+	}{
+		{name: "two hops", hops: 2, want: true},
+		{name: "depth bound reached", hops: baseRefreshMaxHops, want: true},
+		{name: "beyond the depth bound", hops: baseRefreshMaxHops + 1, want: false},
+		{name: "newest hop not by the App", hops: 3, broken: 3, want: false},
+		{name: "middle hop not by the App", hops: 3, broken: 2, want: false},
+		{name: "oldest hop not by the App", hops: 3, broken: 1, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api, head := refreshChain(tc.hops, tc.broken, app)
+			store := review.NewHumanChangeRequests("")
+			if err := store.Record(review.HumanChangeRequest{Repo: "hivecommons/hive", Number: 15766, HeadSHA: "aaaa", Source: review.HumanChangeRequestSourceDecision, SourceID: 1, Actor: "clubanderson", Body: "approve", Kind: review.HumanChangeRequestKindApprove}); err != nil {
+				t.Fatal(err)
+			}
+			carrier := &DecisionCarrier{Store: store, API: api, AppBotLogin: app, Checker: &BaseRefreshChecker{}}
+			got, ok := carrier.Carry(context.Background(), "hivecommons", "hive", 15766, "v5", head)
+			if ok != tc.want {
+				t.Fatalf("carried = %v, want %v (%+v)", ok, tc.want, got)
+			}
+			if tc.want && (got.HeadSHA != head || got.CarriedFromHead != "aaaa" || !got.IsApproval()) {
+				t.Fatalf("carried record = %+v", got)
+			}
+		})
+	}
+}
+
+// A content commit between two refreshes breaks the chain.
+func TestDecisionCarrierRefusesChainBrokenByContentCommit(t *testing.T) {
+	const app = "kubestellar-hive[bot]"
+	same := []*gh.CommitFile{refreshFile("a.go", "blob1", "@@")}
+	changed := []*gh.CommitFile{refreshFile("a.go", "blob9", "@@ +")}
+	api := &fakeBaseRefreshRepos{
+		commits: map[string]*gh.RepositoryCommit{
+			"h2":   refreshCommit("h2", app, "h1", "tip2"),
+			"h1":   refreshCommit("h1", app, "c0de", "tip1"),
+			"c0de": refreshCommit("c0de", "someone", "aaaa"),
+		},
+		compares: map[string]*gh.CommitsComparison{
+			"v5...aaaa": refreshCompare("0ld", same...),
+			"v5...h1":   refreshCompare("tip1", changed...),
+			"v5...h2":   refreshCompare("tip2", changed...),
+		},
+	}
+	store := review.NewHumanChangeRequests("")
+	if err := store.Record(review.HumanChangeRequest{Repo: "hivecommons/hive", Number: 15766, HeadSHA: "aaaa", Source: review.HumanChangeRequestSourceDecision, SourceID: 1, Actor: "clubanderson", Body: "approve", Kind: review.HumanChangeRequestKindApprove}); err != nil {
+		t.Fatal(err)
+	}
+	carrier := &DecisionCarrier{Store: store, API: api, AppBotLogin: app, Checker: &BaseRefreshChecker{}}
+	if got, ok := carrier.Carry(context.Background(), "hivecommons", "hive", 15766, "v5", "h2"); ok {
+		t.Fatalf("decision carried across a content commit: %+v", got)
 	}
 }
 
