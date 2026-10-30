@@ -1719,6 +1719,11 @@ type GovernorConfig struct {
 	HotspotMinOverlaps int   `yaml:"hotspot_min_overlaps,omitempty" json:"hotspot_min_overlaps,omitempty"`
 	HotspotMinLines    int   `yaml:"hotspot_min_lines,omitempty" json:"hotspot_min_lines,omitempty"`
 	HotspotRefileDays  int   `yaml:"hotspot_refile_days,omitempty" json:"hotspot_refile_days,omitempty"`
+	// HotspotMaxOpen caps the modularize issues open at once per repo; the
+	// advisor files the next-ranked hotspot only when one closes.
+	// HotspotMaxPerPass caps new issues per advisor pass.
+	HotspotMaxOpen    int `yaml:"hotspot_max_open,omitempty" json:"hotspot_max_open,omitempty"`
+	HotspotMaxPerPass int `yaml:"hotspot_max_per_pass,omitempty" json:"hotspot_max_per_pass,omitempty"`
 
 	// ProjectObservability configures what the telemetry and operations agents
 	// recommend for the MANAGED PROJECT. It is deliberately separate from
@@ -2226,6 +2231,8 @@ const (
 	DefaultHotspotMinOverlaps = 3
 	DefaultHotspotMinLines    = 800
 	DefaultHotspotRefileDays  = 30
+	DefaultHotspotMaxOpen     = 2
+	DefaultHotspotMaxPerPass  = 1
 )
 
 // HotspotIssuesEnabled resolves GovernorConfig.HotspotEnabled (default on).
@@ -2263,6 +2270,16 @@ func (g GovernorConfig) HotspotMinLinesOrDefault() int {
 // HotspotRefileDaysOrDefault resolves governor.hotspot_refile_days.
 func (g GovernorConfig) HotspotRefileDaysOrDefault() int {
 	return hotspotOrDefault(g.HotspotRefileDays, DefaultHotspotRefileDays)
+}
+
+// HotspotMaxOpenOrDefault resolves governor.hotspot_max_open.
+func (g GovernorConfig) HotspotMaxOpenOrDefault() int {
+	return hotspotOrDefault(g.HotspotMaxOpen, DefaultHotspotMaxOpen)
+}
+
+// HotspotMaxPerPassOrDefault resolves governor.hotspot_max_per_pass.
+func (g GovernorConfig) HotspotMaxPerPassOrDefault() int {
+	return hotspotOrDefault(g.HotspotMaxPerPass, DefaultHotspotMaxPerPass)
 }
 
 // Bounds for AdvisoryConfig.UpdateIntervalS. Exported because the dashboard
