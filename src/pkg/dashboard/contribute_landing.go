@@ -311,6 +311,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 h1{font-size:var(--fs-3xl);margin-bottom:var(--sp-4)}
 .subtitle{color:var(--text-muted);font-size:1.1rem;margin-bottom:var(--sp-9)}
 .subtitle-discord{font-size:var(--fs-md);margin-top:var(--sp-0);margin-bottom:var(--sp-9)}
+.mlx-note{display:none;margin-bottom:var(--sp-5);font-size:var(--fs-sm);color:var(--text-muted)}
 .discord-link{color:var(--cc-accent);font-weight:600}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:10px;margin-bottom:var(--sp-8)}
 .stat{background:var(--surface-2);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-4);text-align:center;box-shadow:var(--shadow-card)}
@@ -1683,7 +1684,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <div id="omp-confinement-note" style="display:none;margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid #d29922;border-radius:var(--r);padding:var(--sp-5) 14px;font-size:.85rem;color:var(--text);line-height:1.5">
 <strong style="color:var(--text)">Oh My Pi (omp) has no verified local sandbox.</strong> <strong>Container</strong> mode (the default) is the supported boundary and runs the pinned <code>omp</code> binary from the contributor image. <strong>Host</strong> mode launches the CLI directly on your machine and refuses to run unless you intentionally opt out with <code>HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1</code>; use it only if you understand that trade-off.
 </div>
-<div id="pi-mlx-note" style="display:none;margin-bottom:var(--sp-5);font-size:.85rem;color:var(--text-muted)">
+<div id="pi-mlx-note" class="mlx-note">
 <h3 id="apple-mlx">Apple MLX local inference</h3>
 Choose <strong>Apple MLX</strong> above for copy-pastable installation, model verification and <code>just contribute-mlx</code> commands. Enter the exact already-downloaded model ID or absolute path (without an <code>mlx/</code> prefix) in the Model field. Requires <strong>Apple Silicon</strong>, native arm64 Node ≥22.19 and Python ≥3.10, macOS ≥14, Pi ≥1.4.0, and a tool-capable model. Intel Macs and Rosetta are unsupported. MLX-LM runs on your Mac; Pi runs coding tools in the contributor container. Docker Desktop 4.34+ host networking must be enabled by you; Kubernetes and Podman machine cannot reach Mac loopback. Models consume shared host RAM outside the relay container's limit. No automatic weight downloads, public listener, cloud fallback or memory-setting changes. The explicit setup probe runs two bounded inference requests; coding quality and live Mac inference are not certified by that probe. <a href="https://github.com/hivecommons/hive/blob/{{HIVE_BRANCH}}/src/docs/contributor-relay.md#apple-mlx-local-inference" target="_blank" rel="noopener">Setup, RAM budgeting and troubleshooting</a>. Integration names identify compatibility, not Apple endorsement.
 </div>
