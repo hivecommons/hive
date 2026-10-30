@@ -194,11 +194,20 @@ func buildClaimsLedger(cfg *config.Config, logger *slog.Logger) *claims.Ledger {
 // installClaimAdmissionCheck gates every automated ledger producer on current
 // labels, including renewals and forced takeovers. Resolve the client per call
 // because App setup can finish after boot.
-func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, client func() *github.Client) {
+func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, client func() *github.Client, integrationCheck ...func(string, int) string) {
 	if ledger == nil || client == nil {
 		return
 	}
 	ledger.SetAdmissionCheck(func(req claims.Request) (string, error) {
+		if _, held := ledger.Lookup(req.Repo, req.Issue); !held && !req.PRStarted {
+			for _, check := range integrationCheck {
+				if check != nil {
+					if reason := check(req.Repo, req.Issue); reason != "" {
+						return reason, nil
+					}
+				}
+			}
+		}
 		ctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
 		defer cancel()
 		gh := client()

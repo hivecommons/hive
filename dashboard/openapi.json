@@ -86,6 +86,57 @@
     }
   ],
   "paths": {
+    "/api/integration-orchestration": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Inspect integration coordination evidence and unknowns (owner only)",
+        "description": "Reports source/schema/runtime identity, configured mode, immutable candidates, canonical intents, live reservations, physical workflow jobs and cohort coverage. This ledger never authorizes merges or substitutes integration evidence for author review.",
+        "responses": {
+          "200": {"description": "Configuration and ledger, or explicit unavailable/unknown state"},
+          "403": {"description": "Owner role required"}
+        }
+      }
+    },
+    "/api/config/integration-orchestration": {
+      "put": {
+        "tags": ["System"],
+        "summary": "Replace bounded integration orchestration configuration (owner only)",
+        "description": "Full off|advisory|enforce configuration with exact repository/base scopes, static execution/admission budgets, bounded lease/window/age/retries and optional pinned workflow contracts. JSON durations use nanoseconds. Disabling is independent of evidence-store availability and never releases authoritative claims/native entries.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
+        "responses": {
+          "200": {"description": "Validated effective configuration"},
+          "400": {"description": "Invalid mode, scope, contract or bounds"},
+          "403": {"description": "Owner role required"},
+          "500": {"description": "Configuration could not be persisted"},
+          "503": {"description": "Enforcement ledger unavailable; disable remains permitted"}
+        }
+      }
+    },
+    "/api/integration-orchestration/intents": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Record a versioned canonical change intent (owner only)",
+        "description": "Requires canonical work identity, exact enrolled destination, monotonically increasing generation, plan/node/revision, anticipated scope and provenance. Enforceable prerequisites must match the complete bound approved plan DAG; semantic and same-file hints never grant authority.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
+        "responses": {
+          "200": {"description": "Durably recorded intent"},
+          "400": {"description": "Malformed intent or unenrolled scope"},
+          "403": {"description": "Owner role required"},
+          "409": {"description": "Unapproved dependencies, generation conflict, cycle or unavailable journal"}
+        }
+      }
+    },
+    "/api/integration-orchestration/reconcile": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Reconcile a bounded workflow observation batch (owner only)",
+        "responses": {
+          "200": {"description": "Batch observed or minimum interval not elapsed; inspect per-scope completeness"},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "Authoritative workflow observations unavailable"}
+        }
+      }
+    },
     "/api/audit": {
       "get": {
         "tags": [

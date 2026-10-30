@@ -743,6 +743,20 @@
   "scanner": {},
   "upstream_watch": {},
   "convergence": {},
+  "integration_orchestration": {
+    "mode": "",
+    "scopes": null,
+    "lease_ttl": 0,
+    "window": 0,
+    "max_active": 0,
+    "max_runner_minutes": 0,
+    "max_jobs": 0,
+    "max_attempts": 0,
+    "max_observation_age": 0,
+    "admission_runner_minutes": 0,
+    "admission_jobs": 0,
+    "policies": null
+  },
   "sla": {
     "targets": {}
   },

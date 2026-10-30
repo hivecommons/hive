@@ -77,6 +77,9 @@ const autoMergeReasonLabelNeedsRebase = "label:needs-rebase"
 
 // Options carries policy dependencies owned by the caller.
 type Options struct {
+	// IntegrationAdmission may withhold a NEW native enqueue for a scoped CI
+	// budget. It never replaces any gate, cancels work, or reorders the queue.
+	IntegrationAdmission func(context.Context, string, *gh.PullRequest) (string, error)
 	// BasePreparation persists front-only final preparation across all lanes.
 	// nil uses the shared durable store.
 	BasePreparation  *BasePreparationStore
@@ -246,7 +249,8 @@ type Options struct {
 	// conflicts it asks the resolver to repair, so the merge-hotspot
 	// advisor (pkg/hotspot) derives its evidence without polling GitHub
 	// again; nil records nothing.
-	HotspotRecorder HotspotRecorder
+	HotspotRecorder          HotspotRecorder
+	IntegrationFilesObserved func(repo, head string, files []string)
 }
 
 // Engine owns the automerge sweep policy state.
@@ -267,6 +271,7 @@ type Engine struct {
 	claimants   map[string][]*gh.PullRequest
 
 	nativeMergeQueuePolicy func() NativeMergeQueuePolicy
+	integrationAdmission   func(context.Context, string, *gh.PullRequest) (string, error)
 	nativeQueueProbeMu     sync.Mutex
 	nativeQueueProbes      map[string]nativeQueueProbe
 
@@ -394,11 +399,12 @@ type Engine struct {
 	// sweepClock records the lanes' passes for the dashboard (sweep_clock.go).
 	sweepClock *SweepClock
 
-	mergeTrainPolicy func() MergeTrainPolicy
-	rebaseResolver   RebaseResolver
-	rebaseEpisode    func(repo string, number int) (RebaseEpisode, bool)
-	fixDispatch      func(repo string, number int, head string) (review.FixDispatchStatus, bool)
-	hotspotRecorder  HotspotRecorder
+	mergeTrainPolicy         func() MergeTrainPolicy
+	rebaseResolver           RebaseResolver
+	rebaseEpisode            func(repo string, number int) (RebaseEpisode, bool)
+	fixDispatch              func(repo string, number int, head string) (review.FixDispatchStatus, bool)
+	hotspotRecorder          HotspotRecorder
+	integrationFilesObserved func(repo, head string, files []string)
 	mergeTrainState
 }
 
@@ -456,10 +462,12 @@ func New(transport Transport, opts Options) *Engine {
 		sweepTrigger:                      opts.SweepTrigger,
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
 		nativeMergeQueuePolicy:            opts.NativeMergeQueue,
+		integrationAdmission:              opts.IntegrationAdmission,
 		rebaseResolver:                    opts.RebaseResolver,
 		rebaseEpisode:                     opts.RebaseEpisode,
 		fixDispatch:                       opts.FixDispatchStatus,
 		hotspotRecorder:                   opts.HotspotRecorder,
+		integrationFilesObserved:          opts.IntegrationFilesObserved,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
