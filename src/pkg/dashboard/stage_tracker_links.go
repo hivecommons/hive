@@ -326,6 +326,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
 				lp.Rework = pr.Rework
+				lp.Push = pr.Push
 				lp.Takeover = pr.Takeover
 				lp.Supersedes = pr.Supersedes
 				lp.Lineage = pr.Lineage
