@@ -747,6 +747,12 @@ type StageTrackerLinkedPR struct {
 	// parent shows a compact "↳ #N · under #M" reference instead of a
 	// second identical row (hivecommons/hive#14921 drew twice).
 	DrawnUnder int `json:"drawn_under,omitempty"`
+	// AlsoCloses is set only on the listing drawn here (DrawnUnder == the
+	// parent issue): the other listed open issues this PR also closes
+	// (number, title, url), lowest number first, so the PR's sub-row can
+	// name them back — the reciprocal of the "↳ #N · under #M" chip
+	// (hivecommons/hive#15806).
+	AlsoCloses []StageTrackerLinkedIssue `json:"also_closes,omitempty"`
 	// Presence mirrors the nested PR's own row field (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
 	// Rework mirrors the nested PR's own row field (hivecommons/hive#15280).
