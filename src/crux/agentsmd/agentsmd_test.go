@@ -206,6 +206,27 @@ func TestParseNearest_ClosestWins(t *testing.T) {
 	}
 }
 
+func TestParseNearest_EscapingPathFallsBackToRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	writeFile(t, filepath.Join(root, AgentsFileName), "# Root\n\nroot baseline instructions\n")
+	writeFile(t, filepath.Join(parent, "sibling", AgentsFileName), "# Foreign\n\nforeign instructions\n")
+	writeFile(t, filepath.Join(parent, "repo-other", AgentsFileName), "# Foreign\n\nforeign instructions\n")
+
+	for _, rel := range []string{
+		filepath.Join("..", "sibling", "file.go"),
+		filepath.Join("..", "repo-other", "file.go"),
+	} {
+		cfg, err := ParseNearest(root, rel, nil)
+		if err != nil {
+			t.Fatalf("ParseNearest(%q) error: %v", rel, err)
+		}
+		if !strings.Contains(cfg.Body, "root baseline") || strings.Contains(cfg.Body, "foreign") {
+			t.Errorf("ParseNearest(%q) expected root baseline, got %q", rel, cfg.Body)
+		}
+	}
+}
+
 func TestParseNearest_MissingRoot(t *testing.T) {
 	root := t.TempDir() // no AGENTS.md anywhere
 	cfg, err := ParseNearest(root, filepath.Join("a", "b.go"), nil)

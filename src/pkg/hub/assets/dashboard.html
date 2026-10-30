@@ -275,8 +275,11 @@
     .ws-badge--github_projects { background:#1a3a5c; color:#58a6ff; }
     .ws-badge--linear { background:#2d1b69; color:#a78bfa; }
     .ws-badge--jira { background:#0052cc; color:#fff; }
-    .hive-table th { text-align: center; padding: 10px 12px; border-bottom: 2px solid var(--line); color: var(--muted); font-weight: 600; font-size: var(--fs-sm); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
-    .hive-table td { padding: var(--sp-5); border-bottom: 1px solid #ffffff0a; vertical-align: middle; text-align: center; }
+    .hive-table th { text-align: center; padding: 10px var(--sp-4); border-bottom: 2px solid var(--line); color: var(--muted); font-weight: 600; font-size: var(--fs-sm); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
+    /* Horizontal cell padding is one step tighter than vertical: with 14
+       columns, 4px a side is ~110px of table width, the difference between
+       the fleet table fitting a 1600px viewport and scrolling sideways. */
+    .hive-table td { padding: var(--sp-5) var(--sp-4); border-bottom: 1px solid #ffffff0a; vertical-align: middle; text-align: center; }
     .hive-table td:first-child { text-align: left; }
     /* Zebra striping: a subtle alternating shade on every OTHER hive row so the
        eye can track one hive's cells straight across the wide table. Keyed off a
@@ -675,6 +678,18 @@
     .nps-admin-response-text { font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--sp-2); }
       .upgrade-ctl[aria-disabled="true"] { cursor: not-allowed !important; opacity: 0.5; pointer-events: auto; }
       .version-missing { font-size: var(--fs-2xs); white-space: nowrap; color: var(--muted); }
+      /* Version column: bounded width, wrapping content. The cell is a two-line
+         block (identity / status+actions); each line is a wrapping flex row so
+         a long status folds inside the column instead of widening it, and
+         SHAs/long words may break anywhere. Individual pills keep their own
+         nowrap so a chip never splits mid-label. */
+      .hive-table td.version-cell { min-width: 14rem; max-width: 22rem; white-space: normal; overflow-wrap: anywhere; }
+      .version-stack { display: inline-flex; flex-direction: column; align-items: center; gap: var(--sp-1); max-width: 100%; }
+      .version-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--sp-1) var(--sp-2); white-space: normal; max-width: 100%; }
+      .version-line .upgrade-progress-history, .version-line .upgrade-progress-interrupt { margin-left: 0; }
+      /* Repos column: the "as: <identity>" line and host pill wrap inside a
+         bounded width rather than stretching the column. */
+      .hive-table td.repos-cell { max-width: 12rem; white-space: normal; overflow-wrap: anywhere; }
       /* Scheduled-upgrade progress pill, history badge and interrupt action
          on the hive card's Version cell (#14950). */
       .upgrade-progress-pill { display: inline-block; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-size: var(--fs-2xs); background: var(--surface); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -8976,13 +8991,19 @@
             var behindLabel = behindKnown ? ('behind by ' + behindCount) : 'behind';
             var nextCheck = h.nextUpdateAt ? ('next check ' + nextCheckIn(h.nextUpdateAt)) : (h.nextUpdateStatus === 'candidate-continuous' ? 'next hub poll' : 'next check soon');
             var whyNotNow = h.upgradeWhyNotNow || (queuedDaily ? 'daily schedule' : 'waiting for idle/health gates');
-            var queuedLabel = behindLabel + ' · ' + nextCheck + ' · why not now: ' + whyNotNow;
+            /* The badge carries only the short state ("behind by 17 · next
+               check in 24h"); the reason it has not upgraded yet is a full
+               sentence and lives in the hover title, so the column stays
+               narrow. */
+            var queuedLabel = behindLabel + ' · ' + nextCheck;
+            var whyNotNowNote = ' Why not now: ' + whyNotNow + '.';
             /* The tooltip names the TARGET — SHA plus the tracked
                branch/channel label — so "queued for what?" never needs a
                second click to answer. */
-            var queuedTitle = queuedDaily
+            var queuedTitle = (queuedDaily
               ? 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') at the next 1pm ET window' + buildingHint + pendingImageNote + floatingLagNote + verificationNote
-              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') as soon as the hub observes a published image and the hive is idle/healthy' + buildingHint + pendingImageNote + floatingLagNote + verificationNote;
+              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') as soon as the hub observes a published image and the hive is idle/healthy' + buildingHint + pendingImageNote + floatingLagNote + verificationNote) +
+              '.' + whyNotNowNote;
             /* REFUSED, not queued. autoUpgradeBlocked is the hub's own evaluated
                decision (upgradeCollectible false), sent by the fleet API rather
                than re-derived here — the badge must never claim an upgrade is
@@ -9070,22 +9091,11 @@
             autoUpgradeCheck = d.outerHTML;
           }
           var shaMsg = _commitMessages[sha] || _latestSHAMessages[branchName] || '';
-          /* FOUR stacked lines, ONE element per line. The column is as wide as
-             its widest LINE, so as long as no two controls share a line the
-             width collapses to the widest single element — which, now that the
-             select is icon-only, is the 56px select rather than the ~150px
-             "[queued · 1pm ET] [Auto: daily 1pm ET]" pair that used to set it.
-               1. the branch pill, which the owner can CHANGE (it is a switcher,
-                  so it owns a line and stays a full tap target);
-               2. the SHA and its current/behind glyph — two views of the same
-                  immutable fact, "what commit is this hive on". These are one
-                  element for width purposes: the glyph is 10px and rides
-                  alongside the hash rather than setting the line's width.
-               3. what happens NEXT: the upgrade affordance alone;
-               4. the icon-only auto-upgrade mode select alone.
-             Lines 3 and 4 are omitted entirely when empty — a read-only viewer
-             gets two lines, not four with two blanks. Every fragment below is
-             embedded verbatim, so ids, handlers and tooltips are preserved. */
+          /* The cell's width is bounded by .version-stack (min/max-width) and
+             its two lines WRAP inside that bound (.version-line), so no single
+             string can widen the column: a crowded status line folds onto a
+             second visual row instead. Every fragment below is embedded
+             verbatim, so ids, handlers and tooltips are preserved. */
           /* The drift dot rides on the SHA line, right of the current/behind
              glyph: "what commit is this hive on, and does it match the fleet" is
              one thought. It sets no extra line, so a drifting hive is no taller. */
@@ -9119,14 +9129,25 @@
              hides it from readers who could not click it anyway. */
           var upgradeProgressLine = renderUpgradeProgress(h, isHosted && h.role === 'owner' && !h.upgradeInterruptPending);
           if (h.upgradeInterruptPending) upgradeProgressLine += '<span class="upgrade-progress-pill upgrade-progress-history" title="The owner asked this upgrade to interrupt in-flight agent turns; the spoke picks it up on its next heartbeat.">interrupt requested</span>';
-          /* The progress pill shares the upgrade line so the cell keeps its
-             one-element-per-line shape (TestVersionCellPutsEachElementOnItsOwnLine). */
+          /* The progress pill and its interrupt action share the status line
+             with the queued badge and Upgrade now. */
           if (upgradeProgressLine) upgradeIcon = upgradeIcon ? upgradeIcon + ' ' + upgradeProgressLine : upgradeProgressLine;
-          versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
-            '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
-            '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
-            (upgradeIcon ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + '</div>' : '') +
-            (autoUpgradeCheck ? '<div style="' + STACKED_LINE_STYLE + '">' + autoUpgradeCheck + '</div>' : '') +
+          /* TWO wrapping lines inside a width-bounded block (see .version-stack):
+               1. identity — the channel/branch pill, the running SHA with its
+                  current/behind glyph, the behind chip and the drift count;
+               2. status + actions — one short state badge, Upgrade now, the
+                  progress pill, Upgrade now (interrupt turns), the history chip
+                  and the auto-upgrade select.
+             Each line is a wrapping flex row, so a crowded status line folds
+             onto a third visual row INSIDE the column instead of pushing the
+             column wider. Long explanations ("why not now", the missed-window
+             reason, the agents holding a drain) live in the badges' hover
+             titles, never inline. Line 2 is omitted for a viewer with neither
+             an action nor a select, so a read-only row stays one line tall. */
+          var statusLine = (upgradeIcon || '') + (autoUpgradeCheck ? ' ' + autoUpgradeCheck : '');
+          versionCell = '<div class="version-stack">' +
+            '<div class="version-line version-line-id">' + branch + ' ' + shaLine + '</div>' +
+            (statusLine ? '<div class="version-line version-line-status">' + statusLine + '</div>' : '') +
             '</div>';
         /* No version reported, but drift can still exist (e.g. heartbeat-stale on a
            spoke too old to report a SHA) — surface the dot beside the dash so
@@ -9273,7 +9294,7 @@
              carry their own nowrap, so the SHA still never breaks mid-hash,
              but the COLUMN is no longer forced to the width of every part laid
              end to end. That nowrap was the main reason this column was wide. */
-          '<td style="font-size:0.7rem">' + versionCell + '</td>' +
+          '<td class="version-cell" style="font-size:0.7rem">' + versionCell + '</td>' +
           /* Repo count over the GitHub-instance pill: the host qualifies WHICH
              GitHub these repos live on, so the two belong together. Stacked
              rather than inline to keep the numeric column narrow. */
@@ -9284,11 +9305,11 @@
              "<slug>[bot]", else empty); a hive with no usable GitHub App renders
              "—", never a stale personal ai_author it can't act as. Prefixed "as:"
              so the line reads as the authoring identity, not another repo. */
-          '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' +
+          '<td class="repos-cell" title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' +
             '<div style="' + STACKED_CELL_STYLE + '">' +
               '<div style="' + STACKED_LINE_STYLE + '">' + repoCount + '</div>' +
               '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance these repos live on">' + githubHostPill(hiveForgeHost(h)) + '</div>' +
-              '<div style="' + STACKED_LINE_STYLE + ';color:var(--muted)" title="GitHub identity this hive opens PRs/commits as (— = no GitHub App installed yet)">as: ' + esc(h.aiAuthorEffective || '—') + '</div>' +
+              '<div class="repos-as" style="' + STACKED_LINE_STYLE + ';white-space:normal;overflow-wrap:anywhere;color:var(--muted)" title="GitHub identity this hive opens PRs/commits as (— = no GitHub App installed yet)">as: ' + esc(h.aiAuthorEffective || '—') + '</div>' +
             '</div>' +
           '</td>' +
           /* MATURITY: the ACMM level badge and the Journey status stacked into
@@ -9966,15 +9987,21 @@
       var history = renderUpgradeHistory(h);
       if (!st || !UPGRADE_PROGRESS_PILL_STATES[st.state]) return history;
       var label = upgradeProgressLabel(st.state);
+      /* The pill shows the state plus at most one short fact (time left on a
+         drain); the agents holding the drain and a missed window's reason are
+         sentences, so they go in the hover title rather than widening the
+         Version column. */
       var extra = '';
+      var tipExtra = '';
       if (st.state === 'draining') {
         var agents = upgradeAgentsInTurnText(st);
         var left = typeof st.drainRemainingS === 'number' && st.drainRemainingS > 0 ? formatUpgradeElapsed(st.drainRemainingS * 1000) + ' left' : 'deadline reached';
-        extra = (agents ? ' · ' + agents : '') + ' · ' + left;
+        extra = ' · ' + left;
+        if (agents) tipExtra = '\n' + agents;
       } else if (st.state === 'missed' && st.reason) {
-        extra = ' · ' + st.reason;
+        tipExtra = '\n' + st.reason;
       }
-      var tip = st.detail || label;
+      var tip = (st.detail || label) + tipExtra;
       var pill = '<span class="upgrade-progress-pill is-' + escAttr(st.state) + '" title="' + escAttr(tip) + '">' + esc(label + extra) + '</span>';
       var action = '';
       if (canAct && (st.state === 'draining' || st.state === 'missed')) {

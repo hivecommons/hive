@@ -1,0 +1,1 @@
+- Activity Monitor: "Returned to" rows now name the clanker's owner (`@login's clanker`) even when an issue is drawn through its covering PR, instead of the issue author (the hive App bot); rows the supersession sweep found superseded say "Superseded by #N · decide" and the "Close as superseded by…" prompt is prefilled with that PR.

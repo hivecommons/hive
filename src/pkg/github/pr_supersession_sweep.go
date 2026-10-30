@@ -3,6 +3,8 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -212,8 +214,10 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		// auto-close, park release) writes on a PR the hive did not open.
 		// Below the level supersession_notice needs, or without the opt-in
 		// label, the detection is audited and nothing else happens.
+		// This is a policy pre-check (no body yet): the content-aware
+		// check runs below, once the notice is rendered.
 		item := c.sentinelWritebackItem(pr)
-		if d := c.WritebackAllowed(prRepo, item, writeback.KindSupersessionNotice, supersessionDecisionNotice(prOwner, closer, "")); !d.Allowed {
+		if d := c.WritebackGate().Allowed(prRepo, item, writeback.KindSupersessionNotice); !d.Allowed {
 			if opts.Audit != nil {
 				event.Action = SupersessionActionSuppressedContributor
 				event.Reason = "write-back gate: " + d.Reason
@@ -289,6 +293,14 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	event.Action = SupersessionActionCommentedContributor
 	body := renderSupersessionComment(event, closer, notice)
+	if !ownPR {
+		// Content-aware gate on the real body: an identical notice already
+		// on this PR, or the same notice just sent to another PR, is held
+		// exactly like a notice that already stands.
+		if d := c.WritebackAllowed(prRepo, c.sentinelWritebackItem(pr), writeback.KindSupersessionNotice, body); !d.Allowed {
+			return c.releaseStaleSupersessionPark(ctx, prRepo, prOwner, prRepoName, pr)
+		}
+	}
 	changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 	if err != nil {
 		return event, "", err
@@ -460,9 +472,25 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		if node.Number == currentPR || !node.Merged {
 			continue
 		}
+		if !sameRepoPullURL(node.URL, owner, repo, node.Number) {
+			continue
+		}
 		return supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}, true
 	}
 	return supersessionCloser{}, false
+}
+
+// sameRepoPullURL reports whether a PR URL from closedByPullRequestsReferences
+// names pull request number in owner/repo. GitHub can list a merged PR from
+// another repository there, so only a same-repo PR may be named by number.
+// The host is ignored so GitHub Enterprise URLs compare the same way.
+func sameRepoPullURL(rawURL, owner, repo string, number int) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	want := "/" + owner + "/" + repo + "/pull/" + strconv.Itoa(number)
+	return strings.EqualFold(strings.TrimSuffix(u.Path, "/"), want)
 }
 
 func (c *Client) issueClosingCommit(ctx context.Context, owner, repo string, issue int) (string, error) {

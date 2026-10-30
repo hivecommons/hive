@@ -275,6 +275,11 @@ type PRPassFacts struct {
 	// fixing stage but the reason names the failed replay, not the
 	// generic conflict, so the owner sees why the copy never opened.
 	AdoptionRefusedReason string
+	// RebaseFailedTwice is set on the hive's own adoption copy when it
+	// still conflicts after the fixer's two rebase-resolve attempts: the
+	// PR reads 085 with stagelabels.LaneReasonRebaseFailedTwice so a
+	// person decides (hivecommons/hive#15307).
+	RebaseFailedTwice bool
 	// Stalled is the pass's dwell verdict (stagelabels.StalledWith over the
 	// store record after this pass's Observe); KindLabels are the
 	// configured author/<kind> names. Both are outputs of the pass the

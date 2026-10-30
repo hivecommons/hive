@@ -60,7 +60,7 @@ func ExpectedEffect(d Decision, kind Kind) Effect {
 		return Effect{Waits: true, What: "the issue leaves Needs decision and an agent picks it up",
 			IfNot: "Re-run the decision, or remove the park label by hand."}
 	default:
-		return Effect{Waits: true, What: "the merge gate merges this PR once its checks are green",
+		return Effect{Waits: true, What: "the merge queue merges this PR once its checks are green",
 			IfNot: "A maintainer can merge it by hand or send it back for a new commit; approving again does not help."}
 	}
 }

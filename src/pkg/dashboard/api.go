@@ -526,6 +526,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// and the sentinel findings held internally, written or not.
 	s.mux.HandleFunc("GET /api/writeback/suppressed", s.handleWritebackSuppressed)
 	s.mux.HandleFunc("GET /api/sentinel", s.handleSentinel)
+	// Merge-hotspot advisor (api_hotspots.go): files repeatedly touched by
+	// concurrent PRs and the modularize issues filed for them.
+	s.mux.HandleFunc("GET /api/hotspots", s.handleHotspots)
 	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
 	s.registerKnowledgeConnectorRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)

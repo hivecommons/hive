@@ -69,7 +69,7 @@ const human = { repo: 'hivecommons/hive', number: 15000, kind: 'pr', stage: 71, 
   presence: { login: 'zoe', state: 'unknown', kind: 'human', since: iso(NOW - 40 * MIN), next: 'wait' } };
 
 test('online clanker: robot head + filled dot, "hive is waiting for them", last seen in words', () => {
-  assert.strictEqual(api.tip(online14989, NOW), "Waiting on @Danathar's hive (clanker · online, last seen 2 min ago) — hive is waiting for them");
+  assert.strictEqual(api.tip(online14989, NOW), "Waiting on @Danathar's clanker (online, last seen 2 min ago) — hive is waiting for them");
   const dot = api.dot(online14989, NOW);
   assert.match(dot, /class="ham-presence ham-presence-online ham-presence-clanker"/);
   assert.ok(dot.includes(api.icons.clanker), 'draws the robot head');
@@ -79,19 +79,19 @@ test('online clanker: robot head + filled dot, "hive is waiting for them", last 
   assert.match(dot, /data-ham-presence="online"/);
   // The online grace still projects an adopt-at: the tooltip says so after the wait.
   const graced = Object.assign({}, online14989, { presence: Object.assign({}, online14989.presence, { adopt_at: iso(NOW + 2 * HOUR) }) });
-  assert.strictEqual(api.tip(graced, NOW), "Waiting on @Danathar's hive (clanker · online, last seen 2 min ago) — hive is waiting for them; adopts at 16:32 UTC (in 2h) if nothing moves");
+  assert.strictEqual(api.tip(graced, NOW), "Waiting on @Danathar's clanker (online, last seen 2 min ago) — hive is waiting for them; adopts at 16:32 UTC (in 2h) if nothing moves");
 });
 
 test('offline clanker: filled square, offline span, adopt-at clock with countdown', () => {
-  assert.strictEqual(api.tip(offline14524, NOW), "Waiting on @hanthor's hive (clanker · offline 26h) — hive will adopt at 15:10 UTC (in 38m)");
+  assert.strictEqual(api.tip(offline14524, NOW), "Waiting on @hanthor's clanker (offline 26h) — hive will adopt at 15:10 UTC (in 38m)");
   assert.match(api.dot(offline14524, NOW), /ham-presence-offline/);
   assert.match(api.dot(offline14524, NOW), /aria-label="@hanthor: clanker offline — hive will adopt at 15:10 UTC \(in 38m\)"/);
   // Past due.
   const due = Object.assign({}, offline14524, { presence: Object.assign({}, offline14524.presence, { adopt_at: iso(NOW - MIN) }) });
-  assert.strictEqual(api.tip(due, NOW), "Waiting on @hanthor's hive (clanker · offline 26h) — hive will adopt due now");
+  assert.strictEqual(api.tip(due, NOW), "Waiting on @hanthor's clanker (offline 26h) — hive will adopt due now");
   // Held (maintainer_policy ask): no adopt_at, next=wait — the dot does not promise an adoption the text denies.
   const held = Object.assign({}, offline14524, { presence: Object.assign({}, offline14524.presence, { next: 'wait', adopt_at: '' }) });
-  assert.strictEqual(api.tip(held, NOW), "Waiting on @hanthor's hive (clanker · offline 26h) — hive is waiting for them");
+  assert.strictEqual(api.tip(held, NOW), "Waiting on @hanthor's clanker (offline 26h) — hive is waiting for them");
   // Long absences read in days.
   const days = Object.assign({}, offline14524, { presence: Object.assign({}, offline14524.presence, { since: iso(NOW - 80 * HOUR), last_seen: iso(NOW - 80 * HOUR) }) });
   assert.match(api.tip(days, NOW), /offline 3d\) — /);
@@ -112,14 +112,14 @@ test('human: the person glyph and the handle only — no dot, no "(human · no c
   assert.ok(!chip.includes('no clanker'));
   // An unregistered clanker (another hive's PR) is unknown too — robot head + hollow ring — and adoption's clock runs.
   const foreign = { presence: { login: 'bot-x', state: 'unknown', kind: 'clanker', since: iso(NOW - 10 * MIN), next: 'adopt', adopt_at: iso(NOW + 5 * MIN) } };
-  assert.strictEqual(api.tip(foreign, NOW), "Waiting on @bot-x's hive (clanker · not registered here) — hive will adopt at 14:37 UTC (in 5m)");
+  assert.strictEqual(api.tip(foreign, NOW), "Waiting on @bot-x's clanker (not registered here) — hive will adopt at 14:37 UTC (in 5m)");
   assert.match(flat(api.dot(foreign, NOW)), /class="ham-presence ham-presence-unknown ham-presence-clanker"[^>]*><svg [^>]*><\/svg><i class="ham-presence-dot"><\/i><\/span>$/);
 });
 
 test('the indicator sits inside the adoption pill just before the @login and its line joins the tooltip', () => {
   const chip = api.adoptionChip(offline14524);
-  assert.match(chip, /^<span class="ham-badge ham-badge-adoption" title="waiting on @hanthor \(offline 26h, 2 nudges\) · Waiting on @hanthor's hive \(clanker · offline 26h\) — hive will adopt at 15:10 UTC \(in 38m\)"/);
-  assert.match(chip, /aria-label="Adoption — waiting on @hanthor \(offline 26h, 2 nudges\) · Waiting on @hanthor's hive \(clanker · offline 26h\)/);
+  assert.match(chip, /^<span class="ham-badge ham-badge-adoption" title="waiting on @hanthor \(offline 26h, 2 nudges\) · Waiting on @hanthor's clanker \(offline 26h\) — hive will adopt at 15:10 UTC \(in 38m\)"/);
+  assert.match(chip, /aria-label="Adoption — waiting on @hanthor \(offline 26h, 2 nudges\) · Waiting on @hanthor's clanker \(offline 26h\)/);
   assert.match(flat(chip), />waiting on <span class="ham-presence ham-presence-offline ham-presence-clanker"[^>]*><svg [^>]*><\/svg><i class="ham-presence-dot"><\/i><\/span>@hanthor<\/span>$/);
   // A 071 row has no adoption line: the muted waiting pill carries the dot instead, never both.
   assert.strictEqual(api.chip(offline14524), '', 'no second pill beside the adoption one');

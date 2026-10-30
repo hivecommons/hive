@@ -33,6 +33,21 @@
     }
     window.setGovernorPRModelsSort = setGovernorPRModelsSort;
 
+    function governorPRModelUnattributed(b) {
+      return !!(b?.effectiveness?.unattributed) || !b?.model || String(b.model).toLowerCase() === 'unknown';
+    }
+
+    // Column definitions for the PRs-by-model table; rendered once as a sticky
+    // header (with the ? tooltips) and repeated per cell only as data-label for
+    // the narrow breakpoint.
+    const GOV_PR_MODEL_COLUMNS = [
+      ['merged', 'Merged', 'Merged PRs in the window. Rank requires at least the minimum shown in the subtitle.'],
+      ['first_pass', '1st pass', 'Share of merged PRs that merged without any review-requested fix round. Rank uses the Wilson 95% lower bound of this rate, so a perfect score on a handful of PRs scores below a near-perfect score on many.'],
+      ['pr_runs', 'PR runs', 'Share of recorded task runs (from the contributor run log) that ended with a verified pull request.'],
+      ['fail', 'Fail', 'Share of recorded task runs that failed (crashed, timed out, or exited non-zero). Multiplies the rank score by (1 − fail).'],
+      ['no_ship', 'No ship', 'Share of recorded task runs that completed but produced no pull request. Multiplies the rank score by (1 − no ship).'],
+    ];
+
     function governorPRModelRows(data) {
       const rows = [...(data?.buckets || [])];
       if (govPRModelsSort === 'count') {
@@ -40,6 +55,9 @@
       }
       return rows.sort((a, b) => {
         const ae = a.effectiveness || {}, be = b.effectiveness || {};
+        // Unattributed ("unknown" model) rows are listed, never ranked: pin them last.
+        const au = governorPRModelUnattributed(a), bu = governorPRModelUnattributed(b);
+        if (au !== bu) return au ? 1 : -1;
         const ar = ae.rank || Number.MAX_SAFE_INTEGER, br = be.rank || Number.MAX_SAFE_INTEGER;
         if (ar !== br) return ar - br;
         if (!!be.eligible !== !!ae.eligible) return be.eligible ? 1 : -1;
@@ -131,18 +149,24 @@
               const rw = b.rework || {};
               const eff = b.effectiveness || {};
               const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
-              const rank = eff.rank ? `<span class="gov-pr-model-rank">#${eff.rank}</span>` : '';
-              const metrics = `<div class="gov-pr-model-metrics" aria-label="Model effectiveness metrics">
-                <div class="gov-pr-model-metric"><span>Merged</span>${eff.merged_prs ?? b.merged ?? 0}</div>
-                <div class="gov-pr-model-metric"><span>1st pass</span>${pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate)}</div>
-                <div class="gov-pr-model-metric"><span>PR runs</span>${pct(eff.verified_pr_run_rate)}</div>
-                <div class="gov-pr-model-metric"><span>Fail</span>${pct(eff.failure_rate)}</div>
-                <div class="gov-pr-model-metric"><span>No ship</span>${pct(eff.nothing_to_ship_rate)}</div>
-              </div>`;
+              const unattributed = governorPRModelUnattributed(b);
+              const rank = eff.rank ? `<span class="gov-pr-model-rank">#${eff.rank}</span>` : (unattributed ? '<span class="gov-pr-model-rank unattributed" title="No model recorded on these PRs; listed but not ranked">unattributed</span>' : '');
+              const values = {
+                merged: String(eff.merged_prs ?? b.merged ?? 0),
+                first_pass: pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate),
+                pr_runs: pct(eff.verified_pr_run_rate),
+                fail: pct(eff.failure_rate),
+                no_ship: pct(eff.nothing_to_ship_rate),
+              };
+              const metrics = `<div class="gov-pr-model-metrics" role="group" aria-label="Model effectiveness metrics">${GOV_PR_MODEL_COLUMNS.map(([key, label]) => `<div class="gov-pr-model-metric" data-label="${label}">${values[key]}</div>`).join('')}</div>`;
+              const backends = Array.isArray(b.backends) && b.backends.length ? b.backends : String(b.backend || 'unknown').split(',').map(x => x.trim()).filter(Boolean);
+              const backendChips = backends.map(x => `<span class="gov-pr-model-backend">${escapeHtml(x)}</span>`).join('');
+              const sources = (b.sources || []).map(src => `${src.model || 'unknown'} / ${src.backend || 'unknown'}: ${src.prs || 0} PRs (${src.merged || 0} merged)`).join('\n');
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
-              const tip = `${b.model || 'unknown'} via ${b.backend || 'unknown'}${eff.rank ? '\nEffectiveness rank #' + eff.rank + ' (min ' + (data.min_merged_prs || 5) + ' merged PRs)' : ''}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate)} · PR run rate ${pct(eff.verified_pr_run_rate)} · failure ${pct(eff.failure_rate)} · nothing-to-ship ${pct(eff.nothing_to_ship_rate)}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
-              return `<div class="gov-pr-model-row" title="${escapeHtml(tip)}">
-                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${escapeHtml(b.backend || 'unknown')}</div></div>
+              const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass) × (1 − fail) × (1 − no ship)` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
+              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass} · PR run rate ${values.pr_runs} · failure ${values.fail} · nothing-to-ship ${values.no_ship}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
+              return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
+                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
                   <div class="gov-pr-model-seg merged" style="width:${mergedPct}%"></div>
                   <div class="gov-pr-model-seg open" style="width:${openPct}%"></div>
@@ -176,6 +200,12 @@
           return `<li><a${href}>${escapeHtml(label)}</a> ${escapeHtml(pr.model || 'unknown')} · ${pr.review_rounds || 0} rounds · ${pr.fix_attempts || 0} fixes · ${pr.follow_up_commits || 0} follow-up commits${fixers}</li>`;
         }).join('')}</ol>
       </div>` : '';
+      const header = data && total > 0 ? `<div class="gov-pr-model-row gov-pr-model-head" aria-hidden="false">
+          <div>Model</div>
+          <div>Outcome</div>
+          <div class="gov-pr-model-metrics">${GOV_PR_MODEL_COLUMNS.map(([, label, help]) => `<div class="gov-pr-model-metric"><span class="gov-pr-model-col" title="${escapeHtml(help)}">${label}<span class="gov-pr-model-help" aria-hidden="true">?</span></span></div>`).join('')}</div>
+          <div class="gov-pr-model-share">PRs · share</div>
+        </div>` : '';
       return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection">
         <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="true" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
           <span class="section-chevron" aria-hidden="true">▼</span>
@@ -184,6 +214,7 @@
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
         <div class="section-body" id="governor-pr-models-section-body"><div class="gov-pr-models">
+          ${header}
           ${rows}
           ${reworkTable}
           ${mostReworked}
@@ -266,6 +297,15 @@
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           ${fleetRunStatHtml()}
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
+          ${(() => {
+            // Merge hotspots tile (GET /api/hotspots): files concurrent PRs
+            // keep colliding on; present only when the advisor is wired.
+            const hs = data && data.hotspots;
+            if (!hs || typeof hs.count !== 'number') return '';
+            const tip = `MERGE HOTSPOTS — files concurrent PRs keep colliding on.&#10;&#10;WHAT: ${hs.count} file(s) above the hotspot thresholds in the window; ${hs.actionable || 0} warrant a split; ${hs.filed || 0} already have a modularize issue filed for the ci-maintainer.&#10;&#10;HOW: GET /api/hotspots (hivectl governor hotspots) lists each file with its PRs, concurrent pairs, conflicts, size, recommendation and issue.`;
+            const label = hs.filed > 0 ? `merge hotspots · ${hs.filed} filed` : 'merge hotspots';
+            return `<div class="gov-stat" title="${tip}"><div class="label">${label}</div><div class="val${hs.actionable > 0 ? ' starting' : ''}">${hs.count}</div></div>`;
+          })()}
           ${(() => {
             // Planning tile: active plan-trees, with plans-awaiting-review highlighted
             // amber (human-action-required, like on-hold). Reads /api/status planning

@@ -153,6 +153,7 @@ func TestHumanizeStageReason(t *testing.T) {
 		"contributor-lane:workflow-path":                             "workflow path",
 		"contributor-lane:tests-removed":                             "tests removed",
 		"human-merge-path":                                           "human-merge path",
+		"human-merge-required":                                       "human merge",
 		"contributor-lane:workflow-path:human-approved@clubanderson": "workflow path — approved by @clubanderson",
 		"reviewer-verdict:requires_human:human-approved@octocat":     "review verdict requires human — approved by @octocat",
 	}
@@ -189,6 +190,15 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 			name: "tests removed, approver unknown", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:tests-removed",
 			wantCaption: "Ready to merge (tests removed) — a person merges it",
 			wantManual:  true, wantActor: "maintainer",
+		},
+		{
+			name: "breaking change parks at 090 for the owner", stage: stagelabels.ReadyForHumanMerge, reason: "human-merge-required",
+			wantCaption: "Ready for human merge (breaking change — owner merges)", wantManual: true, wantActor: "maintainer", wantNoCaption: "Ready to merge",
+		},
+		{
+			name: "breaking change approved still waits for the owner", stage: stagelabels.ReadyForHumanMerge, reason: "human-merge-required:human-approved@clubanderson",
+			wantCaption:  "Ready for human merge (breaking change — owner merges) — approved by @clubanderson",
+			wantApprover: "clubanderson", wantManual: true, wantActor: "maintainer",
 		},
 		{
 			name: "trust-blocked 090 unchanged", stage: stagelabels.ReadyForHumanMerge, reason: "untrusted-author-role",
@@ -263,6 +273,7 @@ func TestStageTrackerHumanMergeReason(t *testing.T) {
 		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "Hive won't merge it alone"},
 		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is off for this repo"},
 		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "A reviewer asked for a person to merge"},
+		{"human-merge-required", "breaking-change", "human merge", "Breaking change — owner merges"},
 		{"something-brand-new", "policy", "policy", "Hive's merge rules leave this one to a person (`something-brand-new`)"},
 		{"", "", "", ""},
 	}
@@ -492,7 +503,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if pr102.Stage != 95 || pr102.Lane != laneHive || pr102.AuthorKind != authorKindHive || pr102.AuthorKindSource != authorKindSrcLabel || pr102.Tier != "trusted" {
 		t.Fatalf("pr102 = %+v", pr102)
 	}
-	if pr102.Caption != "Admitted by the automerge lane; the pre-merge soak window is running — soaking, 12m0s left at the last sweep" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
+	if pr102.Caption != "Admitted by the automerge lane; soaking — 7m left" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
 		t.Fatalf("pr102 caption=%q actor=%q mods=%v", pr102.Caption, pr102.Actor, pr102.Modifiers)
 	}
 	// 12m left when the sweep wrote it 5m ago → 7m now; the 40m-old entry
@@ -942,6 +953,7 @@ func TestStageTrackerStaleDecisionRecord(t *testing.T) {
 		{"045 record backed by needs-human", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"Needs-Human"}, false},
 		{"045 record backed by retired spelling", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"needs-decision"}, false},
 		{"085 record backed by 085 label", stagelabels.Record{Stage: stagelabels.NeedsDecision}, []string{"stage/085-needs-decision"}, false},
+		{"085 record whose labels the write-back gate held off GitHub", stagelabels.Record{Stage: stagelabels.NeedsDecision, LabelsSuppressed: true}, []string{"dco-signoff: yes", "size/M"}, false},
 		{"other stage, no labels", stagelabels.Record{Stage: stagelabels.Claimed}, nil, false},
 	}
 	for _, tc := range cases {
@@ -1061,12 +1073,20 @@ func TestStageTrackerClosedIssueAnchor(t *testing.T) {
 // (`Supersedes #14592`, an adoption's "close #14592"), is dropped rather than
 // drawn as an issue "(title unavailable)".
 func TestStageTrackerEnrichSoftLinks(t *testing.T) {
-	var gets atomic.Int32
+	var gets, closerReads atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql") {
+			// The closer lookup a closed issue costs: #14576 was closed by
+			// the merge of #14570; #14590 (open, body says Fixes #14576)
+			// is listed under the same relation and must not be named.
+			closerReads.Add(1)
+			fmt.Fprint(w, `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":14590,"merged":false},{"number":14570,"url":"https://github.com/hivecommons/hive/pull/14570","merged":true,"mergedAt":"2026-10-27T12:00:00Z"}]}}}}}`)
+			return
+		}
 		gets.Add(1)
 		switch r.URL.Path {
 		case "/repos/hivecommons/hive/issues/14576":
-			fmt.Fprint(w, `{"number":14576,"title":"Runner stalls","state":"closed"}`)
+			fmt.Fprint(w, `{"number":14576,"title":"Runner stalls","state":"closed","state_reason":"completed"}`)
 		case "/repos/hivecommons/hive/issues/14577":
 			fmt.Fprint(w, `{"number":14577,"title":"A PR","state":"open","pull_request":{}}`)
 		case "/repos/hivecommons/hive/issues/14592":
@@ -1100,11 +1120,14 @@ func TestStageTrackerEnrichSoftLinks(t *testing.T) {
 	if len(links) != 3 {
 		t.Fatalf("links = %+v, want the PR numbers 14577 and 14592 dropped", links)
 	}
-	if got := links[0]; got.Number != 14576 || got.Title != "Runner stalls" || got.State != "closed" {
-		t.Fatalf("refs link = %+v, want titled and closed", got)
+	if got := links[0]; got.Number != 14576 || got.Title != "Runner stalls" || got.State != "closed" || got.StateReason != "completed" || got.ClosedBy != 14570 {
+		t.Fatalf("refs link = %+v, want titled, closed (completed) by merged #14570", got)
 	}
-	if got := items[1].LinkedIssues[0]; got.Title != "Runner stalls" || got.State != "closed" {
-		t.Fatalf("second PR's refs link = %+v", got)
+	if got := items[1].LinkedIssues[0]; got.Title != "Runner stalls" || got.State != "closed" || got.ClosedBy != 14570 {
+		t.Fatalf("second PR's refs link = %+v, want closed by #14570 (never the open #14590)", got)
+	}
+	if n := closerReads.Load(); n != 1 {
+		t.Fatalf("closer reads = %d, want 1 (closed issues only, memoised)", n)
 	}
 	if got := links[1]; got.Number != 14578 || got.Title != "" || got.State != "" {
 		t.Fatalf("failed lookup = %+v, want untouched", got)

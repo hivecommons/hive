@@ -155,13 +155,16 @@ agents.session_recycle.min_idle # TODO #11854
 auto_merge.credit_issue_authors # merge-time Co-authored-by credit (#14581); yaml-only
 auto_merge.allow_unprotected_base[] # TODO #11854
 auto_merge.human_merge_paths.<key> # TODO #11854
+auto_merge.human_merge_title_prefixes[] # breaking-titled PRs wait for a human; yaml-only
+auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-only
 auto_merge.merge_forward_trusted_human[] # TODO #11854
 auto_merge.merge_train.enabled # conflict-aware merge train (#15117); yaml-only
 auto_merge.merge_train.max_rebase_attempts # merge train rebase loop guard (#15117); yaml-only
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
-auto_merge.require_current_base[] # TODO #11854
+auto_merge.require_current_base[] # current-base gate per-repo "on" override, written by the Repos tab (#15335)
 auto_merge.required_checks[] # TODO #11854
+auto_merge.skip_current_base[] # current-base gate per-repo "off" override, written by the Repos tab (#15335)
 auto_merge.squash_only[] # merge-method policy; yaml-only
 auto_merge.trusted_authors.exclude_labels[] # TODO #11854
 auto_merge.trusted_authors.repos[] # TODO #11854
@@ -513,3 +516,9 @@ write_surface.enforce[] # TODO #11854
 write_surface.neutralize_mentions[] # TODO #11854
 writeback.kinds.<key>.own_only # policy-file knob; the Settings matrix shows it read-only as the kind's scope
 writeback.kinds.<key>.unlabeled_min_level # policy-file knob; the Settings matrix shows it read-only in the kind's scope
+governor.hotspot_enabled # merge-hotspot advisor; yaml-only
+governor.hotspot_window_days # merge-hotspot advisor; yaml-only
+governor.hotspot_min_prs # merge-hotspot advisor; yaml-only
+governor.hotspot_min_overlaps # merge-hotspot advisor; yaml-only
+governor.hotspot_min_lines # merge-hotspot advisor; yaml-only
+governor.hotspot_refile_days # merge-hotspot advisor; yaml-only

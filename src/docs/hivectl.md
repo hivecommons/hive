@@ -263,6 +263,7 @@ hivectl governor budget-set --file budget.yaml
 hivectl governor repos-set --file repos.yaml
 hivectl governor agent-add ux-discovery --backend copilot --model claude-sonnet-4-6
 hivectl governor agent-remove ux-discovery --yes
+hivectl governor hotspots --repo hivecommons/hive   # merge hotspots: files concurrent PRs keep touching (GET /api/hotspots)
 ```
 
 ### claim / unclaim / claims — issue claims
@@ -346,12 +347,12 @@ Reporting only: nothing here reads into or alters merge eligibility. See
 
 ### evidence — benchmark
 
-Use a benchmark when you want to compare PRs reviewed by Hive with those merged without it. You need a readable local evidence tree or a saved report for `--from-json`; the command does not log in to a Hive or send telemetry. It writes report and image files, and `--readme FILE` also rewrites that file's marked outcomes block.
+Use a benchmark when you want to compare PRs reviewed by Hive with those merged without it. You need a readable local evidence tree or a saved report for `--from-json`; the command does not log in to a Hive or send telemetry. It writes report and image files. `--readme FILE` supports legacy marked documents, not the hand-written root README.
 
 ```bash
-hivectl evidence benchmark --month 2026-10 --out-dir src/docs/benchmarks --readme README.md
+hivectl evidence benchmark --month 2026-10 --out-dir src/docs/benchmarks
 hivectl evidence benchmark --root ./evidence --month 2026-10 --spend cost.json --hub hub.json --source "hive-oke snapshot"
-hivectl evidence benchmark --from-json src/docs/benchmarks/outcomes-2026-10.json --out-dir src/docs/benchmarks --readme README.md
+hivectl evidence benchmark --from-json src/docs/benchmarks/outcomes-2026-10.json --out-dir src/docs/benchmarks
 ```
 
 #### Benchmark measures and inputs
@@ -370,16 +371,17 @@ names the data in the methodology section.
 #### Benchmark outputs and re-rendering
 
 It writes `outcomes-YYYY-MM.{md,json}`,
-`assets/outcomes-YYYY-MM-{bars,trend}.svg` and the plain-language README cards
+`assets/outcomes-YYYY-MM-{bars,trend}.svg` and the legacy plain-language cards
 `assets/outcomes-YYYY-MM-card-<name>-{dark,light}.{svg,png}` under `--out-dir` (the PNG is drawn in-process with an
-embedded font and is what the README embeds), and `--readme FILE` rewrites that file's
+embedded font), and `--readme FILE` rewrites a legacy document's
 `<!-- outcomes:start -->…<!-- outcomes:end -->` block from the same report.
 
-The README block carries only the cards
+The legacy block carries only the cards
 and flat sentences, no intervals: `--readme-min-base N` (default 200) is the smallest base a production-count card
 may rest on, separate from the n ≥ 10 report threshold; `--stories FILE` supplies curated caught → fixed → merged
 examples and `--red-team FILE` the prompt-injection evaluation counts (see [benchmarks/](benchmarks/README.md) for
-both formats).
+both formats). The root README uses a separate renderer:
+`node docs/readme/render-charts.mjs`. See [README graphics](../../docs/readme/README.md).
 
 `--from-json FILE` skips the evidence tree and re-renders every output from a saved report, for
 redrawing committed assets after a layout change. Local filesystem only; no hive session, no telemetry.

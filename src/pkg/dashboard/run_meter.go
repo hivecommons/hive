@@ -44,13 +44,26 @@ type FrontendAgentRun struct {
 }
 
 // FrontendFleetRun is the governor-strip fleet figure: how many agents are
-// mid-kick and the estimated spend accrued in the current clock hour.
+// mid-kick and the estimated spend accrued in the current clock hour, plus
+// the wider windows the tile rotates through (hivecommons/hive#15614).
 type FrontendFleetRun struct {
 	Running int     `json:"running"`
 	HourUSD float64 `json:"hourUSD"`
 	// HourPriced is false until the meter has observed a cumulative total
 	// in the current hour, i.e. when HourUSD would be a guess.
 	HourPriced bool `json:"hourPriced"`
+	// DayUSD / WeekUSD / MonthUSD are the estimated $ spent since the start
+	// of the current UTC calendar day, ISO week (Monday 00:00 UTC) and
+	// calendar month (1st 00:00 UTC): the daily cost ledger summed over the
+	// window plus the live rise since its last snapshot (fleetCostWindows).
+	// They are attached by the Server, not the run meter, and are only
+	// meaningful when WindowsPriced is true.
+	DayUSD   float64 `json:"dayUSD"`
+	WeekUSD  float64 `json:"weekUSD"`
+	MonthUSD float64 `json:"monthUSD"`
+	// WindowsPriced is false when there is no cost ledger (no snapshot and
+	// no daily rollup) to sum, i.e. when the wider windows would be a guess.
+	WindowsPriced bool `json:"windowsPriced"`
 }
 
 type runBaseline struct {
@@ -164,6 +177,14 @@ func (m *runMeter) fleet(running int) FrontendFleetRun {
 		f.HourUSD = m.hourTotal - m.hourBase
 	}
 	return f
+}
+
+// latestTotal is the most recent cumulative estimated total the meter has
+// observed, and whether it has observed one at all.
+func (m *runMeter) latestTotal() (float64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.hourTotal, m.hourSeen
 }
 
 func modelCostTokens(mc tokens.ModelCost) int64 {

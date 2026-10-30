@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Defaults for the writeback block. All three unsolicited knobs default ON:
@@ -75,11 +76,72 @@ type RepoOverride struct {
 	Mode RepoMode `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
+// DedupeConfig is writeback.dedupe: the content-aware layer that stops the
+// same comment landing twice on one item, the same notice fanning out over
+// several items within seconds, and more of one kind per repo per hour than
+// anyone reads. It applies only to comment kinds whose body the caller
+// passed as preview (ContentDedupeKinds); labels and closes are untouched.
+type DedupeConfig struct {
+	// Enabled turns the whole layer off when false. nil means true.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// SameItemTTL is how long an identical body on one item is remembered
+	// (zero: DefaultSameItemTTL).
+	SameItemTTL time.Duration `yaml:"same_item_ttl,omitempty" json:"same_item_ttl,omitempty"`
+	// BurstItems is how many distinct items may receive one body inside
+	// BurstWindow before the rest are held (zero: DefaultBurstItems).
+	BurstItems int `yaml:"burst_items,omitempty" json:"burst_items,omitempty"`
+	// BurstWindow is the cross-item window (zero: DefaultBurstWindow).
+	BurstWindow time.Duration `yaml:"burst_window,omitempty" json:"burst_window,omitempty"`
+	// HourlyCap is the per-repo, per-kind writes-per-hour ceiling for
+	// non-exempt kinds (zero: DefaultHourlyCap; negative: no cap).
+	HourlyCap int `yaml:"hourly_cap,omitempty" json:"hourly_cap,omitempty"`
+}
+
+// EnabledOrDefault resolves dedupe.enabled.
+func (d DedupeConfig) EnabledOrDefault() bool { return d.Enabled == nil || *d.Enabled }
+
+// SameItemTTLOrDefault resolves dedupe.same_item_ttl.
+func (d DedupeConfig) SameItemTTLOrDefault() time.Duration {
+	if d.SameItemTTL <= 0 {
+		return DefaultSameItemTTL
+	}
+	return d.SameItemTTL
+}
+
+// BurstItemsOrDefault resolves dedupe.burst_items.
+func (d DedupeConfig) BurstItemsOrDefault() int {
+	if d.BurstItems <= 0 {
+		return DefaultBurstItems
+	}
+	return d.BurstItems
+}
+
+// BurstWindowOrDefault resolves dedupe.burst_window.
+func (d DedupeConfig) BurstWindowOrDefault() time.Duration {
+	if d.BurstWindow <= 0 {
+		return DefaultBurstWindow
+	}
+	return d.BurstWindow
+}
+
+// HourlyCapOrDefault resolves dedupe.hourly_cap; a negative value disables
+// the cap (returns 0).
+func (d DedupeConfig) HourlyCapOrDefault() int {
+	switch {
+	case d.HourlyCap < 0:
+		return 0
+	case d.HourlyCap == 0:
+		return DefaultHourlyCap
+	}
+	return d.HourlyCap
+}
+
 // Config is the writeback block of hive.yaml.
 type Config struct {
 	Unsolicited UnsolicitedConfig             `yaml:"unsolicited,omitempty" json:"unsolicited"`
 	PerRepo     map[string]RepoOverride       `yaml:"per_repo,omitempty" json:"per_repo,omitempty"`
 	Kinds       map[string]KindPolicyOverride `yaml:"kinds,omitempty" json:"kinds,omitempty"`
+	Dedupe      DedupeConfig                  `yaml:"dedupe,omitempty" json:"dedupe,omitzero"`
 }
 
 // MinLevelOrDefault resolves unsolicited.min_level.
@@ -203,6 +265,15 @@ func (c Config) Validate() error {
 		if m := c.PerRepo[r].Mode; !m.Valid() {
 			return fmt.Errorf("%s.per_repo.%s.mode: %q is not one of off, issues-only, labels-only, full", ConfigKey, r, m)
 		}
+	}
+	if c.Dedupe.SameItemTTL < 0 {
+		return fmt.Errorf("%s.dedupe.same_item_ttl: %s is negative", ConfigKey, c.Dedupe.SameItemTTL)
+	}
+	if c.Dedupe.BurstWindow < 0 {
+		return fmt.Errorf("%s.dedupe.burst_window: %s is negative", ConfigKey, c.Dedupe.BurstWindow)
+	}
+	if c.Dedupe.BurstItems < 0 {
+		return fmt.Errorf("%s.dedupe.burst_items: %d is negative", ConfigKey, c.Dedupe.BurstItems)
 	}
 	return nil
 }

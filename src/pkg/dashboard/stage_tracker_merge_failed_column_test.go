@@ -7,9 +7,9 @@ import (
 
 // TestStageTrackerMergeFailedColumnNode: the operator's row
 // (hivecommons/docs#496 → docs#512, 2026-10-29 11:04 ET). The lane fell
-// back to 060 after the automerge sweep's merge call drew GitHub's 405 "4
+// back to 060 after the automerge lane's merge call drew GitHub's 405 "4
 // of 4 required status checks are expected", and the tracker drew the amber
-// "⟳ Merge failed · merge sweep running ⬡" chip in CI / Review with the raw
+// "⟳ Merge failed · retrying ⬡" chip in CI / Review with the raw
 // "PUT https://api.github.com/…" error spilling out of it. A merge outcome
 // always lights the Merge gate column; the chip is a fixed short phrase
 // (no URL, no verb, ≤ 5 words) with GitHub's words in the tooltip's
@@ -52,6 +52,7 @@ func TestStageTrackerMergeFailedColumnNode(t *testing.T) {
 		jsFunc(t, html, "stageTrackerMergeGateWordHtml")+"\n"+
 		jsFunc(t, html, "stageTrackerStageName")+"\n"+
 		jsFunc(t, html, "stageTrackerStageFell")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR")+"\n"+
 		jsFunc(t, html, "stageTrackerEventText")+"\n"+`
 const assert = require('assert');
 const now = Date.parse('2026-10-29T15:04:00Z');
@@ -113,7 +114,7 @@ for (const [mg, want] of cases) {
 }
 // A retry says what GitHub said in the tooltip.
 info = stageTrackerMergeGateInfo(row(gate({ merge_failed: '405 Pull Request is not mergeable' })), now);
-assert.ok(info.tip.includes('GitHub refused — branch protection blocks it') && info.tip.includes("merge sweep is retrying it now"), info.tip);
+assert.ok(info.tip.includes('GitHub refused — branch protection blocks it') && info.tip.includes("hive is retrying it now"), info.tip);
 assert.strictEqual(info.cue, 'running');
 
 // 4. Pending CI is not red.

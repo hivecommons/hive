@@ -25,7 +25,7 @@ import (
 func TestQueuedStateSplitsBadgeFromUpgradeNowAction(t *testing.T) {
 	body := funcBody(t, "var buildRow = function(")
 	for _, want := range []string{
-		"var queuedLabel = behindLabel + ' · ' + nextCheck + ' · why not now: ' + whyNotNow;",
+		"var queuedLabel = behindLabel + ' · ' + nextCheck;",
 		"var whyNotNow = h.upgradeWhyNotNow || (queuedDaily ? 'daily schedule' : 'waiting for idle/health gates');",
 		// The badge is affordance-free: styled by the shared state-badge
 		// constant, with no role/onclick of its own.

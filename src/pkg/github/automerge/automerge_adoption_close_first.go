@@ -10,6 +10,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -41,6 +43,16 @@ import (
 // the original open on the keep-open path; a refused reopen leaves the
 // record due its next poll, so the reopen lands once the gate allows it
 // (e.g. when an operator lifts a repo pause).
+//
+// An agent-authored original (a contributor's clanker or another hive,
+// hivecommons/hive#15526) is the exception: under
+// governor.labels.stage.adoption.close_superseded: on_adopt (default) the
+// gate item names the copy that carries its commits and the gate allows the
+// close by policy (writeback.ReasonSupersededAgentPR) — no repo opt-in
+// label is asked for, because the pair is one logical PR of the hive's own.
+// on_merge skips close-first for those and lets settleSuperseder close them
+// when the copy merges. A human's original is never closed on adopt without
+// the opt-in label.
 
 // AdoptionCopyFailedMarker opens the note posted when the hive reopens (or,
 // past the reopen guard, declines to reopen) a close-first original.
@@ -112,6 +124,25 @@ func AdoptionCopyFailedHeldComment(copy int, head, why string, redHeads int, reo
 		AdoptionCopyFailedMarker, copy, head, why, copy, adoptionCopyFailedWhy(why, redHeads), ago)
 }
 
+// closeFirstGateItem is the write-back gate's view of an original about to
+// be closed in favour of its copy `superseding`. An agent-authored
+// original (author/clanker, author/hive) under close_superseded on_adopt
+// (the default) names the copy so the gate allows the close by policy
+// (writeback.ReasonSupersededAgentPR); under on_merge it reports onMerge
+// and the caller leaves the original to settleSuperseder. A person's
+// original is the plain gated item whatever the policy says.
+func closeFirstGateItem(obs stageObservation, policy StageLabelPolicy, superseding int) (item writeback.Item, onMerge bool) {
+	item = writebackItemForObservation(obs)
+	if obs.AuthorKind != authorkind.Clanker && obs.AuthorKind != authorkind.Hive {
+		return item, false
+	}
+	if policy.AdoptCloseSuperseded == config.AdoptionCloseSupersededOnMerge {
+		return item, true
+	}
+	item.AgentAuthored, item.SupersededBy = true, superseding
+	return item, false
+}
+
 // closeSupersededOriginalFirst closes the original right after its copy
 // opened. The comment goes first so GitHub shows why before the close;
 // the record is marked as soon as the note is out so nothing re-posts it.
@@ -123,7 +154,12 @@ func (c *Engine) closeSupersededOriginalFirst(ctx context.Context, store *stagel
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	logArgs := []any{"repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "reason", reason}
 	body := AdoptionCloseFirstComment(obs, policy.HiveID, superseding, reason) + adoptionFenceNote(fence)
-	if d := c.writebackAllowed(obs.Display, writebackItemForObservation(obs), writeback.KindContributorAdopt, body); !d.Allowed {
+	item, onMerge := closeFirstGateItem(obs, policy, superseding)
+	if onMerge {
+		c.info("stage labels: agent-authored original left open until the copy merges (close_superseded: on_merge)", logArgs...)
+		return 0, nil
+	}
+	if d := c.writebackAllowed(obs.Display, item, writeback.KindContributorAdopt, body); !d.Allowed {
 		c.info("stage labels: close-first adoption suppressed by the write-back gate; original left open on the keep-open path", append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)...)
 		return 0, nil
 	}
@@ -270,7 +306,7 @@ func (c *Engine) reopenSupersededOriginal(ctx context.Context, store *stagelabel
 	}
 	if d := c.writebackAllowed(owner+"/"+repo, c.closeFirstOriginalItem(ctx, cand), writeback.KindContributorAdopt, preview); !d.Allowed {
 		gateArgs := append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)
-		if d.Reason == writeback.ReasonRepoPaused {
+		if d.Reason == writeback.ReasonRepoPaused || writeback.IsContentReason(d.Reason) {
 			c.info("stage labels: close-first original reopen suppressed by the write-back gate; retried at the next poll", gateArgs...)
 			return 0, nil
 		}

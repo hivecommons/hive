@@ -280,6 +280,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.Governor.CIFailureKickCooldownS < 0 {
 		return fmt.Errorf("governor.ci_failure_kick_cooldown_s must be at least 0")
 	}
+	if c.Governor.MergeTrainStallWarnS < 0 {
+		return fmt.Errorf("governor.merge_train_stall_warn_s must be at least 0")
+	}
 	if c.Governor.ConserveIntervalMultiplier < 0 {
 		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
 	}

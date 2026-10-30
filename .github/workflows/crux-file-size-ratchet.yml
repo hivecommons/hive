@@ -3,8 +3,8 @@ name: crux file-size ratchet
 # src/crux is published to hivecommons/crux by the crux-sync workflow, and crux
 # main enforces a Go file-size ratchet that hive CI never ran, so a PR growing a
 # grandfathered src/crux file was green here and broke crux main on the next
-# sync (#15331). crux stays the source of truth: its script and baseline are
-# fetched from crux main at run time, never vendored into hive.
+# sync (#15331). Pin the script and baseline together to a reviewed crux commit;
+# update the pin when adopting changes to the upstream ratchet.
 on:
   pull_request:
     paths:
@@ -30,11 +30,11 @@ jobs:
           persist-credentials: false
           sparse-checkout: src/crux
 
-      - name: Check out the ratchet script and baseline from crux main
+      - name: Check out the ratchet script and baseline from a pinned crux commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hivecommons/crux
-          ref: main
+          ref: 13372ca72d161cc05e9f795ae4a1b3b352e55a73 # crux main, 2026-10-29
           path: crux-ratchet
           persist-credentials: false
           fetch-depth: 1

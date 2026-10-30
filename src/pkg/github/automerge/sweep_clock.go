@@ -19,6 +19,10 @@ type SweepState struct {
 	// NextFloorAt is when the next full pass is due; zero before the loop
 	// has started.
 	NextFloorAt time.Time
+	// FloorEvery is the cadence the floor pass was last armed with — the
+	// dashboard's unit for "one sweep" when it estimates a merge-train
+	// member's turn (hivecommons/hive#15395). Zero before the loop starts.
+	FloorEvery time.Duration
 	// Targets names the PRs the running pass evaluates; nil means every PR.
 	Targets SweepTargets
 }
@@ -66,6 +70,17 @@ func (c *SweepClock) armFloor(next time.Time) {
 	}
 	c.mu.Lock()
 	c.st.NextFloorAt = next
+	c.mu.Unlock()
+}
+
+// armFloorEvery arms the next floor pass at now+every and records the
+// cadence for the dashboard's estimates.
+func (c *SweepClock) armFloorEvery(now time.Time, every time.Duration) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.st.NextFloorAt, c.st.FloorEvery = now.Add(every), every
 	c.mu.Unlock()
 }
 

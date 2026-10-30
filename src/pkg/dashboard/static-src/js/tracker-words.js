@@ -6,7 +6,9 @@
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
       const why = stageTrackerHumanMergeReasonWord(item);
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+      const code = String((item && item.human_merge_reason) || '').trim();
+      const lead = code === STAGE_TRACKER_BREAKING_CHANGE_CODE ? STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD : STAGE_TRACKER_MANUAL_MERGE_WORD;
+      return lead + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
     }
     // The plain 090 word (no manual-merge rule): the stage's short word
     // plus the reason, "Ready for human merge · untrusted author".
@@ -34,6 +36,8 @@
       if (state === 'closed') return 'Adopted → #' + by + ' (closed) · recovering';
       if (state === 'closed-twice') return 'Adopted → #' + by + ' (closed twice) · needs a person';
       if (state === 'copy-failed') return 'Adopted → #' + by + ' (copy failed) · reopened, needs a person';
+      // hivecommons/hive#15307: one label while the fixer works (#15416 rule).
+      if (state === 'resolving-conflicts') return 'Adopting · fixer resolving conflicts';
       return 'Adopted → #' + by;
     }
     const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
@@ -78,7 +82,7 @@
     //                              remaining"); drawn in CI / Review, since it
     //                              can still regress to 070
     //   080 Ready for auto merge — green and approved; waiting for hive's
-    //                              merge sweep: "next sweep in 42s"
+    //                              merge pass: "next pass in 42s"
     //   095 Soaking              — admitted; the soak window runs: "7m left"
     //   100 Merging              — admitted and soaked; the merge is being
     //                              attempted (GitHub merge queue / tide)
@@ -137,10 +141,146 @@
     const STAGE_TRACKER_TRAIN_STATE_QUEUED = 'queued-behind';
     const STAGE_TRACKER_TRAIN_STATE_REBASING = 'rebasing';
     const STAGE_TRACKER_TRAIN_STATE_EXHAUSTED = 'rebase-exhausted';
-    const STAGE_TRACKER_TRAIN_GLYPH = '⛓';
+    // The merge-queue icon: a side-view railcar on two wheels (14px,
+    // currentColor) — the owner read the old ⛓ as a scribble. One path for
+    // the Merge queue column header, the train header chip and the queue
+    // popover, so the picture means the same thing everywhere.
+    const STAGE_TRACKER_TRAIN_ICON_PATH = '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>';
+    const STAGE_TRACKER_TRAIN_ICON_TITLE = 'Merge queue';
+    // Pure: the inline-SVG train with its "Merge queue" hover.
+    function stageTrackerTrainIconHtml(cls) {
+      return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}"><title>${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
+    }
+    // Pure: ordinal place words — "1st", "2nd", "3rd", "4th", "11th",
+    // "21st" (the owner's wording for the queue: "Merge queued · 1st").
+    // Every merge_train / merge_gate train state in words. A slug reaches a
+    // chip only through this table (or stageTrackerTrainWord), never raw:
+    // hive's own #15406 once read "front" (hivecommons/hive#15395).
+    // Both queue states read "Merge queued"; the place ("· 1st", "· 2nd")
+    // is what tells them apart — the owner could not parse "queued-behind".
+    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Merge queued', 'queued-behind': 'Merge queued', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision', 'duplicate-of': 'Duplicate of' };
+    // merge_gate.state of a PR the queue holds because another open PR
+    // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
+    // / duplicate_issue carry the numbers).
+    const STAGE_TRACKER_GATE_DUPLICATE_PREFIX = 'duplicate-of:';
+    // Pure: the PR number a "duplicate-of:<n>" gate state yields to; 0 for
+    // any other state.
+    function stageTrackerGateDuplicateOf(state) {
+      state = String(state || '');
+      return state.indexOf(STAGE_TRACKER_GATE_DUPLICATE_PREFIX) === 0 ? Number(state.slice(STAGE_TRACKER_GATE_DUPLICATE_PREFIX.length)) || 0 : 0;
+    }
+    // Pure: the pill word for any merge_gate.state — the gate table, then
+    // the train table, then the slug spelled out ("merge-failed" → "Merge
+    // failed") so an unmapped state still never shows as a slug.
+    function stageTrackerMergeGateStateWord(state) {
+      state = String(state || '');
+      if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
+      const dup = stageTrackerGateDuplicateOf(state);
+      if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
+      if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
+      const plain = state.replace(/[-_]+/g, ' ').trim();
+      return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';
+    }
     function stageTrackerTrain(item) {
       const mt = item && item.merge_train;
       return mt && typeof mt === 'object' && mt.state ? mt : null;
+    }
+    // The first merge-ready stage (080 awaiting merge admission). A train
+    // member below it holds a provisional slot: the planner has ordered
+    // it, but CI / the review verdict / the fixer still stand in front.
+    const STAGE_TRACKER_MERGE_READY = 80;
+    // The blocker headline for a provisional train member, by stage —
+    // the same words the stage column shows (stageTrackerShort in Go), so
+    // the chevron and the caption name one blocker (hive's own #15577 read
+    // "Merge queued · 1st" while its caption said "check build-and-test
+    // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Fixing', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    // Pure: true when the row's queue slot is a forecast — the server says
+    // so (merge_train.provisional), or, from an older server, the row's
+    // own stage is short of the merge gate.
+    function stageTrackerTrainProvisional(item) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return false;
+      if (mt.provisional === true) return true;
+      if (mt.provisional === false) return false;
+      const stage = Number(item.stage) || 0;
+      return stage > 0 && stage < STAGE_TRACKER_MERGE_READY;
+    }
+    // Pure: the provisional member's headline — its stage's blocker word.
+    function stageTrackerTrainProvisionalHeadline(item) {
+      const stage = Number(item && item.stage) || 0;
+      // Guarded: test harnesses lift this function without the active-word table.
+      const active = typeof STAGE_TRACKER_ACTIVE_WORD !== 'undefined' ? STAGE_TRACKER_ACTIVE_WORD[stage] : '';
+      return STAGE_TRACKER_PROVISIONAL_STAGE_WORD[stage] || active || STAGE_TRACKER_PROVISIONAL_STAGE_WORD[50];
+    }
+    // Pure: the trailing slot words for a provisional member — "queued 1st
+    // of 2 once ready" — never the headline. trains (the count of trains
+    // on the page) adds the train tag when there is more than one.
+    function stageTrackerTrainProvisionalSuffix(item, trains) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return '';
+      const pos = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT ? 1 : (stageTrackerTrainPlace(mt).pos || 2);
+      return 'queued ' + stageTrackerTrainOrdinalOfN(mt, pos) + ' once ready' + stageTrackerTrainTagSuffix(mt, trains);
+    }
+    // Pure: "1st of 2" — the place with the queue length, so two trains on
+    // one page do not read as two "1st"s with nothing to tell them apart
+    // (the owner's ask: "how are there 2 'merge queued 1st'?"). The bare
+    // ordinal when the length is unknown.
+    function stageTrackerTrainOrdinalOfN(mt, pos) {
+      pos = Number(pos) || 0;
+      const len = Math.max(stageTrackerTrainPlace(mt).len, pos);
+      return stageTrackerOrdinal(pos) + (len >= 2 ? ' of ' + len : '');
+    }
+    // Pure: the short name that tells one train from another — the
+    // basename of its first overlapping file ("main.go"), else its head
+    // ("#15567"); '' with neither.
+    function stageTrackerTrainTag(mt) {
+      if (!mt) return '';
+      const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
+      if (files.length) return String(files[0]).split('/').pop();
+      const head = stageTrackerTrainPlace(mt).head;
+      return head ? '#' + head : '';
+    }
+    // The chevron's train tag lead: "· train main.go".
+    const STAGE_TRACKER_TRAIN_TAG_LEAD = 'train ';
+    // Pure: " · train main.go" when more than one train is on the page
+    // (trains is that count); '' for one train or none.
+    function stageTrackerTrainTagSuffix(mt, trains) {
+      if (!((Number(trains) || 0) > 1)) return '';
+      const tag = stageTrackerTrainTag(mt);
+      return tag ? ' · ' + STAGE_TRACKER_TRAIN_TAG_LEAD + tag : '';
+    }
+    // Pure: the hover sentence naming the train — "Train of 2 PRs
+    // overlapping main.go; merges after #15567." ("merges first" at the
+    // front); '' when the tag is not shown.
+    function stageTrackerTrainTagTip(mt, trains) {
+      if (!mt || !stageTrackerTrainTagSuffix(mt, trains)) return '';
+      const p = stageTrackerTrainPlace(mt);
+      const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
+      const over = files.length ? ' overlapping ' + files.map(f => String(f).split('/').pop()).join(', ') : '';
+      const isFront = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || p.pos === 1;
+      const order = isFront ? 'merges first' : (p.head ? 'merges after #' + p.head : 'merges in turn');
+      return 'Train of ' + Math.max(p.len, p.pos || 1) + ' PRs' + over + '; ' + order + '.';
+    }
+    // Pure: { count, index } over the page's row items — how many distinct
+    // trains are drawn, and each train key's 0-based slot in order of
+    // first appearance (the rail accent cycles on it). Entries may be
+    // items or the grouped view's {item} / {group} wrappers.
+    function stageTrackerTrainIndex(items) {
+      const index = {};
+      let count = 0;
+      (items || []).forEach(e => {
+        const it = e && e.item ? e.item : (e && e.group ? null : e);
+        const k = it ? stageTrackerTrainKey(it) : '';
+        if (k && index[k] === undefined) index[k] = count++;
+      });
+      return { count, index };
+    }
+    // How many rail accents cycle before repeating (.ham-train-k0..k3).
+    const STAGE_TRACKER_TRAIN_ACCENTS = 4;
+    // Pure: " ham-train-k2" for a train's accent slot; '' when unknown.
+    function stageTrackerTrainAccentClass(idx) {
+      return typeof idx === 'number' && idx >= 0 ? ' ham-train-k' + (idx % STAGE_TRACKER_TRAIN_ACCENTS) : '';
     }
     function stageTrackerOrdinal(n) {
       n = Number(n) || 0;
@@ -148,38 +288,171 @@
       if (r100 >= 11 && r100 <= 13) return n + 'th';
       return n + (r10 === 1 ? 'st' : r10 === 2 ? 'nd' : r10 === 3 ? 'rd' : 'th');
     }
+    // Pure: the train's head number / queue length / this row's position,
+    // read from the queue facts (#15395) with the older front/size as the
+    // fallback.
+    function stageTrackerTrainPlace(mt) {
+      return { head: Number(mt.head_number || mt.front) || 0, len: Number(mt.length || mt.size) || 0, pos: Number(mt.position) || 0 };
+    }
+    // The stalled chip's lead — "Merge queue · stalled — …". The popover
+    // and the queue header strip it down to "stalled: …".
+    const STAGE_TRACKER_TRAIN_STALLED_LEAD = 'Merge queue · stalled — ';
+    // Why a stalled train's head is not moving, by merge_train.head_state
+    // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
+    // person says what the person has to do (the owner's ask: "waiting on
+    // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    // Pure: the short reason a stalled head is stuck — the head_state
+    // table, a human-decision head told apart by its reason, else the
+    // head's own plain-word reason cut at its first clause.
+    function stageTrackerTrainStallWhy(mt) {
+      const reason = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const state = String(mt.head_state || '');
+      if (state === 'needs-human' && /decision/i.test(reason)) return 'needs a human decision';
+      return STAGE_TRACKER_TRAIN_HEAD_STALL_WORD[state] || reason;
+    }
+    // Pure: "Merge queue · stalled — waiting on #15425 (needs maintainer
+    // merge) · 1h 20m" for a member behind a head that has sat past
+    // governor.merge_train_stall_warn_s; the head's own row reads "Merge
+    // queue · stalled — needs maintainer merge · 1h 20m"; '' when not
+    // stalled. The server decides stalled; the words say why and how long.
+    function stageTrackerTrainStalledWord(mt) {
+      if (!mt || !mt.stalled) return '';
+      const p = stageTrackerTrainPlace(mt);
+      const why = stageTrackerTrainStallWhy(mt);
+      const dur = stageTrackerShortLeft((Number(mt.stalled_s) || 0) * 1000);
+      const isHead = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || p.pos === 1;
+      const what = isHead ? (why || 'the head has not moved') : 'waiting on #' + p.head + (why ? ' (' + why + ')' : '');
+      return STAGE_TRACKER_TRAIN_STALLED_LEAD + what + (dur ? ' · ' + dur : '');
+    }
     // The chevron word for a train member ('' for a row not in a train).
-    function stageTrackerTrainWord(item) {
+    // The queued word is the place with the queue length — "Merge queued
+    // · 2nd of 3" — so it reads the same with the merge sweep on or off
+    // (#15395); never the state slug, never "front" or "queued-behind",
+    // and never '' for a state this table does not know: an unmapped slug
+    // reads spelled out with the row's place ("Waiting for front · 3rd").
+    // trains is the count of trains on the page: past one, the word ends
+    // with the train's tag ("· train main.go") so two "1st"s tell apart.
+    function stageTrackerTrainWord(item, trains) {
       const mt = stageTrackerTrain(item);
       if (!mt) return '';
+      // A slot held ahead of readiness reads blocker first, slot second.
+      if ((mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED) && stageTrackerTrainProvisional(item)) return stageTrackerTrainProvisionalHeadline(item) + ' · ' + stageTrackerTrainProvisionalSuffix(item, trains);
+      const stalled = stageTrackerTrainStalledWord(mt);
+      if (stalled && (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED)) return stalled;
+      const p = stageTrackerTrainPlace(mt);
+      const tag = stageTrackerTrainTagSuffix(mt, trains);
       switch (mt.state) {
-        case STAGE_TRACKER_TRAIN_STATE_FRONT: return 'Merging · front of train';
-        case STAGE_TRACKER_TRAIN_STATE_QUEUED: return 'In merge train · ' + stageTrackerOrdinal(mt.position) + ' of ' + (Number(mt.size) || 0);
+        case STAGE_TRACKER_TRAIN_STATE_FRONT: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · ' + stageTrackerTrainOrdinalOfN(mt, 1) + tag;
+        case STAGE_TRACKER_TRAIN_STATE_QUEUED: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · ' + stageTrackerTrainOrdinalOfN(mt, p.pos || 2) + tag;
         case STAGE_TRACKER_TRAIN_STATE_REBASING: return 'Rebasing · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
         case STAGE_TRACKER_TRAIN_STATE_EXHAUSTED: return 'Needs human decision · rebase failed ' + (Number(mt.attempt) === 2 ? 'twice' : (Number(mt.attempt) || 0) + ' times');
       }
-      return '';
+      const word = STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
+      return p.pos > 0 ? word + ' · ' + stageTrackerOrdinal(p.pos) : word;
     }
-    // Tooltip lines: the queue ahead and the overlapping files.
+    // Pure: the member's countdown target in ms (eta_at, else now+eta_s);
+    // 0 with no estimate.
+    function stageTrackerTrainEtaAt(mt, nowMs) {
+      if (!mt) return 0;
+      const at = mt.eta_at ? Date.parse(mt.eta_at) : 0;
+      if (at > 0) return at;
+      const s = Number(mt.eta_s) || 0;
+      return s > 0 ? nowMs + s * 1000 : 0;
+    }
+    // Pure: the ETA words — "ETA ~25m (2 ahead · next pass in 40s)",
+    // "running late — estimated ~25m, still waiting", or '' with no
+    // estimate. Always a "~": an estimate, not a promise.
+    function stageTrackerTrainEtaWords(mt, nowMs) {
+      const at = stageTrackerTrainEtaAt(mt, nowMs);
+      if (!(at > 0)) return '';
+      const left = stageTrackerShortLeft(at - nowMs);
+      const basis = String(mt.eta_basis || '').trim();
+      if (mt.late) return 'Running late — estimated ~' + stageTrackerShortLeft((Number(mt.eta_s) || 0) * 1000) + ', still waiting' + (basis ? ' (' + basis + ')' : '') + '.';
+      return 'ETA ' + (left ? '~' + left : 'any moment now') + (basis ? ' (' + basis + ')' : '') + '.';
+    }
+    // Pure: the queued row's hover — "2nd of 6 in the merge queue · behind
+    // #15253 (soaking, 12m left) · ETA ~25m. Hive merges one at a time, in
+    // order." / "1st of 6 in the merge queue · merges next · ETA ~4m." A
+    // head on a person or CI has no estimate, so the hover names what the
+    // head waits on instead. Never "front" or "queued-behind".
+    function stageTrackerTrainQueueTip(mt, nowMs) {
+      if (!mt) return '';
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      const p = stageTrackerTrainPlace(mt);
+      const why = String(mt.head_reason || '').trim();
+      const etaWords = stageTrackerTrainEtaWords(mt, nowMs).replace(/\.$/, '');
+      const stalledFor = stageTrackerShortLeft((Number(mt.stalled_s) || 0) * 1000);
+      const order = ' Hive merges one at a time, in order.';
+      const first = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || (p.pos === 1 && mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED);
+      if (first) {
+        let tip = stageTrackerOrdinal(1) + ' of ' + Math.max(p.len, 1) + ' in the merge queue · merges next' + (why ? ' (' + why + ')' : '');
+        if (mt.stalled) tip += ' · stalled: it has not moved for ' + stalledFor;
+        else if (etaWords) tip += ' · ' + etaWords;
+        return tip + '.' + order;
+      }
+      let tip = stageTrackerOrdinal(p.pos || 2) + ' of ' + Math.max(p.len, p.pos || 2) + ' in the merge queue · behind #' + p.head + (why ? ' (' + why + ')' : '');
+      if (mt.stalled) tip += ' · merge queue stalled: #' + p.head + ' has not moved for ' + stalledFor + (why ? ' — ' + why : '') + '; no estimate until it moves';
+      else if (etaWords) tip += ' · ' + etaWords;
+      else if (why) tip += ' · no estimate until #' + p.head + ' moves';
+      return tip + '.' + order;
+    }
+    // The muted hover note on a PR the server took out of its merge train
+    // while it is under repair (left_train: {why, note} — fixing, needs
+    // author, needs decision, red checks). The row rides no train and
+    // wears no ordinal; this line is the only trace.
+    const STAGE_TRACKER_LEFT_TRAIN_NOTE = 'left the merge train while being fixed; rejoins when green';
+    // Pure: the left-train note for a row, '' when it rides or never rode.
+    function stageTrackerLeftTrainNote(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.note || STAGE_TRACKER_LEFT_TRAIN_NOTE);
+    }
+    // Tooltip lines: the queue ahead and the overlapping files — or, for a
+    // PR that left its train, the one muted note.
     function stageTrackerTrainLines(item) {
       const mt = stageTrackerTrain(item);
-      if (!mt) return [];
+      if (!mt) { const left = stageTrackerLeftTrainNote(item); return left ? ['Merge train: ' + left] : []; }
       const ahead = Array.isArray(mt.ahead) ? mt.ahead.filter(n => Number(n) > 0) : [];
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, front first' + (mt.front ? ' (front #' + mt.front + ')' : '')];
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) lines.push('Position: front — merges first; the lane then updates or rebases the others');
+      const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) lines.push('Position: 1st — merges next; the lane then updates or rebases the others');
       else lines.push('Position: ' + stageTrackerOrdinal(mt.position) + ' of ' + (Number(mt.size) || 0) + (ahead.length ? ' · ahead: ' + ahead.map(n => '#' + n).join(', ') : ''));
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_REBASING) lines.push('Front merged; rebase attempt ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' in progress');
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_REBASING) lines.push('The PR ahead merged; rebase attempt ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' in progress');
       if (mt.state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED) lines.push('Rebase failed ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' times — a maintainer rebases, then merges');
       if (files.length) lines.push('Overlapping files: ' + files.join(', '));
       return lines;
     }
+    // Pure: the train a row rides — a PR's own merge_train, or, for an
+    // issue row, the merge_train of its open linked PR (the PR drawn as the
+    // issue's sub-row, nested_under). Returns { mt, pr } or null. The train
+    // header must sit over every member that is on the page: hive's
+    // v5#15425 read "3 PRs" over one row because #15529 and #15530 were
+    // drawn under their issues #15493 and #15523 and the header only
+    // counted PR rows.
+    function stageTrackerRowTrain(item) {
+      if (!item) return null;
+      const own = stageTrackerTrain(item);
+      if (own) return { mt: own, pr: Number(item.number) || 0 };
+      if (item.kind === 'pr') return null;
+      const prs = Array.isArray(item.linked_prs) ? item.linked_prs : [];
+      const open = prs.filter(lp => lp && stageTrackerTrain(lp) && !lp.superseded && String(lp.state || '') !== 'closed' && (Number(lp.stage) || 0) < STAGE_TRACKER_TERMINAL && (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') < 0);
+      if (!open.length) return null;
+      open.sort((a, b) => (Number(a.merge_train.position) || 0) - (Number(b.merge_train.position) || 0) || ((Number(a.number) || 0) - (Number(b.number) || 0)));
+      return { mt: stageTrackerTrain(open[0]), pr: Number(open[0].number) || 0 };
+    }
     function stageTrackerTrainKey(item) {
-      const mt = stageTrackerTrain(item);
-      return mt ? (item.repo || '') + '|' + (mt.id || ('#' + mt.front)) : '';
+      const rt = stageTrackerRowTrain(item);
+      return rt ? (item.repo || '') + '|' + (rt.mt.id || ('#' + rt.mt.front)) : '';
+    }
+    // Pure: the member's merge order on its row (position, then PR number).
+    function stageTrackerTrainOrder(item) {
+      const rt = stageTrackerRowTrain(item);
+      return rt ? [Number(rt.mt.position) || 0, rt.pr] : [0, 0];
     }
     // Pure: re-orders a sorted row list so each train's members sit together
-    // at the first member's slot, in merge order (front first).
+    // at the first member's slot, in merge order (front first). An issue
+    // row whose nested PR is a member is a member row.
     function stageTrackerTrainContiguous(rows) {
       rows = Array.isArray(rows) ? rows : [];
       const byTrain = {};
@@ -191,44 +464,92 @@
         if (!k) { out.push(it); return; }
         if (emitted[k]) return;
         emitted[k] = true;
-        byTrain[k].slice().sort((a, b) => (Number(a.merge_train.position) || 0) - (Number(b.merge_train.position) || 0) || ((a.number || 0) - (b.number || 0))).forEach(m => out.push(m));
+        byTrain[k].slice().sort((a, b) => { const x = stageTrackerTrainOrder(a), y = stageTrackerTrainOrder(b); return (x[0] - y[0]) || (x[1] - y[1]); }).forEach(m => out.push(m));
       });
       return out;
     }
-    // Header line over a train's rows: "⛓ merge train · 4 PRs · front #15074".
-    function stageTrackerTrainHeaderText(mt) {
-      return STAGE_TRACKER_TRAIN_GLYPH + ' merge train · ' + (Number(mt.size) || 0) + ' PRs · front #' + (Number(mt.front) || 0);
+    // Pure: the member numbers of a train the page does not show, given the
+    // train's record (ahead + size on the last member tells the whole
+    // queue when the view carries it) and the numbers shown under the
+    // header. shown is the PR numbers rendered in this run.
+    function stageTrackerTrainMissing(mt, shown) {
+      const known = {};
+      (Array.isArray(mt.members) ? mt.members : []).forEach(n => { if (Number(n) > 0) known[Number(n)] = true; });
+      if (Number(mt.front) > 0) known[Number(mt.front)] = true;
+      (Array.isArray(mt.ahead) ? mt.ahead : []).forEach(n => { if (Number(n) > 0) known[Number(n)] = true; });
+      const here = {};
+      (shown || []).forEach(n => { here[Number(n)] = true; });
+      return Object.keys(known).map(Number).filter(n => !here[n]).sort((a, b) => a - b);
     }
-    function stageTrackerTrainHeaderHtml(item) {
-      const mt = stageTrackerTrain(item);
-      if (!mt) return '';
+    // Header line over a train's rows: "merge train · 4 PRs · 1st: #15074".
+    // The count is the rows drawn under the header, never the server's
+    // size alone: with shown (the PR numbers rendered in this run) a
+    // train the view only partly carries reads "merge train · 1 of 3 PRs
+    // here · 1st: #15425 · not in this view: #15529, #15530" so the header
+    // never claims rows that are not there (the train icon sits in front
+    // of it in the HTML).
+    function stageTrackerTrainHeaderText(mt, shown) {
+      const size = Number(mt.size) || 0;
+      const front = Number(mt.front) || 0;
+      if (!Array.isArray(shown)) return 'merge train · ' + size + ' PRs · 1st: #' + front;
+      const here = shown.length;
+      let text = 'merge train · ' + (here < size ? here + ' of ' + size + ' PRs here' : here + (here === 1 ? ' PR' : ' PRs')) + ' · 1st: #' + front;
+      if (here < size) {
+        const missing = stageTrackerTrainMissing(mt, shown);
+        const named = missing.map(n => '#' + n);
+        const unnamed = size - here - missing.length;
+        if (unnamed > 0) named.push(unnamed + ' more');
+        text += ' · not in this view: ' + (named.length ? named.join(', ') : (size - here) + ' PRs');
+      }
+      return text;
+    }
+    // idx is the train's accent slot on the page (stageTrackerTrainIndex);
+    // the header and its rows share the rail colour it picks.
+    function stageTrackerTrainHeaderHtml(item, shown, idx) {
+      const rt = stageTrackerRowTrain(item);
+      if (!rt) return '';
+      const mt = rt.mt;
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const tip = stageTrackerTrainLines(item).join('\n');
-      return `<div class="ham-train-head" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
-        <span class="ham-train-chip">${esc(stageTrackerTrainHeaderText(mt))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
+      const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }).join('\n');
+      return `<div class="ham-train-head${stageTrackerTrainAccentClass(idx)}" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
+        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
       </div>`;
     }
-    // Row classes for a train member: the rail, and whether it leads / ends
-    // the run (prev/next are the neighbouring rows, or null).
-    function stageTrackerTrainRowClass(item, prev, next) {
+    // Row classes for a train member: the rail, whether it leads / ends
+    // the run (prev/next are the neighbouring rows, or null), and the
+    // train's accent slot (idx, from stageTrackerTrainIndex) so its rows
+    // and header share one colour.
+    function stageTrackerTrainRowClass(item, prev, next, idx) {
       const k = stageTrackerTrainKey(item);
       if (!k) return '';
-      const mt = stageTrackerTrain(item);
-      let cls = ' ham-train';
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
+      const rt = stageTrackerRowTrain(item);
+      let cls = ' ham-train' + stageTrackerTrainAccentClass(idx);
+      if (rt.mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
       if (!next || stageTrackerTrainKey(next) !== k) cls += ' ham-train-last';
       return cls;
     }
     // Inserts a train header entry before the first row of each train run.
-    // Entries are {key, html}; items are the page's row items in order.
+    // Entries are {key, html}; items are the page's row items in order. The
+    // header counts the run it heads — the rows actually drawn under it.
     function stageTrackerTrainRows(items, rowOf) {
       const out = [];
       let prevKey = '';
-      (items || []).forEach((e, i) => {
+      const list = items || [];
+      const itemOf = e => (e && e.item ? e.item : (e && e.group ? null : e));
+      const trains = stageTrackerTrainIndex(list);
+      list.forEach((e, i) => {
         // Entries are items, or the grouped view's {item} / {group} wrappers.
-        const it = e && e.item ? e.item : (e && e.group ? null : e);
+        const it = itemOf(e);
         const k = it ? stageTrackerTrainKey(it) : '';
-        if (k && k !== prevKey) out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it) });
+        if (k && k !== prevKey) {
+          const shown = [];
+          for (let j = i; j < list.length; j++) {
+            const m = itemOf(list[j]);
+            if (!m || stageTrackerTrainKey(m) !== k) break;
+            shown.push(stageTrackerRowTrain(m).pr);
+          }
+          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown, trains.index[k]) });
+        }
         prevKey = k;
         out.push(rowOf(e, i));
       });
@@ -263,7 +584,7 @@
     // step) because the PR has not reached the gate yet: nothing a person
     // does now moves the row, so no pill is drawn and the row stays out of
     // "Needs attention"; the row tooltip alone names what waits at the gate.
-    const STAGE_TRACKER_DEFERRED_NOTE = 'Pending at merge gate: ';
+    const STAGE_TRACKER_DEFERRED_NOTE = 'Pending at merge queue: ';
     function stageTrackerDeferredMods(item) {
       return Array.isArray(item && item.deferred_modifiers) ? item.deferred_modifiers : [];
     }
@@ -334,7 +655,7 @@
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
-      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
     var _stageTrackerFilter = stageTrackerDefaultFilter();
     // Type-to-filter text of the "all labels" dialog (not persisted).
@@ -353,6 +674,7 @@
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
+      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed';
       if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
@@ -460,7 +782,7 @@
     // Stage → operator phrase, mirrored from stageTrackerStagePhrase
     // (stage_tracker_vocabulary.go): every string the page renders names a
     // stage by its chevron's words, never by a code ("060 reviewed").
-    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being fixed by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge gate', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
+    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being fixed by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
     // Pure: a stage's name in plain words for cues and tooltips — its short
     // word when the stages table has one, else its label with the lane's
     // "stage/060-" slug prefix dropped and the slug humanised ("Reviewed").
@@ -533,18 +855,39 @@
       const lead = who + ' · ' + chose + ', ' + agentNowClockTime(atMs, nowMs);
       return lead + (d.title ? '\n' + d.title : '');
     }
+    // Pure: the PR a nested original was superseded by — `superseded_by`
+    // from the server, or `adopted_by` while the copy is live — when that
+    // copy is itself listed under the issue; else 0.
+    function stageTrackerLinkedSuperseder(lp, issue) {
+      if (!lp) return 0;
+      const live = lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice' && lp.adopted_by_state !== 'copy-failed';
+      const by = Number(lp.superseded_by) || (live ? Number(lp.adopted_by) || 0 : 0);
+      if (!(by > 0) || by === Number(lp.number)) return 0;
+      const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
+      return linked.some(x => x && Number(x.number) === by && String(x.state || '') !== 'closed') ? by : 0;
+    }
     // Pure: an adopted original listed under its issue — closed, or still
-    // open with the hive's copy already in the list — draws as one dimmed
-    // line without a chevron track (hivecommons/hive#15126).
+    // open — with the hive's copy in the list draws as one muted line
+    // without a chevron track (hivecommons/hive#15126, #15511): the note
+    // reads "superseded · hive adopted → #N", "superseded · closed · hive
+    // adopted → #N" once the close landed. '' when the copy is not listed.
     function stageTrackerLinkedSupersededText(lp, issue) {
-      if (!lp) return '';
-      const by = Number(lp.superseded_by || lp.adopted_by) || 0;
-      if (String(lp.state || '') === 'closed') return 'closed · superseded by #' + by;
-      if (by > 0 && lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice') {
-        const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
-        if (linked.some(x => Number(x.number) === by)) return 'Adopted → #' + by + ' · superseded (hive re-authored with sign-off)';
-      }
-      return '';
+      const by = stageTrackerLinkedSuperseder(lp, issue);
+      if (!by) return '';
+      return 'superseded · ' + (String(lp.state || '') === 'closed' ? 'closed · ' : '') + 'hive adopted → #' + by;
+    }
+    // Pure: the hover behind that note — what hive did and what becomes of
+    // this PR.
+    function stageTrackerLinkedSupersededTip(lp) {
+      const by = Number(lp && (lp.superseded_by || lp.adopted_by)) || 0;
+      if (!by) return '';
+      return 'Hive re-authored this PR as #' + by + ' with the same commits and sign-off. ' + (String(lp.state || '') === 'closed' ? 'This PR is closed as superseded.' : 'This PR closes as superseded when #' + by + ' merges.');
+    }
+    // Pure: a closed original whose superseder is no longer listed open
+    // under the issue (merged, closed, filtered) has nothing left to say
+    // and is not drawn.
+    function stageTrackerLinkedSupersededGone(lp, issue) {
+      return !!lp && String(lp.state || '') === 'closed' && !stageTrackerLinkedSuperseder(lp, issue);
     }
     function stageTrackerCoveringPR(item) {
       if (!item || item.kind === 'pr') return null;
@@ -556,13 +899,15 @@
     }
     // Pure: { word, detail, tip, cue } for an item on the gate, null off it.
     //   word   — the pill word (STAGE_TRACKER_MERGE_GATE_WORD)
-    //   detail — the live part after " · " ("next sweep in 42s", "7m left");
+    //   detail — the live part after " · " ("next pass in 42s", "7m left");
     //            always a gate fact, never the issue's lane reason
     //   tip    — one plain sentence for the glyph's title + aria-label; on
     //            an issue row it leads with "open PR #N covers it · at <stage>"
     //   cue    — 'running' (sweep on it now) | 'waiting' | 'soaking' | 'merging' | ''
     //   until  — ms epoch the detail counts down to (0 when none)
-    function stageTrackerMergeGateInfo(item, nowMs) {
+    // trains — how many trains the page draws (ctx.trains); past one a
+    // queue word names its train.
+    function stageTrackerMergeGateInfo(item, nowMs, trains) {
       const rb = item && item.rebase;
       if (rb && rb.text && !(item.rebase_merge && item.rebase_merge.state && item.rebase_merge.state !== 'failed' && item.rebase_merge.state !== 'merged')) {
         // The fixer's autonomous rebase-resolve loop guard: "Rebasing ·
@@ -577,16 +922,16 @@
       const state = stageTrackerMergeGateStateOf(src);
       // A decided row may sit on a stage with no merge_gate yet; the
       // decision still owns the pill (#15126).
-      if (!state && typeof stageTrackerDecidedOf === 'function' && (stageTrackerDecidedOf(src, nowMs) || stageTrackerDecidedOf(item, nowMs))) return stageTrackerMergeGateInfoFor(src, item, nowMs);
+      if (!state && typeof stageTrackerDecidedOf === 'function' && (stageTrackerDecidedOf(src, nowMs) || stageTrackerDecidedOf(item, nowMs))) return stageTrackerMergeGateInfoFor(src, item, nowMs, trains);
       if (!state || state === 'merged') return null;
-      const info = stageTrackerMergeGateInfoFor(src, item, nowMs);
+      const info = stageTrackerMergeGateInfoFor(src, item, nowMs, trains);
       const coverWhy = stageTrackerCoverReasonText(item);
       if (coverWhy) info.tip = coverWhy.charAt(0).toUpperCase() + coverWhy.slice(1) + ' — ' + info.tip;
       return info;
     }
     // src carries the merge_gate / stage read; item is the row itself (its
     // lane reason stands in for a gate reason only on a PR row).
-    function stageTrackerMergeGateInfoFor(src, item, nowMs) {
+    function stageTrackerMergeGateInfoFor(src, item, nowMs, trains) {
       const state = stageTrackerMergeGateStateOf(src);
       const mg = (src && src.merge_gate) || {};
       // A recorded decision whose effect is pending (hivecommons/hive#15126):
@@ -596,11 +941,53 @@
       if (dec) return dec;
       const laneReason = item && item.kind !== 'issue' && !stageTrackerCoverReasonText(item) ? item.reason : '';
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
-      const word = STAGE_TRACKER_MERGE_GATE_WORD[state] || state;
+      const word = stageTrackerMergeGateStateWord(state);
       const nextAt = mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0;
       const lastAt = mg.last_sweep_at ? Date.parse(mg.last_sweep_at) : 0;
       const lastSeen = lastAt > 0 ? ' Last checked ' + stageTrackerAgoText(lastAt, nowMs) + '.' : '';
-      // A soak clock (own or mirrored) outranks "merge sweep running": the
+      // Two open PRs for one issue (hivecommons/hive#15395): the queue
+      // kept one and holds this one — "Duplicate of #15402 · needs a
+      // pick"; no clock, no train. Let hive decide on either row closes
+      // the held one as superseded.
+      const dupOf = stageTrackerGateDuplicateOf(state);
+      if (dupOf) {
+        const issue = Number(mg.duplicate_issue) || 0;
+        const tip = 'This PR and #' + dupOf + ' both fix' + (issue ? ' #' + issue : ' the same issue') + ". Hive's merge queue carries one PR per issue and kept #" + dupOf + ' (a green head first, then the earlier-opened); this one is held out of the queue. Let hive decide on either row closes this one as superseded with credit, or close it yourself.' + lastSeen;
+        return { state, word: word, detail: 'needs a pick', tip, cue: 'waiting', until: 0, duplicateOf: dupOf };
+      }
+      // A merge-train member (hivecommons/hive#15395): the label is its
+      // place in the queue and nothing else, so the chip does not flip
+      // between "… · checking now" and the bare form each sweep,
+      // and a front in its soak keeps its place word (never the slug) —
+      // its countdown already includes the soak left.
+      // The sweep is the spinning ⬡ and a "Checking now…" tooltip line.
+      const trainSrc = stageTrackerTrain(src) ? src : (stageTrackerTrain(item) ? item : null);
+      const mt = trainSrc ? stageTrackerTrain(trainSrc) : null;
+      // A provisional slot (the member's own stage is short of the gate):
+      // the chip's headline is the stage's blocker, the slot a muted
+      // trailing detail, and the hover leads with what blocks it.
+      if (mt && (state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED) && stageTrackerTrainProvisional(trainSrc)) {
+        const blocker = stageTrackerReviewPassedDetail(laneReason || mg.reason) || String((trainSrc && trainSrc.caption) || '').split(/ — /)[0].trim();
+        const headline = stageTrackerTrainProvisionalHeadline(trainSrc);
+        const tagTip = stageTrackerTrainTagTip(mt, trains);
+        const tip = headline + (blocker ? ' — ' + blocker : '') + '. ' + (tagTip ? tagTip + ' ' : '') + stageTrackerTrainQueueTip(mt, nowMs).replace(/ · merges next/, ' · merges first once it is ready') + (mg.sweep_running ? ' Checking now…' : '') + lastSeen;
+        return { state, word: headline, detail: stageTrackerTrainProvisionalSuffix(trainSrc, trains), tip, cue: 'waiting', until: 0, train: mt, stalled: false, provisional: true };
+      }
+      if (mt && (state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED || state === STAGE_TRACKER_TRAIN_STATE_REBASING || state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED)) {
+        const trainWord = stageTrackerTrainWord(trainSrc, trains) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
+        const queued = state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED;
+        const tagTip = queued ? stageTrackerTrainTagTip(mt, trains) : '';
+        const queueTip = (tagTip ? tagTip + ' ' : '') + (queued ? stageTrackerTrainQueueTip(mt, nowMs) : stageTrackerTrainLines(trainSrc).join('. ') + '.');
+        const checking = mg.sweep_running ? ' Checking now…' : '';
+        // The countdown to its turn ("· ~4m") ticks from eta_at like the
+        // soak clock, so a poll re-render does not reset it; a blocked
+        // head or a stalled train shows no clock; past twice the first
+        // estimate it reads "running late".
+        const etaAt = queued && !mt.stalled ? stageTrackerTrainEtaAt(mt, nowMs) : 0;
+        const detail = etaAt > 0 ? (mt.late ? 'running late' : stageTrackerTrainEtaDetail(etaAt, nowMs)) : '';
+        return { state, word: trainWord, detail, tip: queueTip + checking + lastSeen, cue: mg.sweep_running ? 'running' : 'waiting', until: etaAt > 0 && !mt.late ? etaAt : 0, train: mt, stalled: !!mt.stalled };
+      }
+      // A soak clock (own or mirrored) outranks "checking now": the
       // sweep reads the clock, it does not replace it. Any gate stage the
       // lane holds for the soak — 095 admitted, or 060/080 while trust
       // still blocks the head — counts the same clock down.
@@ -610,7 +997,7 @@
         // "soak 12m left"; at 095 the soak is the stage.
         clock.prefix = state === 'soaking' ? '' : 'soak ';
         const soak = stageTrackerSoakWords(clock, nowMs, nextAt, !!mg.sweep_running);
-        return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
+        return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: soak.cue || 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
       }
       // 060 Review passed: the pill carries the lane's own recorded reason
       // ("CI in progress", "checks unreadable", "soak 30m remaining" —
@@ -619,15 +1006,15 @@
       const preWhy = state === 'gate-pending' ? (stageTrackerReviewPassedDetail(mg.reason || laneReason) || 'waiting for merge admission') : '';
       if (state === 'merge-failed') return stageTrackerMergeFailedInfo(mg, nowMs, nextAt, lastSeen);
       if (mg.sweep_running) {
-        return { state, word, detail: preWhy || 'merge sweep running', tip: (preWhy ? 'Review passed, not yet admitted to auto merge — ' + preWhy + '; ' : '') + "hive's merge sweep is running on this PR now.", cue: 'running', until: 0 };
+        return { state, word, detail: preWhy || 'checking now', tip: (preWhy ? 'Review passed, not yet admitted to auto merge — ' + preWhy + '; ' : '') + 'hive is checking this PR now.', cue: 'running', until: 0 };
       }
-      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const nextWords = stageTrackerNextPassWords(nextAt, nowMs);
       const sooner = ' A GitHub event on the PR (check run, review, push) triggers a pass sooner.';
       if (state === 'soaking') {
-        return { state, word, detail: 'soak window complete', tip: 'Admitted; the soak window is complete — hive merges on its next sweep' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: 0 };
+        return { state, word, detail: 'complete', tip: 'Soak complete — merges on the next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: 0 };
       }
       if (state === 'ready') {
-        return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's merge sweep" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
+        return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's next merge pass" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
       }
       if (state === 'merging') {
         // A live merge call (merging_since, hivecommons/hive#15245) says
@@ -676,18 +1063,34 @@
       const at = mg.merge_failed_at ? Date.parse(mg.merge_failed_at) : 0;
       const who = STAGE_TRACKER_MERGE_PATH_WORDS[mg.merge_path] || '';
       const when = (who ? ' (' + who + ')' : '') + (at > 0 ? ' ' + stageTrackerAgoText(at, nowMs) : '');
-      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const nextWords = stageTrackerNextPassWords(nextAt, nowMs);
       const details = why ? ' Details: ' + why : '';
       if (kind === 'checks-pending') {
-        const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? "; hive's merge sweep is on it now" : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
+        const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? '; hive is on it now' : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
         return { state, word: 'Waiting for CI', detail: checks > 0 ? checks + ' check' + (checks === 1 ? '' : 's') : '', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
       }
       const word = STAGE_TRACKER_MERGE_GATE_WORD[state];
       const sentence = 'hive tried to merge this' + when + ' and GitHub refused' + (text ? ' — ' + text : '') + '.';
       if (mg.sweep_running) {
-        return { state, word, detail: 'retrying', tip: sentence + " hive's merge sweep is retrying it now." + lastSeen + details, cue: 'running', until: 0 };
+        return { state, word, detail: 'retrying', tip: sentence + ' hive is retrying it now.' + lastSeen + details, cue: 'running', until: 0 };
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
+    }
+    // Pure: the hover note for a refusal that belongs to an earlier head
+    // (merge_gate.prior_head_merge_failed*): the PR's head moved, or the
+    // record fell back below 080 to wait on CI, after GitHub refused the
+    // merge. The chevron reads the live stage; this line is the history —
+    // "merge attempt on previous head failed: branch protection". '' when
+    // there is none. Never a chevron word.
+    function stageTrackerPriorHeadMergeFailedNote(item) {
+      const mg = item && item.merge_gate;
+      if (!mg || (!mg.prior_head_merge_failed && !mg.prior_head_merge_failed_kind)) return '';
+      const why = String(mg.prior_head_merge_failed || '').trim();
+      const fallback = why && !mg.prior_head_merge_failed_kind ? stageTrackerMergeRefusalFromRaw(why) : null;
+      const kind = mg.prior_head_merge_failed_kind || (fallback && fallback.kind) || '';
+      const detail = kind === 'checks-pending' ? 'required checks had not reported' : (STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || stageTrackerMergeFailedShort(why));
+      const head = String(mg.prior_head_merge_failed_head || '').slice(0, 7);
+      return 'merge attempt on previous head' + (head ? ' ' + head : '') + ' failed: ' + detail;
     }
     // Pure: a refusal's first line, cut to STAGE_TRACKER_MERGE_FAILED_SHORT_MAX
     // (tooltips and toasts; the pill detail comes from the refusal kind).
@@ -697,10 +1100,10 @@
       return line.length > STAGE_TRACKER_MERGE_FAILED_SHORT_MAX ? line.slice(0, STAGE_TRACKER_MERGE_FAILED_SHORT_MAX - 1).trimEnd() + '…' : line;
     }
     // Pure: the pill word with its live detail — "Ready for auto merge ·
-    // next sweep in 42s". The detail span carries data-ham-until so the
+    // next pass in 42s". The detail span carries data-ham-until so the
     // countdown ticks in place.
-    function stageTrackerMergeGateWordHtml(item, nowMs) {
-      const info = stageTrackerMergeGateInfo(item, nowMs);
+    function stageTrackerMergeGateWordHtml(item, nowMs, trains) {
+      const info = stageTrackerMergeGateInfo(item, nowMs, trains);
       if (!info) return '';
       // A soak detail carries its clock so the tick can redo both the
       // words and the hover sentence (data-ham-soak-tip is the sentence
@@ -708,7 +1111,7 @@
       const c = info.soakClock;
       const soakAttrs = c ? ` data-ham-soak="1" data-ham-until="${c.until}" data-ham-until-kind="soaking" data-ham-soak-window="${c.windowS}" data-ham-soak-head="${esc(c.head)}" data-ham-soak-restarted="${c.restarted ? 1 : 0}" data-ham-soak-prefix="${esc(c.prefix || '')}" data-ham-next="${c.nextAt || 0}" data-ham-sweeping="${c.sweepRunning ? 1 : 0}" data-ham-soak-tip="${esc(info.soak)}"` : '';
       const detail = info.detail ? ` <span class="ham-gate-detail"${soakAttrs || (info.until ? ` data-ham-until="${info.until}" data-ham-until-kind="${esc(info.state)}"` : '')}>· ${esc(info.detail)}</span>` : '';
-      return `<span class="ham-seg-t">${esc(info.word)}${detail}</span>`;
+      return `<span class="ham-seg-t${info.stalled ? ' ham-queue-stalled' : ''}">${esc(info.word)}${detail}</span>`;
     }
     /* ---- Soak clock ---------------------------------------------------------
        The payload's `soak` {started_at, until, window_s, head_sha} is the
@@ -752,10 +1155,20 @@
       if (typeof formatDashboardTime === 'function') return formatDashboardTime(ms, opts);
       try { return new Intl.DateTimeFormat(undefined, opts).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString(); }
     }
-    // Pure: { word, detail, tip } for a soak clock at nowMs.
+    // Pure: "next pass in 42s" until the lane's next pass, "pass due now"
+    // once it has come, '' when the next pass is unknown. Never the word
+    // "sweep" — that is the lane's internal name, not a state.
+    function stageTrackerNextPassWords(nextAt, nowMs) {
+      if (nextAt > nowMs) return 'next pass in ' + stageTrackerShortLeft(nextAt - nowMs);
+      return nextAt > 0 ? 'pass due now' : '';
+    }
+    // Pure: { word, detail, tip, cue } for a soak clock at nowMs.
     //   soaking   — "Soaking · 12m left"; the hover carries the rule, the
     //               live time left and the end time
-    //   ready     — past until: "Soaking · ready — next sweep in 3m"
+    //   complete  — past until, waiting for the lane's next pass:
+    //               "Soaking · complete"
+    //   mergeable — past until and the lane's pass is on it now:
+    //               "Mergeable · merging now"
     //   restarted — "Soak restarted · new head"
     function stageTrackerSoakWords(clock, nowMs, nextAt, sweepRunning) {
       const short = clock.head ? clock.head.slice(0, 7) : '';
@@ -763,26 +1176,36 @@
       const mins = clock.windowS > 0 ? Math.round(clock.windowS / 60) : 0;
       const window = mins > 0 ? mins + ' minute' + (mins === 1 ? '' : 's') : 'the soak window';
       if (clock.restarted) {
-        return { word: 'Soak restarted', detail: 'new head', tip: who + ' was replaced by a new push, so the soak starts over on the new head: it must sit ' + window + ' without new commits before the hive merges it. hive re-reads it on its next sweep.' };
+        return { word: 'Soak restarted', detail: 'new head', tip: who + ' was replaced by a new push, so the soak starts over on the new head: it must sit ' + window + ' without new commits before the hive merges it. hive re-reads it on its next pass.' };
       }
       const prefix = clock.prefix || '';
       const leftMs = clock.until - nowMs;
       if (leftMs > 0) {
         return { word: 'Soaking', detail: prefix + stageTrackerShortLeft(leftMs) + ' left', tip: who + ' must sit ' + window + ' without new commits before the hive merges it · ' + stageTrackerSoakLeftText(leftMs) + ' left · soak ends ' + stageTrackerClockText(clock.until) };
       }
-      const next = sweepRunning ? 'merge sweep running' : (nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : 'sweep due now');
-      return { word: 'Soaking', detail: (prefix ? 'soaked — ' : 'ready — ') + next, tip: who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '; hive merges it on its next sweep (' + next + ').' };
+      const soaked = who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '. ';
+      if (sweepRunning) {
+        return { word: 'Mergeable', detail: prefix ? 'soaked — merging now' : 'merging now', tip: soaked + 'Mergeable — merging now.', cue: 'running' };
+      }
+      const next = stageTrackerNextPassWords(nextAt, nowMs);
+      return { word: 'Soaking', detail: prefix ? 'soak complete' : 'complete', tip: soaked + 'Soak complete — merges on the next pass' + (next ? ' (' + next + ')' : '') + '.', cue: 'soaking' };
     }
     // Pure: the leading glyph for a row on the gate — spinning while hive's
     // sweep is on it, a clock while it waits — with the sentence as title
     // and aria-label. '' off the gate.
-    function stageTrackerGateCueHtml(item, nowMs) {
-      const info = stageTrackerMergeGateInfo(item, nowMs);
+    function stageTrackerGateCueHtml(item, nowMs, trains) {
+      const info = stageTrackerMergeGateInfo(item, nowMs, trains);
       if (!info) return '';
       const spin = info.cue === 'running' || info.cue === 'merging';
       return `<span class="ham-gate-ico${spin ? ' cue-spin' : ''}" data-gate-cue="${esc(info.cue)}" role="img" title="${esc(info.tip)}" aria-label="${esc(info.tip)}">${stageTrackerIcon(spin ? 'sweep' : 'wait', 'ham-ico')}</span>`;
     }
-    // Pure: ticks every countdown in el from nowMs; "sweep due now" once a
+    // Pure: the queue chip's countdown words — "~4m" until the estimate,
+    // "any moment now" once it has passed.
+    function stageTrackerTrainEtaDetail(etaAt, nowMs) {
+      const left = stageTrackerShortLeft(etaAt - nowMs);
+      return left ? '~' + left : 'any moment now';
+    }
+    // Pure: ticks every countdown in el from nowMs; "pass due now" once a
     // ready row's next pass has come.
     function stageTrackerGateCountdownSync(el, nowMs) {
       if (!el || typeof el.querySelectorAll !== 'function') return;
@@ -792,8 +1215,9 @@
         const kind = n.getAttribute('data-ham-until-kind');
         if (n.getAttribute('data-ham-soak') === '1') { stageTrackerSoakTick(n, nowMs); continue; }
         const left = stageTrackerShortLeft(until - nowMs);
-        let t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· soak window complete') : (left ? '· next sweep in ' + left : '· sweep due now');
+        let t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· complete') : (left ? '· next pass in ' + left : '· pass due now');
         if (kind === 'decided') t = n.textContent.replace(/ · in [^·]*$|· in [^·]*$/, '') + (left ? ' · in ' + left : ' · due now');
+        if (kind === STAGE_TRACKER_TRAIN_STATE_QUEUED || kind === STAGE_TRACKER_TRAIN_STATE_FRONT) t = '· ' + stageTrackerTrainEtaDetail(until, nowMs);
         if (n.textContent !== t) n.textContent = t;
       }
     }
@@ -805,6 +1229,10 @@
       const words = stageTrackerSoakWords(clock, nowMs, Number(n.getAttribute('data-ham-next')) || 0, n.getAttribute('data-ham-sweeping') === '1');
       const t = '· ' + words.detail;
       if (n.textContent !== t) n.textContent = t;
+      // At 095 the soak owns the pill word too: a soaked head under the
+      // lane's pass flips "Soaking" to "Mergeable" without a re-render.
+      const wordNode = n.previousSibling;
+      if (!clock.prefix && wordNode && wordNode.nodeType === 3 && wordNode.textContent.trim() !== words.word) wordNode.textContent = words.word + ' ';
       const prev = n.getAttribute('data-ham-soak-tip') || '';
       if (!prev || prev === words.tip || typeof n.closest !== 'function') return;
       const li = n.closest('li');
@@ -934,14 +1362,14 @@
       return 'at ' + agentNowClockTime(at, nowMs) + ' (' + inWords + ')';
     }
     // The plain-words tooltip:
-    //   Waiting on @Danathar's hive (clanker · online, last seen 2 min ago) — hive is waiting for them
-    //   Waiting on @hanthor's hive (clanker · offline 26h) — hive will adopt at 15:10 (in 38m)
+    //   Waiting on @Danathar's clanker (online, last seen 2 min ago) — hive is waiting for them
+    //   Waiting on @hanthor's clanker (offline 26h) — hive will adopt at 15:10 (in 38m)
     //   Waiting on @zoe (human) — waiting for a human reply
     function stageTrackerPresenceTip(item, nowMs) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
       const now = Number(nowMs) || Date.now();
-      const hive = "Waiting on @" + p.login + "'s hive (clanker · ";
+      const hive = "Waiting on @" + p.login + "'s clanker (";
       const adopt = stageTrackerPresenceAdoptAt(p, now);
       let head, next;
       if (p.state === 'online') {
@@ -977,6 +1405,24 @@
       const ico = stageTrackerIcon(p.kind, 'ham-ico ham-presence-ico', '');
       const dot = p.kind === 'human' ? '' : '<i class="ham-presence-dot"></i>';
       return `<span class="ham-presence ham-presence-${p.state} ham-presence-${p.kind}" role="img" aria-label="${esc(stageTrackerPresenceAria(item, nowMs))}" data-ham-presence="${p.state}" data-ham-presence-kind="${p.kind}">${ico}${dot}</span>`;
+    }
+    // The holder's live state after the chevron's "· @odttlnt's clanker":
+    // " · [■] offline 3h" when the row's presence is for that clanker and
+    // it is gone, " · [○] not registered" when no clanker is registered
+    // here for the login. An online clanker adds nothing (the row is
+    // moving, nothing to flag); a human has no presence. The title is the
+    // presence tooltip, so the next automatic step is one hover away.
+    function stageTrackerHolderPresenceHtml(item, claimant, nowMs) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p || p.kind !== 'clanker' || !claimant || claimant.kind !== 'clanker' || !claimant.login) return '';
+      if (String(claimant.login).toLowerCase() !== p.login.toLowerCase()) return '';
+      const now = Number(nowMs) || Date.now();
+      let word = '';
+      if (p.state === 'offline') word = 'offline' + (stageTrackerPresenceGone(p, now) ? ' ' + stageTrackerPresenceGone(p, now) : '');
+      else if (p.state === 'unknown') word = 'not registered';
+      if (!word) return '';
+      const tip = stageTrackerPresenceTip(item, now);
+      return `<span class="ham-holder-presence ham-presence ham-presence-${p.state} ham-presence-clanker" title="${esc(tip)}" aria-label="${esc(tip)}" data-ham-presence="${p.state}"> · <i class="ham-presence-dot" aria-hidden="true"></i>${esc(word)}</span>`;
     }
     // Pill text with the indicator placed just before the @login (or
     // leading, when the text names nobody): "waiting on [robot ●] @hanthor".
@@ -1147,15 +1593,40 @@
       const st = Number(item && item.stage) || 0;
       return !!(item && item.sentinel_alert) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
     }
+    // Pure: whose PR a 071/072 row waits on — the row's own author, or, for
+    // an issue row drawn through its one covering PR (via_pr), that PR's
+    // author. The issue's author is whoever filed it (on hive's hive the
+    // reviewer's bot, hivecommons-hive[bot]); naming them on the chevron
+    // read "Returned to @hivecommons-hive[bot]'s hive" for a clanker's PR.
+    function stageTrackerReturnedAuthor(item) {
+      let src = item || {};
+      if (src.via_pr && Array.isArray(src.linked_prs)) {
+        const here = src.linked_prs.filter(lp => lp && lp.author && (!Number(lp.drawn_under) || Number(lp.drawn_under) === (Number(src.number) || 0)));
+        if (here.length === 1) src = here[0];
+      }
+      return { author: String(src.author || '').replace(/^@/, ''), kind: String(src.author_kind || '') };
+    }
+    // "'s clanker" for a clanker's PR (the person's relay agent picks it
+    // up), "'s hive" for another hive's, nothing for a person's own.
+    function stageTrackerToolingSuffix(kind) {
+      if (kind === 'clanker') return "'s clanker";
+      if (kind === 'hive') return "'s hive";
+      return '';
+    }
     // The 071/072 chevron word names the routing: "Needs @author" at 071,
-    // "Returned to @author's hive" at 072 for a clanker-authored PR (the
+    // "Returned to @author's clanker" at 072 for a clanker-authored PR (the
     // contributor's agent picks it up), "Returned to @author" for a human's.
+    // A row already superseded by a merged PR says that instead — nothing
+    // is owed by the author; a maintainer closes it (hivecommons/hive#15303
+    // sat as "Returned to …" while its issue was closed by #15304).
     function stageTrackerReturnedWord(item, fallback) {
       const st = Number(item && item.stage) || 0;
-      const author = String((item && item.author) || '').replace(/^@/, '');
+      const sup = item && item.superseded && typeof item.superseded === 'object' ? Number(item.superseded.closer_pr) || 0 : 0;
+      const who = stageTrackerReturnedAuthor(item);
       let text = fallback;
-      if (author && st === 71) text = 'Needs @' + author;
-      else if (author && st === 72) text = 'Returned to @' + author + (item.author_kind === 'human' ? '' : "'s hive");
+      if (sup) text = 'Superseded by #' + sup + ' · decide';
+      else if (who.author && st === 71) text = 'Needs @' + who.author;
+      else if (who.author && st === 72) text = 'Returned to @' + who.author + stageTrackerToolingSuffix(who.kind);
       return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
     }
 

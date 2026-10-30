@@ -863,7 +863,8 @@ func IsGitHubUpstreamUnavailable(s string) bool {
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
 // above applied to the whole line, GitHub rate-limit and pacing refusals
-// (IsGitHubRateLimited), every benignSubstrings entry, and the
+// (IsGitHubRateLimited), gateway failures (IsGitHubUpstreamUnavailable),
+// every benignSubstrings entry, and the
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
@@ -896,7 +897,7 @@ func IsBenignMessage(msg string) bool {
 		"[contribute-ws] refusing task: daily rate limit reached":
 		return true
 	}
-	if benignIOTimeout(m, m) || IsGitHubRateLimited(m) {
+	if benignIOTimeout(m, m) || IsGitHubRateLimited(m) || IsGitHubUpstreamUnavailable(m) {
 		return true
 	}
 	for _, s := range benignSubstrings {

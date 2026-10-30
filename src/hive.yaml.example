@@ -1250,6 +1250,12 @@ knowledge:
 #   kinds:                    # per-kind overrides; defaults in docs/acmm-policy-matrix.md
 #     sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
 #     hold_gate_notice: { min_level: 4 }               # hive-authored PRs only, always
+#   dedupe:                   # content-aware suppression of duplicate / burst comments (comment kinds with a body only)
+#     enabled: true
+#     same_item_ttl: 24h      # identical body on the same item is held this long
+#     burst_items: 2          # distinct items that may get one body inside burst_window; the rest are held
+#     burst_window: 60s
+#     hourly_cap: 60          # comments per repo per kind per hour; merge-path kinds exempt; -1 disables
 
 # Data directories — all persistent state
 data:

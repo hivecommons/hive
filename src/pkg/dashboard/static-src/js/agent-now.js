@@ -252,6 +252,82 @@
         ? `${r.filesChanged} file${r.filesChanged === 1 ? '' : 's'}` : '– files';
       return `<div class="oc-run-line" data-agent-run="${esc(a.name)}" title="${esc(RUN_LINE_HELP)}"><span class="rl-cost">${cost}</span>${sep}<span class="rl-tokens">${toks}</span>${sep}<span class="rl-elapsed">${fmtRunElapsed(r.elapsedS)}</span>${sep}${tests}${sep}<span class="rl-files">${files}</span></div>`;
     }
+    // --- fleet cost rotor (begin) ---
+    // The RUNNING tile rotates its cost window — this hour → today → this
+    // week → this month — one phrase at a time (#15614). The agent count
+    // stays put; only the amount + window phrase crossfades. All four
+    // phrases are rendered into the same grid cell so the tile is always as
+    // wide as its widest phrase and never shifts or wraps. The rotation
+    // index is module state so a status repaint keeps the current phrase.
+    const FLEET_COST_WINDOWS = [
+      { key: 'hour', label: 'this hour', usd: 'hourUSD', priced: 'hourPriced' },
+      { key: 'day', label: 'today', usd: 'dayUSD', priced: 'windowsPriced' },
+      { key: 'week', label: 'this week', usd: 'weekUSD', priced: 'windowsPriced' },
+      { key: 'month', label: 'this month', usd: 'monthUSD', priced: 'windowsPriced' },
+    ];
+    const FLEET_COST_DWELL_MS = 4000;
+    const FLEET_COST_WINDOWS_HELP = 'today / this week / this month are the cost ledger summed from 00:00 UTC today, Monday 00:00 UTC (ISO week) and the 1st 00:00 UTC, plus the rise since its last reading.';
+    const _fleetCost = { idx: 0, started: false, hover: false, lastAdvance: -Infinity, clock: () => Date.now() };
+    function fleetCostPhrases(f) {
+      return FLEET_COST_WINDOWS.map(w => {
+        const amount = f && f[w.priced] ? fmtUSD(f[w.usd] || 0) : '$–';
+        return { key: w.key, label: w.label, amount, text: `${amount} ${w.label}` };
+      });
+    }
+    function fleetCostTooltipLines(f) {
+      return fleetCostPhrases(f).map(p => p.text).join(' · ');
+    }
+    function fleetCostReducedMotion() {
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+    function fleetCostRotorHtml(f) {
+      const phrases = fleetCostPhrases(f);
+      const idx = _fleetCost.idx % phrases.length;
+      const spans = phrases.map((p, i) => `<span class="fcr-phrase${i === idx ? ' is-cur' : ''}" data-fleet-cost-window="${p.key}"${i === idx ? '' : ' aria-hidden="true"'}><span class="fcr-amount">${esc(p.amount)}</span> <span class="fcr-window">${esc(p.label)}</span></span>`).join('');
+      return `<span class="fleet-cost-rotor" data-fleet-cost-rotor aria-live="off">${spans}</span>`;
+    }
+    // fleetCostApply moves one rotor from prevIdx to idx. Under reduced
+    // motion the outgoing phrase is never marked, so the swap is instant.
+    function fleetCostApply(el, prevIdx, idx) {
+      const reduced = fleetCostReducedMotion();
+      el.querySelectorAll('.fcr-phrase').forEach((p, i) => {
+        const cur = i === idx;
+        p.classList.toggle('is-cur', cur);
+        p.classList.toggle('is-out', !reduced && i === prevIdx && !cur);
+        if (cur) p.removeAttribute('aria-hidden'); else p.setAttribute('aria-hidden', 'true');
+      });
+    }
+    function fleetCostPaused() {
+      return _fleetCost.hover || document.hidden === true;
+    }
+    // fleetCostTick advances every rotor on the page by one window; while
+    // hovered or hidden it leaves the index alone so the cadence resumes in
+    // step instead of jumping.
+    function fleetCostTick() {
+      if (fleetCostPaused()) return;
+      // dashboardSetInterval re-fires the callback the moment the tab is
+      // visible again; hold that early call so the cadence resumes in step.
+      const t = _fleetCost.clock();
+      if (t - _fleetCost.lastAdvance < FLEET_COST_DWELL_MS / 2) return;
+      _fleetCost.lastAdvance = t;
+      const prev = _fleetCost.idx;
+      _fleetCost.idx = (prev + 1) % FLEET_COST_WINDOWS.length;
+      document.querySelectorAll('[data-fleet-cost-rotor]').forEach(el => fleetCostApply(el, prev, _fleetCost.idx));
+    }
+    function fleetCostHostOf(node) {
+      return node && node.closest ? node.closest('[data-fleet-cost-host]') : null;
+    }
+    // The rotor rides the shared dashboard interval registry (paused while
+    // the tab is hidden) rather than adding a bare setInterval.
+    function fleetCostRotorStart() {
+      if (_fleetCost.started) return;
+      _fleetCost.started = true;
+      dashboardSetInterval('fleetCostRotor', fleetCostTick, FLEET_COST_DWELL_MS);
+      document.addEventListener('pointerover', e => { _fleetCost.hover = !!fleetCostHostOf(e.target); });
+      document.addEventListener('pointerout', e => { _fleetCost.hover = !!fleetCostHostOf(e.relatedTarget); });
+    }
+    // --- fleet cost rotor (end) ---
+
     // fleetRunStatHtml is the Governor-section twin of fleetRunStripHtml: the
     // compact strip it first landed in is display:none while the full
     // Governor section stays visible in focus mode, so without this stat the
@@ -259,14 +335,14 @@
     function fleetRunStatHtml() {
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
-      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
-      return `<div class="gov-stat" title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price; $– when a running agent's model is unpriced).&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run">${f.running || 0} · ${hour} this hour</div></div>`;
+      fleetCostRotorStart();
+      return `<div class="gov-stat fleet-run-stat" data-fleet-cost-host title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price; $– when a running agent's model is unpriced).&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</div></div>`;
     }
     function fleetRunStripHtml() {
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
-      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
-      return `<div class="gov-metric" title="Agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price)"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run">${f.running || 0} · ${hour} this hour</span></div>`;
+      fleetCostRotorStart();
+      return `<div class="gov-metric fleet-run-stat" data-fleet-cost-host title="Agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price)&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</span></div>`;
     }
 
     // Repaints every "Now:" line in place so "ago" keeps counting up (and
@@ -407,4 +483,11 @@
     // "workflow-files" / "untrusted-author" / "branch-protection", falling
     // back to "policy"); the tooltip carries the payload's one-sentence
     // human_merge_reason_text (hivecommons/hive#14658).
-    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'policy': 'policy' };
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
+    // 090 under the breaking-change rule (human_merge_reason
+    // "breaking-change": a ⚠️ title or needs-owner-merge label,
+    // hivecommons/hive#15442): no approval lets the hive merge it, so the
+    // word is the stage's own, "Ready for human merge", and the chip says
+    // "human merge".
+    const STAGE_TRACKER_BREAKING_CHANGE_CODE = 'breaking-change';
+    const STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD = 'Ready for human merge';

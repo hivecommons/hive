@@ -44,7 +44,8 @@
       if (navItem) navItem.style.display = '';
       const topBtn = document.getElementById('welcome-topbar-btn');
       if (topBtn) topBtn.style.display = '';
-      if (!_welcomeState.dismissed) openWelcomeDialog();
+      // Kiosk displays (#15594) are unattended: nothing can dismiss a dialog.
+      if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 
     function openWelcomeDialog() {

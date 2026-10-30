@@ -377,6 +377,12 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "no claim but needs-rebase", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
 		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.ReadyForHumanMerge, rank: stageRankRole},
 		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		// A breaking-titled / needs-owner-merge PR owes no decision, only
+		// the owner's merge click: an OWNED 090 whatever the lane
+		// (hivecommons/hive#15442), fixing while it wears needs-rebase.
+		{name: "human merge required is owned 090", obs: stageObservation{Lane: stageLaneTrusted, Reason: autoMergeReasonHumanMergeRequired, Detail: approve}, want: stagelabels.ReadyForHumanMerge, rank: stageRankOwned},
+		{name: "human merge required self lane", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergeRequired}, want: stagelabels.ReadyForHumanMerge, rank: stageRankOwned},
+		{name: "human merge required needs-rebase", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergeRequired, Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
 		// A merge GitHub refuses for a missing approving review or a
 		// disabled merge method is not imminent: a person acts (085).
 		{name: "merge refused review required", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonMergeRefusedReview, Detail: approve}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
@@ -2562,5 +2568,20 @@ func TestApplyStageLabelsHonoursStageEngineOptions(t *testing.T) {
 	}
 	if rec, ok := store.Get(stageKey("acme", "widget", 1)); !ok || rec.Stage != stagelabels.Reviewed || rec.Reason != "engine says reviewed" {
 		t.Fatalf("store %+v", rec)
+	}
+}
+
+// hivecommons/hive#15499: a decision question that names the PR already
+// carrying the change is the superseded question itself and warrants the
+// closer; any other decision question stays a person's.
+func TestSupersededCheckWarrantedForRedundantOfDecision(t *testing.T) {
+	human := stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: stageReasonVerdictRequiresHuman, Human: true}
+	redundant := stageObservation{Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "close as a no-op?", RedundantOf: 15427}}}
+	other := stageObservation{Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "rename the flag?"}}}
+	if !supersededCheckWarranted(human, redundant) {
+		t.Fatal("redundant-of decision must run the superseded/empty-diff closer")
+	}
+	if supersededCheckWarranted(human, other) {
+		t.Fatal("an ordinary decision question is not a supersession check")
 	}
 }

@@ -1,0 +1,18 @@
+/* ---- kiosk: unattended display mode (#15594) ----
+   `?kiosk=1` (see js/boot.js) is what the headless Twitch streamer in
+   src/deploy/stream loads. The page becomes the Hive activity monitor and
+   nothing else: no sidebar, topbar, avatar menu, chat FAB or notices, and
+   the other sections are removed from flow so the tracker fills 1920x1080.
+   Toasts and the merge banners stay — they are part of the show. */
+    body.kiosk-mode { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); cursor: none; --navbar-sticky-height: 0px; }
+    body.kiosk-mode .oc-sidebar, body.kiosk-mode .oc-sidebar-resize, body.kiosk-mode .oc-topbar,
+    body.kiosk-mode #dash-notices, body.kiosk-mode #oc-agent-detail, body.kiosk-mode .hive-chat-fab,
+    body.kiosk-mode .hive-chat-panel, body.kiosk-mode #welcome-overlay, body.kiosk-mode .nps-card { display: none !important; }
+    /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
+       display:grid!important with id specificity; beat it with (1,2,2). */
+    html body.kiosk-mode #oc-topbar[id] { display: none !important; }
+    body.kiosk-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.kiosk-mode #activity-monitor-section .dashboard-grip, body.kiosk-mode #activity-monitor-section .section-chevron { display: none !important; }
+    body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
+    body.kiosk-mode .ham-sticky { top: 0; }
+    body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }

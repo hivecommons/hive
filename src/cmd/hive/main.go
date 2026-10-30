@@ -81,6 +81,7 @@ import (
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -2569,7 +2570,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
+	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
+		return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseStrictFor(repo)
+	}
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
@@ -2578,16 +2583,33 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// episode (#15104): the request admits the PR to the fixer router —
 	// which still requires a head the hive can push to — under the shared
 	// two-attempt guard, and the lane merges the clean head on its next pass.
+	// The adoption lane opens the same episode on the hive's own copy of
+	// a contributor PR whose head would not replay onto the base
+	// (hivecommons/hive#15307), with RequestedBy naming it.
 	autoMergeOpts.RebaseResolver = automerge.RebaseResolverFunc(func(_ context.Context, req automerge.RebaseRequest) error {
-		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, mergeTrainRebaseRequester, time.Now())
+		requester := mergeTrainRebaseRequester
+		if req.RequestedBy != "" {
+			requester = req.RequestedBy
+		}
+		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, requester, time.Now())
 		return nil
 	})
+	autoMergeOpts.RebaseEpisode = func(repo string, number int) (automerge.RebaseEpisode, bool) {
+		a, ok := rebasemerge.SharedAttempts().Get(repo, number)
+		if !ok {
+			return automerge.RebaseEpisode{}, false
+		}
+		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
+	}
 	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
 		if b.cfg == nil {
 			return automerge.DefaultMergeTrainPolicy
 		}
 		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
 	}
+	// Merge-hotspot advisor intake (hotspot_advisor.go): the train's file
+	// lists and sibling conflicts are the advisor's only evidence.
+	autoMergeOpts.HotspotRecorder = hotspotRecorder{store: hotspotStore()}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
 		setMergeEligibleLaneGate(laneGate)
@@ -2781,6 +2803,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
+	b.dashSrv.SetHotspotSource(hotspotDashSource{store: hotspotStore()})
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
 			return nil
@@ -7388,6 +7411,15 @@ func runEvalCycle(
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
+	// Merge-hotspot advisor: at most hourly, score the files concurrent
+	// PRs keep colliding on (from the merge train's own records) and file
+	// one modularize issue per hotspot for the ci-maintainer lane through
+	// the writeback gate. Skipped with the other optional sweeps when the
+	// GitHub budget is tight.
+	if !budgetDecision.SkipOptional {
+		runHotspotAdvisor(ctx, cfg, ghClient, actionable, logger)
+	}
+
 	if !budgetDecision.SkipUnstick {
 		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 			PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -7809,7 +7841,7 @@ func runEvalCycle(
 			onReviewDelivered: func(msg scheduler.KickMessage) {
 				if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
 					deliveredReviewKicks = append(deliveredReviewKicks, k)
-					persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
+					persistReviewDispatchStateInProgress(reviewPlan, deliveredReviewKicks, logger)
 				}
 			},
 			onFailed: func(msg scheduler.KickMessage, err error) {
@@ -9438,7 +9470,9 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
 		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		opts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
 		opts.MergeTrain = func() automerge.MergeTrainPolicy {
 			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
@@ -10019,6 +10053,7 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if cfg != nil {
 		approveOpts.RepoAutoMergeEnabled = cfg.RepoAutoMergeEnabled
 		approveOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		approveOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		approveOpts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	approveEngine := automerge.New(ghClient, approveOpts)
@@ -10988,7 +11023,8 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
 			// The compare from the last judged head, for the delta
 			// re-review and its trivial skip (review.delta_rereview).
-			DeltaDiff: reviewDeltaDiffFor(ctx, cfg, ghr, artifact, state, fullRepo, pr.Number, pr.HeadSHA, pr.BodyDigest),
+			DeltaDiff:     reviewDeltaDiffFor(ctx, cfg, ghr, artifact, state, fullRepo, pr.Number, pr.HeadSHA, pr.BodyDigest),
+			BaseDiffEmpty: pr.BaseDiffEmpty,
 		}
 		// The linked Linear issue's text for the scope contract, read here
 		// so reviewers never need a Linear token (hivecommons/hive#14906);
@@ -11376,11 +11412,28 @@ func postReviewAcknowledgements(ctx context.Context, poster reviewCommentPoster,
 }
 
 func persistReviewDispatchState(plan review.DispatchPlan, delivered []review.DispatchKick, logger *slog.Logger) {
+	writeReviewDispatchState(plan, func(planned []review.DispatchKick) review.DispatchState {
+		return review.ConfirmDelivered(plan.State, planned, delivered)
+	}, logger)
+}
+
+// persistReviewDispatchStateInProgress is the persist made while the kick pass
+// is still delivering: it keeps the pending rows of planned kicks not yet
+// confirmed, so a verdict from a kick still in flight binds to its dispatch
+// (hivecommons/hive#15559). The end-of-pass persistReviewDispatchState drops
+// the kicks that never landed.
+func persistReviewDispatchStateInProgress(plan review.DispatchPlan, delivered []review.DispatchKick, logger *slog.Logger) {
+	writeReviewDispatchState(plan, func([]review.DispatchKick) review.DispatchState {
+		return review.ConfirmDeliveredInProgress(plan.State, delivered)
+	}, logger)
+}
+
+func writeReviewDispatchState(plan review.DispatchPlan, confirm func(planned []review.DispatchKick) review.DispatchState, logger *slog.Logger) {
 	planned := append(append([]review.DispatchKick(nil), plan.ReviewKicks...), plan.FixKicks...)
 	if plan.State.GeneratedAt.IsZero() && len(planned) == 0 {
 		return
 	}
-	state := review.ConfirmDelivered(plan.State, planned, delivered)
+	state := confirm(planned)
 	if err := review.WriteDispatchState("", state); err != nil {
 		logger.Warn("failed to persist review dispatch state", "error", err)
 	}
