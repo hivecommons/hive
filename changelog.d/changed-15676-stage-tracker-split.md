@@ -1,0 +1,1 @@
+- Split the `stage_tracker_decision.go` and `stage_tracker_merge_train.go` merge hotspots in `src/pkg/dashboard` into four files each (`stage_tracker_decision_{lanes,human_merge,pr}.go`, `stage_tracker_merge_train_{overlap,postpass,eta}.go`). Pure move of whole top-level declarations within the same package; no behaviour change and no exported API change. (#15676, #15678)
