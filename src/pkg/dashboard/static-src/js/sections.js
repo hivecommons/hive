@@ -74,6 +74,12 @@
       return `<button type="button" class="config-info section-settings-gear" data-section-settings="1" data-action="${esc(action)}" data-stop="1"${extraAttrs || ''} title="${esc(title || (label + ' settings'))}" aria-label="${esc(label)} settings"><svg class="section-settings-gear-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M13.3 2.25h-2.6l-.42 2.66a7.46 7.46 0 0 0-1.24.52L6.86 3.84 5.02 5.68 6.61 7.86c-.22.4-.4.82-.52 1.25l-2.66.42v2.6l2.66.42c.13.43.3.85.52 1.25l-1.59 2.18 1.84 1.84 2.18-1.59c.4.22.81.39 1.24.52l.42 2.66h2.6l.42-2.66c.43-.13.85-.3 1.24-.52l2.18 1.59 1.84-1.84-1.59-2.18c.22-.4.4-.82.52-1.25l2.66-.42v-2.6l-2.66-.42a7.4 7.4 0 0 0-.52-1.25l1.59-2.18-1.84-1.84-2.18 1.59c-.4-.22-.81-.39-1.24-.52l-.42-2.66ZM12 14.9a2.9 2.9 0 1 0 0-5.8 2.9 2.9 0 0 0 0 5.8Z"/></svg></button>`;
     }
 
+    // Pop out / full screen / return (hivecommons/hive#15829), rendered next to
+    // the activity monitor's gear; handlers live in js/tracker-popout.js and
+    // css/popout.css decides which of the three show in which mode.
+    const STAGE_TRACKER_HEADER_TOOLS_HTML = '<button type="button" class="config-info section-settings-gear ham-header-tool ham-popout-btn" id="activity-monitor-popout" data-action="openStageTrackerPopout" data-stop="1" title="Pop out — open the activity monitor in its own window, for another monitor" aria-label="Pop out the Hive activity monitor into its own window">⧉</button>'
+      + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
+      + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
       'governor': { title: '🚦 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
@@ -101,7 +107,7 @@
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
-      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word

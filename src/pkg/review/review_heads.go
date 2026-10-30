@@ -196,7 +196,7 @@ func (p *DispatchPlan) dispatchHeads(pr PullRequest, reviewers []AgentCapability
 			ReviewModel:          reviewer.Model,
 			Delta:                delta,
 		})
-		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Head: m.Head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta)})
+		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Head: m.Head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 		p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Agent: reviewer.Name, Head: m.Head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(reviewer.Model), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 		availableSlots--
 	}
@@ -235,7 +235,7 @@ func (p *DispatchPlan) dispatchCombinedHeads(pr PullRequest, keys []string, grou
 			ReviewModel:          reviewer.Model,
 			Delta:                delta,
 		})
-		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspectives[0], Perspectives: perspectives, Head: head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta)})
+		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspectives[0], Perspectives: perspectives, Head: head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 		for _, persp := range perspectives {
 			p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: persp, Agent: reviewer.Name, Head: head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(reviewer.Model), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 		}
