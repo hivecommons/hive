@@ -426,6 +426,9 @@
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-lineage:hover { color: var(--text); }
+    .ham-also-closes { color: var(--muted); }
+    .ham-also-closes a { color: inherit; text-decoration: none; }
+    .ham-also-closes a:hover { color: var(--text); text-decoration: underline; }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
     .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
@@ -563,12 +566,15 @@
     .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
     .ham-queue-train:first-of-type { margin-top: 0; }
     .ham-queue-stalled { color: var(--yellow); }
+    .ham-preparation-list li { grid-template-columns: auto minmax(0, 1fr); }
+    .ham-preparation-list .ham-merged-meta { white-space: normal; overflow-wrap: anywhere; }
     /* Inside a lit chevron the word keeps the chevron's ink: ochre on the
        amber fill was invisible, so a stalled train's chevrons read empty
        (just the ⟳ and the actor glyph). */
     .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
-    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; position: relative; overflow: hidden; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
     .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
     .merge-banner-head { font-weight: var(--fw-semibold); }

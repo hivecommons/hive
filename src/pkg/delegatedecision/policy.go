@@ -301,6 +301,13 @@ type Input struct {
 	ReviewerRequiresHuman bool
 	ReviewerFinding       string
 	SecurityFinding       bool
+	// HiveSuperseding: the hive App's own superseding copy of another PR
+	// (hive-authored, body declares `Supersedes #N`). The owner's rule is
+	// that it auto-merges with no operator decision; HiveSupersederHardStop
+	// is the one stagelabels.HiveSupersederHardStop* token that parked it
+	// anyway ("" when the park is an ordinary one the rule overrides).
+	HiveSuperseding        bool
+	HiveSupersederHardStop string
 }
 
 // CIRed reports a head that is not green because a check failed (or none
@@ -653,6 +660,9 @@ func decidePR(in Input) Decision {
 	if OwnerOnly(in) {
 		return ownerOnlyDecision(in, "secrets, PATs and org permissions are the owner's alone")
 	}
+	if d, ok := decideHiveSuperseder(in, ref); ok {
+		return d
+	}
 	if in.SentinelAlert {
 		if !in.TrustedAuthor {
 			return recommendOnly("sentinel-untrusted", "a sentinel alert on a PR from an author without write access is a human review", "review the sentinel finding on "+ref+" and remove the sentinel label if intended")
@@ -783,6 +793,33 @@ func decideAdoptedByHive(in Input, ref string) (Decision, bool) {
 		Rationale: "the hive adopted " + ref + " in place and owns its branch, so the reviewer's finding is the hive's own fixer's to address — not the contributor's and not a person's (hivecommons/hive#15722)",
 		Actions:   []Action{decisionComment(text)},
 	}, true
+}
+
+// RuleHiveSuperseder is the owner's superseder rule: "if a pr is superseded
+// by a pr that a hive agent creates, it should auto merge" — the only
+// exception being the sentinel or some other emergent problem with the PR.
+const RuleHiveSuperseder = "hive-superseder-automerge"
+
+// decideHiveSuperseder applies RuleHiveSuperseder to the hive's own
+// superseding PR. Without a hard stop the PR is released (the lane merges
+// it once CI/review are clean; an ordinary reviewer finding is the fixer's,
+// not a decision). With a hard stop the delegate only recommends, naming
+// the stop, because that is exactly the case the owner reserved.
+func decideHiveSuperseder(in Input, ref string) (Decision, bool) {
+	if in.Kind != KindPR || !in.HiveSuperseding {
+		return Decision{}, false
+	}
+	if stop := strings.TrimSpace(in.HiveSupersederHardStop); stop != "" {
+		return recommendOnly(RuleHiveSuperseder,
+			"the hive's superseding PR auto-merges by the owner's rule, except for the sentinel or an emergent problem — and this one has one: "+stop,
+			"look at "+ref+" ("+stop+"): clear the stop (acknowledge the sentinel finding, release the hold, or fix the head) and the lane merges it; else close it"), true
+	}
+	if in.SentinelAlert {
+		return Decision{}, false
+	}
+	return releasePR(RuleHiveSuperseder,
+		"approve "+ref+": hive-authored superseding PR — auto-merging once CI/review are clean (owner rule: a PR the hive creates to supersede another auto-merges; reviewer findings go to the fixer)",
+		"the owner's rule: a PR the hive creates to supersede another auto-merges with no operator decision; only the sentinel or an emergent problem (hold, exhausted fixes, red CI, unresolvable conflict) parks it"), true
 }
 
 // RuleOnePRPerIssue: the merge queue carries one PR per issue; the one it

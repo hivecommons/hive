@@ -51,6 +51,13 @@ type stageAPI struct {
 	// (hivecommons/hive#15020). Unlisted PRs answer empty lists.
 	issueComments map[int][]map[string]any
 	issueEvents   map[int][]map[string]any
+	// statefulComments makes POST /issues/N/comments persist into the
+	// GET list (ids 1001, 1002, …) and accepts PATCH /issues/comments/ID,
+	// recording each edit in commentEdits: the quiet-notification tests
+	// need the status comment to survive between sweeps.
+	statefulComments bool
+	posted           map[int][]map[string]any
+	commentEdits     []string
 }
 
 type stageCommitFixture struct {
@@ -115,7 +122,21 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			if out == nil {
 				out = []map[string]any{}
 			}
+			out = append(out, api.posted[n]...)
 			_ = json.NewEncoder(w).Encode(out)
+		case api.statefulComments && r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/issues/comments/"):
+			id, _ := strconv.ParseInt(strings.TrimPrefix(path, "/repos/acme/widget/issues/comments/"), 10, 64)
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			for _, list := range api.posted {
+				for _, c := range list {
+					if c["id"] == id {
+						c["body"] = body["body"]
+					}
+				}
+			}
+			api.commentEdits = append(api.commentEdits, body["body"])
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "body": body["body"]})
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && strings.HasSuffix(path, "/events"):
 			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), "/events"))
 			out := api.issueEvents[n]
@@ -169,8 +190,17 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			api.comments = append(api.comments, body["body"])
+			id := int64(1)
+			if api.statefulComments {
+				n, _ := strconv.Atoi(strings.TrimSuffix(path[strings.LastIndex(path, "/issues/")+len("/issues/"):], "/comments"))
+				if api.posted == nil {
+					api.posted = map[int][]map[string]any{}
+				}
+				id = int64(1000 + len(api.comments))
+				api.posted[n] = append(api.posted[n], map[string]any{"id": id, "body": body["body"], "user": map[string]any{"login": testHiveAppBotLogin}})
+			}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, path)
 			w.WriteHeader(http.StatusTeapot)
@@ -2414,8 +2444,10 @@ func TestApplyStageLabelsRegressionFlapOnSameHeadCommentsOnce(t *testing.T) {
 		comments += len(api.comments)
 		api.reset()
 	}
-	if comments != 1 {
-		t.Fatalf("regression comments across 4 flaps on one head = %d, want 1", comments)
+	// A min_head_age wait is the hive's own gate: nothing failed, so since
+	// the notification-spam fix no regression note is posted for it at all.
+	if comments != 0 {
+		t.Fatalf("regression comments across 4 pending flaps on one head = %d, want 0", comments)
 	}
 }
 

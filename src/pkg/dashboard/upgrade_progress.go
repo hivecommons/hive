@@ -22,8 +22,11 @@ func (s *Server) SetUpgradeDrainSource(fn func(now time.Time) *spoke.UpgradeDrai
 // upgradeProgressInput is what buildUpgradeProgress derives from, gathered
 // at serve time so the derivation is pure and table-testable.
 type upgradeProgressInput struct {
-	Policy      *spoke.HeartbeatUpgradePolicy
-	Drain       *spoke.UpgradeDrainReport
+	Policy *spoke.HeartbeatUpgradePolicy
+	Drain  *spoke.UpgradeDrainReport
+	// Announce is the announced/restarting roll record (#15788), already
+	// filtered for staleness by the caller.
+	Announce    *upgradeAnnounceState
 	Marker      map[string]any
 	Outcome     *upgradeOutcome
 	RunningSHA  string
@@ -39,7 +42,9 @@ type upgradeProgressInput struct {
 // last landed outcome — plus the hub's policy (next window, history). It
 // uses the same state vocabulary as the hub card (#14856).
 //
+//	restart announced (SIGTERM)    → rolling, phase restarting (#15788)
 //	drain open                     → draining (countdown, agents in turn)
+//	roll announced, no kill yet    → pulling, phase announced (#15788)
 //	marker, attempts exhausted     → missed (last error)
 //	marker, retrying               → pulling
 //	outcome landed this boot       → done
@@ -69,6 +74,10 @@ func buildUpgradeProgress(in upgradeProgressInput) *spoke.UpgradeProgress {
 	}
 	history = spoke.UpgradeHistoryForDisplay(history, upgradedAt)
 
+	if a := in.Announce; a != nil && a.Restarting {
+		return announceProgress(a, in.RunningSHA, nextWindow, now)
+	}
+
 	if d := in.Drain; d != nil {
 		turns := d.Turns
 		if len(turns) == 0 {
@@ -89,6 +98,10 @@ func buildUpgradeProgress(in upgradeProgressInput) *spoke.UpgradeProgress {
 		p.Detail = "draining: " + spoke.FormatTurns(turns, in.AgentsTotal) +
 			" — proceeds in " + spoke.FormatShortDuration(remaining)
 		return p
+	}
+
+	if a := in.Announce; a != nil {
+		return announceProgress(a, in.RunningSHA, nextWindow, now)
 	}
 
 	if m := in.Marker; m != nil {
@@ -203,6 +216,7 @@ func (s *Server) upgradeProgress(status *StatusPayload, now time.Time) *spoke.Up
 	s.versionMu.RUnlock()
 	in := upgradeProgressInput{
 		Policy:    policy,
+		Announce:  liveUpgradeAnnounce(s.upgradeAnnounce.get(), now),
 		Marker:    readUpgradeMarker(),
 		Outcome:   readUpgradeOutcome(),
 		StartedAt: s.startedAt,

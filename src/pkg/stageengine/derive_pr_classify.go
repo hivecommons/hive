@@ -396,6 +396,22 @@ func ClassifyStage(o stageObservation) stageVerdict {
 			// the App's own — as superseded, never "waiting its turn".
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
+		// Items that have not passed the review or CI is not green should
+		// not be (a) ready for merge, (b) in a merge train
+		// (hivecommons/hive#15825): the train seats only heads the lane
+		// found green and reviewed, and a seat never outranks what this
+		// head's own evidence says.
+		if VerdictBlocks(o.Detail) {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: StageVerdictReason(o.Detail)}
+		}
+		if name := o.Detail.RedCheck(o.HeadSHA); name != "" {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+		}
+		if train.State == prstage.MergeTrainStateRebasing {
+			// The hive is rebasing it: the head it pushes has no CI and no
+			// verdicts yet, so it is being fixed (070), not merge-queued.
+			return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned}
+		}
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {
@@ -585,6 +601,26 @@ func PreserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs st
 		return stageVerdict{}, false
 	}
 	return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
+}
+
+// PreserveStageOnStaleDecisionAnswer keeps a PR parked at 085 when the only
+// thing pulling it back to its fixing stage is a trusted human's answered
+// decision on a head that has not moved since, and no fixer will act on
+// that answer (fixerExcluded: exhausted, no enabled fixer, …). Without it
+// the flip to 070 reset the record's dwell and stripped stage/stalled
+// ("removed:[stage/stalled] reason:contributor-lane:decision-answered" on
+// hive's own #15308, hivecommons/hive#15744) while nobody was fixing.
+func PreserveStageOnStaleDecisionAnswer(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict, fixerExcluded bool) (stageVerdict, bool) {
+	if !hadPrev || !fixerExcluded || prev.Stage != stagelabels.NeedsDecision {
+		return stageVerdict{}, false
+	}
+	if verdict.Terminal || verdict.Stage != FixingStage(obs) || verdict.Reason != StageReasonDecisionAnswered {
+		return stageVerdict{}, false
+	}
+	if prev.ActivityHead == "" || obs.HeadSHA == "" || prev.ActivityHead != obs.HeadSHA {
+		return stageVerdict{}, false
+	}
+	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: prev.Reason}, true
 }
 
 // AuthorSideDone reports whether the PR has nothing left for its author to

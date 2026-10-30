@@ -47,6 +47,7 @@ const {
   redactPiCredentials,
   piReadiness,
 } = require('./pi-backend.js');
+const { checkRuntime: checkMlxRuntime } = require('./mlx-backend.js');
 // Pure pane-classification (kubestellar/hive#6429): readiness/login/onboarding
 // tables, the busy/idle/blocked/error state machine, the blocked-on-human
 // reason breakdown, the modal-dismiss keystroke table, and the pane-tail/
@@ -3224,6 +3225,10 @@ function resolveBackendShell() {
 // play — agy's effort is conditional on exactly that.
 function modelFlagFor() {
   if (BACKEND === 'pi' && !PI_SELECTION.valid) throw new Error(PI_SELECTION.error);
+  if (BACKEND === 'pi') checkMlxRuntime(MODEL, PI_ENV);
+  if (BACKEND === 'pi' && PI_SELECTION.provider === 'mlx') {
+    return `--model ${MODEL} --extension ${shellQuote(path.join(__dirname, 'mlx-pi-extension.js'))}`;
+  }
   return MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? `--model ${MODEL}` : '';
 }
 
@@ -3919,6 +3924,7 @@ function buildHeadlessArgv(prompt) {
   const spec = HEADLESS_BACKENDS[BACKEND];
   if (!spec) return null;
   if (BACKEND === 'pi' && !PI_SELECTION.valid) throw new Error(PI_SELECTION.error);
+  if (BACKEND === 'pi') checkMlxRuntime(MODEL, PI_ENV);
   const { cmd, perm } = resolveBackend();
   const permArgs = perm ? perm.split(/\s+/).filter(Boolean) : [];
   const modelArgs = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? ['--model', MODEL] : [];
@@ -3937,7 +3943,9 @@ function buildHeadlessArgv(prompt) {
   const claudeEffortArgs = BACKEND === 'claude' && effectiveReasoningEffort()
     ? ['--effort', effectiveReasoningEffort()]
     : [];
-  const flagArgs = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...museEffortArgs, ...claudeEffortArgs];
+  const mlxArgs = BACKEND === 'pi' && PI_SELECTION.provider === 'mlx'
+    ? ['--extension', path.join(__dirname, 'mlx-pi-extension.js')] : [];
+  const flagArgs = [...permArgs, ...modelArgs, ...mlxArgs, ...reasoningArgs, ...agyEffortArgs, ...museEffortArgs, ...claudeEffortArgs];
   // Sub-command-first CLIs parse their options on the sub-command, not the
   // root binary, so the one-shot token has to lead (see flagsAfterCommand).
   const args = spec.flagsAfterCommand
@@ -9900,6 +9908,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
       writeHeadlessStatus(HEADLESS_STATE_FAILED, { result: 'failed', reason: PI_SELECTION.error });
     }
     process.exit(1);
+  }
+  if (BACKEND === 'pi') {
+    try { checkMlxRuntime(MODEL, PI_ENV); } catch (error) {
+      console.error(`FATAL: ${error.message}`);
+      if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
+        writeHeadlessStatus(HEADLESS_STATE_FAILED, { result: 'failed', reason: error.message });
+      }
+      process.exit(1);
+    }
   }
   // Warm the capability cache BEFORE the first hub connection. detectCapabilities()
   // is called from the auth_challenge handler, and the hub bounds a handshake at

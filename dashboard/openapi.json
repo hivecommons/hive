@@ -29621,6 +29621,73 @@
         }
       }
     },
+    "/api/upgrade/announce": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Announce a pod roll before it happens",
+        "description": "Marks this spoke's upgradeProgress as state=pulling/phase=announced with the given target and publishes an SSE `upgrading` event so every open dashboard shows the upgrade animation before the pod is killed (#15788). Used by the hub (also delivered via the heartbeat response) and by operator scripts ahead of `kubectl rollout restart`. A SIGTERM afterwards publishes phase=restarting from the same record; an announce with no kill expires after 15 minutes. Requires owner role.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "description": "Commit SHA or image tag the pod restarts onto; omit for a plain restart"
+                  },
+                  "version": {
+                    "type": "string",
+                    "description": "Alias of target"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "hub",
+                      "operator"
+                    ],
+                    "description": "Who is rolling the pod; anything else is recorded as operator"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Announce recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "upgradeProgress": {
+                      "type": "object",
+                      "description": "The spoke's upgradeProgress as now reported by /api/status and /api/version (state, phase, source, target, from, detail, startedAt)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON body"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
     "/api/snapshot": {
       "get": {
         "tags": [
