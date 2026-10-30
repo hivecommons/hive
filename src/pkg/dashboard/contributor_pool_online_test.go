@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -72,5 +74,49 @@ func TestBuildContributorPoolStatusOnline(t *testing.T) {
 	}
 	if got.PresenceWindow != "15m" {
 		t.Fatalf("presence_window = %q, want 15m", got.PresenceWindow)
+	}
+	if !reflect.DeepEqual(got.OnlineIDs, []string{"id-fresh"}) {
+		t.Fatalf("online IDs = %v, want only id-fresh", got.OnlineIDs)
+	}
+
+	// A second session for the same contributor does not add another row.
+	hub.connections["c3"] = &ContributorConnection{connID: "c3", profile: &ContributorProfile{ContributorID: "id-fresh", GitHubUsername: "fresh"}, lastPong: time.Now()}
+	assertPool := func(want []string) {
+		t.Helper()
+		pool := s.BuildContributorPoolStatus()
+		if !reflect.DeepEqual(pool.OnlineIDs, want) || pool.Online != len(want) || pool.Registered != 3 {
+			t.Fatalf("online IDs/count = %v/%d, registered %d; want %v/%d, registered 3", pool.OnlineIDs, pool.Online, pool.Registered, want, len(want))
+		}
+	}
+	assertPool([]string{"id-fresh"})
+	delete(hub.connections, "c1")
+	assertPool([]string{"id-fresh"})
+	delete(hub.connections, "c3")
+	assertPool([]string{})
+	hub.connections["c2"].lastPong = time.Now()
+	assertPool([]string{"id-stale"})
+
+	// The zero-state is an explicit array, not unavailable/null.
+	empty := (&Server{}).BuildContributorPoolStatus()
+	data, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(data, &payload); err != nil || string(payload["online_ids"]) != "[]" {
+		t.Fatalf("empty pool must encode online_ids: [], got %s (%v)", data, err)
+	}
+}
+
+func TestOnlineContributorIDs(t *testing.T) {
+	now := time.Now()
+	profiles := []ContributorProfile{
+		{ContributorID: "clanker-z", GitHubUsername: "Zed"},
+		{ContributorID: "clanker-a", GitHubUsername: "Amy"},
+		{ContributorID: "clanker-offline", GitHubUsername: "Offline"},
+	}
+	seen := map[string]time.Time{"zed": now, "amy": now.Add(-15 * time.Minute), "offline": now.Add(-16 * time.Minute), "unknown": now}
+	if got, want := onlineContributorIDs(profiles, seen, 15*time.Minute, now), []string{"clanker-a", "clanker-z"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("online IDs = %v, want %v (not GitHub usernames or unknown/offline relays)", got, want)
 	}
 }
