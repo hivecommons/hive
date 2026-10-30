@@ -1626,21 +1626,33 @@ func TestTrySweepContributorLanePRSoakTiming(t *testing.T) {
 	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: tracker})
 	ctx := context.Background()
 
-	// First green observation: soak starts now, nothing merges.
-	_, reason, err := engine.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy)
-	if err != nil || reason != contributorLaneReasonSoaking+"(remaining=2h0m0s)" {
+	// First green observation: soak starts now, nothing merges. The reason
+	// is the bare token — the countdown is not in it (hivecommons/hive#15729:
+	// a reason that moved every pass re-stamped the stage record); the
+	// clock rides on the evaluation.
+	eval, reason, err := engine.evaluateContributorLanePR(ctx, "widget", "acme", "widget", 7, policy, false)
+	if err != nil || reason != contributorLaneReasonSoaking {
 		t.Fatalf("first pass reason=%q err=%v", reason, err)
+	}
+	if !eval.soakStartedAt.Equal(clock.at) || eval.soakRemaining != 2*time.Hour {
+		t.Fatalf("first pass soak clock = %v / %v, want %v / 2h", eval.soakStartedAt, eval.soakRemaining, clock.at)
 	}
 	firstGreen, ok := tracker.FirstGreen("acme", "widget", 7, "sha7")
 	if !ok || !firstGreen.Equal(clock.at) {
 		t.Fatalf("first green = %v ok=%v, want %v", firstGreen, ok, clock.at)
 	}
 
-	// Half-way through the soak the remaining time is reported.
+	// Half-way through the soak the reason is unchanged; the clock counts.
 	clock.advance(time.Hour)
-	_, reason, err = engine.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy)
-	if err != nil || reason != contributorLaneReasonSoaking+"(remaining=1h0m0s)" {
+	eval, reason, err = engine.evaluateContributorLanePR(ctx, "widget", "acme", "widget", 7, policy, false)
+	if err != nil || reason != contributorLaneReasonSoaking {
 		t.Fatalf("mid-soak reason=%q err=%v", reason, err)
+	}
+	if !eval.soakStartedAt.Equal(firstGreen) || eval.soakRemaining != time.Hour {
+		t.Fatalf("mid-soak clock = %v / %v, want %v / 1h", eval.soakStartedAt, eval.soakRemaining, firstGreen)
+	}
+	if _, reason, err = engine.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy); err != nil || reason != contributorLaneReasonSoaking {
+		t.Fatalf("mid-soak sweep reason=%q err=%v", reason, err)
 	}
 	if got, _ := tracker.FirstGreen("acme", "widget", 7, "sha7"); !got.Equal(firstGreen) {
 		t.Fatalf("first green moved to %v", got)
@@ -1671,9 +1683,9 @@ func TestTrySweepContributorLanePRSoakSurvivesRestart(t *testing.T) {
 	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: tracker})
 	ctx := context.Background()
 
-	_, reason, err := engine.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy)
-	if err != nil || reason != contributorLaneReasonSoaking+"(remaining=30m0s)" {
-		t.Fatalf("fresh process reason=%q err=%v, want 30m remaining from the check's completed_at", reason, err)
+	eval, reason, err := engine.evaluateContributorLanePR(ctx, "widget", "acme", "widget", 7, policy, false)
+	if err != nil || reason != contributorLaneReasonSoaking || eval.soakRemaining != 30*time.Minute {
+		t.Fatalf("fresh process reason=%q remaining=%v err=%v, want 30m remaining from the check's completed_at", reason, eval.soakRemaining, err)
 	}
 	if first, ok := tracker.FirstGreen("acme", "widget", 7, "sha7"); !ok || !first.Equal(clock.at.Add(-90*time.Minute)) {
 		t.Fatalf("first green = %v ok=%v, want seeded from completed_at", first, ok)
@@ -1692,8 +1704,8 @@ func TestTrySweepContributorLanePRSoakSurvivesRestart(t *testing.T) {
 	api2 := newContributorLaneAPI(t, &fx2)
 	defer api2.Close()
 	engine2 := newContributorLaneEngine(api2.URL, policy, clock, Options{ContributorSoak: NewContributorSoakTracker()})
-	if _, reason, err := engine2.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy); err != nil || reason != contributorLaneReasonSoaking+"(remaining=2h0m0s)" {
-		t.Fatalf("future completed_at reason=%q err=%v", reason, err)
+	if eval, reason, err := engine2.evaluateContributorLanePR(ctx, "widget", "acme", "widget", 7, policy, false); err != nil || reason != contributorLaneReasonSoaking || eval.soakRemaining != 2*time.Hour {
+		t.Fatalf("future completed_at reason=%q remaining=%v err=%v", reason, eval.soakRemaining, err)
 	}
 }
 
@@ -1860,9 +1872,6 @@ func TestContributorLanePolicyHelpers(t *testing.T) {
 	}
 	if got := p.excludedLabel([]string{"ok"}); got != "" {
 		t.Fatalf("excludedLabel = %q, want empty", got)
-	}
-	if got := contributorLaneSoakReason(90*time.Minute + 20*time.Second); got != "contributor-lane:soaking(remaining=1h30m0s)" {
-		t.Fatalf("soak reason = %q", got)
 	}
 	var nilEngine *Engine
 	if nilEngine.currentContributorLanePolicy().Enabled {

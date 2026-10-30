@@ -17688,7 +17688,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: key → the fields the event line watches.
     function stageTrackerStateMap(items) {
       const out = {};
-      const put = (key, it) => { out[key] = { stage: Number(it.stage) || 0, label: it.stage_label || '', caption: it.caption || '', kind: it.kind || '', mirrored: !!it.mirrored, mods: (Array.isArray(it.modifiers) ? it.modifiers : []).slice().sort(), rework: it.rework && it.rework.state ? String(it.rework.state) : '', reworkActor: it.rework && it.rework.actor ? String(it.rework.actor) : '' }; };
+      const put = (key, it) => { out[key] = { stage: Number(it.stage) || 0, label: it.stage_label || '', caption: it.caption || '', noteAt: it.note_changed_at || '', kind: it.kind || '', mirrored: !!it.mirrored, mods: (Array.isArray(it.modifiers) ? it.modifiers : []).slice().sort(), rework: it.rework && it.rework.state ? String(it.rework.state) : '', reworkActor: it.rework && it.rework.actor ? String(it.rework.actor) : '' }; };
       for (const it of (Array.isArray(items) ? items : [])) {
         if (!it || !it.kind || !(Number(it.number) > 0)) continue;
         put(stageTrackerItemKey(it), it);
@@ -17757,13 +17757,43 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerEventsNext(events, prevStates, nextStates, stages, nowMs, ttlMs) {
       const ttl = typeof ttlMs === 'number' ? ttlMs : STAGE_TRACKER_EVENT_MS;
       const out = {};
-      for (const k of Object.keys(events || {})) if (nowMs - events[k].at < ttl && (!prevStates || ttl !== Infinity || nextStates[k])) out[k] = events[k];
+      for (const k of Object.keys(events || {})) if (nowMs - stageTrackerEventShownAt(events[k]) < ttl && (!prevStates || ttl !== Infinity || nextStates[k])) out[k] = events[k];
       if (!prevStates) return out;
       for (const k of Object.keys(nextStates)) {
-        const text = stageTrackerEventText(prevStates[k], nextStates[k], stages);
-        if (text) out[k] = { who: 'hive', text, at: nowMs };
+        const prev = prevStates[k], next = nextStates[k];
+        const text = stageTrackerEventText(prev, next, stages);
+        if (!text) continue;
+        if (stageTrackerSameNote(prev, next, stages)) {
+          // The same note with new words (a soak counting down): the
+          // line keeps its age and its open/tucked state; the words
+          // move in place. No line to refresh: nothing new to say.
+          if (out[k] && out[k].who === 'hive') out[k] = Object.assign({}, out[k], { text });
+          continue;
+        }
+        out[k] = stageTrackerNewEvent(text, next.noteAt, nowMs);
       }
       return out;
+    }
+    // Pure: when this tab first showed (or last re-opened) the line — its
+    // lifetime and fade count from here; its age (ev.at) may be older when
+    // the server said when the note changed.
+    function stageTrackerEventShownAt(ev) {
+      return ev && typeof ev.openAt === 'number' ? ev.openAt : (ev ? ev.at : 0);
+    }
+    // Pure: whether a caption-only change left the note's meaning alone —
+    // the server's note_changed_at did not move (hivecommons/hive#15729:
+    // "soaking — 10m left" → "9m left" is not a new hive comment).
+    function stageTrackerSameNote(prev, next, stages) {
+      if (!prev || !next || !next.noteAt || next.noteAt !== prev.noteAt) return false;
+      return !stageTrackerEventText(prev, Object.assign({}, next, { caption: prev.caption }), stages);
+    }
+    // Pure: a fresh hive line. Its age counts from when the note changed
+    // on the server (noteAt, when known and not in the future), its
+    // 30 s open window from now so it is seen.
+    function stageTrackerNewEvent(text, noteAt, nowMs) {
+      const at = noteAt ? Date.parse(noteAt) : NaN;
+      if (!(at > 0) || at >= nowMs) return { who: 'hive', text, at: nowMs };
+      return { who: 'hive', text, at, openAt: nowMs };
     }
     function stageTrackerNoteEvents(d, nowMs) {
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
@@ -17906,7 +17936,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!ev) return '';
       const nowMs = ctx && typeof ctx.nowMs === 'number' ? ctx.nowMs : Date.now();
       const auto = ctx && typeof ctx.noteTuck === 'boolean' ? ctx.noteTuck : (typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting());
-      const fading = !auto && nowMs - ev.at > STAGE_TRACKER_EVENT_MS * 2 / 3;
+      const fading = !auto && nowMs - stageTrackerEventShownAt(ev) > STAGE_TRACKER_EVENT_MS * 2 / 3;
       const open = !auto || stageTrackerNoteOpen(ev, nowMs, auto);
       const who = ev.who === 'you' ? 'You' : 'Hive';
       const body = `<span class="cue-event-who">${esc(who)}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`;
