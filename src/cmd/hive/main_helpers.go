@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/holdguard"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
@@ -36,6 +37,40 @@ func getHoldGuardStore() *holdguard.Store {
 		holdGuardStore = holdguard.Load(holdGuardLedgerPath)
 	})
 	return holdGuardStore
+}
+
+// holdGuardHumanChangeRequests resolves the decision ledger the hold guard
+// reads operator approvals from; tests swap in a memory-only store.
+var holdGuardHumanChangeRequests = func() review.HumanChangeRequestStore {
+	return review.DefaultHumanChangeRequests()
+}
+
+// holdGuardOperatorApproval reports the trusted merger whose recorded
+// approval (dashboard Approve or `/hive decision approve`,
+// pr_decision_operator.go) stands against exactly headSHA on repo#number.
+// The record is head-scoped — a newer head supersedes it — so it is proof
+// the person reviewed the tree on the branch now, which the gate-lift
+// timeline cannot show when the hive removed the label for them. Fails
+// closed: no record, a change request, an unknown or untrusted actor, or an
+// empty head never cover the head.
+func holdGuardOperatorApproval(cfg *config.Config, repo string, number int, headSHA string) (string, bool) {
+	headSHA = strings.TrimSpace(headSHA)
+	if cfg == nil || headSHA == "" {
+		return "", false
+	}
+	store := holdGuardHumanChangeRequests()
+	if store == nil {
+		return "", false
+	}
+	req, ok := store.For(repo, number, headSHA)
+	if !ok || !req.IsApproval() || !strings.EqualFold(strings.TrimSpace(req.HeadSHA), headSHA) {
+		return "", false
+	}
+	login := strings.TrimSpace(req.Actor)
+	if !trustedMergerFunc(cfg)(login) {
+		return "", false
+	}
+	return login, true
 }
 
 // enforceHoldGuard closes #5589: a hold-gated PR that accumulates commits —
@@ -160,6 +195,18 @@ func enforceHoldGuard(
 					"repo", repo, "pr", pr.Number)
 				continue
 			}
+		}
+		// A dashboard Approve (or `/hive decision approve`) is recorded
+		// against the exact head the person saw; the hive then removes the
+		// gate label on their behalf, so the timeline below shows a hive
+		// lift that can never cover the head. The head-keyed approval by a
+		// trusted merger is the review the guard asks for: accept it.
+		if login, ok := holdGuardOperatorApproval(cfg, repo, pr.Number, pr.HeadSHA); ok {
+			store.Clear(repo, pr.Number)
+			logger.Info("hold guard: current head approved by a trusted merger through the hive's decision record; head accepted",
+				"repo", repo, "pr", pr.Number,
+				"recorded_head", rec.HeadSHA, "current_head", pr.HeadSHA, "approver", login)
+			continue
 		}
 		if ghClient != nil {
 			// A trusted human who removed the gate label AFTER the current
