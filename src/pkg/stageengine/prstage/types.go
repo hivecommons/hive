@@ -184,6 +184,12 @@ type ReviewVerdict struct {
 	Verdict           string
 	DecisionRequested bool
 	DecisionQuestion  string
+	// DecisionFinding names what the review found that makes the decision
+	// a person's (duplicate, risk-class question, finding at the human
+	// threshold, reviewer high-risk marker). A decision-requested verdict
+	// without one never reaches the stage engine: the aggregate resolves
+	// it as advisory (review.AggregateReports, owner rule 2026-10-29).
+	DecisionFinding string
 	// RedundantOf is the PR the reviewer named as already carrying this
 	// change (`<!-- hive-redundant-of: #N -->`): the decision is a close,
 	// and for the hive's own PR the lane performs it (hivecommons/hive#15499).

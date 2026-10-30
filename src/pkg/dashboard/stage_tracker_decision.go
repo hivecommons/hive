@@ -838,6 +838,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Blocker = "Neither the author nor the hive can make CI run for this fork PR."
 	case reviewerDeferred:
 		d.Blocker = "The hive will not merge until a person decides."
+		if verdict != nil && strings.TrimSpace(verdict.DecisionFinding) != "" {
+			d.Blocker = "The review found: " + strings.TrimSpace(verdict.DecisionFinding) + ". " + d.Blocker
+		}
 	}
 	if held && selfHold == nil {
 		if d.Blocker != "" {

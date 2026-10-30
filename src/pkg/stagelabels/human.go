@@ -122,6 +122,10 @@ type Evidence struct {
 	// DecisionQuestion is the maintainer-facing question from the reviewer
 	// verdict/comment, when the swarm explicitly deferred a product call.
 	DecisionQuestion string
+	// DecisionFinding is what the review found that makes the question a
+	// person's — printed so the comment and tracker say WHY, not just that
+	// a decision is owed (hivecommons/hive, owner rule 2026-10-29).
+	DecisionFinding string
 	// HumanSummaries are reviewer summaries for requires_human verdicts that
 	// did not carry a structured decision question.
 	HumanSummaries []string
@@ -352,6 +356,9 @@ func RouteHuman(e Evidence) Route {
 			break
 		}
 		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
+		if f := strings.TrimSpace(e.DecisionFinding); f != "" {
+			decide = append(decide, "the review found: "+f)
+		}
 		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
 			if decisionQuestionPlaceholderMention(q) {
 				q += " _(the reviewer named no specific person; repository approvers/owners, this is yours)_"

@@ -11180,6 +11180,7 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		MaxPerspectivesPerPR:       cfg.Review.MaxPerspectivesPerPR,
 		Perspectives:               reviewPerspectiveSet(cfg, logger),
 		SelfAuthoredDecisionPolicy: cfg.Review.EffectiveSelfAuthoredDecisionPolicy(),
+		SensitivePaths:             cfg.Security.SensitivePaths,
 		ModelStamps:                reviewModelStamps(logger),
 		ExpectedHeads:              cfg.ExpectedReviewHeads(),
 		MissingHeads:               reviewMissingHeads(),
