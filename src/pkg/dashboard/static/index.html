@@ -1489,6 +1489,7 @@
     .ham-issue-closed .ham-closed-not-planned { color: var(--text-faint); font-style: italic; }
     /* Issue slot naming an issue the PR only refers to (`Refs #N`, a `(#N, part 1)` title): a muted "refs" chip tells it from a closing link. */
     .ham-issue-refs-chip { flex: 0 0 auto; margin-left: var(--sp-1); font-style: italic; }
+    .ham-title-tag { flex: 0 0 auto; font-family: var(--font-mono); }
     /* Repo chip before the number: monospace, tinted per repo from the
        --ham-repo-tint-N palette (slot = string hash), muted for the primary
        repo; a button that sets the Repo filter. Owner/repo rides its title. */
@@ -1598,6 +1599,12 @@
     .ham-badge-overlap { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
     .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
+    /* Push progress on the waiting-on pill (hive PR 15784): the wait's age
+       rides last; past dashboard.stage_tracker.waiting_push_stale_h it takes
+       the muted warning tone. "@zoe pushed abc1234 · 2m" links to the commit. */
+    .ham-push-stale { color: color-mix(in srgb, var(--status-warn) 70%, var(--text-faint)); }
+    .ham-badge-push { text-decoration: none; }
+    .ham-badge-push:hover { color: var(--text-muted); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
        waits on, drawn as the same glyphs the stage chevrons use — a person
        for a human (nothing more: a human has no presence to report) or the
@@ -14881,10 +14888,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        beyond ride one. A PR still at CI / Review whose files overlap
        another open PR's carries `overlap: {behind, with, files, note}`
        instead of `merge_train` — hive's own page once drew "merge train ·
-       2 PRs · 1st: #15637" under two rows that both read CI / Review. The
-       row shows one muted badge, "overlaps #15637", whose hover is the
-       note: "overlaps #15637 (sidebar.html, index.html) — will queue
-       behind it". No rail, no ordinal, no header. */
+       2 PRs · 1st: #15637" under two rows that both read CI / Review, and
+       later "1st: #15741" over a CI / Review row while #15748 and #15755
+       sat green at 080 behind it. The lane merges ready members first,
+       so the row's lead chip stays in its own column and a small
+       secondary train chip says where it joins: "train · joins behind
+       #15748 when green" (hover: "overlaps #15748 (hive-merge.md) —
+       joins the merge train behind it when green"), or, when no member
+       of the train is ready, "train · 1st once green". No rail, no
+       ordinal, no header. */
+    // The secondary chip's lead word.
+    const STAGE_TRACKER_OVERLAP_CHIP_LEAD = 'train · ';
     // Pure: the row's overlap hint, or null when it rides a train or
     // overlaps nothing.
     function stageTrackerOverlap(item) {
@@ -14894,15 +14908,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!(Number(o.behind) > 0) && !withPRs.length) return null;
       return o;
     }
-    // Pure: the badge word — "overlaps #15637" (the PR it queues behind,
-    // else the first PR it overlaps, "+1" for the rest).
+    // Pure: the chip's words — "train · joins behind #15748 when green"
+    // (the ready front it joins behind), else "train · 1st once green"
+    // (nobody in the train is ready; this one is provisionally first).
     function stageTrackerOverlapBadgeText(item) {
       const o = stageTrackerOverlap(item);
       if (!o) return '';
-      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
-      const lead = Number(o.behind) > 0 ? Number(o.behind) : withPRs[0];
-      const rest = withPRs.filter(n => n !== lead).length;
-      return 'overlaps #' + lead + (Number(o.behind) > 0 ? '' : (rest > 0 ? ' +' + rest : ''));
+      if (Number(o.behind) > 0) return STAGE_TRACKER_OVERLAP_CHIP_LEAD + 'joins behind #' + Number(o.behind) + ' when green';
+      return STAGE_TRACKER_OVERLAP_CHIP_LEAD + '1st once green';
     }
     // Pure: the hover sentence — the server's note, else built from the
     // parts the same way.
@@ -14912,9 +14925,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (o.note) return String(o.note);
       const files = (Array.isArray(o.files) ? o.files : []).filter(Boolean);
       const paren = files.length ? ' (' + files.join(', ') + ')' : '';
-      if (Number(o.behind) > 0) return 'overlaps #' + Number(o.behind) + paren + ' — will queue behind it';
+      if (Number(o.behind) > 0) return 'overlaps #' + Number(o.behind) + paren + ' — joins the merge train behind it when green';
       const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
-      return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — merges ahead of ' + (withPRs.length > 1 ? 'them once all are ready' : 'it once both are ready');
+      return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — no member of the train is merge-ready yet; provisionally 1st, merges ahead of ' + (withPRs.length > 1 ? 'them' : 'it') + ' if it is green first';
     }
     // Pure: the muted badge beside the row's chips; '' without a hint.
     function stageTrackerOverlapBadgeHtml(item) {
@@ -16033,8 +16046,94 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const p = stageTrackerPresenceOf(item);
       if (!p || stageTrackerAdoptionTip(item)) return '';
       const ptip = stageTrackerPresenceTip(item, Date.now());
-      const tip = typeof stageTrackerReworkJoinTip === 'function' ? stageTrackerReworkJoinTip(ptip, item, Date.now()) : ptip;
-      return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc(tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}</span>`;
+      const rtip = typeof stageTrackerReworkJoinTip === 'function' ? stageTrackerReworkJoinTip(ptip, item, Date.now()) : ptip;
+      // The wait's age rides last on the pill, muted-amber once stale
+      // (hivecommons/hive#15784). Guarded: the harnesses load by name.
+      const wait = typeof stageTrackerPushWaitHtml === 'function' ? stageTrackerPushWaitHtml(item, Date.now()) : '';
+      const wtip = typeof stageTrackerPushTip === 'function' ? stageTrackerPushTip(item, Date.now()) : '';
+      const tip = wtip ? rtip + ' · ' + wtip : rtip;
+      return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc(tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}${wait}</span>`;
+    }
+
+    // Push progress on a CI / Review row (`push`: {state, login, since, sha,
+    // url, next, stale} — hivecommons/hive#15784). The chevron keeps the
+    // stage; the gray pill carries the push:
+    //   waiting — the hive waits for the author's push; the pill ends with
+    //             the wait's age ("waiting on @zoe to push · 38m"), amber
+    //             once past dashboard.stage_tracker.waiting_push_stale_h.
+    //   pushed  — a head landed and CI / the re-review for it still run:
+    //             "@zoe pushed abc1234 · 2m" (links to the commit); on an
+    //             adopted row the lineage chip says "· pushed 2m ago"
+    //             instead. The presence marker goes: the ball is back with
+    //             the hive.
+    const STAGE_TRACKER_PUSH_NEXT = { ci: 'CI running', 're-review': 're-review queued' };
+    function stageTrackerPushOf(item) {
+      const p = item && item.kind === 'pr' ? item.push : null;
+      if (!p || (p.state !== 'waiting' && p.state !== 'pushed')) return null;
+      return p;
+    }
+    // Pure: whether the author's push has landed — the row is the hive's again.
+    function stageTrackerPushedBack(item) {
+      const p = stageTrackerPushOf(item);
+      return !!(p && p.state === 'pushed');
+    }
+    // Pure: the short age of the state ("38m", "2h"); '' without a time.
+    function stageTrackerPushAge(p, nowMs) {
+      const at = Date.parse((p && p.since) || '');
+      return at > 0 ? stageTrackerAgoText(at, nowMs).replace(/ ago$/, '') : '';
+    }
+    function stageTrackerPushSha(p) {
+      return String((p && p.sha) || '').slice(0, 7);
+    }
+    // " · 38m" for the waiting pill, the age wrapped so a stale wait can take
+    // the muted-amber tone; '' unless the row waits.
+    function stageTrackerPushWaitHtml(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p || p.state !== 'waiting') return '';
+      const age = stageTrackerPushAge(p, nowMs);
+      if (!age) return '';
+      return ' · <span class="ham-push-age' + (p.stale ? ' ham-push-stale' : '') + '">' + esc(age) + '</span>';
+    }
+    // Pure: "@zoe pushed abc1234 · 2m"; '' unless the push landed.
+    function stageTrackerPushChipText(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p || p.state !== 'pushed') return '';
+      const sha = stageTrackerPushSha(p);
+      const age = stageTrackerPushAge(p, nowMs);
+      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (age ? ' · ' + age : '');
+    }
+    // Pure: whether the row's lineage chip (adopted / rebased copy) carries
+    // the push instead of a pill of its own.
+    function stageTrackerPushOnLineage(item) {
+      const l = item && item.lineage;
+      return !!(l && l.kind && l.kind !== 'superseded' && Number(l.from_number) > 0);
+    }
+    // Pure: " · pushed 2m ago" for the lineage chip; '' unless pushed.
+    function stageTrackerPushLineageSuffix(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p || p.state !== 'pushed' || !stageTrackerPushOnLineage(item)) return '';
+      const at = Date.parse(p.since || '');
+      const ago = at > 0 ? stageTrackerAgoText(at, nowMs) : '';
+      return ' · pushed' + (ago ? ' ' + ago : '');
+    }
+    // Pure: the hover line — how long the hive has waited, or what the push queued.
+    function stageTrackerPushTip(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p) return '';
+      const at = Date.parse(p.since || '');
+      const when = at > 0 ? stageTrackerAgoText(at, nowMs) + ' (' + agentNowClockTime(at, nowMs) + ')' : '';
+      const who = p.login ? '@' + p.login : 'the author';
+      if (p.state === 'waiting') return 'waiting for ' + who + ' to push' + (when ? ' since ' + when : '') + (p.stale ? ' · no push for a long time' : '');
+      const next = STAGE_TRACKER_PUSH_NEXT[p.next] || STAGE_TRACKER_PUSH_NEXT.ci;
+      return who + ' pushed' + (stageTrackerPushSha(p) ? ' ' + stageTrackerPushSha(p) : '') + (when ? ' ' + when : '') + ' · ' + next;
+    }
+    function stageTrackerPushChipHtml(item, nowMs) {
+      const text = stageTrackerPushChipText(item, nowMs);
+      if (!text || stageTrackerPushOnLineage(item)) return '';
+      const p = stageTrackerPushOf(item);
+      const tip = stageTrackerPushTip(item, nowMs);
+      const attrs = `class="ham-badge ham-badge-waiting ham-badge-push" title="${esc(tip)}" aria-label="${esc(tip)}"`;
+      return p.url ? `<a ${attrs} href="${esc(p.url)}" target="_blank" rel="noopener">${esc(text)}</a>` : `<span ${attrs}>${esc(text)}</span>`;
     }
 
     // Rework pickup on a returned PR (`rework`: {state, actor, requested_at,
@@ -16277,7 +16376,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind, item);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
-      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
+      // A 071 / 072 row whose author has pushed is back with the hive: the
+      // chevron reads the column's own word ("CI / Review"), not "Needs
+      // @author" (hivecommons/hive#15784). Guarded: the harnesses load by name.
+      const pushedBack = (cur === 71 || cur === 72) && typeof stageTrackerPushedBack === 'function' && stageTrackerPushedBack(item);
+      const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
       if (detour && (cur === 71 || cur === 72) && typeof stageTrackerReturnedWord === 'function') {
@@ -16767,6 +16870,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (presence) lines.push('Presence: ' + presence);
       const rework = typeof stageTrackerReworkTip === 'function' ? stageTrackerReworkTip(item, nowMs) : '';
       if (rework) lines.push('Rework: ' + rework);
+      const push = typeof stageTrackerPushTip === 'function' ? stageTrackerPushTip(item, nowMs) : '';
+      if (push) lines.push('Push: ' + push);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
@@ -16831,7 +16936,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerChipsHtml(item) {
-      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
+      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
@@ -17168,7 +17273,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
@@ -17214,7 +17319,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const l = item && item.lineage;
       if (!l || !l.kind) return '';
       const ago = stageTrackerAgoText(Date.parse(l.at || ''), nowMs).replace(/ ago$/, '');
-      const tail = ago ? ' · ' + ago : '';
+      // Once the head moves the chip says so instead of the adoption's age:
+      // "adopted from @x's #N · pushed 2m ago" (hivecommons/hive#15784).
+      const pushed = typeof stageTrackerPushLineageSuffix === 'function' ? stageTrackerPushLineageSuffix(item, nowMs) : '';
+      const tail = pushed || (ago ? ' · ' + ago : '');
       if (l.kind === 'superseded') return Number(l.to_number) > 0 ? 'superseded by #' + Number(l.to_number) + tail : '';
       if (!(Number(l.from_number) > 0)) return '';
       const whose = l.from_author ? '@' + l.from_author + "'s " : '';
@@ -17438,6 +17546,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tip = repo + (primary ? ' (primary repo)' : '') + (active ? ' — showing only this repo; click to show all repos' : ' — click to show only this repo');
       return `<button type="button" class="ham-repo-chip ham-repo-tint-${stageTrackerRepoTint(repo)}${primary ? ' ham-repo-primary' : ''}" data-action="hamRepoChip" data-arg0="${esc(repo)}" data-stop="1" aria-pressed="${active ? 'true' : 'false'}" title="${esc(tip)}">${esc(stageTrackerRepoShort(repo))}</button>`;
     }
+    // Every hive-filed issue title leads with its filing agent in brackets
+    // (`[scanner] …`, `[reviewer] Review backlog (security): …`). The tag is
+    // drawn once, as a chip ahead of the title, and the title text that
+    // follows no longer repeats it; the full title stays in the tooltip. A
+    // bracket that is not an agent slug (`[ACMM L0]`, `[Tests]`) is part of
+    // the subject and is left in the title.
+    function stageTrackerSplitTitleTag(title) {
+      const m = /^\s*\[([a-z0-9][a-z0-9_.-]*)\]\s*(.*)$/s.exec(String(title || ''));
+      if (!m || !m[2]) return { tag: '', text: String(title || '') };
+      return { tag: m[1], text: m[2] };
+    }
+    function stageTrackerTitleHtml(title, extraClass) {
+      const full = String(title || '');
+      const { tag, text } = stageTrackerSplitTitleTag(full);
+      const cls = 'ham-title' + (extraClass ? ' ' + extraClass : '');
+      const chip = tag ? `<span class="ham-badge ham-title-tag" title="${esc('Filed by [' + tag + ']')}">${esc(tag)}</span> ` : '';
+      return `${chip}<span class="${cls}" title="${esc(full)}">${esc(text)}</span>`;
+    }
     // Column name for a group header's distribution tooltip (as the column header draws it).
     function stageTrackerColName(idx, stages) {
       if (idx >= STAGE_TRACKER_PATH.length) return 'Merged';
@@ -17542,7 +17668,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '') || null, lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -17571,7 +17697,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         leadHtml = `<div class="ham-head-main">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
-            <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
+            ${stageTrackerTitleHtml(title)}
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${typeof stageTrackerLinkedElsewhereHtml === 'function' ? stageTrackerLinkedElsewhereHtml(item) : ''}
             ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
@@ -17583,7 +17709,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
-            ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.soft ? ` <span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}${li.closed ? ' ' + stageTrackerClosedChipHtml(item, li) : ''}
+            ${li.title ? stageTrackerTitleHtml(li.title) : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.soft ? ` <span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}${li.closed ? ' ' + stageTrackerClosedChipHtml(item, li) : ''}
           </div>`
           : `<div class="ham-head-main ham-no-issue">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
@@ -21602,6 +21728,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerMergingHold = stageTrackerMergingHoldNext(_stageTrackerMergingHold, d, _stageTrackerMergeState, raw, _stageTrackerPRItems, nowMs);
       const masked = stageTrackerMergingHoldMask(raw, _stageTrackerMergingHold, nowMs);
       if (masked.until) stageTrackerMergingHoldSchedule(masked.until - nowMs);
+      // The Merged chip holds the masked merges back too: the server
+      // already counts them, their glyph has not even launched yet.
+      _stageTrackerMergedHeld = {};
+      masked.held.forEach(k => { _stageTrackerMergedHeld[k] = true; });
       _stageTrackerPRItems = stageTrackerPRItemsOf(d);
       const next = masked.state;
       const fresh = stageTrackerNewlyMerged(_stageTrackerMergeState, next).filter(k => !_stageTrackerZapped[k]);
@@ -21935,6 +22065,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Merges whose glyph is still on its way: the count holds them back
     // until stageTrackerCelebrateTick lands them.
     var _stageTrackerCelebratePending = {};
+    // Merges the merge-gate hold (#15245) still masks as open: the server
+    // counts them already, the SPA has not read them as fresh yet, so no
+    // glyph is pending for them. Without this the drum rolled on the poll
+    // that brought the merge — a full banner-lifetime before the bee
+    // launched — and the landing found nothing left to roll.
+    var _stageTrackerMergedHeld = {};
     // Stateful: fold one payload into the state and redraw the chip. The
     // count only bumps (pop + zap) through stageTrackerCelebrateTick; a
     // plain reload draws the server's number without a flourish.
@@ -21952,13 +22088,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerMergedChip.node = document.getElementById('activity-monitor-merged') || have || null;
       return stageTrackerMergedChip.node;
     }
-    // Pure: how many in-flight merges the server already counts — the
-    // chip holds those back so the landing is when it bumps.
-    function stageTrackerMergedHoldback(state, pending) {
+    // Pure: how many merges the server already counts whose bump the chip
+    // still owes the bee — a glyph pending or in the air, or a merge the
+    // merge-gate hold masks until its flight can launch — so the landing
+    // is when it bumps.
+    function stageTrackerMergedHoldback(state, pending, held) {
       const known = {};
       for (const e of ((state && state.server && state.server.recent) || [])) known[stageTrackerMergedIdent(e.repo, e.number)] = true;
+      const keys = Object.assign({}, held || {}, pending || {});
       let n = 0;
-      for (const key of Object.keys(pending || {})) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
+      for (const key of Object.keys(keys)) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
       return n;
     }
     // Pure: the odometer columns for a change of text from `from` to `to`,
@@ -22112,15 +22251,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Stateful: whether a celebration glyph is in the air or about to be
     // (stageTrackerCelebrateMerges staggers the launches; a merge is
-    // pending from the payload that brought it). The drum and the zap
-    // wait on this; the flight's own end — its animationend, or
-    // stageTrackerAfter's timer at STAGE_TRACKER_CELEBRATE_FLY_MS when the
-    // event never fires — is what clears it.
-    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0; }
+    // pending from the payload that brought it, or masked by the merge
+    // gate's hold until then). The drum and the zap wait on this; the
+    // flight's own end — its animationend, or stageTrackerAfter's timer
+    // at STAGE_TRACKER_CELEBRATE_FLY_MS when the event never fires — is
+    // what clears it.
+    // A merge the merge-gate hold still masks counts as a flight to come:
+    // its glyph launches when the hold ends and re-reads it as fresh.
+    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0 || Object.keys(_stageTrackerMergedHeld).length > 0; }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
       const now = Date.now();
-      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending));
+      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending, _stageTrackerMergedHeld));
       // Never backwards within a tab: a server that has not caught up yet
       // (or lost a merge) does not make the number drop.
       if (txt.count > _stageTrackerMergedShown || tick) _stageTrackerMergedShown = Math.max(_stageTrackerMergedShown, txt.count);

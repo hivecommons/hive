@@ -143,7 +143,9 @@ older overlays, but new configs should use `bob.session_label`.
     cli_pinned: true             # pin the CLI so nothing auto-switches it
     launch_cmd: "/usr/bin/copilot --allow-all --model claude-sonnet-4-6"
                                  # explicit launch command (optional — hive builds
-                                 #   one from backend + model + mode when omitted)
+                                 #   one from backend + model + mode when omitted).
+                                 #   Must launch the CLI named by `backend`; see
+                                 #   "launch_cmd and backend" below.
     agent_spec: /data/agent-specs/reviewer
                                  # optional BYO-agent spec file or directory.
                                  #   When set, Hive loads agent.yaml/spec.yaml
@@ -715,6 +717,14 @@ Two consequences worth knowing:
 
 - **Model validation does not save you here.** `POST /api/model/...` checks the model against the agent's *current effective* backend, and deliberately fails **open** when that backend's model list cannot be enumerated (see `validateModelForAgent`). Codex is exactly such a backend, so `switch` to codex followed by `model` set to a Claude id is accepted. Reverse the order and the model is validated against the backend you are about to leave. Neither order gives you a checked pair.
 - **The atomic route does not restart the agent.** It persists the pair and syncs it into the live process config, so the running CLI keeps its current method until the agent next restarts. That is usually what you want for a scripted change — the two-call path pays for two restarts — but if you need the change to take effect now, restart the agent afterwards.
+
+### `launch_cmd` and `backend`
+
+`backend` is the operator-owned field; `launch_cmd` is derived from it. The two must agree: a `launch_cmd` whose executable is a different agentic CLI than `backend` names (say `backend: codex` next to `launch_cmd: /usr/bin/bob …`) is rejected by config validation, because the agent would be launched as one CLI and health-checked as another. Hive enforces this on every path that can move the two apart:
+
+- **Changing the backend clears a contradicting `launch_cmd`.** `POST /api/switch/{agent}/{backend}`, `PUT /api/config/agent/{name}/models` with a `backend`, and an ACMM pack apply that moves an agent's backend all drop a `launch_cmd` that launches the *previous* CLI, and log `launch_cmd cleared on backend switch` with the agent, the previous command and the new backend. The agent then launches on the new backend's default command. A `launch_cmd` that already launches the new backend, or a wrapper script that does not name a CLI, is kept.
+- **Saves refuse the contradiction.** `hive.yaml` and per-agent overlay writes validate the pair and return an error (surfaced as a 400 and a dashboard alert) rather than persisting a config the next boot would reject.
+- **Boot degrades instead of failing.** If a hive still boots with the contradiction in its base config (written by a version before this check), the loader drops that agent's `launch_cmd`, keeps `backend`, logs `config: dropped launch_cmd that contradicts the agent's backend …` at ERROR, and raises a dashboard alert per affected agent. The hive stays up; save the agent once from the dashboard (or fix the file) to clear the alert. A contradiction in a *per-agent overlay* is handled by the older rule: the overlay file is skipped and the agent falls back to its `hive.yaml` entry.
 
 ## Cadences and the governor
 

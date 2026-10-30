@@ -991,6 +991,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
+		s.reconcileLaunchCmdForBackend(name, &agentCfg)
 		effectiveBackend = agentCfg.Backend
 		backendChanged = backend != prevBackend
 	}
@@ -1022,13 +1023,23 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
 
+	// The reconcile above guarantees no backend/launch_cmd contradiction
+	// reaches the save guard; a failure here is an I/O problem, and the
+	// in-memory change already applied, so surface it rather than abort.
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after model update", "agent", name, "error", err)
-	}
-	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+		s.AddSystemAlert("agent-field-save-failed", "error",
+			"Could not save the model/method choice for "+name+" — it will revert on the next restart: "+err.Error())
+	} else if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
 		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after model update", "agent", name, "error", err)
+			s.AddSystemAlert("agent-field-save-failed", "error",
+				"Could not save the model/method choice for "+name+" to its agent overlay — it will revert on the next config load: "+err.Error())
+		} else {
+			s.ClearSystemAlert("agent-field-save-failed")
 		}
+	} else {
+		s.ClearSystemAlert("agent-field-save-failed")
 	}
 	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
 

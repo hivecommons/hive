@@ -475,6 +475,8 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 		jsFunc(t, html, "stageTrackerRowHtml"),
 		jsFunc(t, html, "stageTrackerPRIssueSlot"),
 		jsFunc(t, html, "stageTrackerClosedChipHtml"),
+		jsFunc(t, html, "stageTrackerSplitTitleTag"),
+		jsFunc(t, html, "stageTrackerTitleHtml"),
 		jsFunc(t, html, "stageTrackerItemURL"),
 	}, "\n") + `
 const now = Date.parse('2026-01-01T12:00:00Z');
@@ -610,6 +612,8 @@ func TestStageTrackerMotionPreviewSample(t *testing.T) {
 		jsFunc(t, html, "stageTrackerRowHtml"),
 		jsFunc(t, html, "stageTrackerPRIssueSlot"),
 		jsFunc(t, html, "stageTrackerClosedChipHtml"),
+		jsFunc(t, html, "stageTrackerSplitTitleTag"),
+		jsFunc(t, html, "stageTrackerTitleHtml"),
 		jsFunc(t, html, "stageTrackerItemURL"),
 		jsFunc(t, html, "stageTrackerItemKey"),
 		jsFunc(t, html, "stageTrackerMoveAttrs"),

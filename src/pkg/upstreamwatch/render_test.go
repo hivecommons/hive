@@ -175,7 +175,7 @@ func TestGitHubFiler_File(t *testing.T) {
 	if err != nil || n != 77 {
 		t.Fatalf("File = %d, %v", n, err)
 	}
-	if !strings.Contains(body, `"labels":["upstream/port"]`) || !strings.Contains(body, `"title":"upstream: x"`) {
+	if !strings.Contains(body, `"labels":["upstream/port"]`) || !strings.Contains(body, `"title":"[governor] upstream: x"`) {
 		t.Fatalf("request body = %s", body)
 	}
 

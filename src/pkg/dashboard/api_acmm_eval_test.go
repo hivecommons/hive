@@ -769,9 +769,11 @@ func TestHandleACMMCreateIssue_BodyFormattingAndLabels(t *testing.T) {
 		t.Fatal("expected title in captured issue request")
 	}
 	title := body["title"].(string)
-	wantTitlePrefix := "[ACMM L0] Add " + criterion.Name
-	if title != wantTitlePrefix {
-		t.Fatalf("title = %q, want %q", title, wantTitlePrefix)
+	// The dashboard files it, so the title leads with [dashboard]; the
+	// operator-facing [ACMM L0] bracket is the subject and stays.
+	wantTitle := "[dashboard] [ACMM L0] Add " + criterion.Name
+	if title != wantTitle {
+		t.Fatalf("title = %q, want %q", title, wantTitle)
 	}
 
 	issueBody := body["body"].(string)
