@@ -63,3 +63,29 @@ func TestBasePreparationStoreFileModes(t *testing.T) {
 		t.Fatalf("expected a .json and a .lock entry, got json=%v lock=%v", sawJSON, sawLock)
 	}
 }
+
+// TestBasePreparationStoreTightensExistingDirectory verifies a directory
+// created group-writable by earlier code is narrowed to the intended mode.
+func TestBasePreparationStoreTightensExistingDirectory(t *testing.T) {
+	old := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	store := NewBasePreparationStore(dir)
+	if err := store.change("owner/repo:main", func(st *basePreparation) error {
+		st.Owner.Number = 42
+		return nil
+	}); err != nil {
+		t.Fatalf("change failed: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("directory mode = %o, want 755", got)
+	}
+}
