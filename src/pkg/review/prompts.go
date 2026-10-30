@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/config"
 )
 
 type PullRequest struct {
