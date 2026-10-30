@@ -51,6 +51,8 @@ The reference is organized into the sections below. Existing links to this page 
   - [Backfill guard](operator-reference/sweeps-and-operations.md#backfill-guard)
 <a id="duplicate-write-suppression"></a>
   - [Duplicate-write suppression](operator-reference/sweeps-and-operations.md#duplicate-write-suppression)
+<a id="notification-mode-githubnotificationsmode"></a>
+  - [Notification mode (`github.notifications.mode`)](operator-reference/sweeps-and-operations.md#notification-mode-githubnotificationsmode)
 <a id="suspicious-activity-alerts-sentinel"></a>
 - [Suspicious-activity alerts (`sentinel`)](operator-reference/sweeps-and-operations.md#suspicious-activity-alerts-sentinel)
 <a id="image-provenance-and-tags"></a>
@@ -101,6 +103,8 @@ The reference is organized into the sections below. Existing links to this page 
 - [`HIVE_GITHUB_TOKEN` permissions](operator-reference/runtime-and-quota.md#hive_github_token-permissions)
 <a id="github-app-permissions-the-hive-needs-and-what-each-one-unblocks"></a>
   - [GitHub App permissions the hive needs, and what each one unblocks](operator-reference/runtime-and-quota.md#github-app-permissions-the-hive-needs-and-what-each-one-unblocks)
+<a id="onboarding-errors-point-to-the-getting-started-guide"></a>
+  - [Onboarding errors point to the Getting Started guide](operator-reference/runtime-and-quota.md#onboarding-errors-point-to-the-getting-started-guide)
 <a id="runtime-diagnostics-debug-gomemlimit-mem-log-line"></a>
 - [Runtime diagnostics (`debug`, `GOMEMLIMIT`, `mem:` log line)](operator-reference/runtime-and-quota.md#runtime-diagnostics-debug-gomemlimit-mem-log-line)
 <a id="cmdhive-flags-and-environment"></a>
