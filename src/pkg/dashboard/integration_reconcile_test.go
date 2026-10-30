@@ -24,6 +24,8 @@ func TestIntegrationReconcilesOldCompletedRunsAndEveryAttempt(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
+				case r.URL.Path == "/repos/o/r/pulls":
+					_, _ = w.Write([]byte("[]"))
 				case r.URL.Path == "/repos/o/r/actions/runs":
 					if r.URL.Query().Get("created") != "" {
 						t.Error("creation window can omit old completed execution")

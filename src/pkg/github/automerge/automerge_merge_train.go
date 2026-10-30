@@ -568,6 +568,9 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 			if c.hotspotRecorder != nil {
 				c.hotspotRecorder.RecordPRFiles(owner+"/"+repo, pr.GetNumber(), files, pr.GetCreatedAt().Time)
 			}
+			if c.integrationFilesObserved != nil {
+				c.integrationFilesObserved(owner+"/"+repo, pr.GetHead().GetSHA(), append([]string(nil), files...))
+			}
 			members = append(members, mergeTrainMember{
 				Number:         pr.GetNumber(),
 				Base:           base,

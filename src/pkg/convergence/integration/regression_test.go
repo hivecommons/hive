@@ -144,7 +144,10 @@ func TestRetryBudgetRenewalAndQualification(t *testing.T) {
 	if err := store.Append(Event{Version: 1, ID: "candidate-red", At: now, Evidence: &rejected}); err != nil {
 		t.Fatal(err)
 	}
-	probe.Head = rejected.Subject.Members[1].Head
+	intent.Generation++
+	intent.Head = rejected.Subject.Members[1].Head
+	putIntent(t, store, intent)
+	probe.Head = intent.Head
 	if d, err := store.Decide(cfg, probe); err != nil || d.Allowed || !strings.Contains(d.Reason, "candidate attempts") {
 		t.Fatalf("%+v %v", d, err)
 	}

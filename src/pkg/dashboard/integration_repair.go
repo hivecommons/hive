@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence/integration"
@@ -22,9 +23,11 @@ func (s *Server) integrationFailureOwner(repo string, failure *github.WebhookCIF
 		return nil, nil, ""
 	}
 	var selected *integration.Evidence
+	now := time.Now()
 	for _, receipt := range store.ForTestedHead(repo, failure.HeadSHA) {
 		if receipt.Subject.Repo != repo || receipt.Subject.TestedSHA != failure.HeadSHA || !cfg.Allows(repo, receipt.Subject.Base) ||
-			receipt.State == integration.Superseded || len(receipt.Subject.Members) == 0 {
+			receipt.State == integration.Superseded || receipt.State == integration.Unknown || receipt.Subject.Validate() != nil ||
+			receipt.ObservedAt.After(now) || now.Sub(receipt.ObservedAt) > cfg.MaxObservationAge {
 			continue
 		}
 		if selected == nil || receipt.ObservedAt.After(selected.ObservedAt) {

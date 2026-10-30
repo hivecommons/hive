@@ -32,6 +32,7 @@ type Store struct {
 	memberChanges map[string]Event
 	groupChanges  map[string]Event
 	policies      *PolicySet
+	drifts        map[string]Drift
 	integrated    map[string]IntegrationReceipt
 	poison        error
 	offset        int64
@@ -103,7 +104,7 @@ func (s *Store) ForTestedHead(repo, head string) []Evidence {
 func Open(path string) (*Store, error) {
 	s := &Store{path: path, seen: map[string]string{}, intents: map[string]Intent{},
 		evidence: map[string]Evidence{}, jobs: map[string]Job{}, coverage: map[string]Coverage{},
-		reservations: map[string]Reservation{}, memberChanges: map[string]Event{}, groupChanges: map[string]Event{}, integrated: map[string]IntegrationReceipt{}}
+		reservations: map[string]Reservation{}, memberChanges: map[string]Event{}, groupChanges: map[string]Event{}, integrated: map[string]IntegrationReceipt{}, drifts: map[string]Drift{}}
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return s, nil
@@ -135,7 +136,7 @@ func (s *Store) validate(e Event) error {
 		return fmt.Errorf("event identity reused with different content")
 	}
 	n := 0
-	for _, yes := range []bool{e.Intent != nil, e.Evidence != nil, e.Job != nil, e.Coverage != nil, e.Reservation != nil, e.Release != "", e.Invalidate != "", e.MemberChange != nil, e.Integrated != nil, e.GroupChange != nil, e.PolicySet != nil} {
+	for _, yes := range []bool{e.Intent != nil, e.Evidence != nil, e.Job != nil, e.Coverage != nil, e.Reservation != nil, e.Release != "", e.Invalidate != "", e.MemberChange != nil, e.Integrated != nil, e.GroupChange != nil, e.PolicySet != nil, e.Drift != nil} {
 		if yes {
 			n++
 		}
@@ -145,6 +146,9 @@ func (s *Store) validate(e Event) error {
 	}
 	if change := e.MemberChange; change != nil && (change.Repo == "" || change.PR <= 0) {
 		return fmt.Errorf("invalid member change")
+	}
+	if drift := e.Drift; drift != nil && (drift.Key == "" || drift.Repo == "" || !fullSHA(drift.Head) || drift.IntentGeneration == 0 || drift.Source == "" || drift.ObservedAt.IsZero()) {
+		return fmt.Errorf("invalid scope drift observation")
 	}
 	if change := e.GroupChange; change != nil && (change.Repo == "" || change.Authority == "" || !fullSHA(change.Head)) {
 		return fmt.Errorf("invalid group invalidation")
@@ -238,8 +242,16 @@ func (s *Store) apply(e Event) {
 		return
 	}
 	s.seen[e.ID] = eventDigest(e)
+	if drift := e.Drift; drift != nil {
+		if previous, found := s.drifts[drift.Key]; !found || drift.ObservedAt.After(previous.ObservedAt) {
+			next := *drift
+			next.Actual = append([]string(nil), drift.Actual...)
+			next.OutsideAnticipated = append([]string(nil), drift.OutsideAnticipated...)
+			s.drifts[drift.Key] = next
+		}
+	}
 	if receipt := e.Integrated; receipt != nil {
-		s.integrated[fmt.Sprintf("%s#%d", receipt.Repo, receipt.PR)] = *receipt
+		s.integrated[fmt.Sprintf("%s#%d", strings.ToLower(receipt.Repo), receipt.PR)] = *receipt
 	}
 	if i := e.Intent; i != nil {
 		old, found := s.intents[i.Key]
@@ -265,7 +277,7 @@ func (s *Store) apply(e Event) {
 		if !found || (old.State != Superseded && v.ObservedAt.After(old.ObservedAt)) {
 			next := cloneEvidence(*v)
 			for _, member := range next.Subject.Members {
-				change, known := s.memberChanges[fmt.Sprintf("%s#%d", next.Subject.Repo, member.PR)]
+				change, known := s.memberChanges[fmt.Sprintf("%s#%d", strings.ToLower(next.Subject.Repo), member.PR)]
 				if known && !next.ObservedAt.After(change.At) && (change.MemberChange.Head == "" || change.MemberChange.Head != member.Head) {
 					next.State, next.InvalidatedBy, next.Reason = Superseded, change.ID, change.Reason
 				}
@@ -309,13 +321,13 @@ func (s *Store) apply(e Event) {
 	if change := e.MemberChange; change != nil {
 		copyChange := *change
 		e.MemberChange = &copyChange
-		key := fmt.Sprintf("%s#%d", change.Repo, change.PR)
+		key := fmt.Sprintf("%s#%d", strings.ToLower(change.Repo), change.PR)
 		if previous, found := s.memberChanges[key]; !found || e.At.After(previous.At) {
 			s.memberChanges[key] = e
 		}
 		for id, receipt := range s.evidence {
 			for _, member := range receipt.Subject.Members {
-				if receipt.Subject.Repo == change.Repo && member.PR == change.PR && !receipt.ObservedAt.After(e.At) && (change.Head == "" || member.Head != change.Head) {
+				if strings.EqualFold(receipt.Subject.Repo, change.Repo) && member.PR == change.PR && !receipt.ObservedAt.After(e.At) && (change.Head == "" || member.Head != change.Head) {
 					receipt.State, receipt.InvalidatedBy, receipt.Reason = Superseded, e.ID, e.Reason
 					s.evidence[id] = receipt
 				}
@@ -446,6 +458,7 @@ type Snapshot struct {
 	Coverage     []Coverage           `json:"coverage"`
 	Reservations []Reservation        `json:"reservations"`
 	Integrated   []IntegrationReceipt `json:"integrated"`
+	Drifts       []Drift              `json:"drifts"`
 }
 
 func (s *Store) Snapshot(now time.Time) Snapshot {
@@ -472,13 +485,18 @@ func (s *Store) Snapshot(now time.Time) Snapshot {
 	for _, v := range s.integrated {
 		out.Integrated = append(out.Integrated, v)
 	}
+	for _, v := range s.drifts {
+		v.Actual = append([]string(nil), v.Actual...)
+		v.OutsideAnticipated = append([]string(nil), v.OutsideAnticipated...)
+		out.Drifts = append(out.Drifts, v)
+	}
 	return out
 }
 
 func (s *Store) Integrated(repo string, pr int) (IntegrationReceipt, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	receipt, ok := s.integrated[fmt.Sprintf("%s#%d", repo, pr)]
+	receipt, ok := s.integrated[fmt.Sprintf("%s#%d", strings.ToLower(repo), pr)]
 	return receipt, ok
 }
 

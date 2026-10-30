@@ -23,12 +23,13 @@ import (
 )
 
 type integrationRuntime struct {
-	mu            sync.Mutex
-	once          sync.Once
-	store         *integration.Store
-	err           error
-	path          string
-	lastReconcile time.Time
+	mu                   sync.Mutex
+	once                 sync.Once
+	store                *integration.Store
+	err                  error
+	path                 string
+	lastReconcile        time.Time
+	reconcileScopeOffset int
 }
 
 func (s *Server) IntegrationNativeAdmission(_ context.Context, repo string, pr *gh.PullRequest) (string, error) {
@@ -79,6 +80,30 @@ func (s *Server) IntegrationNativeAdmission(_ context.Context, repo string, pr *
 		return d.Reason, nil
 	}
 	return "", nil
+}
+
+func (s *Server) IntegrationObserveFiles(repo, head string, files []string) {
+	cfg := s.integrationConfig()
+	if cfg.Mode == config.IntegrationOff {
+		return
+	}
+	enrolled := false
+	for _, scope := range cfg.Scopes {
+		if strings.EqualFold(scope.Repo, repo) {
+			enrolled = true
+			break
+		}
+	}
+	if !enrolled {
+		return
+	}
+	store, err := s.integrationStore()
+	if err == nil {
+		err = store.ObserveFiles(repo, head, files, time.Now())
+	}
+	if err != nil {
+		s.webhookLogger().Warn("integration scope drift unavailable; overlap planner unaffected", "repo", repo, "error", err)
+	}
 }
 
 func (s *Server) integrationConfig() config.IntegrationOrchestrationConfig {
@@ -284,20 +309,14 @@ func (s *Server) integrationDispatchDecision(ref worksource.Ref) integration.Dec
 	if cfg.Mode == config.IntegrationOff {
 		return out
 	}
-	base := ""
+	bases := []string{}
 	for _, scope := range cfg.Scopes {
 		if !strings.EqualFold(scope.Repo, ref.Repo) {
 			continue
 		}
-		if base != "" {
-			out.Reason = "issue base unknown across multiple enrolled bases"
-			out.WouldBlock = true
-			out.Allowed = cfg.Mode != config.IntegrationEnforce
-			return out
-		}
-		base = scope.Base
+		bases = append(bases, scope.Base)
 	}
-	if base == "" {
+	if len(bases) == 0 {
 		return out
 	}
 	store, err := s.integrationStore()
@@ -305,6 +324,16 @@ func (s *Server) integrationDispatchDecision(ref worksource.Ref) integration.Dec
 		out.Reason = "integration ledger unavailable: " + err.Error()
 		out.WouldBlock, out.Allowed = true, cfg.Mode != config.IntegrationEnforce
 		return out
+	}
+	base := bases[0]
+	if len(bases) > 1 {
+		intent, known := store.Intent(ref.Key())
+		if !known || !cfg.Allows(ref.Repo, intent.Base) {
+			out.Reason = "issue base unknown across multiple enrolled bases"
+			out.WouldBlock, out.Allowed = true, cfg.Mode != config.IntegrationEnforce
+			return out
+		}
+		base = intent.Base
 	}
 	if ref.Key() != "" {
 		now := time.Now()
@@ -409,6 +438,9 @@ func (s *Server) integrationClaimObserved(c claims.Claim) {
 		if !strings.EqualFold(scope.Repo, c.Repo) {
 			continue
 		}
+		if intent, known := store.Intent(c.Key()); known && intent.Base != scope.Base {
+			continue
+		}
 		in := s.integrationInput(c.Key(), c.Repo, scope.Base, time.Now())
 		in.Claim, in.ClaimGeneration, in.ClaimExpiresAt, in.Reserve = c.Holder, uint64(c.ClaimedAt.UnixNano()), c.ExpiresAt, true
 		in.RenewOnly = true
@@ -431,6 +463,9 @@ func (s *Server) integrationClaimCommit(c claims.Claim) (string, error) {
 		store, err := s.integrationStore()
 		if err != nil {
 			return "integration ledger unavailable", err
+		}
+		if intent, known := store.Intent(c.Key()); known && intent.Base != scope.Base {
+			continue
 		}
 		in := s.integrationInput(c.Key(), c.Repo, scope.Base, time.Now())
 		in.Claim, in.ClaimGeneration = c.Holder, uint64(c.ClaimedAt.UnixNano())
@@ -455,6 +490,9 @@ func (s *Server) integrationLease(key, repo, identity string, gen uint64, expire
 		store, err := s.integrationStore()
 		if err != nil {
 			return err
+		}
+		if intent, known := store.Intent(key); known && intent.Base != scope.Base {
+			continue
 		}
 		in := s.integrationInput(key, repo, scope.Base, now)
 		in.Reserve, in.Claim, in.ClaimGeneration, in.ClaimExpiresAt = true, "contributor/"+identity, gen, expires
@@ -496,17 +534,51 @@ func (s *Server) handleIntegrationGet(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.integrationConfig()
 	resp := map[string]any{"config": cfg, "schema_version": integration.SchemaVersion, "runtime_commit": versionHash,
-		"source": "github-observations-v1", "enabled": cfg.Mode != config.IntegrationOff,
-		"effective_writer":       "existing preparation owner or native GitHub queue; orchestration never writes merges",
-		"native_group_evidence":  "unknown until complete authoritative group, tested tree and producer observations",
-		"author_review_evidence": "separate; never substituted by integration evidence",
-		"controls":               "Hive authoring admission only; no native queue jumping or GitHub build-window control"}
+		"source": "github-observations-v1", "source_version": 1, "enabled": cfg.Mode != config.IntegrationOff,
+		"effective_writer":         "unknown in this observer; the existing live preparation/native authority guard remains authoritative",
+		"native_group_evidence":    "unknown until complete authoritative group, tested tree and producer observations",
+		"author_review_evidence":   "separate; never substituted by integration evidence",
+		"direct_producer_contract": "hive-integration-subject-v1-<attempt>/subject.json from the pinned workflow; no producer is installed or activated by this feature",
+		"proof_semantics":          "historical one-workflow receipts only; never aggregate merge eligibility",
+		"preparation_source":       "/api/stage-tracker.base_preparation; ownership/backlog, not ready train or native queue seats",
+		"reconciliation":           map[string]any{"interval_seconds": integrationReconcileInterval.Seconds(), "max_runs_per_scope": integrationReconcileMaxRuns, "max_job_reads": integrationReconcileMaxJobReads, "max_policy_reads": integrationReconcileMaxPolicyReads, "cohort": "bounded repository listing; overflow is unknown, not zero"},
+		"controls":                 "Hive authoring and new Hive-owned enqueue admission only; no native queue jumping or GitHub build-window control"}
+	scopes := make([]map[string]any, 0, len(cfg.Scopes))
+	for _, scope := range cfg.Scopes {
+		status := map[string]any{"repo": scope.Repo, "base": scope.Base, "live_authority_state": "unknown; configured is not effective"}
+		if s.deps != nil && s.deps.Config != nil {
+			status["preparation_configured"] = s.deps.Config.AutoMerge.RequireCurrentBaseFor(scope.Repo)
+			status["native_configured"] = s.deps.Config.AutoMerge.NativeMergeQueue.EnabledFor(scope.Repo)
+		}
+		scopes = append(scopes, status)
+	}
+	resp["configured_authorities"] = scopes
 	store, err := s.integrationStore()
 	if err != nil {
 		resp["state"] = "unknown"
 		resp["error"] = err.Error()
 	} else {
-		resp["ledger"] = store.Snapshot(time.Now())
+		now := time.Now()
+		snapshot := store.Snapshot(now)
+		resp["ledger"] = snapshot
+		reports := make([]map[string]any, 0, len(cfg.Scopes))
+		for _, scope := range cfg.Scopes {
+			through := time.Time{}
+			for _, coverage := range snapshot.Coverage {
+				if strings.EqualFold(coverage.Repo, scope.Repo) && coverage.Base == scope.Base {
+					through = coverage.Through
+				}
+			}
+			stale := through.IsZero() || through.After(now) || now.Sub(through) > cfg.MaxObservationAge
+			if through.IsZero() {
+				through = now
+			}
+			reports = append(reports, map[string]any{"stale": stale, "report": store.CostReport(scope.Repo, scope.Base, through.Add(-cfg.Window), through)})
+		}
+		resp["ci_accounting"] = reports
+		if source := s.hotspotSourceRef(); source != nil {
+			resp["existing_hotspots"] = source.HotspotsJSON("")
+		}
 	}
 	jsonResponse(w, resp)
 }

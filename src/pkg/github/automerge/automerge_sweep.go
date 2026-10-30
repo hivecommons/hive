@@ -240,7 +240,8 @@ type Options struct {
 	// conflicts it asks the resolver to repair, so the merge-hotspot
 	// advisor (pkg/hotspot) derives its evidence without polling GitHub
 	// again; nil records nothing.
-	HotspotRecorder HotspotRecorder
+	HotspotRecorder          HotspotRecorder
+	IntegrationFilesObserved func(repo, head string, files []string)
 }
 
 // Engine owns the automerge sweep policy state.
@@ -387,10 +388,11 @@ type Engine struct {
 	// sweepClock records the lanes' passes for the dashboard (sweep_clock.go).
 	sweepClock *SweepClock
 
-	mergeTrainPolicy func() MergeTrainPolicy
-	rebaseResolver   RebaseResolver
-	rebaseEpisode    func(repo string, number int) (RebaseEpisode, bool)
-	hotspotRecorder  HotspotRecorder
+	mergeTrainPolicy         func() MergeTrainPolicy
+	rebaseResolver           RebaseResolver
+	rebaseEpisode            func(repo string, number int) (RebaseEpisode, bool)
+	hotspotRecorder          HotspotRecorder
+	integrationFilesObserved func(repo, head string, files []string)
 	mergeTrainState
 }
 
@@ -450,6 +452,7 @@ func New(transport Transport, opts Options) *Engine {
 		rebaseResolver:                    opts.RebaseResolver,
 		rebaseEpisode:                     opts.RebaseEpisode,
 		hotspotRecorder:                   opts.HotspotRecorder,
+		integrationFilesObserved:          opts.IntegrationFilesObserved,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}

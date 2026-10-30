@@ -32,7 +32,7 @@ func (c *Client) ReadIntegrationWorkflowProof(ctx context.Context, policy config
 	if policy.Engine == "native" {
 		event = "merge_group"
 	}
-	if run.GetEvent() != event || strings.Split(run.GetPath(), "@")[0] != policy.Workflow || run.GetHeadRepository().GetFullName() != policy.Repo {
+	if run.GetEvent() != event || strings.Split(run.GetPath(), "@")[0] != policy.Workflow || !strings.EqualFold(run.GetHeadRepository().GetFullName(), policy.Repo) {
 		return out, fmt.Errorf("workflow event, path or source repository not bound to policy")
 	}
 	content, _, _, err := c.client.Repositories.GetContents(ctx, parts[0], parts[1], policy.Workflow, &gh.RepositoryContentGetOptions{Ref: run.GetHeadSHA()})

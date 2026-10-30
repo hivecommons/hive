@@ -10,11 +10,12 @@ import (
 )
 
 type Cost struct {
-	RunnerMinutes *float64 `json:"runner_minutes"`
-	Jobs          int      `json:"jobs"`
-	Running       int      `json:"running"`
-	Complete      bool     `json:"complete"`
-	Reason        string   `json:"reason"`
+	RunnerMinutes         *float64 `json:"runner_minutes"`
+	ObservedRunnerMinutes float64  `json:"observed_runner_minutes"`
+	Jobs                  int      `json:"jobs"`
+	Running               int      `json:"running"`
+	Complete              bool     `json:"complete"`
+	Reason                string   `json:"reason"`
 }
 
 func cost(jobs map[string]Job, coverage Coverage, repo, base string, from, through time.Time) Cost {
@@ -22,6 +23,13 @@ func cost(jobs map[string]Job, coverage Coverage, repo, base string, from, throu
 	minutes := 0.0
 	for _, j := range jobs {
 		if !strings.EqualFold(j.Repo, repo) || j.Base != base || j.RunnerID == 0 || j.StartedAt.IsZero() {
+			continue
+		}
+		if j.Status == "queued" || j.Status == "waiting" || j.Status == "pending" || j.Status == "requested" || j.Conclusion == "skipped" {
+			continue
+		}
+		if j.Status == "" || j.Status == "completed" && j.CompletedAt.IsZero() {
+			out.Complete = false
 			continue
 		}
 		end := j.CompletedAt
@@ -47,6 +55,7 @@ func cost(jobs map[string]Job, coverage Coverage, repo, base string, from, throu
 			out.Jobs++
 		}
 	}
+	out.ObservedRunnerMinutes = minutes
 	if out.Complete {
 		out.RunnerMinutes = &minutes
 	} else {
@@ -88,11 +97,13 @@ type Input struct {
 }
 
 type Decision struct {
-	Allowed    bool     `json:"allowed"`
-	WouldBlock bool     `json:"would_block"`
-	Reason     string   `json:"reason"`
-	Hints      []string `json:"hints"`
-	Cost       Cost     `json:"cost"`
+	Allowed        bool     `json:"allowed"`
+	WouldBlock     bool     `json:"would_block"`
+	Reason         string   `json:"reason"`
+	Hints          []string `json:"hints"`
+	Cost           Cost     `json:"cost"`
+	ActiveLimit    int      `json:"active_limit"`
+	FailureBackoff int      `json:"failure_backoff"`
 }
 
 func intersects(a, b []string) bool {
@@ -129,6 +140,9 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 		out.Hints = append(out.Hints, "scope unknown: no versioned intent; independence not established")
 		block("qualified change intent unavailable")
 	} else {
+		if !strings.EqualFold(intent.Repo, in.Repo) || intent.Base != in.Base {
+			block("intent repository/base differs from admission scope")
+		}
 		if in.IntentGeneration != 0 && in.IntentGeneration != intent.Generation {
 			block("intent generation changed while gathering prerequisites")
 		}
@@ -164,9 +178,9 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 				continue
 			}
 			if intersects(intent.Contracts, other.Contracts) || intersects(intent.Components, other.Components) || intersects(intent.Generated, other.Generated) {
-				out.Hints = append(out.Hints, "semantic interaction with "+key+" (advisory; not an exclusive lock)")
+				out.Hints = append(out.Hints, "semantic interaction with "+key+" (advisory; not an exclusive lock"+relationDisposition(intent, key, "semantic")+")")
 			} else if intersects(intent.Paths, other.Paths) {
-				out.Hints = append(out.Hints, "same-file overlap with "+key+" (advisory; not an exclusive lock)")
+				out.Hints = append(out.Hints, "same-file overlap with "+key+" (advisory; not an exclusive lock"+relationDisposition(intent, key, "file")+")")
 			}
 		}
 	}
@@ -215,7 +229,21 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 			}
 		}
 	}
-	if active >= cfg.MaxActive {
+	out.ActiveLimit = cfg.MaxActive
+	for _, receipt := range s.evidence {
+		if strings.EqualFold(receipt.Subject.Repo, in.Repo) && receipt.Subject.Base == in.Base && receipt.State == Rejected &&
+			receipt.Source == "github-actions-bound-v1" && len(receipt.Subject.Members) > 1 && receipt.Subject.Validate() == nil &&
+			!receipt.ObservedAt.Before(in.Now.Add(-cfg.Window)) && !receipt.ObservedAt.After(in.Now) {
+			out.FailureBackoff++
+			if out.ActiveLimit > 1 {
+				out.ActiveLimit--
+			}
+		}
+	}
+	if out.FailureBackoff > 0 {
+		out.Hints = append(out.Hints, "confirmed combined-candidate failure reduces future Hive admission only; no GitHub build-window mutation or shared-job cancellation")
+	}
+	if active >= out.ActiveLimit {
 		block("scoped active admission limit")
 	}
 	if existing, ok := s.reservations[in.Key]; ok && existing.ExpiresAt.After(in.Now) &&
@@ -226,6 +254,8 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 	// already-running work even while missing telemetry freezes growth.
 	if existing, ok := s.reservations[in.Key]; ok && in.Reserve && in.RenewOnly && existing.Claim == in.Claim &&
 		existing.ClaimGeneration == in.ClaimGeneration && existing.IntentGeneration == intent.Generation &&
+		strings.EqualFold(intent.Repo, in.Repo) && intent.Base == in.Base && (in.IntentGeneration == 0 || in.IntentGeneration == intent.Generation) &&
+		(in.Head == "" || intent.Head == "" || in.Head == intent.Head) &&
 		existing.ExpiresAt.After(in.Now) && in.ClaimExpiresAt.After(in.Now) {
 		out.WouldBlock, out.Reason = false, "existing exact lease renewed; no new work admitted"
 	}

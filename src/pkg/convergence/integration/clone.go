@@ -8,6 +8,7 @@ func cloneIntent(i Intent) Intent {
 	i.Paths = slices.Clone(i.Paths)
 	i.Generated = slices.Clone(i.Generated)
 	i.Prerequisites = slices.Clone(i.Prerequisites)
+	i.Relations = slices.Clone(i.Relations)
 	return i
 }
 

@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	integrationReconcileInterval    = 3 * time.Minute
-	integrationReconcileTimeout     = 45 * time.Second
-	integrationReconcileMaxRuns     = 8
-	integrationReconcilePageSize    = 100
-	integrationReconcileMaxJobReads = 24
+	integrationReconcileInterval       = 3 * time.Minute
+	integrationReconcileTimeout        = 45 * time.Second
+	integrationReconcileMaxRuns        = 8
+	integrationReconcilePageSize       = 100
+	integrationReconcileMaxJobReads    = 24
+	integrationReconcileMaxPolicyReads = 4
 )
 
 type integrationWebhookPayload struct {
@@ -66,6 +67,9 @@ func (s *Server) observeIntegrationWebhook(event, delivery string, body []byte, 
 	if cfg.Mode == config.IntegrationOff {
 		return nil
 	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	var p integrationWebhookPayload
 	if err := json.Unmarshal(body, &p); err != nil {
 		return err
@@ -84,14 +88,17 @@ func (s *Server) observeIntegrationWebhook(event, delivery string, body []byte, 
 	if err != nil {
 		return err
 	}
-	if store.HasEvent("github/" + delivery) {
-		return nil
-	}
 	if event == "workflow_run" && p.WorkflowRun != nil {
+		if err := s.observeIntegrationRun(p.WorkflowRun, repo, delivery, now); err != nil {
+			return err
+		}
 		if p.WorkflowRun.GetEvent() == "merge_group" {
 			return s.observeIntegrationPolicyRun(context.Background(), p.WorkflowRun, repo, delivery, now)
 		}
-		return s.observeIntegrationRun(p.WorkflowRun, repo, delivery, now)
+		return s.observeIntegrationDirectPolicyRun(context.Background(), p.WorkflowRun, repo, delivery, now)
+	}
+	if store.HasEvent("github/" + delivery) {
+		return nil
 	}
 	if event == "merge_group" {
 		g := p.MergeGroup
@@ -109,7 +116,7 @@ func (s *Server) observeIntegrationWebhook(event, delivery string, body []byte, 
 		}
 		group, readErr := s.deps.GHClient.ReadNativeIntegrationGroup(ctx, repo, base, g.BaseSHA, g.HeadRef, g.HeadSHA)
 		subject := integration.Subject{Version: integration.SchemaVersion, Repo: repo, Base: base, Engine: "native",
-			Authority: g.HeadRef, BaseSHA: g.BaseSHA, TestedSHA: g.HeadSHA, TestedTree: group.Tree,
+			Authority: g.HeadRef, BaseSHA: group.BaseSHA, TestedSHA: g.HeadSHA, TestedTree: group.Tree,
 			Policy: "unverified-policy", Producer: "github-merge-group-webhook", Workflow: "merge_group", Attempt: 1, Generation: 1}
 		for _, m := range group.Members {
 			subject.Members = append(subject.Members, integration.Member{PR: m.PR, Head: m.Head, Entry: m.Entry, Position: m.Position, BaseCommit: m.BaseCommit, HeadCommit: m.HeadCommit})
@@ -140,7 +147,7 @@ func (s *Server) observeIntegrationWebhook(event, delivery string, body []byte, 
 			// documented prefix. Only an unmerged close invalidates it here.
 			if pr.GetMerged() {
 				receipt := integration.IntegrationReceipt{Repo: repo, PR: pr.GetNumber(), Head: pr.GetHead().GetSHA(), MergeSHA: pr.GetMergeCommitSHA(),
-					MergedAt: pr.GetMergedAt().Time, Source: "github-signed-merged-webhook-v1"}
+					Base: pr.GetBase().GetRef(), MergedAt: pr.GetMergedAt().Time, Source: "github-signed-merged-webhook-v1"}
 				return store.Append(integration.Event{Version: integration.SchemaVersion, ID: "github/" + delivery, At: now, Integrated: &receipt})
 			}
 			return store.InvalidateMember(repo, pr.GetNumber(), head, reason, delivery, now)
@@ -174,25 +181,41 @@ func (s *Server) handleIntegrationReconcile(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) observeIntegrationRun(run *gh.WorkflowRun, repo, delivery string, now time.Time) error {
-	if run.GetEvent() != "pull_request" || len(run.PullRequests) != 1 {
+	if run.GetEvent() != "pull_request" && run.GetEvent() != "merge_group" {
 		return nil
 	}
 	cfg := s.integrationConfig()
-	pr := run.PullRequests[0]
-	if pr == nil || !cfg.Allows(repo, pr.GetBase().GetRef()) {
+	var pr *gh.PullRequest
+	base, engine := integrationBranchBase(run.GetHeadBranch(), cfg.Scopes, repo), "native"
+	if run.GetEvent() == "pull_request" {
+		if len(run.PullRequests) != 1 || run.PullRequests[0] == nil {
+			return nil
+		}
+		pr, engine = run.PullRequests[0], "direct"
+		base = pr.GetBase().GetRef()
+	}
+	if !cfg.Allows(repo, base) {
 		return nil
 	}
 	store, err := s.integrationStore()
 	if err != nil {
 		return err
 	}
-	subject := integration.Subject{Version: integration.SchemaVersion, Repo: repo, Base: pr.GetBase().GetRef(), Engine: "direct",
-		Authority: fmt.Sprintf("workflow-run/%d", run.GetID()), BaseSHA: pr.GetBase().GetSHA(),
-		Policy: "unverified-policy", Producer: "github-actions-observation", Workflow: run.GetPath(), Attempt: run.GetRunAttempt(), Generation: 1,
-		Members: []integration.Member{{PR: pr.GetNumber(), Head: pr.GetHead().GetSHA(), Entry: fmt.Sprintf("pull/%d", pr.GetNumber()), Position: 1}}}
+	subject := integration.Subject{Version: integration.SchemaVersion, Repo: repo, Base: base, Engine: engine,
+		Authority: fmt.Sprintf("workflow-run/%d", run.GetID()),
+		Policy:    "unverified-policy", Producer: "github-actions-observation", Workflow: run.GetPath(), Attempt: run.GetRunAttempt(), Generation: 1}
+	if pr != nil {
+		subject.BaseSHA = pr.GetBase().GetSHA()
+		subject.Members = []integration.Member{{PR: pr.GetNumber(), Head: pr.GetHead().GetSHA(), Entry: fmt.Sprintf("pull/%d", pr.GetNumber()), Position: 1}}
+	}
 	evidence := integration.Evidence{Subject: subject, State: integration.Unknown, ObservedAt: now, Source: "github-workflow-run-v1", RunID: run.GetID(), SuiteID: run.GetCheckSuiteID(),
 		Reason: "author workflow observed; actual checkout commit/tree and combined-base policy evidence unavailable"}
-	return store.Append(integration.Event{Version: integration.SchemaVersion, ID: "github/" + delivery, At: now, Evidence: &evidence})
+	if !store.HasEvent("github/" + delivery) {
+		if err := store.Append(integration.Event{Version: integration.SchemaVersion, ID: "github/" + delivery, At: now, Evidence: &evidence}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) observeIntegrationPolicyRun(parent context.Context, run *gh.WorkflowRun, repo, delivery string, now time.Time) error {
@@ -210,7 +233,8 @@ func (s *Server) observeIntegrationPolicyRun(parent context.Context, run *gh.Wor
 	ctx, cancel := context.WithTimeout(parent, integrationReconcileTimeout)
 	defer cancel()
 	for _, policy := range cfg.Policies {
-		if !strings.EqualFold(policy.Repo, repo) || policy.Engine != "native" || strings.Split(run.GetPath(), "@")[0] != policy.Workflow {
+		if !strings.EqualFold(policy.Repo, repo) || policy.Engine != "native" || strings.Split(run.GetPath(), "@")[0] != policy.Workflow ||
+			integrationBranchBase(run.GetHeadBranch(), cfg.Scopes, repo) != policy.Base {
 			continue
 		}
 		eventID := "policy/" + delivery + "/" + policy.Workflow
@@ -229,20 +253,24 @@ func (s *Server) observeIntegrationPolicyRun(parent context.Context, run *gh.Wor
 			}
 		}
 		if subject == nil {
-			return fmt.Errorf("native group membership not observed; reconcile group delivery first")
+			authority := "refs/heads/" + strings.TrimPrefix(run.GetHeadBranch(), "refs/heads/")
+			group, groupErr := s.deps.GHClient.ReadNativeIntegrationGroup(ctx, repo, policy.Base, "", authority, run.GetHeadSHA())
+			if groupErr != nil {
+				return groupErr
+			}
+			recovered := integration.Subject{Version: integration.SchemaVersion, Repo: repo, Base: policy.Base, Engine: "native", Authority: authority,
+				BaseSHA: group.BaseSHA, TestedSHA: group.HeadSHA, TestedTree: group.Tree, Policy: "unverified-policy", Producer: "github-queue-read", Workflow: "merge_group", Attempt: 1, Generation: 1}
+			for _, member := range group.Members {
+				recovered.Members = append(recovered.Members, integration.Member{PR: member.PR, Head: member.Head, Entry: member.Entry, Position: member.Position, BaseCommit: member.BaseCommit, HeadCommit: member.HeadCommit})
+			}
+			subject = &recovered
 		}
-		group, groupErr := s.deps.GHClient.ReadNativeIntegrationGroup(ctx, repo, policy.Base, subject.BaseSHA, subject.Authority, subject.TestedSHA)
+		group, groupErr := s.deps.GHClient.ReadNativeIntegrationGroup(ctx, repo, policy.Base, "", subject.Authority, subject.TestedSHA)
 		if groupErr != nil {
 			return groupErr
 		}
-		if len(group.Members) != len(subject.Members) || group.Tree != subject.TestedTree {
+		if !integrationNativeMembershipCompatible(*subject, group) {
 			return fmt.Errorf("native tested membership/tree changed")
-		}
-		for index, m := range group.Members {
-			old := subject.Members[index]
-			if old.PR != m.PR || old.Head != m.Head || old.Entry != m.Entry || old.Position != m.Position {
-				return fmt.Errorf("native exact member changed")
-			}
 		}
 		proof, proofErr := s.deps.GHClient.ReadIntegrationWorkflowProof(ctx, policy, run)
 		subject.Policy, subject.Producer, subject.Workflow = policy.Fingerprint(), fmt.Sprintf("github-app/%d", policy.AppID), fmt.Sprintf("%s@%d", policy.Workflow, run.GetWorkflowID())
@@ -283,6 +311,9 @@ func (s *Server) ReconcileIntegration(ctx context.Context) error {
 	if cfg.Mode == config.IntegrationOff {
 		return nil
 	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	s.integration.mu.Lock()
 	now := time.Now()
 	if now.Sub(s.integration.lastReconcile) < integrationReconcileInterval {
@@ -290,6 +321,8 @@ func (s *Server) ReconcileIntegration(ctx context.Context) error {
 		return nil
 	}
 	s.integration.lastReconcile = now
+	start := s.integration.reconcileScopeOffset % len(cfg.Scopes)
+	s.integration.reconcileScopeOffset = (start + 1) % len(cfg.Scopes)
 	s.integration.mu.Unlock()
 	if s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
 		return fmt.Errorf("GitHub workflow observations unavailable")
@@ -302,7 +335,9 @@ func (s *Server) ReconcileIntegration(ctx context.Context) error {
 	defer cancel()
 	client := s.deps.GHClient.GoGitHub()
 	jobReads := 0
-	for _, scope := range cfg.Scopes {
+	policyReads := 0
+	scopes := append(append([]config.IntegrationScope(nil), cfg.Scopes[start:]...), cfg.Scopes[:start]...)
+	for _, scope := range scopes {
 		parts := strings.SplitN(scope.Repo, "/", 2)
 		from := now.Add(-cfg.Window)
 		c := integration.Coverage{Repo: scope.Repo, Base: scope.Base, From: from, Through: now, Source: "github-actions-rest-v1", Complete: true}
@@ -343,6 +378,33 @@ func (s *Server) ReconcileIntegration(ctx context.Context) error {
 					continue
 				}
 				observedRuns++
+				delivery := fmt.Sprintf("reconcile-run/%s/%d/%d/%d", scope.Repo, run.GetID(), run.GetRunAttempt(), run.GetUpdatedAt().UnixNano())
+				if err := s.observeIntegrationRun(run, scope.Repo, delivery, now); err != nil {
+					return err
+				}
+				for _, policy := range cfg.Policies {
+					engine := "direct"
+					if run.GetEvent() == "merge_group" {
+						engine = "native"
+					}
+					if !strings.EqualFold(policy.Repo, scope.Repo) || policy.Base != scope.Base || policy.Engine != engine || strings.Split(run.GetPath(), "@")[0] != policy.Workflow {
+						continue
+					}
+					if policyReads >= integrationReconcileMaxPolicyReads {
+						s.webhookLogger().Warn("integration policy reconciliation budget exhausted; missing receipts remain unknown", "repo", scope.Repo, "run", run.GetID())
+						break
+					}
+					policyReads++
+					var policyErr error
+					if engine == "native" {
+						policyErr = s.observeIntegrationPolicyRun(ctx, run, scope.Repo, delivery, now)
+					} else {
+						policyErr = s.observeIntegrationDirectPolicyRun(ctx, run, scope.Repo, delivery, now)
+					}
+					if policyErr != nil {
+						s.webhookLogger().Warn("integration policy reconciliation unavailable", "repo", scope.Repo, "run", run.GetID(), "error", policyErr)
+					}
+				}
 				attempts := run.GetRunAttempt()
 				if attempts < 1 {
 					c.Complete, c.Reason = false, "run attempt unknown"
@@ -381,6 +443,11 @@ func (s *Server) ReconcileIntegration(ctx context.Context) error {
 						}
 					}
 				}
+			}
+		}
+		if readErr == nil {
+			if err := s.reconcileIntegrationMerges(ctx, scope, from, now, &c); err != nil {
+				return err
 			}
 		}
 		if err := store.Append(integration.Event{Version: integration.SchemaVersion, ID: fmt.Sprintf("coverage/%s/%d", scope.Repo+"#"+scope.Base, now.UnixNano()), At: now, Coverage: &c}); err != nil {

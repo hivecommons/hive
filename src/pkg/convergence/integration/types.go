@@ -103,24 +103,44 @@ type Prerequisite struct {
 }
 
 type Intent struct {
-	Version       int            `json:"version"`
-	Key           string         `json:"key"`
-	Repo          string         `json:"repo"`
-	Base          string         `json:"base"`
-	Generation    uint64         `json:"generation"`
-	Plan          string         `json:"plan"`
-	PlanNode      string         `json:"plan_node"`
-	PlanRevision  int            `json:"plan_revision"`
-	Head          string         `json:"head,omitempty"`
-	Components    []string       `json:"components"`
-	Contracts     []string       `json:"contracts"`
-	Paths         []string       `json:"paths"`
-	Generated     []string       `json:"generated"`
-	ScopeKnown    bool           `json:"scope_known"`
-	Confidence    string         `json:"confidence"`
-	Provenance    string         `json:"provenance"`
-	Prerequisites []Prerequisite `json:"prerequisites"`
-	ObservedAt    time.Time      `json:"observed_at"`
+	Version       int                  `json:"version"`
+	Key           string               `json:"key"`
+	Repo          string               `json:"repo"`
+	Base          string               `json:"base"`
+	Generation    uint64               `json:"generation"`
+	Plan          string               `json:"plan"`
+	PlanNode      string               `json:"plan_node"`
+	PlanRevision  int                  `json:"plan_revision"`
+	Head          string               `json:"head,omitempty"`
+	Components    []string             `json:"components"`
+	Contracts     []string             `json:"contracts"`
+	Paths         []string             `json:"paths"`
+	Generated     []string             `json:"generated"`
+	ScopeKnown    bool                 `json:"scope_known"`
+	Confidence    string               `json:"confidence"`
+	Provenance    string               `json:"provenance"`
+	Prerequisites []Prerequisite       `json:"prerequisites"`
+	Relations     []RelationAssessment `json:"relations,omitempty"`
+	ObservedAt    time.Time            `json:"observed_at"`
+}
+
+type RelationAssessment struct {
+	Key         string `json:"key"`
+	Kind        string `json:"kind"`
+	Disposition string `json:"disposition"`
+	Provenance  string `json:"provenance"`
+}
+
+type Drift struct {
+	Key                string    `json:"key"`
+	Repo               string    `json:"repo"`
+	Head               string    `json:"head"`
+	IntentGeneration   uint64    `json:"intent_generation"`
+	ObservedAt         time.Time `json:"observed_at"`
+	Source             string    `json:"source"`
+	HeadVerified       bool      `json:"head_verified"`
+	Actual             []string  `json:"actual"`
+	OutsideAnticipated []string  `json:"outside_anticipated"`
 }
 
 func (i Intent) Validate() error {
@@ -131,6 +151,12 @@ func (i Intent) Validate() error {
 		return fmt.Errorf("intent requires canonical work, plan, generation and provenance")
 	}
 	keys, nodes := map[string]bool{}, map[string]bool{}
+	for _, relation := range i.Relations {
+		if _, valid := worksource.ParseKey(relation.Key); !valid || relation.Key == i.Key || relation.Provenance == "" ||
+			relation.Kind != "semantic" && relation.Kind != "file" || relation.Disposition != "confirmed" && relation.Disposition != "false-positive" && relation.Disposition != "unreviewed" {
+			return fmt.Errorf("invalid advisory relation assessment")
+		}
+	}
 	for _, p := range i.Prerequisites {
 		if _, ok := worksource.ParseKey(p.Key); !ok || p.PlanNode == "" || p.Key == i.Key {
 			return fmt.Errorf("invalid prerequisite %q", p.Key)
@@ -177,13 +203,15 @@ type Job struct {
 func (j Job) Key() string { return fmt.Sprintf("%s/%d/%d", strings.ToLower(j.Repo), j.ID, j.Attempt) }
 
 type Coverage struct {
-	Repo     string    `json:"repo"`
-	Base     string    `json:"base"`
-	From     time.Time `json:"from"`
-	Through  time.Time `json:"through"`
-	Complete bool      `json:"complete"`
-	Source   string    `json:"source"`
-	Reason   string    `json:"reason"`
+	Repo           string    `json:"repo"`
+	Base           string    `json:"base"`
+	From           time.Time `json:"from"`
+	Through        time.Time `json:"through"`
+	Complete       bool      `json:"complete"`
+	Source         string    `json:"source"`
+	Reason         string    `json:"reason"`
+	MergedComplete bool      `json:"merged_complete"`
+	MergeReason    string    `json:"merge_reason,omitempty"`
 }
 
 type Event struct {
@@ -204,6 +232,7 @@ type Event struct {
 	Integrated        *IntegrationReceipt `json:"integrated,omitempty"`
 	GroupChange       *GroupChange        `json:"group_change,omitempty"`
 	PolicySet         *PolicySet          `json:"policy_set,omitempty"`
+	Drift             *Drift              `json:"drift,omitempty"`
 }
 
 type GroupChange struct {
@@ -230,6 +259,7 @@ type MemberChange struct {
 
 type IntegrationReceipt struct {
 	Repo     string    `json:"repo"`
+	Base     string    `json:"base,omitempty"`
 	PR       int       `json:"pr"`
 	Head     string    `json:"head"`
 	MergeSHA string    `json:"merge_sha"`

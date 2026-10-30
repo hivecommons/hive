@@ -111,7 +111,7 @@ func TestDispatchIntentReconcilesDAGWithoutOverwritingOwnerScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, found := store.Intent(intent.Key)
-	if !found || current.Generation != 2 || current.PlanRevision != 2 || !current.ObservedAt.Equal(epoch) {
+	if !found || current.Generation != 2 || current.PlanRevision != 2 || !current.ObservedAt.Equal(epoch.Add(time.Second)) {
 		t.Fatalf("%+v", current)
 	}
 	if err := store.EnsureIntent(intent); err != nil {
