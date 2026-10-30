@@ -184,7 +184,7 @@ func (l *reviewBacklogLedger) addPRFinding(repo string, pr int, f outputschema.F
 	key := reviewBacklogPRKey(repo, pr)
 	// The head the finding was filed at needs no "still present" note.
 	if head = strings.TrimSpace(head); head != "" && ref.ID != "" {
-		l.StillPresentHeads[reviewBacklogRepoKey(repo)+":"+ref.ID] = head
+		l.StillPresentHeads[reviewBacklogStillPresentKey(repo, pr, ref)] = head
 	}
 	for _, have := range l.PRFindings[key] {
 		if have.ItemID == ref.ID && normaliseFingerprintPath(have.File) == normaliseFingerprintPath(f.File) && have.Line == f.Line {
@@ -195,6 +195,12 @@ func (l *reviewBacklogLedger) addPRFinding(repo string, pr int, f outputschema.F
 		File: normaliseFingerprintPath(f.File), Line: f.Line, Title: strings.TrimSpace(f.Title),
 		ItemID: ref.ID, ItemKey: ref.Key, ItemNumber: ref.Number, ItemURL: ref.URL,
 	})
+}
+
+// reviewBacklogStillPresentKey is per PR and item: an item several PRs
+// re-raise keeps a last-noted head for each of them.
+func reviewBacklogStillPresentKey(repo string, pr int, ref ReviewBacklogRef) string {
+	return reviewBacklogPRKey(repo, pr) + ":" + ref.ID
 }
 
 func reviewBacklogPRKey(repo string, pr int) string {
@@ -217,12 +223,12 @@ func reviewBacklogTitlesEqual(a, b string) bool {
 // has not been posted yet; it records the head when it has not. Rate-limited
 // to one note per item per head, so three perspectives re-reporting the same
 // note at one head leave one line, not three.
-func (l *reviewBacklogLedger) stillPresentDue(repo string, ref ReviewBacklogRef, head string) bool {
+func (l *reviewBacklogLedger) stillPresentDue(repo string, pr int, ref ReviewBacklogRef, head string) bool {
 	head = strings.TrimSpace(head)
 	if head == "" || ref.ID == "" {
 		return false
 	}
-	key := reviewBacklogRepoKey(repo) + ":" + ref.ID
+	key := reviewBacklogStillPresentKey(repo, pr, ref)
 	if l.StillPresentHeads[key] == head {
 		return false
 	}

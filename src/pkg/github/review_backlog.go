@@ -57,7 +57,7 @@ type reviewBacklogLedger struct {
 	// tracked against the existing item instead of filed again
 	// (hivecommons/hive#15627).
 	PRFindings map[string][]reviewBacklogPRFinding `json:"pr_findings,omitempty"`
-	// StillPresentHeads maps "<repo>:<item id>" → the last head a "still
+	// StillPresentHeads maps "<repo>#<pr>:<item id>" → the last head a "still
 	// present" note was posted for, so each item gets at most one per head.
 	StillPresentHeads map[string]string `json:"still_present_heads,omitempty"`
 }
@@ -281,7 +281,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 				listed = append(listed, reviewBacklogFiled{number: prev.IssueNumber, key: prev.ItemKey, url: prev.IssueURL, title: reviewBacklogIssueTitle(report.Perspective, finding), status: reviewBacklogListedTracked})
 				// The same perspective reporting it again at a new head
 				// leaves the once-per-head "still present" note.
-				if tracked, isTracked := ledger.prFinding(req.Repo, req.Number, finding); isTracked && dailyRemaining > 0 && ledger.stillPresentDue(req.Repo, tracked.ref(), headSHA) {
+				if tracked, isTracked := ledger.prFinding(req.Repo, req.Number, finding); isTracked && dailyRemaining > 0 && ledger.stillPresentDue(req.Repo, req.Number, tracked.ref(), headSHA) {
 					if err := sink.AppendToItem(ctx, req.Repo, tracked.ref(), reviewBacklogStillPresentComment(headSHA, []review.Perspective{report.Perspective})); err != nil {
 						return err
 					}
@@ -320,7 +320,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 				record.IssueNumber, record.IssueURL, record.ItemKey = tracked.ItemNumber, tracked.ItemURL, tracked.ItemKey
 				ledger.Items[key] = record
 				listed = append(listed, reviewBacklogFiled{number: tracked.ItemNumber, key: tracked.ItemKey, url: tracked.ItemURL, title: reviewBacklogIssueTitle(report.Perspective, finding), status: reviewBacklogListedTracked})
-				if dailyRemaining > 0 && ledger.stillPresentDue(req.Repo, tracked.ref(), headSHA) {
+				if dailyRemaining > 0 && ledger.stillPresentDue(req.Repo, req.Number, tracked.ref(), headSHA) {
 					if err := sink.AppendToItem(ctx, req.Repo, tracked.ref(), reviewBacklogStillPresentComment(headSHA, []review.Perspective{report.Perspective})); err != nil {
 						return err
 					}

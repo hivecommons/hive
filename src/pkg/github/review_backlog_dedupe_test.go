@@ -169,7 +169,9 @@ func TestReviewBacklogOneItemPerFindingAcrossPerspectivesAndHeads(t *testing.T) 
 	if got := len(ledger.PRFindings[reviewBacklogPRKey("o/r", 5)]); got != 2 {
 		t.Fatalf("PR findings tracked = %d, want 2 (one per item)", got)
 	}
-	if len(comments[5]) != 2 {
-		t.Fatalf("PR 5 summary comments = %d, want one per pass that filed", len(comments[5]))
+	// The PR's summary comment is once per PR; re-reports and the second
+	// filing add nothing to it.
+	if len(comments[5]) != 1 {
+		t.Fatalf("PR 5 summary comments = %d, want 1", len(comments[5]))
 	}
 }

@@ -113,12 +113,7 @@ const (
 	reviewBacklogPRClosed
 )
 
-func (c *Client) reviewBacklogPROutcome(ctx context.Context, repo string, number int) (reviewBacklogPROutcome, error) {
-	o, _, err := c.reviewBacklogPROutcomeBase(ctx, repo, number)
-	return o, err
-}
-
-// reviewBacklogPROutcomeBase is reviewBacklogPROutcome plus the PR's base
+// reviewBacklogPROutcomeBase reads a tracked PR's outcome plus its base
 // branch, which the self-check reads the finding's file from.
 func (c *Client) reviewBacklogPROutcomeBase(ctx context.Context, repo string, number int) (reviewBacklogPROutcome, string, error) {
 	owner, name := c.splitRepo(repo)

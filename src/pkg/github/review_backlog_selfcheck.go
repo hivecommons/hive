@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // ReviewBacklogCloser is an optional sink capability: a destination that can
@@ -20,6 +22,12 @@ type ReviewBacklogCloser interface {
 func (s githubIssueBacklogSink) CloseItem(ctx context.Context, repo string, ref ReviewBacklogRef, note string) error {
 	if ref.Number <= 0 {
 		return fmt.Errorf("review backlog: GitHub item %q has no issue number", ref.ID)
+	}
+	// The item is the hive's own filing, so the gate only withholds the
+	// close when the repo is paused or its write-back mode is off.
+	item := writeback.Item{Number: ref.Number, HiveAuthored: true}
+	if d := s.c.WritebackAllowed(repo, item, writeback.KindIssueClose, note); !d.Allowed {
+		return fmt.Errorf("review backlog: close of %s#%d withheld: %s", repo, ref.Number, d.Reason)
 	}
 	if err := s.c.CreateIssueCommentBudgeted(ctx, repo, ref.Number, note); err != nil {
 		return err
