@@ -2964,7 +2964,8 @@ type stageTrackerLinkInfo struct {
 	at          time.Time
 }
 
-// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#number.
+// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#issue.
+// The cached closer is unfiltered; each carrying PR excludes itself below.
 type stageTrackerLinkMemo struct {
 	mu sync.Mutex
 	m  map[string]stageTrackerLinkInfo
@@ -3040,7 +3041,7 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				in, hit := s.stageTrackerLinks.get(key, now)
 				if !hit && lookups < stageTrackerLinkLookups && ctx.Err() == nil {
 					lookups++
-					facts, err := s.deps.GHClient.IssueLinkState(ctx, owner, name, li.Number, pr.Number)
+					facts, err := s.deps.GHClient.IssueLinkState(ctx, owner, name, li.Number, 0)
 					in = stageTrackerLinkInfo{title: facts.Title, state: facts.State, stateReason: facts.StateReason, closedBy: facts.ClosedBy, pr: facts.IsPR, ok: err == nil}
 					// Running out of this rebuild's budget says nothing
 					// about the issue: leave it for the next rebuild.
@@ -3054,7 +3055,11 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				if in.ok {
 					li.Title, li.State = in.title, in.state
 					if in.state == "closed" {
-						li.StateReason, li.ClosedBy = in.stateReason, in.closedBy
+						li.StateReason, li.ClosedBy = in.stateReason, 0
+						// Exclude the carrying PR per row, not in the shared lookup.
+						if in.closedBy != pr.Number {
+							li.ClosedBy = in.closedBy
+						}
 					}
 				}
 			}
