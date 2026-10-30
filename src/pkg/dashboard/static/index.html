@@ -6652,6 +6652,24 @@
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
     .review-priority-low { border-color: var(--muted); }
+/* ---- kiosk: unattended display mode (#15594) ----
+   `?kiosk=1` (see js/boot.js) is what the headless Twitch streamer in
+   src/deploy/stream loads. The page becomes the Hive activity monitor and
+   nothing else: no sidebar, topbar, avatar menu, chat FAB or notices, and
+   the other sections are removed from flow so the tracker fills 1920x1080.
+   Toasts and the merge banners stay — they are part of the show. */
+    body.kiosk-mode { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); cursor: none; --navbar-sticky-height: 0px; }
+    body.kiosk-mode .oc-sidebar, body.kiosk-mode .oc-sidebar-resize, body.kiosk-mode .oc-topbar,
+    body.kiosk-mode #dash-notices, body.kiosk-mode #oc-agent-detail, body.kiosk-mode .hive-chat-fab,
+    body.kiosk-mode .hive-chat-panel, body.kiosk-mode #welcome-overlay, body.kiosk-mode .nps-card { display: none !important; }
+    /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
+       display:grid!important with id specificity; beat it with (1,2,2). */
+    html body.kiosk-mode #oc-topbar[id] { display: none !important; }
+    body.kiosk-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.kiosk-mode #activity-monitor-section .dashboard-grip, body.kiosk-mode #activity-monitor-section .section-chevron { display: none !important; }
+    body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
+    body.kiosk-mode .ham-sticky { top: 0; }
+    body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6676,6 +6694,23 @@
 // for toggle labels; the DOMContentLoaded hook below guarantees it runs
 // once the topbar/sidebar buttons exist, so the label and body class always
 // sync from storage.
+// Kiosk mode (#15594): `?kiosk=1` turns the dashboard into an unattended
+// display for a headless streamer (src/deploy/stream). It is a pure
+// presentation flag — it grants nothing, hides the chrome (sidebar, topbar,
+// avatar menu, chat FAB, notices) and every section except the Hive activity
+// monitor, suppresses the welcome/NPS dialogs and the toast hover-pause, and
+// never writes to localStorage so a rolled SPA can't inherit stale state.
+// The class is set here, before first paint, so the chrome never flashes.
+(function(){
+  var kiosk=false;
+  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; } catch(e) {}
+  window.HIVE_KIOSK=kiosk;
+  window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  if(kiosk){
+    document.body.classList.add('kiosk-mode');
+    if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
+  }
+})();
 (function(){
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
@@ -42699,7 +42734,9 @@ function burnAreaChart() {
         cd.remaining = Math.max(0, cd.remaining - (Date.now() - cd.startedAt));
         bar.style.animationPlayState = 'paused';
       };
-      if (!el._countdownWired) {
+      // A kiosk (#15594) has no pointer; the hidden cursor must never park a
+      // toast on screen for the whole stream.
+      if (!el._countdownWired && !(window.hiveKioskMode && window.hiveKioskMode())) {
         el._countdownWired = true;
         const c = () => el._countdown;
         el.addEventListener('mouseenter', () => { const x = c(); if (x) { x.hovered = true; x.pause(); } });
@@ -61604,6 +61641,7 @@ function burnAreaChart() {
 
     function showNPSSurvey(status) {
       if (_npsShownThisLoad || _npsCard) return;
+      if (window.hiveKioskMode && window.hiveKioskMode()) return;
       _npsShownThisLoad = true;
       const maxChars = Number(status && status.max_feedback_chars) || 0;
       let selected = null;
@@ -61749,7 +61787,8 @@ function burnAreaChart() {
       if (navItem) navItem.style.display = '';
       const topBtn = document.getElementById('welcome-topbar-btn');
       if (topBtn) topBtn.style.display = '';
-      if (!_welcomeState.dismissed) openWelcomeDialog();
+      // Kiosk displays (#15594) are unattended: nothing can dismiss a dialog.
+      if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 
     function openWelcomeDialog() {
