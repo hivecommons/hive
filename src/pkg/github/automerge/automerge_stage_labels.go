@@ -1113,7 +1113,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)
 			store.NoteHold(key, obs.Hold)
-			noteSoak(store, key, obs.Reason, obs.HeadSHA, pass.Route, c.currentContributorLanePolicy().Soak, now)
+			soakFirstGreen, _ := c.contributorSoak.FirstGreen(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
+			noteSoak(store, key, obs.Reason, obs.HeadSHA, pass.Route, c.currentContributorLanePolicy().Soak, soakFirstGreen, now)
 			if dcoRead {
 				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned, obs.Detail.DCOUnsignedHive, obs.Detail.DCOSquashUnsafeHive)
 			}

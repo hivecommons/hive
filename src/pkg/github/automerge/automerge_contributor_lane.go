@@ -386,12 +386,6 @@ func (p ContributorLanePolicy) excludedLabel(labels []string) string {
 	return ""
 }
 
-// contributorLaneSoakReason renders the soaking skip with the time left so a
-// reader of the log or the dashboard knows when the merge is due.
-func contributorLaneSoakReason(remaining time.Duration) string {
-	return fmt.Sprintf("%s(remaining=%s)", contributorLaneReasonSoaking, remaining.Round(time.Minute))
-}
-
 // SweepContributorLaneAutoMerges merges green, soaked, reviewer-approved PRs
 // that this hive's contributor lane produced. See the file comment for the
 // full gate list.
@@ -1274,6 +1268,14 @@ type contributorLaneEval struct {
 	// workflowApprover is the trusted merger whose approval released the
 	// workflow-path fence for headSHA ("" when the fence did not trip).
 	workflowApprover string
+	// soakStartedAt / soakRemaining are the soak clock the lane holds
+	// headSHA on when the skip reason is contributorLaneReasonSoaking:
+	// when the head was first seen green and how long is left. The reason
+	// itself carries no countdown (hivecommons/hive#15729: a reason that
+	// changed every pass re-stamped the stage record and the dashboard
+	// read each pass as a fresh hive note); the record keeps the deadline.
+	soakStartedAt time.Time
+	soakRemaining time.Duration
 }
 
 // evaluateContributorLanePR runs every contributor-lane gate except the
@@ -1442,7 +1444,8 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	firstGreen := c.contributorSoak.observeGreenSince(soakKey, now, greenSince)
 	if soaked := now.Sub(firstGreen); soaked < policy.Soak {
-		return eval, contributorLaneSoakReason(policy.Soak - soaked), nil
+		eval.soakStartedAt, eval.soakRemaining = firstGreen, policy.Soak-soaked
+		return eval, contributorLaneReasonSoaking, nil
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return eval, humanReason, err
