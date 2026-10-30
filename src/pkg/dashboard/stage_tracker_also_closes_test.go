@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -13,7 +14,8 @@ import (
 // Its strip is drawn once, under #15502; that listing names #15503 back in
 // also_closes (number, title, url) so the sub-row can say "also closes
 // #15503", while the #15503 listing — the "↳ … under #15502" chip — carries
-// none. A PR closing a single listed issue gets no also_closes at all.
+// none. A PR closing a single listed issue gets no also_closes at all, and
+// a soft reference (`Refs #15504`, listed) is never an "also closes".
 func TestStageTrackerLinkedPRAlsoCloses(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	s := newTestServer()
@@ -37,12 +39,14 @@ func TestStageTrackerLinkedPRAlsoCloses(t *testing.T) {
 				LinkedPRs: []github.IssueLinkedPR{{Number: 15759, State: "open"}}},
 			github.Issue{Number: 15503, Title: "Review backlog (correctness): off-by-one", URL: "https://github.com/acme/hive/issues/15503", Author: "hive-app[bot]", Labels: []string{"stage/040-covered-by-pr"},
 				LinkedPRs: []github.IssueLinkedPR{{Number: 15759, State: "open"}}},
+			github.Issue{Number: 15504, Title: "Review backlog (correctness): referenced only", URL: "https://github.com/acme/hive/issues/15504", Author: "hive-app[bot]", Labels: []string{"stage/030-in-progress"}},
 			github.Issue{Number: 15510, Title: "a lone issue", URL: "https://github.com/acme/hive/issues/15510", Author: "hive-app[bot]", Labels: []string{"stage/040-covered-by-pr"},
 				LinkedPRs: []github.IssueLinkedPR{{Number: 15760, State: "open"}}},
 		},
 		OpenPrs: []any{
 			FrontendPR{PullRequest: github.PullRequest{Number: 15759, Title: "fix the review backlog", Author: "hive-app[bot]", AppAuthored: true, Labels: []string{"stage/050-review-pending", "author/hive"},
-				LinkedIssues: []github.PRLinkedIssue{{Number: 15500, State: "closed"}, {Number: 15503}, {Number: 15502}}}},
+				LinkedIssues:     []github.PRLinkedIssue{{Number: 15500, State: "closed"}, {Number: 15503}, {Number: 15502}},
+				ReferencedIssues: []github.PRLinkedIssue{{Number: 15504, Repo: "acme/hive", Via: github.PRLinkViaRefs}}}},
 			FrontendPR{PullRequest: github.PullRequest{Number: 15760, Title: "fix the lone issue", Author: "hive-app[bot]", AppAuthored: true, Labels: []string{"stage/050-review-pending", "author/hive"},
 				LinkedIssues: []github.PRLinkedIssue{{Number: 15510}}}},
 		},
@@ -61,7 +65,7 @@ func TestStageTrackerLinkedPRAlsoCloses(t *testing.T) {
 	}
 	got := owner.LinkedPRs[0].AlsoCloses
 	if len(got) != 1 || got[0].Number != 15503 || got[0].Title != "Review backlog (correctness): off-by-one" || got[0].URL != "https://github.com/acme/hive/issues/15503" {
-		t.Fatalf("issue 15502 linked PR also_closes = %+v, want #15503 with its title and url", got)
+		t.Fatalf("issue 15502 linked PR also_closes = %+v, want only #15503 (not the soft-referenced #15504) with its title and url", got)
 	}
 	if got[0].Listed || got[0].State != "" {
 		t.Fatalf("also_closes carries only number/title/url, got %+v", got[0])
@@ -72,6 +76,16 @@ func TestStageTrackerLinkedPRAlsoCloses(t *testing.T) {
 	}
 	if other.LinkedPRs[0].AlsoCloses != nil {
 		t.Fatalf("the listing drawn elsewhere must not carry also_closes, got %+v", other.LinkedPRs[0].AlsoCloses)
+	}
+	// The soft `Refs #15504` is listed on the PR (so the UI can mark it) yet
+	// is a reference, not a closing: it must not be named as "also closes".
+	pr := trackerItem(t, resp, "pr", 15759)
+	if k := slices.IndexFunc(pr.LinkedIssues, func(li StageTrackerLinkedIssue) bool { return li.Number == 15504 }); k < 0 || !pr.LinkedIssues[k].Listed || pr.LinkedIssues[k].Via != github.PRLinkViaRefs {
+		t.Fatalf("PR 15759 linked_issues = %+v, want a listed refs link to #15504", pr.LinkedIssues)
+	}
+	referenced := trackerItem(t, resp, "issue", 15504)
+	if len(referenced.LinkedPRs) != 1 || referenced.LinkedPRs[0].DrawnUnder != 15502 || referenced.LinkedPRs[0].AlsoCloses != nil {
+		t.Fatalf("issue 15504 linked_prs = %+v, want one listing of #15759 drawn under 15502 with no also_closes", referenced.LinkedPRs)
 	}
 	lone := trackerItem(t, resp, "issue", 15510)
 	if len(lone.LinkedPRs) != 1 || lone.LinkedPRs[0].AlsoCloses != nil {
@@ -131,5 +145,15 @@ const lineage = { kind: 'adopted', from_number: 15700, from_author: 'alice', fro
 row = stageTrackerRowHtml(issue(15502, [lp(15759, 15502, { also_closes: [li(15503)], lineage })]), stages, ctx);
 assert.ok(row.includes('ham-lineage') && row.includes('ham-also-closes'), row);
 assert.ok(row.indexOf('ham-lineage') < row.indexOf('ham-also-closes'), 'lineage chip before the also-closes pill');
+
+// A superseded adopted original (hive's copy #15762 listed open alongside it) draws as one muted line with neither pill; the copy keeps its own.
+row = stageTrackerRowHtml(issue(15502, [lp(15759, 15502, { also_closes: [li(15503)], lineage, adopted_by: 15762 }), lp(15762, 15502, { also_closes: [li(15503)] })]), stages, ctx);
+const allSubs = row.split('<div class="ham-sub').slice(1);
+assert.strictEqual(allSubs.length, 2, row);
+const anySub = (n) => allSubs.find(s => s.includes('data-ham-sub-key="hivecommons/hive/pr#' + n + '"'));
+assert.ok(anySub(15759).startsWith(' ham-sub-superseded"') && anySub(15759).includes('ham-superseded-note'), 'the original reads as superseded: ' + anySub(15759));
+assert.deepStrictEqual(also(anySub(15759)), [], 'a superseded original wears no also-closes pill: ' + anySub(15759));
+assert.ok(!anySub(15759).includes('ham-lineage'), 'nor a lineage chip');
+assert.deepStrictEqual(also(anySub(15762)).map(a => a.text), ['also closes #15503'], anySub(15762));
 `)
 }

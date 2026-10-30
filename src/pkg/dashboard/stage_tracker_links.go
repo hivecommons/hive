@@ -408,11 +408,13 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 // stageTrackerAlsoCloses is the PR's other listed open issues — every
 // LinkedIssue with its own row in the response except the parent drawing
 // the PR — slimmed to number, title and URL and sorted lowest first; nil
-// when the PR closes only the parent (hivecommons/hive#15806).
+// when the PR closes only the parent (hivecommons/hive#15806). Soft links
+// (Refs / title / mention) are references, not closings, so they never
+// count as "also closes" even when listed.
 func stageTrackerAlsoCloses(pr *StageTrackerItem, parent int) []StageTrackerLinkedIssue {
 	var out []StageTrackerLinkedIssue
 	for _, li := range pr.LinkedIssues {
-		if !li.Listed || li.Number == parent || li.Number == 0 {
+		if !li.Listed || li.Number == parent || li.Number == 0 || stageTrackerLinkSoft(li) {
 			continue
 		}
 		out = append(out, StageTrackerLinkedIssue{Number: li.Number, Title: li.Title, URL: li.URL})
