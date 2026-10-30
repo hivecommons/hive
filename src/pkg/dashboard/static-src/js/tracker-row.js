@@ -208,7 +208,18 @@
     // actor's why. null when the next move is not a person's.
     const STAGE_TRACKER_HUMAN_REASON_MAX = 40;
     const STAGE_TRACKER_HUMAN_REASON_FALLBACK = 'a person must act';
-    const STAGE_TRACKER_HUMAN_WHY_SAID = ['a human decision is owed', 'no maintainer has triaged it yet', 'a maintainer merges it'];
+    // Pure: the chevron word already names the person's ask — "Triage
+    // needed" (015), "Needs human decision" (045/085), the 090 merge word,
+    // or the needs-decision / needs-triage pill (STAGE_TRACKER_MOD_TEXT) —
+    // so the inline reason would only repeat it. Decided on the same
+    // stage and modifiers the chevron reads, never on the server's prose.
+    function stageTrackerHumanWhySaid(item) {
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-triage') >= 0) return true;
+      const st = Number(item.stage) || 0;
+      const decision = typeof STAGE_TRACKER_DECISION_STAGES !== 'undefined' ? STAGE_TRACKER_DECISION_STAGES : [];
+      return decision.indexOf(st) >= 0 || st === STAGE_TRACKER_TRIAGE_NEEDED || st === STAGE_TRACKER_READY_FOR_HUMAN_MERGE;
+    }
     function stageTrackerHumanReason(item) {
       if (!item || stageTrackerActorKind(item) !== 'human') return null;
       const sa = stageTrackerStageActor(item);
@@ -224,7 +235,7 @@
         full = String(item.human_merge_reason_text || '').trim();
       } else {
         full = d && d.question ? String(d.question).trim() : '';
-        if (why && STAGE_TRACKER_HUMAN_WHY_SAID.indexOf(why) < 0) short = why.split(/ — |; /)[0].trim();
+        if (why && !stageTrackerHumanWhySaid(item)) short = why.split(/ — |; /)[0].trim();
       }
       if (short.length > STAGE_TRACKER_HUMAN_REASON_MAX) short = short.slice(0, STAGE_TRACKER_HUMAN_REASON_MAX - 1).trimEnd() + '…';
       return { short, full: full || why || short || STAGE_TRACKER_HUMAN_REASON_FALLBACK };
@@ -1170,7 +1181,7 @@
       if (!item || item.kind !== 'issue' || !Array.isArray(item.linked_prs)) return null;
       const open = item.linked_prs.filter(lp => lp && stageTrackerLinkedPROpen(lp, item));
       if (open.some(lp => stageTrackerLinkedDrawnHere(lp, item))) return null;
-      const asks = lp => (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('needs-decision') >= 0 || [45, 85].indexOf(Number(lp.stage) || 0) >= 0 || !!(lp.decision_needed && lp.decision_needed.question);
+      const asks = lp => (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('needs-decision') >= 0 || (typeof STAGE_TRACKER_DECISION_STAGES !== 'undefined' ? STAGE_TRACKER_DECISION_STAGES : []).indexOf(Number(lp.stage) || 0) >= 0 || !!(lp.decision_needed && lp.decision_needed.question);
       return open.find(asks) || null;
     }
     // "Covered by PR #N — waiting for a decision on the PR": the covered

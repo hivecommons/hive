@@ -19,7 +19,7 @@ function pick(re, what) {
   assert.ok(m, what + ' not found in index.html');
   return m[0];
 }
-const fn = name => pick(new RegExp('function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n    \\}\\n'), name);
+const fn = name => pick(new RegExp('(?:async )?function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n    \\}\\n'), name);
 // A one-line function or declaration, e.g. "function f(x) { return x; }".
 const line = (re, what) => pick(new RegExp('^ *' + re + '.*$', 'm'), what);
 
@@ -36,7 +36,10 @@ const src = [
   line('function stageTrackerDecisionTargetKey\\(', 'stageTrackerDecisionTargetKey'),
   line('const STAGE_TRACKER_HUMAN_REASON_MAX = ', 'STAGE_TRACKER_HUMAN_REASON_MAX'),
   line('const STAGE_TRACKER_HUMAN_REASON_FALLBACK = ', 'STAGE_TRACKER_HUMAN_REASON_FALLBACK'),
-  line('const STAGE_TRACKER_HUMAN_WHY_SAID = ', 'STAGE_TRACKER_HUMAN_WHY_SAID'),
+  line('const STAGE_TRACKER_TRIAGE_NEEDED = ', 'STAGE_TRACKER_TRIAGE_NEEDED'),
+  line('const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = ', 'STAGE_TRACKER_READY_FOR_HUMAN_MERGE'),
+  line('const STAGE_TRACKER_DECISION_STAGES = ', 'STAGE_TRACKER_DECISION_STAGES'),
+  fn('stageTrackerHumanWhySaid'),
   fn('stageTrackerLeadBusyHtml'),
   fn('stageTrackerPendingKeys'),
   fn('stageTrackerAskingKeys'),
@@ -176,7 +179,7 @@ test('every 👤 says why a person is wanted', () => {
     { repo, kind: 'pr', number: 1, stage: 90, human_merge_reason: 'workflow-files', human_merge_reason_text: "Hive won't merge it alone — it touches .github/workflows", stage_actor: { kind: 'human', why: 'a maintainer merges it' } },
     Object.assign({ repo, kind: 'pr' }, pr15759),
     { repo, kind: 'pr', number: 2, stage: 70, author: 'sam', stage_actor: { kind: 'human', login: 'sam', why: "@sam must push a fix; the hive does not edit a person's PR" } },
-    { repo, kind: 'pr', number: 3, stage: 85, stage_actor: { kind: 'human', why: 'the hive is not permitted to merge into a protected release branch; a person must' } },
+    { repo, kind: 'pr', number: 3, stage: 70, stage_actor: { kind: 'human', why: 'the hive is not permitted to push a fix into a protected release branch — a person must' } },
     { repo, kind: 'pr', number: 4, stage: 85, modifiers: ['needs-decision'] },
     { repo, kind: 'issue', number: 5, stage: 15, stage_actor: { kind: 'human', why: 'no maintainer has triaged it yet' } },
   ];
@@ -195,6 +198,16 @@ test('every 👤 says why a person is wanted', () => {
   assert.ok(long.short.endsWith('…') && long.short.length === api.max, long.short);
   assert.strictEqual(bare.full, 'a person must act');
   assert.strictEqual(triage.short, '');
+  // The repeat is suppressed on the stage and pill the chevron word reads,
+  // not on the server's wording: a reworded why still stays in the hover.
+  for (const it of [
+    { repo, kind: 'pr', number: 6, stage: 85, stage_actor: { kind: 'human', why: 'somebody has to decide' } },
+    { repo, kind: 'issue', number: 7, stage: 45, stage_actor: { kind: 'human', why: 'the maintainers must choose' } },
+    { repo, kind: 'issue', number: 8, stage: 0, modifiers: ['needs-triage'], stage_actor: { kind: 'human', why: 'triage is pending' } },
+    { repo, kind: 'pr', number: 9, stage: 90, stage_actor: { kind: 'human', why: 'someone with merge rights clicks merge' } },
+  ]) {
+    assert.deepStrictEqual(api.humanReason(it), { short: '', full: it.stage_actor.why }, JSON.stringify(it));
+  }
   assert.strictEqual(api.humanReasonHtml(issue15503), '<span class="ham-human-why" title="Covered by PR #15759 — waiting for a decision on the PR"> · #15759 needs a decision</span>');
   assert.strictEqual(api.humanReasonHtml(fixtures[2]), '');
   // Not a person's move: no reason, no marker text.

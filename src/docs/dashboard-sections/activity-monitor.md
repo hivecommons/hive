@@ -434,7 +434,7 @@ The icon says what kind of actor holds the row; the `claimant` says *who*. On a 
 
 #### One row per PR
 
-A pull request that closes several open issues (`Closes #A` and `Closes #B`) is drawn once, under the issue the server names in each linked entry's `drawn_under` (its `nested_under`, the lowest-numbered open issue it closes). The other issues keep their own strip and show a compact **↳ #N · under #M** chip beside the title (tooltip: *PR #N covers this issue too; its row is drawn under #M*) instead of a second identical sub-row, so hivecommons/hive#14921 appears once under #14910 and #14911 points at it.
+A pull request that closes several open issues (`Closes #A` and `Closes #B`) is drawn once, under the issue the server names in each linked entry's `drawn_under` (its `nested_under`, the lowest-numbered open issue it closes). The other issues keep their own strip and show a compact **↳ #N · under #M** chip beside the title (tooltip: *PR #N covers this issue too; its row is drawn under #M*) instead of a second identical sub-row, so hivecommons/hive#14921 appears once under #14910 and #14911 points at it. When that parked PR waits on a person's decision, the covered issue also wears the passive **decision pending on #N** chip described under *Covered issues point at the PR's row* above — never the PR's own *Let hive decide* button.
 
 Payloads without `drawn_under` draw as before.
 
