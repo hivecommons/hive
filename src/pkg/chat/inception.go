@@ -189,6 +189,20 @@ func (s *Service) cmdInceptionState(ctx context.Context) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
+// recordInceptionAnswer records an answer to a specific question and returns
+// whether the interview is complete, along with the current answer state.
+func (s *Service) recordInceptionAnswer(ctx context.Context, state *inceptionStateResponse, qID string, content string) (bool, map[string]string, map[string]bool) {
+	key := inceptionRunKey(state)
+	s.mu.Lock()
+	buf := s.inceptionBufferLocked(key)
+	buf.Answers[qID] = content
+	delete(buf.Skipped, qID)
+	s.mu.Unlock()
+
+	answers, skipped := s.mergedInceptionAnswers(state)
+	return inceptionInterviewDone(state.State.Questions, answers, skipped), answers, skipped
+}
+
 func (s *Service) cmdInceptionAnswer(ctx context.Context, args string) (string, error) {
 	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
 	if len(parts) != 2 {
@@ -209,15 +223,9 @@ func (s *Service) cmdInceptionAnswer(ctx context.Context, args string) (string, 
 	if !inceptionAcceptsAnswers(state.State.Phase) {
 		return fmt.Sprintf("❌ cannot submit answers in phase %s; remaining questions use their defaults", state.State.Phase), nil
 	}
-	key := inceptionRunKey(state)
-	s.mu.Lock()
-	buf := s.inceptionBufferLocked(key)
-	buf.Answers[state.State.Questions[n-1].ID] = answer
-	delete(buf.Skipped, state.State.Questions[n-1].ID)
-	s.mu.Unlock()
 
-	answers, skipped := s.mergedInceptionAnswers(state)
-	if inceptionInterviewDone(state.State.Questions, answers, skipped) {
+	done, answers, _ := s.recordInceptionAnswer(ctx, state, state.State.Questions[n-1].ID, answer)
+	if done {
 		return s.submitInceptionBuffer(ctx, state)
 	}
 	return fmt.Sprintf("✅ Recorded answer %d (%d of %d). Reply `!inception submit` to send them, or keep answering.",
@@ -453,9 +461,6 @@ func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, 
 		return
 	}
 	s.mu.Lock()
-	buf := s.inceptionBufferLocked(inceptionRunKey(state))
-	buf.Answers[q.ID] = content
-	delete(buf.Skipped, q.ID)
 	if pending := s.pendingInterviews[key]; pending != nil {
 		pending.Answers[q.ID] = content
 	}
@@ -464,8 +469,8 @@ func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, 
 	// Same one-call rule as `!inception answer`: the engine leaves clarify on
 	// the first submission, so the reply is buffered until the interview is
 	// complete (or `!inception submit`) rather than posted on its own.
-	answers, skipped = s.mergedInceptionAnswers(state)
-	if inceptionInterviewDone(state.State.Questions, answers, skipped) {
+	done, answers, _ := s.recordInceptionAnswer(ctx, state, q.ID, content)
+	if done {
 		reply, _ := s.submitInceptionBuffer(ctx, state)
 		s.enqueue(reply)
 		return
