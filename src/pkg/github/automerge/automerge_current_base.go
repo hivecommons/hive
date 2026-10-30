@@ -89,7 +89,7 @@ func (c *Engine) warnCurrentBaseFallbackOnce(displayRepo string, number int, rea
 //
 // stop is false when the merge may proceed; otherwise the caller returns the
 // event, reason and error as-is.
-func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo string, number int, baseBranch, headSHA string, branchUpdateAllowed bool, holdReason string, fork bool) (AutoMergeSweepEvent, string, bool, error) {
+func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo string, number int, baseBranch, headSHA string, branchUpdateAllowed bool, holdReason string, fork bool, admissionLane ...string) (AutoMergeSweepEvent, string, bool, error) {
 	if !c.requireCurrentBaseFor(owner+"/"+repo) || c.gh == nil {
 		return AutoMergeSweepEvent{}, "", false, nil
 	}
@@ -102,13 +102,24 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 		return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, err
 	}
 	if cmp.GetBehindBy() <= 0 {
+		// Ownership serializes REFRESHES, never already-current ready work.
+		// A fully gated successor may land while another head prepares.
 		return AutoMergeSweepEvent{}, "", false, nil
 	}
 	if !branchUpdateAllowed {
 		return AutoMergeSweepEvent{}, holdReason, true, nil
 	}
-	c.info("automerge head is behind the current base; updating before merge", "repo", displayRepo, "pr", number, "base", baseBranch, "behind_by", cmp.GetBehindBy())
+	lane := stageLaneSelf
+	if len(admissionLane) > 0 {
+		lane = admissionLane[0]
+	}
+	if reason, err := c.admitBasePreparation(ctx, owner, repo, baseBranch, number, headSHA, lane, false); reason != "" || err != nil {
+		return AutoMergeSweepEvent{}, nonEmpty(reason, basePreparationPrefix+"state-unavailable"), true, err
+	}
 	event, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, currentBaseUpdateReason, fork)
+	if event.BranchUpdated {
+		c.info("automerge head is behind the current base; updating before merge", "repo", displayRepo, "pr", number, "base", baseBranch, "behind_by", cmp.GetBehindBy())
+	}
 	if currentBaseUpdateUnavailable(reason, err) && !c.requireCurrentBaseStrictFor(owner+"/"+repo) {
 		// Gate inherited from the hive-wide default (#15335) on a head the App
 		// may not write: parking it would turn every non-editable fork PR
