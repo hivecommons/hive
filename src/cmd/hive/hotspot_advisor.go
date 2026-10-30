@@ -273,6 +273,7 @@ func runHotspotAdvisor(ctx context.Context, cfg *config.Config, ghClient *github
 	filer := &hotspot.Filer{
 		Store: store, Gate: ghAdapter, Creator: ghAdapter, Stater: ghAdapter,
 		Opts: opts, Refile: refile,
+		MaxOpen: g.HotspotMaxOpenOrDefault(), MaxPerPass: g.HotspotMaxPerPassOrDefault(),
 		Logf: func(format string, args ...any) { logger.Info(fmt.Sprintf(format, args...)) },
 	}
 	for _, repo := range store.Repos() {

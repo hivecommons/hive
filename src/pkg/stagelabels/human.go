@@ -28,6 +28,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -258,6 +259,11 @@ const (
 	// closed, or the merged PR declares it) instead of parking it at 085 on
 	// a reviewer's requires_human (hivecommons/hive#15208).
 	LaneReasonSupersededByMerge = "superseded-by-merge"
+	// LaneReasonAlreadyLanded is the ledger reason when the hive closes its
+	// own PR because the reviewer's verdict on the head says the change is
+	// already on the base and the closer proved it (hivecommons/hive#15647);
+	// AlreadyLandedReason appends the landing PR (":#N") when known.
+	LaneReasonAlreadyLanded = "self-authored:already-landed"
 	// LaneReasonAdoptionStalledPrefix opens the 085 reason for an adopted
 	// PR (074) whose head sat past the stage dwell with nothing the hive
 	// could push; the suffix is the lane reason it was stuck on
@@ -648,4 +654,27 @@ func HumanAuthorOwesAnswer(e Evidence) bool {
 // its own, so it never turns a human author's question into a decision.
 func IsDecisionRequestedReason(reason string) bool {
 	return strings.EqualFold(strings.TrimSpace(reason), "contributor-lane:decision-requested")
+}
+
+// AlreadyLandedReason is LaneReasonAlreadyLanded with the PR that landed
+// the change (":#N"), or bare when none was named.
+func AlreadyLandedReason(landed int) string {
+	if landed <= 0 {
+		return LaneReasonAlreadyLanded
+	}
+	return LaneReasonAlreadyLanded + ":#" + strconv.Itoa(landed)
+}
+
+// AlreadyLandedCaption is the tracker caption for an AlreadyLandedReason
+// ("already landed via #N — closing as superseded"); ok is false for any
+// other reason.
+func AlreadyLandedCaption(reason string) (caption string, ok bool) {
+	r := strings.TrimSpace(reason)
+	if r != LaneReasonAlreadyLanded && !strings.HasPrefix(r, LaneReasonAlreadyLanded+":#") {
+		return "", false
+	}
+	if n, err := strconv.Atoi(strings.TrimPrefix(r, LaneReasonAlreadyLanded+":#")); err == nil && n > 0 {
+		return "already landed via #" + strconv.Itoa(n) + " — closing as superseded", true
+	}
+	return "already landed on the base — closing as superseded", true
 }

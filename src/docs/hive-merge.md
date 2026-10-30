@@ -889,6 +889,33 @@ Three things made #15499 sit a day at 085 instead:
   decision now quotes the newest decision-requested verdict on any head,
   shows a *redundant of #N* chip, and leads with **Close as superseded**.
 
+**Already landed, by the reviewer's word.** #15647 and #15648 (adoptions of
+#15324 / #15343) still parked at 085 with the question "should decide
+whether to close this adoption … as already landed, since v5 already
+contains the identical change via #15506": the empty-diff closer ran, but
+its 15-minute freshness guard read the PR's `updated_at`, which the hive's
+own labels and comments bump every pass, so the head was "too fresh"
+forever. "Already landed / redundant / no-op" is the hive's own decision
+about its own PR, not a person's. The 085 route now takes the
+**already-landed** entry when the verdict for the head says so — the
+`hive-redundant-of` marker, or wording that names the landing PR
+explicitly ("already landed … via #N", "identical change merged in #N";
+a question that merely mentions a PR is not a claim, and two candidate
+numbers are ambiguous and name none). On that entry there is no
+freshness guard (a reviewer confirmed this head), a head whose files
+are each byte-identical on the base tip counts as empty when GitHub
+still reports a diff, and the landing PR is taken from the marker or
+the words; with no number the compare alone must prove redundancy. The
+close is logged once with reason `self-authored:already-landed`
+(tracker caption "already landed via #N — closing as superseded"),
+and settles the adoption's lineage: each original the copy declared
+`Supersedes #M` whose record names this copy is told, marked superseded
+on the stage store (so the orphan recovery does not re-adopt a head the
+base already has) and closed, and issues the copy would have closed are
+closed with the redundant-of note. Only when the verdict names no PR
+*and* the compare is not empty does the PR fall through to 085 as before
+([#15647](https://github.com/hivecommons/hive/pull/15647)).
+
 ## Usage
 
 ```sh

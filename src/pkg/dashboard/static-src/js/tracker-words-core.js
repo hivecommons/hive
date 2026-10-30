@@ -201,9 +201,11 @@
       if (lower.indexOf('required-check-failing:') === 0 || lower.indexOf('check-failing:') === 0 || lower === 'ci-red') return 'checks-failing';
       return '';
     }
-    // The first merge-ready stage (080 awaiting merge admission). A train
-    // member below it holds a provisional slot: the planner has ordered
-    // it, but CI / the review verdict / the fixer still stand in front.
+    // The first merge-ready stage (080 awaiting merge admission). The
+    // server seats no train member below it (a PR short of the queue
+    // carries an `overlap` hint instead); the provisional words below are
+    // the fallback for a payload that still does, so the chevron never
+    // contradicts the caption.
     const STAGE_TRACKER_MERGE_READY = 80;
     // The blocker headline for a provisional train member, by stage —
     // the same words the stage column shows (stageTrackerShort in Go), so
@@ -413,6 +415,8 @@
       else if (why) tip += ' · no estimate until #' + p.head + ' moves';
       return tip + '.' + order;
     }
+    // One sentence of merge-train mechanics for every train hover.
+    const STAGE_TRACKER_TRAIN_MECHANICS = 'Each one is rebased onto the base only after the PR ahead of it merges — it cannot be rebased before that. Only green, approved PRs (merge queue, 080+) are counted; a PR still at CI / Review is not in the train.';
     // The muted hover note on a PR the server took out of its merge train
     // while it is under repair (left_train: {why, note} — fixing, needs
     // author, needs decision, red checks). The row rides no train and
@@ -424,16 +428,83 @@
       if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
       return String(lt.note || STAGE_TRACKER_LEFT_TRAIN_NOTE);
     }
+    /* ---- overlap hint (a PR short of the merge queue) ---------------------
+       The merge train is a merge-queue concept: only PRs at 080 and
+       beyond ride one. A PR still at CI / Review whose files overlap
+       another open PR's carries `overlap: {behind, with, files, note}`
+       instead of `merge_train` — hive's own page once drew "merge train ·
+       2 PRs · 1st: #15637" under two rows that both read CI / Review. The
+       row shows one muted badge, "overlaps #15637", whose hover is the
+       note: "overlaps #15637 (sidebar.html, index.html) — will queue
+       behind it". No rail, no ordinal, no header. */
+    // Pure: the row's overlap hint, or null when it rides a train or
+    // overlaps nothing.
+    function stageTrackerOverlap(item) {
+      const o = item && item.overlap;
+      if (!o || typeof o !== 'object' || stageTrackerTrain(item)) return null;
+      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
+      if (!(Number(o.behind) > 0) && !withPRs.length) return null;
+      return o;
+    }
+    // Pure: the badge word — "overlaps #15637" (the PR it queues behind,
+    // else the first PR it overlaps, "+1" for the rest).
+    function stageTrackerOverlapBadgeText(item) {
+      const o = stageTrackerOverlap(item);
+      if (!o) return '';
+      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
+      const lead = Number(o.behind) > 0 ? Number(o.behind) : withPRs[0];
+      const rest = withPRs.filter(n => n !== lead).length;
+      return 'overlaps #' + lead + (Number(o.behind) > 0 ? '' : (rest > 0 ? ' +' + rest : ''));
+    }
+    // Pure: the hover sentence — the server's note, else built from the
+    // parts the same way.
+    function stageTrackerOverlapTip(item) {
+      const o = stageTrackerOverlap(item);
+      if (!o) return '';
+      if (o.note) return String(o.note);
+      const files = (Array.isArray(o.files) ? o.files : []).filter(Boolean);
+      const paren = files.length ? ' (' + files.join(', ') + ')' : '';
+      if (Number(o.behind) > 0) return 'overlaps #' + Number(o.behind) + paren + ' — will queue behind it';
+      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
+      return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — merges ahead of ' + (withPRs.length > 1 ? 'them once all are ready' : 'it once both are ready');
+    }
+    // Pure: the muted badge beside the row's chips; '' without a hint.
+    function stageTrackerOverlapBadgeHtml(item) {
+      const text = stageTrackerOverlapBadgeText(item);
+      if (!text) return '';
+      const tip = 'Not in the merge queue yet: ' + stageTrackerOverlapTip(item);
+      return `<span class="ham-badge ham-badge-overlap" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(text)}</span>`;
+    }
     // Tooltip lines: the queue ahead and the overlapping files — or, for a
-    // PR that left its train, the one muted note.
-    function stageTrackerTrainLines(item) {
+    // PR that left its train, the one muted note — or, for a PR short of
+    // the merge queue, the overlap hint.
+    // header is true for the train header's own hover, which speaks for
+    // the whole train rather than one member's slot.
+    function stageTrackerTrainLines(item, header) {
       const mt = stageTrackerTrain(item);
-      if (!mt) { const left = stageTrackerLeftTrainNote(item); return left ? ['Merge train: ' + left] : []; }
+      if (!mt) {
+        const left = stageTrackerLeftTrainNote(item);
+        if (left) return ['Merge train: ' + left];
+        // Guarded: test harnesses lift this function on its own.
+        const over = typeof stageTrackerOverlapTip === 'function' ? stageTrackerOverlapTip(item) : '';
+        return over ? ['Not in the merge queue yet: ' + over] : [];
+      }
       const ahead = Array.isArray(mt.ahead) ? mt.ahead.filter(n => Number(n) > 0) : [];
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) lines.push('Position: 1st — merges next; the lane then updates or rebases the others');
-      else lines.push('Position: ' + stageTrackerOrdinal(mt.position) + ' of ' + (Number(mt.size) || 0) + (ahead.length ? ' · ahead: ' + ahead.map(n => '#' + n).join(', ') : ''));
+      const size = Number(mt.size) || 0;
+      const base = String(mt.id || '').split('#')[0] || 'the same base';
+      // The mechanics the owner asked about: shared files mean a fixed
+      // order, and a member can only rebase once the one ahead has merged.
+      const lines = ['Merge train: ' + size + ' PRs in the merge queue to ' + base + ' touch the same files, so they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
+      // Guarded: test harnesses lift this function without the constant.
+      if (typeof STAGE_TRACKER_TRAIN_MECHANICS !== 'undefined') lines.push(STAGE_TRACKER_TRAIN_MECHANICS);
+      if (header) {
+        // nothing more: the header speaks for the whole train
+      } else if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) lines.push('Position: 1st — merges next; the lane then updates or rebases the others');
+      else {
+        const prev = ahead.length ? ahead[ahead.length - 1] : (Number(mt.front) || 0);
+        lines.push('Position: ' + stageTrackerOrdinal(mt.position) + ' of ' + size + (prev ? ' · after #' + prev + ' merges' : '') + (ahead.length > 1 ? ' · ahead: ' + ahead.map(n => '#' + n).join(', ') : ''));
+      }
       if (mt.state === STAGE_TRACKER_TRAIN_STATE_REBASING) lines.push('The PR ahead merged; rebase attempt ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' in progress');
       if (mt.state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED) lines.push('Rebase failed ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' times — a maintainer rebases, then merges');
       if (files.length) lines.push('Overlapping files: ' + files.join(', '));
@@ -497,14 +568,36 @@
       (shown || []).forEach(n => { here[Number(n)] = true; });
       return Object.keys(known).map(Number).filter(n => !here[n]).sort((a, b) => a - b);
     }
+    // Pure: where a train's members are on the client, for the header's
+    // missing line — listed: PR numbers in the filtered, ordered list
+    // (any page); known: PR numbers in the whole payload. Built once per
+    // render in tracker-filter.js from the rows the train helpers see (a
+    // PR drawn under its issue counts under its own number).
+    function stageTrackerTrainWhere(listed, known) {
+      const nums = rows => {
+        const out = {};
+        (Array.isArray(rows) ? rows : []).forEach(it => {
+          const rt = stageTrackerRowTrain(it && it.item ? it.item : it);
+          if (rt && rt.pr > 0) out[rt.pr] = true;
+          if (it && it.kind === 'pr' && Number(it.number) > 0) out[Number(it.number)] = true;
+        });
+        return out;
+      };
+      return { listed: nums(listed), known: nums(known) };
+    }
     // Header line over a train's rows: "merge train · 4 PRs · 1st: #15074".
     // The count is the rows drawn under the header, never the server's
     // size alone: with shown (the PR numbers rendered in this run) a
-    // train the view only partly carries reads "merge train · 1 of 3 PRs
-    // here · 1st: #15425 · not in this view: #15529, #15530" so the header
-    // never claims rows that are not there (the train icon sits in front
-    // of it in the HTML).
-    function stageTrackerTrainHeaderText(mt, shown) {
+    // train the page only partly carries says where the rest are —
+    // "merge train · 1 of 3 PRs here · 1st: #15425 · on another page:
+    // #15529, #15530" or "… · hidden by the filter: #15529" — so the header
+    // never claims rows that are not there and never leaves the owner
+    // asking what "not in this view" means. The server's size counts
+    // only PRs in the merge queue (080 and beyond); a PR still at CI /
+    // Review is not a member and is not mentioned here (hivecommons/hive#15653).
+    // where is stageTrackerTrainWhere's answer; without it the rest read
+    // "not on this page".
+    function stageTrackerTrainHeaderText(mt, shown, where) {
       const size = Number(mt.size) || 0;
       const front = Number(mt.front) || 0;
       if (!Array.isArray(shown)) return 'merge train · ' + size + ' PRs · 1st: #' + front;
@@ -512,23 +605,34 @@
       let text = 'merge train · ' + (here < size ? here + ' of ' + size + ' PRs here' : here + (here === 1 ? ' PR' : ' PRs')) + ' · 1st: #' + front;
       if (here < size) {
         const missing = stageTrackerTrainMissing(mt, shown);
-        const named = missing.map(n => '#' + n);
         const unnamed = size - here - missing.length;
-        if (unnamed > 0) named.push(unnamed + ' more');
-        text += ' · not in this view: ' + (named.length ? named.join(', ') : (size - here) + ' PRs');
+        if (!where || !where.listed) {
+          const named = missing.map(n => '#' + n);
+          if (unnamed > 0) named.push(unnamed + ' more');
+          text += ' · not on this page: ' + (named.length ? named.join(', ') : (size - here) + ' PRs');
+          return text;
+        }
+        const paged = missing.filter(n => where.listed[n]);
+        const filtered = missing.filter(n => !where.listed[n] && where.known && where.known[n]);
+        const gone = missing.filter(n => !where.listed[n] && !(where.known && where.known[n]));
+        if (paged.length) text += ' · on another page: ' + paged.map(n => '#' + n).join(', ');
+        if (filtered.length) text += ' · hidden by the filter: ' + filtered.map(n => '#' + n).join(', ');
+        const rest = gone.map(n => '#' + n);
+        if (unnamed > 0) rest.push(unnamed + ' more');
+        if (rest.length) text += ' · not in this payload: ' + rest.join(', ');
       }
       return text;
     }
     // idx is the train's accent slot on the page (stageTrackerTrainIndex);
     // the header and its rows share the rail colour it picks.
-    function stageTrackerTrainHeaderHtml(item, shown, idx) {
+    function stageTrackerTrainHeaderHtml(item, shown, idx, where) {
       const rt = stageTrackerRowTrain(item);
       if (!rt) return '';
       const mt = rt.mt;
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }).join('\n');
+      const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }, true).join('\n');
       return `<div class="ham-train-head${stageTrackerTrainAccentClass(idx)}" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
-        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
+        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown, where))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
       </div>`;
     }
     // Row classes for a train member: the rail, whether it leads / ends
@@ -547,7 +651,9 @@
     // Inserts a train header entry before the first row of each train run.
     // Entries are {key, html}; items are the page's row items in order. The
     // header counts the run it heads — the rows actually drawn under it.
-    function stageTrackerTrainRows(items, rowOf) {
+    // where (stageTrackerTrainWhere) tells the header where the members
+    // it does not draw are.
+    function stageTrackerTrainRows(items, rowOf, where) {
       const out = [];
       let prevKey = '';
       const list = items || [];
@@ -564,7 +670,7 @@
             if (!m || stageTrackerTrainKey(m) !== k) break;
             shown.push(stageTrackerRowTrain(m).pr);
           }
-          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown, trains.index[k]) });
+          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown, trains.index[k], where) });
         }
         prevKey = k;
         out.push(rowOf(e, i));
