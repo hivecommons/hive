@@ -96,6 +96,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLeadAction"),
 		jsFunc(t, html, "stageTrackerMaintainerMoved"),
 		jsFunc(t, html, "stageTrackerDevWarn"),
+		jsFunc(t, html, "stageTrackerLeadActionOnRow"),
 		jsFunc(t, html, "stageTrackerLeadActionHtml"),
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
@@ -1320,17 +1321,53 @@ assert.strictEqual(STAGE_TRACKER_ACTING_CAPTIONS['decide:merge-now'], 'Merging�
 assert.strictEqual(STAGE_TRACKER_ACTION_WORDS.merged, 'merged');
 assert.strictEqual(STAGE_TRACKER_ACTION_WORDS['queued-for-merge'], 'queued for merge');
 
-// A human-authored PR waiting on its author (072): no Decide… submenu, so
-// the server's close answers lead, with their consequences.
+// A human-authored PR waiting on its author (072): no Decide… submenu. The
+// server's close answers stay in the ⋯ menu with their consequences, but a
+// destructive option never leads the row on its own — the row shows no
+// inline button rather than "Close as superseded".
 const waiting = { repo: 'o/r', kind: 'pr', number: 9, url: 'u', author: 'someone', author_kind: 'human', stage: 72, modifiers: [],
-  decision_needed: { question: 'This PR waits on @someone for a new commit.', options: [
+  decision_needed: { question: 'This PR waits on @someone to push a new commit.', options: [
     { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #9 unmerged, naming the PR that replaces it' },
     { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #9 unmerged' },
     { action: 'hold', label: 'Hold', enabled: true } ] } };
 as = stageTrackerRowActions(waiting, writer);
 assert.deepStrictEqual(ids(as), ['decide:close-superseded', 'decide:close-wontfix', 'hold', 'retry', 'needs-human', 'open', 'copy']);
 assert.ok(as[0].danger && as[1].danger);
+assert.ok(!as[0].lead && !as[1].lead, 'a close is never the inline lead by default');
 assert.strictEqual(as[0].hint, 'closes #9 unmerged, naming the PR that replaces it');
+assert.strictEqual(stageTrackerLeadAction(waiting, writer), null, 'no inline button for a PR waiting on its author');
+assert.strictEqual(stageTrackerLeadActionHtml(waiting, writer), '');
+
+// The live shape (hivecommons/hive#15626, #15641): a human's PR parked at
+// 085 after the review swarm sent it back — delegate and hold sit in the
+// Decide… submenu, so the closes were the first options left over and
+// "Close as superseded" became the red lead. Now the lead is the
+// non-destructive submenu answer.
+const sentBack = { repo: 'o/r', kind: 'pr', number: 15626, url: 'u', author: 'clubanderson', author_kind: 'human', stage: 85, modifiers: ['needs-decision'],
+  rework: { state: 'acknowledged', actor: 'clubanderson' },
+  decision_needed: { question: 'This PR waits on @clubanderson to push a new commit.', options: [
+    { action: 'decide:delegate', label: 'Let hive decide', enabled: true },
+    { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'Closes #15626, naming the PR that replaces it' },
+    { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'Closes #15626 without merging' },
+    { action: 'hold', label: 'Hold', enabled: true } ] } };
+let leadSB = stageTrackerLeadAction(sentBack, writer);
+assert.ok(leadSB && !/^decide:close-/.test(leadSB.id), 'sent-back PR never leads with a close: ' + JSON.stringify(leadSB));
+assert.ok(!leadSB.danger);
+const sbDecide = stageTrackerRowActions(sentBack, writer).find(a => a.id === 'decide');
+assert.ok(sbDecide && sbDecide.submenu.some(o => o.id === 'decide:close-superseded' && o.danger), 'the Decide… submenu still offers the close');
+
+// When the server says the close IS the answer (lead: the reviewer named
+// the PR that supersedes this one — RedundantOf), Close as superseded
+// still leads.
+const redundant = { ...sentBack, number: 15499, decision_needed: { question: 'q', redundant_of: 15400, options: [
+    { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, lead: true, consequence: 'Closes this PR as superseded by #15400, which already carries its change.' },
+    { action: 'decide:delegate', label: 'Let hive decide', enabled: true },
+    { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true },
+    { action: 'hold', label: 'Hold', enabled: true } ] } };
+leadSB = stageTrackerLeadAction(redundant, writer);
+assert.strictEqual(leadSB.id, 'decide:close-superseded');
+assert.ok(leadSB.danger && leadSB.lead);
+assert.strictEqual(leadSB.hint, 'Closes this PR as superseded by #15400, which already carries its change.');
 
 // A server-disabled lead keeps the server's plain-words reason.
 const refused = { ...pr317, decision_needed: { ...decision090, options: [{ action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: false, reason_if_disabled: 'Release the hold first' }] } };
