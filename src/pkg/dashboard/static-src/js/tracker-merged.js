@@ -77,7 +77,7 @@
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
       if (celebrate) fresh.forEach(k => { _stageTrackerCelebratePending[k] = true; });
       if (typeof stageTrackerMergedSync === 'function') stageTrackerMergedSync(d, fresh, Date.now());
-      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now());
+      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now(), d && d.base_preparation);
       if (typeof stageTrackerClosedToast === 'function') closed.forEach((k, i) => stageTrackerClosedToast(k, closedItems[i]));
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });

@@ -40,10 +40,11 @@ type StageTrackerResponse struct {
 	// on every request served from memory until the TTL lapses.
 	Source string `json:"source"`
 	// CacheTTLSeconds is the effective dashboard.stage_tracker.cache_ttl_s.
-	CacheTTLSeconds int64               `json:"cache_ttl_s"`
-	HiveID          string              `json:"hive_id,omitempty"`
-	Stages          []StageTrackerStage `json:"stages"`
-	Items           []StageTrackerItem  `json:"items"`
+	CacheTTLSeconds int64                          `json:"cache_ttl_s"`
+	HiveID          string                         `json:"hive_id,omitempty"`
+	Stages          []StageTrackerStage            `json:"stages"`
+	Items           []StageTrackerItem             `json:"items"`
+	BasePreparation []StageTrackerPreparationQueue `json:"base_preparation,omitempty"`
 	// OpenIssues and OpenPRs count Items by kind. Items is the canonical
 	// open-items set (open_items.go), so these equal the Overview tile's
 	// total open issues and PRs; the SPA prints them in the section header
@@ -272,13 +273,14 @@ type StageTrackerHop struct {
 
 // StageTrackerItem is one open issue or PR on the tracker.
 type StageTrackerItem struct {
-	Superseded *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
-	Repo       string                        `json:"repo"`
-	Number     int                           `json:"number"`
-	Kind       string                        `json:"kind"`
-	Title      string                        `json:"title"`
-	URL        string                        `json:"url,omitempty"`
-	Author     string                        `json:"author,omitempty"`
+	Preparation *StageTrackerPreparation      `json:"preparation,omitempty"`
+	Superseded  *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
+	Repo        string                        `json:"repo"`
+	Number      int                           `json:"number"`
+	Kind        string                        `json:"kind"`
+	Title       string                        `json:"title"`
+	URL         string                        `json:"url,omitempty"`
+	Author      string                        `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
 	Head           string                `json:"head,omitempty"`
@@ -661,15 +663,16 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
-	BaseRef    string     `json:"base_ref,omitempty"`
-	Number     int        `json:"number"`
-	Title      string     `json:"title,omitempty"`
-	URL        string     `json:"url,omitempty"`
-	Author     string     `json:"author,omitempty"`
-	AuthorKind string     `json:"author_kind,omitempty"`
-	Stage      int        `json:"stage,omitempty"`
-	StageSince *time.Time `json:"stage_since,omitempty"`
-	Caption    string     `json:"caption,omitempty"`
+	Preparation *StageTrackerPreparation `json:"preparation,omitempty"`
+	BaseRef     string                   `json:"base_ref,omitempty"`
+	Number      int                      `json:"number"`
+	Title       string                   `json:"title,omitempty"`
+	URL         string                   `json:"url,omitempty"`
+	Author      string                   `json:"author,omitempty"`
+	AuthorKind  string                   `json:"author_kind,omitempty"`
+	Stage       int                      `json:"stage,omitempty"`
+	StageSince  *time.Time               `json:"stage_since,omitempty"`
+	Caption     string                   `json:"caption,omitempty"`
 	// NoteChangedAt mirrors the PR row's: when the caption last changed
 	// meaning.
 	NoteChangedAt *time.Time `json:"note_changed_at,omitempty"`

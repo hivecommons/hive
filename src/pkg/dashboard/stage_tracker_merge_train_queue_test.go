@@ -208,7 +208,7 @@ func TestStageTrackerMergeQueueChipNode(t *testing.T) {
 	for _, want := range []string{
 		`id="activity-monitor-queue" data-action="hamQueueToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-queue-pop"`,
 		`<div class="ham-merged-pop ham-queue-pop" id="activity-monitor-queue-pop" role="dialog" aria-label="Merge queue" hidden></div>`,
-		`if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now());`,
+		`if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now(), d && d.base_preparation);`,
 		`.ham-queue-stalled { color: var(--yellow); }`,
 	} {
 		if !strings.Contains(html, want) {
