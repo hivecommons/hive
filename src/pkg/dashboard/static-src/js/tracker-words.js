@@ -82,7 +82,7 @@
     //                              remaining"); drawn in CI / Review, since it
     //                              can still regress to 070
     //   080 Ready for auto merge — green and approved; waiting for hive's
-    //                              merge sweep: "next sweep in 42s"
+    //                              merge pass: "next pass in 42s"
     //   095 Soaking              — admitted; the soak window runs: "7m left"
     //   100 Merging              — admitted and soaked; the merge is being
     //                              attempted (GitHub merge queue / tide)
@@ -204,7 +204,7 @@
     // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
     // person says what the person has to do (the owner's ask: "waiting on
     // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
-    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for a merge sweep', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
     // Pure: the short reason a stalled head is stuck — the head_state
     // table, a human-decision head told apart by its reason, else the
     // head's own plain-word reason cut at its first clause.
@@ -258,7 +258,7 @@
       const s = Number(mt.eta_s) || 0;
       return s > 0 ? nowMs + s * 1000 : 0;
     }
-    // Pure: the ETA words — "ETA ~25m (2 ahead · next sweep in 40s)",
+    // Pure: the ETA words — "ETA ~25m (2 ahead · next pass in 40s)",
     // "running late — estimated ~25m, still waiting", or '' with no
     // estimate. Always a "~": an estimate, not a promise.
     function stageTrackerTrainEtaWords(mt, nowMs) {
@@ -267,7 +267,7 @@
       const left = stageTrackerShortLeft(at - nowMs);
       const basis = String(mt.eta_basis || '').trim();
       if (mt.late) return 'Running late — estimated ~' + stageTrackerShortLeft((Number(mt.eta_s) || 0) * 1000) + ', still waiting' + (basis ? ' (' + basis + ')' : '') + '.';
-      return 'ETA ' + (left ? '~' + left : 'any sweep now') + (basis ? ' (' + basis + ')' : '') + '.';
+      return 'ETA ' + (left ? '~' + left : 'any moment now') + (basis ? ' (' + basis + ')' : '') + '.';
     }
     // Pure: the queued row's hover — "2nd of 6 in the merge queue · behind
     // #15253 (soaking, 12m left) · ETA ~25m. Hive merges one at a time, in
@@ -759,7 +759,7 @@
     }
     // Pure: { word, detail, tip, cue } for an item on the gate, null off it.
     //   word   — the pill word (STAGE_TRACKER_MERGE_GATE_WORD)
-    //   detail — the live part after " · " ("next sweep in 42s", "7m left");
+    //   detail — the live part after " · " ("next pass in 42s", "7m left");
     //            always a gate fact, never the issue's lane reason
     //   tip    — one plain sentence for the glyph's title + aria-label; on
     //            an issue row it leads with "open PR #N covers it · at <stage>"
@@ -815,7 +815,7 @@
       }
       // A merge-train member (hivecommons/hive#15395): the label is its
       // place in the queue and nothing else, so the chip does not flip
-      // between "… · merge sweep running" and the bare form each sweep,
+      // between "… · checking now" and the bare form each sweep,
       // and a front in its soak keeps its place word (never the slug) —
       // its countdown already includes the soak left.
       // The sweep is the spinning ⬡ and a "Checking now…" tooltip line.
@@ -834,7 +834,7 @@
         const detail = etaAt > 0 ? (mt.late ? 'running late' : stageTrackerTrainEtaDetail(etaAt, nowMs)) : '';
         return { state, word: trainWord, detail, tip: queueTip + checking + lastSeen, cue: mg.sweep_running ? 'running' : 'waiting', until: etaAt > 0 && !mt.late ? etaAt : 0, train: mt, stalled: !!mt.stalled };
       }
-      // A soak clock (own or mirrored) outranks "merge sweep running": the
+      // A soak clock (own or mirrored) outranks "checking now": the
       // sweep reads the clock, it does not replace it. Any gate stage the
       // lane holds for the soak — 095 admitted, or 060/080 while trust
       // still blocks the head — counts the same clock down.
@@ -844,7 +844,7 @@
         // "soak 12m left"; at 095 the soak is the stage.
         clock.prefix = state === 'soaking' ? '' : 'soak ';
         const soak = stageTrackerSoakWords(clock, nowMs, nextAt, !!mg.sweep_running);
-        return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
+        return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: soak.cue || 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
       }
       // 060 Review passed: the pill carries the lane's own recorded reason
       // ("CI in progress", "checks unreadable", "soak 30m remaining" —
@@ -853,15 +853,15 @@
       const preWhy = state === 'gate-pending' ? (stageTrackerReviewPassedDetail(mg.reason || laneReason) || 'waiting for merge admission') : '';
       if (state === 'merge-failed') return stageTrackerMergeFailedInfo(mg, nowMs, nextAt, lastSeen);
       if (mg.sweep_running) {
-        return { state, word, detail: preWhy || 'merge sweep running', tip: (preWhy ? 'Review passed, not yet admitted to auto merge — ' + preWhy + '; ' : '') + "hive's merge sweep is running on this PR now.", cue: 'running', until: 0 };
+        return { state, word, detail: preWhy || 'checking now', tip: (preWhy ? 'Review passed, not yet admitted to auto merge — ' + preWhy + '; ' : '') + 'hive is checking this PR now.', cue: 'running', until: 0 };
       }
-      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const nextWords = stageTrackerNextPassWords(nextAt, nowMs);
       const sooner = ' A GitHub event on the PR (check run, review, push) triggers a pass sooner.';
       if (state === 'soaking') {
-        return { state, word, detail: 'soak window complete', tip: 'Admitted; the soak window is complete — hive merges on its next sweep' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: 0 };
+        return { state, word, detail: 'complete', tip: 'Soak complete — merges on the next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: 0 };
       }
       if (state === 'ready') {
-        return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's merge sweep" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
+        return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's next merge pass" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
       }
       if (state === 'merging') {
         // A live merge call (merging_since, hivecommons/hive#15245) says
@@ -910,16 +910,16 @@
       const at = mg.merge_failed_at ? Date.parse(mg.merge_failed_at) : 0;
       const who = STAGE_TRACKER_MERGE_PATH_WORDS[mg.merge_path] || '';
       const when = (who ? ' (' + who + ')' : '') + (at > 0 ? ' ' + stageTrackerAgoText(at, nowMs) : '');
-      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const nextWords = stageTrackerNextPassWords(nextAt, nowMs);
       const details = why ? ' Details: ' + why : '';
       if (kind === 'checks-pending') {
-        const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? "; hive's merge sweep is on it now" : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
+        const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? '; hive is on it now' : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
         return { state, word: 'Waiting for CI', detail: checks > 0 ? checks + ' check' + (checks === 1 ? '' : 's') : '', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
       }
       const word = STAGE_TRACKER_MERGE_GATE_WORD[state];
       const sentence = 'hive tried to merge this' + when + ' and GitHub refused' + (text ? ' — ' + text : '') + '.';
       if (mg.sweep_running) {
-        return { state, word, detail: 'retrying', tip: sentence + " hive's merge sweep is retrying it now." + lastSeen + details, cue: 'running', until: 0 };
+        return { state, word, detail: 'retrying', tip: sentence + ' hive is retrying it now.' + lastSeen + details, cue: 'running', until: 0 };
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
     }
@@ -931,7 +931,7 @@
       return line.length > STAGE_TRACKER_MERGE_FAILED_SHORT_MAX ? line.slice(0, STAGE_TRACKER_MERGE_FAILED_SHORT_MAX - 1).trimEnd() + '…' : line;
     }
     // Pure: the pill word with its live detail — "Ready for auto merge ·
-    // next sweep in 42s". The detail span carries data-ham-until so the
+    // next pass in 42s". The detail span carries data-ham-until so the
     // countdown ticks in place.
     function stageTrackerMergeGateWordHtml(item, nowMs) {
       const info = stageTrackerMergeGateInfo(item, nowMs);
@@ -986,10 +986,20 @@
       if (typeof formatDashboardTime === 'function') return formatDashboardTime(ms, opts);
       try { return new Intl.DateTimeFormat(undefined, opts).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString(); }
     }
-    // Pure: { word, detail, tip } for a soak clock at nowMs.
+    // Pure: "next pass in 42s" until the lane's next pass, "pass due now"
+    // once it has come, '' when the next pass is unknown. Never the word
+    // "sweep" — that is the lane's internal name, not a state.
+    function stageTrackerNextPassWords(nextAt, nowMs) {
+      if (nextAt > nowMs) return 'next pass in ' + stageTrackerShortLeft(nextAt - nowMs);
+      return nextAt > 0 ? 'pass due now' : '';
+    }
+    // Pure: { word, detail, tip, cue } for a soak clock at nowMs.
     //   soaking   — "Soaking · 12m left"; the hover carries the rule, the
     //               live time left and the end time
-    //   ready     — past until: "Soaking · ready — next sweep in 3m"
+    //   complete  — past until, waiting for the lane's next pass:
+    //               "Soaking · complete"
+    //   mergeable — past until and the lane's pass is on it now:
+    //               "Mergeable · merging now"
     //   restarted — "Soak restarted · new head"
     function stageTrackerSoakWords(clock, nowMs, nextAt, sweepRunning) {
       const short = clock.head ? clock.head.slice(0, 7) : '';
@@ -997,15 +1007,19 @@
       const mins = clock.windowS > 0 ? Math.round(clock.windowS / 60) : 0;
       const window = mins > 0 ? mins + ' minute' + (mins === 1 ? '' : 's') : 'the soak window';
       if (clock.restarted) {
-        return { word: 'Soak restarted', detail: 'new head', tip: who + ' was replaced by a new push, so the soak starts over on the new head: it must sit ' + window + ' without new commits before the hive merges it. hive re-reads it on its next sweep.' };
+        return { word: 'Soak restarted', detail: 'new head', tip: who + ' was replaced by a new push, so the soak starts over on the new head: it must sit ' + window + ' without new commits before the hive merges it. hive re-reads it on its next pass.' };
       }
       const prefix = clock.prefix || '';
       const leftMs = clock.until - nowMs;
       if (leftMs > 0) {
         return { word: 'Soaking', detail: prefix + stageTrackerShortLeft(leftMs) + ' left', tip: who + ' must sit ' + window + ' without new commits before the hive merges it · ' + stageTrackerSoakLeftText(leftMs) + ' left · soak ends ' + stageTrackerClockText(clock.until) };
       }
-      const next = sweepRunning ? 'merge sweep running' : (nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : 'sweep due now');
-      return { word: 'Soaking', detail: (prefix ? 'soaked — ' : 'ready — ') + next, tip: who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '; hive merges it on its next sweep (' + next + ').' };
+      const soaked = who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '. ';
+      if (sweepRunning) {
+        return { word: 'Mergeable', detail: prefix ? 'soaked — merging now' : 'merging now', tip: soaked + 'Mergeable — merging now.', cue: 'running' };
+      }
+      const next = stageTrackerNextPassWords(nextAt, nowMs);
+      return { word: 'Soaking', detail: prefix ? 'soak complete' : 'complete', tip: soaked + 'Soak complete — merges on the next pass' + (next ? ' (' + next + ')' : '') + '.', cue: 'soaking' };
     }
     // Pure: the leading glyph for a row on the gate — spinning while hive's
     // sweep is on it, a clock while it waits — with the sentence as title
@@ -1017,12 +1031,12 @@
       return `<span class="ham-gate-ico${spin ? ' cue-spin' : ''}" data-gate-cue="${esc(info.cue)}" role="img" title="${esc(info.tip)}" aria-label="${esc(info.tip)}">${stageTrackerIcon(spin ? 'sweep' : 'wait', 'ham-ico')}</span>`;
     }
     // Pure: the queue chip's countdown words — "~4m" until the estimate,
-    // "any sweep now" once it has passed.
+    // "any moment now" once it has passed.
     function stageTrackerTrainEtaDetail(etaAt, nowMs) {
       const left = stageTrackerShortLeft(etaAt - nowMs);
-      return left ? '~' + left : 'any sweep now';
+      return left ? '~' + left : 'any moment now';
     }
-    // Pure: ticks every countdown in el from nowMs; "sweep due now" once a
+    // Pure: ticks every countdown in el from nowMs; "pass due now" once a
     // ready row's next pass has come.
     function stageTrackerGateCountdownSync(el, nowMs) {
       if (!el || typeof el.querySelectorAll !== 'function') return;
@@ -1032,7 +1046,7 @@
         const kind = n.getAttribute('data-ham-until-kind');
         if (n.getAttribute('data-ham-soak') === '1') { stageTrackerSoakTick(n, nowMs); continue; }
         const left = stageTrackerShortLeft(until - nowMs);
-        let t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· soak window complete') : (left ? '· next sweep in ' + left : '· sweep due now');
+        let t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· complete') : (left ? '· next pass in ' + left : '· pass due now');
         if (kind === 'decided') t = n.textContent.replace(/ · in [^·]*$|· in [^·]*$/, '') + (left ? ' · in ' + left : ' · due now');
         if (kind === STAGE_TRACKER_TRAIN_STATE_QUEUED || kind === STAGE_TRACKER_TRAIN_STATE_FRONT) t = '· ' + stageTrackerTrainEtaDetail(until, nowMs);
         if (n.textContent !== t) n.textContent = t;
@@ -1046,6 +1060,10 @@
       const words = stageTrackerSoakWords(clock, nowMs, Number(n.getAttribute('data-ham-next')) || 0, n.getAttribute('data-ham-sweeping') === '1');
       const t = '· ' + words.detail;
       if (n.textContent !== t) n.textContent = t;
+      // At 095 the soak owns the pill word too: a soaked head under the
+      // lane's pass flips "Soaking" to "Mergeable" without a re-render.
+      const wordNode = n.previousSibling;
+      if (!clock.prefix && wordNode && wordNode.nodeType === 3 && wordNode.textContent.trim() !== words.word) wordNode.textContent = words.word + ' ';
       const prev = n.getAttribute('data-ham-soak-tip') || '';
       if (!prev || prev === words.tip || typeof n.closest !== 'function') return;
       const li = n.closest('li');
