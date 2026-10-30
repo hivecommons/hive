@@ -82,6 +82,9 @@ func hostAllowedByHTTPList(host string, allowlist []string) bool {
 }
 
 func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
+	if err := c.IntegrationOrchestration.Validate(); err != nil {
+		return err
+	}
 	if c.Project.Org == "" {
 		return fmt.Errorf("project.org is required")
 	}
@@ -121,6 +124,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if c.GitHub.GraphQLPRBatchPageSize < 0 || c.GitHub.GraphQLPRBatchPageSize > 100 {
 		return fmt.Errorf("github.graphql_pr_batch_page_size must be between 1 and 100, or 0 for the default")
+	}
+	if !c.GitHub.Notifications.Valid() {
+		return fmt.Errorf("github.notifications.mode must be %q or %q", NotificationsModeQuiet, NotificationsModeNormal)
 	}
 	if _, err := HeartbeatOmitClasses(c.Hub.HeartbeatOmit); err != nil {
 		return err

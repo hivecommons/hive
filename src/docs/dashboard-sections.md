@@ -18,6 +18,14 @@ Hive has two release lines. **v5** is the stable line. **v6** is the newer line.
 
 For short definitions of the names the dashboard uses, see the [dashboard glossary](dashboard-glossary.md). For how the dashboard is built, see the [spoke dashboard guide](dashboard.md).
 
+### Live sidebar count feedback
+
+The Hive activity monitor, Contributors and Knowledge navigation pills briefly show an upward or downward arrow and the actual signed count change. The number remains readable and the link works as before. Reduced-motion preferences keep the feedback static; there is no extra polling or repeated announcement on unchanged refreshes.
+
+The tracker’s gold pill counts default-view **rows** (issues, except folded review notes, plus PRs not drawn under an issue); its orange pill counts **waiting-on-you items**. These are not separate issue and PR totals. Contributors animates only **online** in online/registered, using the existing registered-profile heartbeat window, not connected sockets or changes in registered totals. Knowledge counts **facts**, the sum of layer `total_pages` values, when enabled; its disabled zero does not mean stored facts were deleted. If a remote layer is unhealthy, Knowledge still loads its available facts, marks the count as partial in its accessible label and tooltip, and suppresses delta feedback until a complete count is known again.
+
+Initial or unknown counts and route/filter redraws do not animate. After reconnection, feedback describes only the observed net numeric change, not whether an item was merged, closed or otherwise removed.
+
 ## Words used on this page
 
 These words have a special meaning in Hive. Each entry explains them again the first time it uses them.

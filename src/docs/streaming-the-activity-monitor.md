@@ -151,10 +151,26 @@ dashboard build is picked up without restarting the pod.
 | Pod **CrashLoopBackOff** on start | `DASHBOARD_URL` unset, or ffmpeg cannot reach `live.twitch.tv:1935` — check the NetworkPolicy allows egress to public IPs and that the cluster permits outbound RTMP. |
 | Stream drops every few minutes | Twitch rejected the key (reset in Creator Dashboard?). ffmpeg restarts with 2→60 s backoff; the logs show the masked `***` key, never the real one. |
 | Old UI after a dashboard roll | Wait for the next `RELOAD_EVERY` tick or `kubectl rollout restart deploy/hive-stream`. |
+| **OOMKilled** / `Killed Xvfb` then `a supervised process left the loop` | The pod ran out of memory, almost always the x11grab frame queue after the encoder stalled (see [Resources and memory](#resources-and-memory)). Check `ipcs -m` in the pod: hundreds of 8 MiB segments means ffmpeg is hoarding frames — lower `VIDEO_QUEUE_FRAMES` or give the encoder CPU. |
 | Pod is `Running` but Twitch is offline | `healthcheck.sh` in the pod; if `frames` is not increasing, the ffmpeg sink is failing — look for `rtmp` errors in the logs. |
 
-Pure CPU budget: software x264 at 1080p30 `veryfast` uses roughly 1.5 cores;
-the Deployment requests 1 CPU / 2 Gi and limits 2 CPU / 3 Gi.
+## Resources and memory
+
+The Deployment requests 1 CPU / 3 Gi and limits 3 CPU / 6 Gi. Where it goes:
+
+| Consumer | Typical | Notes |
+|---|---|---|
+| Chromium (all processes) | ~1.0–1.3 Gi | `--renderer-process-limit=1`, `--js-flags=--max-old-space-size=1024`, `--disable-dev-shm-usage`; the supervisor reloads the tab when the sum of Chromium RSS passes `CHROMIUM_RSS_RELOAD_MIB` (3584) instead of waiting for the OOM killer. |
+| ffmpeg + Xvfb shared frames | ≤ `VIDEO_QUEUE_FRAMES` × 8.3 MiB (16 → ~130 Mi) | x11grab hands ffmpeg one MIT-SHM segment per raw 1080p frame, attached to both processes and charged to the cgroup once. If x264 falls behind, the input thread queues frames up to `-thread_queue_size`; the old 1024-deep queue could pin 8.5 Gi and OOMKilled the pod in a loop. Frames are skipped when the bounded queue is full. |
+| `/dev/shm` memory emptyDir | ≤ 512 Mi | Memory-backed emptyDirs count against the container limit. |
+| ffmpeg private, PulseAudio, Xvfb framebuffer | ~150 Mi | PulseAudio runs with only the null sink loaded; the pulse input queue holds tiny packets. |
+
+CPU: software x264 at 1080p30 `veryfast` needs about two cores on arm64 plus
+Chromium's software rasteriser (`--disable-gpu`). x264 threads are sized from
+the cgroup CPU quota (`ENC_THREADS`), not `nproc`, so the encoder does not
+oversubscribe a throttled pod. If `ffmpeg-progress.txt` shows `speed=` below
+`1.0x` or `drop_frames` climbing, drop `X264_PRESET` to `superfast` before
+raising the CPU limit.
 
 ## Privacy
 

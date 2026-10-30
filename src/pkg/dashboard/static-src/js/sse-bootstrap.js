@@ -120,10 +120,21 @@
         }
       });
 
+      // The pod announces its own roll before the stream drops (#15788).
+      source.addEventListener('upgrading', (e) => {
+        try {
+          versionHandleUpgradingEvent(JSON.parse(e.data));
+        } catch (err) {
+          console.error('SSE upgrading parse error:', err);
+        }
+      });
+
       source.onerror = () => {
         if (conn) {
+          const roll = typeof versionReadUpgradeProgress === 'function' ? versionReadUpgradeProgress() : null;
+          const rolling = roll && roll.source === 'roll' && !roll.completedAt;
           conn.className = 'connection';
-          conn.innerHTML = '<span class="dot-dead">●</span> reconnecting...';
+          conn.innerHTML = '<span class="dot-dead">●</span> ' + (rolling ? (roll.target ? 'upgrading · reconnecting…' : 'restarting · reconnecting…') : 'reconnecting...');
         }
         source.close();
         if (_eventSource === source) _eventSource = null;

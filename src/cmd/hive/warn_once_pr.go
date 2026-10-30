@@ -47,4 +47,9 @@ var (
 	humanLabelWarn     prWarnOnce
 	reviewExpiredWarn  prWarnOnce
 	reviewPromotedWarn prWarnOnce
+	// reviewFixExcludedWarn keys on (repo, pr, head, reason): the fix
+	// dispatcher re-derives its exclusions every cycle, so without it the
+	// same "fix-attempts-exhausted" line fired every ~5 min for 13h on
+	// hive's own #15308 (hivecommons/hive#15744).
+	reviewFixExcludedWarn prWarnOnce
 )

@@ -272,6 +272,7 @@
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
+        case 'loadIntegrationOrchestration': loadIntegrationOrchestration(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'loadUpstreamWatch': loadUpstreamWatch(); break;
@@ -1120,4 +1121,3 @@
         el.disabled = false;
       }
     }
-

@@ -1,5 +1,18 @@
 # Dashboard REST API reference — Hub server
 
+## Merged contributor leaderboard
+
+`GET /api/hub/leaderboard` returns `{"leaderboard": [...]}`. Rows merge
+contributors by `github_username` across public spokes, summing
+`tasks_completed`, `tasks_failed`, and `abandoned`. The integer `abandoned`
+field counts abandoned PRs; older spokes that omit it contribute zero, and
+merged rows explicitly include `"abandoned": 0` when none are reported.
+Both full heartbeats and lightweight task-status pushes carry this field.
+Private hives, agent rows, and empty usernames are excluded. Contributors
+with only abandoned PRs remain visible; rows with no counts and no activity
+are omitted. The added count does not change ranking.
+
+
 Part of the [Dashboard REST API reference](../api-reference.md); see that page for how auth levels and `pkg/<file>:<line>` source citations are read and checked. Edit this file for routes in this area and run `src/scripts/check-api-reference-citations.sh --fix` to resync citations.
 
 
