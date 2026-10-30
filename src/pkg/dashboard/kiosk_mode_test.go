@@ -17,8 +17,8 @@ func TestKioskModeWiring(t *testing.T) {
 		`document.body.classList.add('kiosk-mode');`,
 		`#section-activity-monitor-section'`,
 		`body.kiosk-mode .oc-sidebar, body.kiosk-mode .oc-sidebar-resize, body.kiosk-mode .oc-topbar,`,
-		// Must out-specify theme.go's layout guard `body #oc-topbar.oc-topbar{display:grid!important}`.
-		`body.kiosk-mode #oc-topbar.oc-topbar { display: none !important; }`,
+		// Must out-specify theme.go's layoutGuardCSS, which forces the topbar visible with id specificity.
+		`html body.kiosk-mode #oc-topbar[id] { display: none !important; }`,
 		`body.kiosk-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }`,
 		`if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();`,
 		`if (window.hiveKioskMode && window.hiveKioskMode()) return;`,

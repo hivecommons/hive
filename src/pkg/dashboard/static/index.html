@@ -6633,9 +6633,9 @@
     body.kiosk-mode .oc-sidebar, body.kiosk-mode .oc-sidebar-resize, body.kiosk-mode .oc-topbar,
     body.kiosk-mode #dash-notices, body.kiosk-mode #oc-agent-detail, body.kiosk-mode .hive-chat-fab,
     body.kiosk-mode .hive-chat-panel, body.kiosk-mode #welcome-overlay, body.kiosk-mode .nps-card { display: none !important; }
-    /* /api/theme.css ships a layout guard `body #oc-topbar.oc-topbar{display:grid!important}`
-       (theme/theme.go); match its id specificity so kiosk still wins. */
-    body.kiosk-mode #oc-topbar.oc-topbar { display: none !important; }
+    /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
+       display:grid!important with id specificity; beat it with (1,2,2). */
+    html body.kiosk-mode #oc-topbar[id] { display: none !important; }
     body.kiosk-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
     body.kiosk-mode #activity-monitor-section .dashboard-grip, body.kiosk-mode #activity-monitor-section .section-chevron { display: none !important; }
     body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
