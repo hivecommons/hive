@@ -240,7 +240,14 @@
        overlay that existed for 900 ms over plain text. The counter is
        now a drum at rest, always (stageTrackerOdometerRest /
        stageTrackerOdometerDraw): a wheel per digit, the day/week line the
-       same columns drawn plain; the pill's bee is --ham-merged-bee. */
+       same columns drawn plain; the pill's bee is --ham-merged-bee.
+       Owner (2026-10-29, hivecommons/hive issue 15568): "the odometer
+       should roll only after the bee animation finishes so it looks
+       correlated" — the day/week line rolled on arrival, a total the
+       server had already raised rolled at once, and merges over the
+       flight cap bumped under other bees. Now a glyph in the air holds
+       the whole drum (stageTrackerMergedInFlight); the last landing draws
+       once, to the final numbers, and only then the roll (and the zap). */
     const STAGE_TRACKER_CELEBRATE_KEY = 'hive.tracker.celebrate';
     const STAGE_TRACKER_MERGED_LAST_KEY = 'hive.tracker.merged.last';
     const STAGE_TRACKER_CELEBRATE_GLYPH_KEY = 'hive.tracker.celebrate_glyph';
@@ -558,6 +565,13 @@
     function stageTrackerMergedLastSave(n, sub) {
       try { sessionStorage.setItem(STAGE_TRACKER_MERGED_LAST_KEY, JSON.stringify({ n: String(n), sub: String(sub) })); } catch {}
     }
+    // Stateful: whether a celebration glyph is in the air or about to be
+    // (stageTrackerCelebrateMerges staggers the launches; a merge is
+    // pending from the payload that brought it). The drum and the zap
+    // wait on this; the flight's own end — its animationend, or
+    // stageTrackerAfter's timer at STAGE_TRACKER_CELEBRATE_FLY_MS when the
+    // event never fires — is what clears it.
+    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0; }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
       const now = Date.now();
@@ -570,16 +584,25 @@
       const n = chip.querySelector('.ham-merged-n'), sub = chip.querySelector('.ham-merged-sub');
       // First draw of this page: roll up from what the tab showed before
       // the reload, when that is behind the number we have now.
-      if (n && n.getAttribute('data-odo-value') == null) {
+      const first = !n || n.getAttribute('data-odo-value') == null;
+      if (n && first) {
         const last = stageTrackerMergedLastLoad();
         if (last) { stageTrackerOdometerSeed(n, last.n, shown); stageTrackerOdometerSeed(sub, last.sub, txt.sub); }
       }
-      stageTrackerOdometerSet(n, shown);
-      stageTrackerOdometerSet(sub, txt.sub, STAGE_TRACKER_ODOMETER_SUB_MS);
-      if (shown > 0) stageTrackerMergedLastSave(shown, txt.sub);
+      // A glyph in the air owns the drum (issue 15568): neither number
+      // moves under a flight — not the day/week line, not a total the
+      // server already raised, not a merge over the flight cap. The last
+      // landing (stageTrackerCelebrateTick) draws once, to the final
+      // values, so the bee lands and then the drum rolls.
+      const hold = !first && stageTrackerMergedInFlight();
+      if (!hold) {
+        stageTrackerOdometerSet(n, shown);
+        stageTrackerOdometerSet(sub, txt.sub, STAGE_TRACKER_ODOMETER_SUB_MS);
+        if (shown > 0) stageTrackerMergedLastSave(shown, txt.sub);
+      }
       const title = txt.title.replace(/^Merged: \d+ all time/, `Merged: ${shown} all time`);
       if (chip.title !== title) chip.title = title;
-      if (tick) {
+      if (tick && !hold) {
         chip.classList.remove('cue-tick'); void chip.offsetWidth; stageTrackerTransient(chip, 'cue-tick', 320);
         const live = document.getElementById('activity-monitor-merged-live');
         if (live) live.textContent = `Merged: ${shown} all time, ${txt.sub}`;
@@ -622,7 +645,8 @@
       if (pop && !pop.hidden) { hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
     });
     // The glyph has landed (or left the screen, or faded): count the PR,
-    // pop the chip, zap.
+    // pop the chip, zap — once the last glyph is down; a landing while
+    // others still fly is folded into theirs (issue 15568).
     function stageTrackerCelebrateTick(key, preview) {
       delete _stageTrackerCelebratePending[key];
       const i = String(key).indexOf('/pr#');
@@ -632,7 +656,7 @@
         if (!known && !_stageTrackerMerged.local[key]) _stageTrackerMerged.local[key] = { repo, number, at: Date.now(), title: _stageTrackerPRTitle[key] || '' };
       }
       stageTrackerMergedCountDraw(true);
-      if (stageTrackerSoundGate()) stageTrackerPlayZap(1);
+      if (!stageTrackerMergedInFlight() && stageTrackerSoundGate()) stageTrackerPlayZap(1);
     }
     var _stageTrackerCelebrating = {};
     var _stageTrackerFlights = 0;
