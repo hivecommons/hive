@@ -29,7 +29,8 @@ function load(env) {
     'function stageTrackerSaveFilter() {}',
     'var _stageTrackerFilter = {};',
     pick(/const STAGE_TRACKER_WAITING_TOAST_GAP_MS = [^\n]*\n/, 'GAP'),
-    pick(/const STAGE_TRACKER_WAITING_TOAST_MS = [^\n]*\n/, 'TOAST_MS'),
+    // Toast duration comes from the Activity Monitor settings (#15813).
+    'function stageTrackerToastMs() { return 15000; }',
     pick(/const STAGE_TRACKER_WAITING_TOOLTIP_MAX = [^\n]*\n/, 'TOOLTIP_MAX'),
     pick(/const STAGE_TRACKER_WAITING_TOAST_NUMBERS = [^\n]*\n/, 'TOAST_NUMBERS'),
     pick(/const STAGE_TRACKER_WAITING_TOAST_KEY = [^\n]*\n/, 'TOAST_KEY'),

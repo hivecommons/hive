@@ -242,6 +242,12 @@ type Input struct {
 	// TrainDuplicateIssue is that issue (hivecommons/hive#15395).
 	TrainDuplicateOf    int
 	TrainDuplicateIssue int
+	// ClaimConflictWith is the open PR in another merge lane that claims
+	// the same issue as this one while no decision is recorded, so the
+	// queue admits neither (0 = none); ClaimConflictIssue is that issue
+	// (hivecommons/hive#15810).
+	ClaimConflictWith  int
+	ClaimConflictIssue int
 	// ReporterTrustHold: the park is the reporter-trust gate on the fixing PR.
 	ReporterTrustHold bool
 	// AdoptionStalled: a contributor PR whose adoption parked at 085.
@@ -662,6 +668,11 @@ func decidePR(in Input) Decision {
 			Actions:   []Action{decisionComment(text), {Kind: ActionApproveReview}},
 		}
 	}
+	// Two open PRs for one issue in different lanes (hivecommons/hive#15810):
+	// the queue holds both and the hive only names the choice.
+	if d, ok := decideClaimConflict(in, ref); ok {
+		return d
+	}
 	// Two open PRs for one issue (hivecommons/hive#15395): the merge
 	// queue already picked the survivor (green first, then earlier); the
 	// held one closes as superseded, the kept one is released.
@@ -777,6 +788,31 @@ func decideAdoptedByHive(in Input, ref string) (Decision, bool) {
 // RuleOnePRPerIssue: the merge queue carries one PR per issue; the one it
 // held as a duplicate closes as superseded by the one it kept.
 const RuleOnePRPerIssue = "one-pr-per-issue"
+
+// RuleSameIssueClaimConflict: two open PRs in different merge lanes claim
+// one issue and nobody has decided which lands; the queue admits neither
+// and the hive names the choice without making it (hivecommons/hive#15810).
+const RuleSameIssueClaimConflict = "same-issue-claim-conflict"
+
+// decideClaimConflict is the recommend-only answer for a PR the merge
+// queue holds on an undecided same-issue claim: the hive's own PR and a
+// trusted human's PR for hivecommons/hive#15773 both marched toward merge
+// because each lane saw only its own. The hive does not pick — it names
+// the two PRs and the two ways out; Approve on one row admits that PR,
+// Close as superseded on the other ends the conflict.
+func decideClaimConflict(in Input, ref string) (Decision, bool) {
+	if in.Kind != KindPR || in.ClaimConflictWith <= 0 {
+		return Decision{}, false
+	}
+	other := fmt.Sprintf("#%d", in.ClaimConflictWith)
+	issue := "the same issue"
+	if in.ClaimConflictIssue > 0 {
+		issue = fmt.Sprintf("issue #%d", in.ClaimConflictIssue)
+	}
+	return recommendOnly(RuleSameIssueClaimConflict,
+		fmt.Sprintf("%s and %s both claim %s from different merge lanes; the merge queue admits neither until one is closed or approved, so two implementations of one fix never both land", ref, other, issue),
+		fmt.Sprintf("keep %s, close %s — or keep %s, close %s; the hive will not pick", other, ref, ref, other)), true
+}
 
 // decideTrainDuplicate resolves a same-issue pair the merge queue split
 // (hivecommons/hive#15395). The queue's pick stands: a green head beats a
