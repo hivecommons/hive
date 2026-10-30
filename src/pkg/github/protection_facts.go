@@ -117,6 +117,7 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 				}
 			}
 			f.FailingRequiredChecks = red
+			f.RequiredChecksAllReported = len(req.set) > 0 && len(missing) == 0
 			switch {
 			case observedRequired > 0:
 				f.MissingRequiredChecks = missing

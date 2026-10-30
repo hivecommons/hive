@@ -9259,7 +9259,11 @@ func allEscalationObservations(cfg *config.Config, actionable *github.Actionable
 // view of it. Red means a required check concluded failure. Pending means this
 // pass could not conclude CI at all — checks still running, no check runs, or
 // (per EnrichCIStatus) the check-run fetch errored — which the ledger must
-// treat as "no information", never as "went green". Labeled mirrors the forge's
+// treat as "no information", never as "went green". A PR red only on checks
+// outside a known required set (an advisory continue-on-error job) is Pending
+// too: not Red, so it draws no fix kick, spends no re-dispatch budget and is
+// never escalated, but not green either, so the ledger keeps its history and
+// a needs-human label stays where it is. Labeled mirrors the forge's
 // needs-human label so the ledger and the label can never disagree about
 // whether a PR has already been handed to a human. Labels carry the PR's
 // current forge labels so Sweep can reconcile reviewer-lane verdicts

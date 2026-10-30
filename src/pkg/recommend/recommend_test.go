@@ -72,6 +72,12 @@ func TestBucketing(t *testing.T) {
 			p.CIStatus = "failure"
 			p.FailingChecks = []string{"build"}
 		}, BucketRedCI},
+		{"failing advisory check is still red ci", func(p *github.PullRequest) {
+			p.MergeableState = "unstable"
+			p.CIStatus = "failure"
+			p.FailingChecks = []string{"mutation (advisory)"}
+			p.Protection = &github.ProtectionFacts{RequiredChecksKnown: true, RequiredChecksAllReported: true}
+		}, BucketRedCI},
 		{"human decision label wins over everything", func(p *github.PullRequest) {
 			p.Labels = []string{"3-human-queue"}
 			p.MergeableState = "dirty"

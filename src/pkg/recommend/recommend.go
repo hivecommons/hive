@@ -191,7 +191,9 @@ func Build(repo string, prs []github.PullRequest, opts Options) Report {
 		case isConflicting(pr):
 			item.Note = rebaseNote(pr)
 			rep.add(BucketConflicts, item)
-		case pr.HasFailingRequiredCheck():
+		// Any failing check, required or not: isReady refuses a red PR, so a
+		// required-only test here would list an advisory-red PR nowhere.
+		case pr.HasFailingCheck():
 			item.Note = failingNote(pr)
 			rep.add(BucketRedCI, item)
 		case isReady(pr):

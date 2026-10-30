@@ -1180,18 +1180,41 @@ type PRReworkStats struct {
 	FixerBackends       []string  `json:"fixer_backends,omitempty"`
 }
 
-// HasFailingRequiredCheck reports whether this PR has a completed, non-meta
-// (required) check whose conclusion was failure/action_required. It is the
-// GENERIC "this PR is red because a required check failed" predicate shared by
-// the merge-watcher re-engagement (#2), claim-suppression release (#3), and the
-// governor stuck-PR reaper (#4). It keys ONLY off the check state that
-// EnrichCIStatus already computed (CIStatus + FailingChecks) — it never inspects
-// a specific linter, language, or check name, so nothing here is
-// project-specific. CIStatus=="failure" is only ever set when at least one
+// HasFailingCheck reports whether this PR has a completed, non-meta check run
+// whose conclusion was failure/action_required, required or not. It keys ONLY
+// off the check state that EnrichCIStatus already computed (CIStatus +
+// FailingChecks). CIStatus=="failure" is only ever set when at least one
 // non-meta check failed (isMetaCheck already excludes tide/guardrails/netlify/
 // copilot), so the FailingChecks guard is belt-and-suspenders.
-func (p PullRequest) HasFailingRequiredCheck() bool {
+func (p PullRequest) HasFailingCheck() bool {
 	return p.CIStatus == "failure" && len(p.FailingChecks) > 0
+}
+
+// HasFailingRequiredCheck is the GENERIC "this PR is red because a required
+// check failed" predicate shared by the claim-suppression release (#3), the
+// governor stuck-PR reaper and escalation ledger (#4), and the dependency-bot
+// red-CI handoff. It is HasFailingCheck, except that a PR whose failing checks
+// all lie outside the base branch's required set is not red
+// (OnlyNonRequiredChecksFailing): GitHub reports such a PR unstable, not
+// blocked, and the automerge sweep merges it, so a fix kick has nothing to
+// repair. Before this a red advisory job (continue-on-error, not in the
+// ruleset) spent the whole re-dispatch budget on a mergeable PR and parked it
+// with needs-human. When the required set is unknown, empty, or not fully
+// reported as check runs, it fails closed exactly as HasFailingCheck does.
+// It never inspects a specific linter, language, or check name, so nothing
+// here is project-specific.
+func (p PullRequest) HasFailingRequiredCheck() bool {
+	return p.HasFailingCheck() && !p.OnlyNonRequiredChecksFailing()
+}
+
+// OnlyNonRequiredChecksFailing reports that EnrichCIStatus determined the base
+// branch's required checks (Protection.RequiredChecksKnown), every one of them
+// reported as a check run on the head (Protection.RequiredChecksAllReported),
+// and none of them is failing. Any failing check on such a PR is non-required.
+// It says nothing about whether a check is failing at all.
+func (p PullRequest) OnlyNonRequiredChecksFailing() bool {
+	f := p.Protection
+	return f != nil && f.RequiredChecksKnown && f.RequiredChecksAllReported && len(f.FailingRequiredChecks) == 0
 }
 
 // Mergeable is a tri-state mergeability verdict for a pull request.

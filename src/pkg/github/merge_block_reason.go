@@ -60,6 +60,13 @@ type ProtectionFacts struct {
 	// FailingRequiredChecks are the required checks observed red on the head
 	// commit.
 	FailingRequiredChecks []string `json:"failing_required_checks,omitempty"`
+	// RequiredChecksAllReported records that the known required set is
+	// non-empty and every check in it has a check run on the head commit
+	// (failing or not). Only then does an empty FailingRequiredChecks prove
+	// that nothing required is red: a known-empty set enforces nothing, and a
+	// required context reported as a commit status is invisible to the
+	// check-run listing. PullRequest.OnlyNonRequiredChecksFailing reads it.
+	RequiredChecksAllReported bool `json:"required_checks_all_reported,omitempty"`
 	// MissingRequiredChecks are required checks for which NO check run exists
 	// on the head commit. It is only ever populated when at least one OTHER
 	// required check WAS observed as a check run: on a repository that
