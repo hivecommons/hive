@@ -30,6 +30,7 @@ css/responsive.css
 css/recipes-utilities.css
 css/welcome.css
 css/review-campaigns.css
+css/kiosk.css
 css/variables.css
 glue/style-close-body-open.html
 js/boot.js

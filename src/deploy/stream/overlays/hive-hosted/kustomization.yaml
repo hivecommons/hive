@@ -1,0 +1,28 @@
+# hive's own hosted spoke on hive-oke: namespace
+# hive-hosted-hosted-available-oke-11-placeholder-r05x, dashboard Service
+# `hive` port 3002. The streamer reaches it in-cluster with the spoke's shared
+# dashboard token (hub_proxied: true keeps the Bearer path enabled there).
+#
+#   kubectl --context hive-oke apply -k src/deploy/stream/overlays/hive-hosted
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../k8s
+images:
+  - name: ghcr.io/hivecommons/hive-stream
+    newTag: v5-latest
+patches:
+  - target:
+      kind: ConfigMap
+      name: hive-stream
+    patch: |-
+      - op: replace
+        path: /data/DASHBOARD_URL
+        value: http://hive.hive-hosted-hosted-available-oke-11-placeholder-r05x.svc.cluster.local:3002
+  - target:
+      kind: NetworkPolicy
+      name: hive-stream
+    patch: |-
+      - op: replace
+        path: /spec/egress/1/to/0/namespaceSelector/matchLabels/kubernetes.io~1metadata.name
+        value: hive-hosted-hosted-available-oke-11-placeholder-r05x
