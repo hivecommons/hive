@@ -324,7 +324,13 @@ func TestRunLoopHealthRecheckResetsTickerWhenWebhooksLapse(t *testing.T) {
 	if !strings.Contains(log.String(), "webhooks degraded; polling cadence restored") {
 		t.Fatalf("log = %s", log.String())
 	}
-	if len(h.evals) != 1 {
-		t.Fatalf("health re-check must not run an eval cycle, evals = %d", len(h.evals))
+	// The re-check itself runs no eval cycle; the one extra cycle is the
+	// loop top's owed reconcile pass, because 121s have passed since the
+	// last one against the restored 60s cadence (hivecommons/hive#15779).
+	if len(h.sources) != 2 || h.sources[1] != evalSourceEnumerate {
+		t.Fatalf("sources = %v, want first cycle + one overdue reconcile pass", h.sources)
+	}
+	if !strings.Contains(log.String(), "eval interval elapsed without a reconcile pass; enumerating") {
+		t.Fatalf("missing overdue reconcile log: %s", log.String())
 	}
 }

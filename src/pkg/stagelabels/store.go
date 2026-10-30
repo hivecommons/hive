@@ -58,6 +58,12 @@ type Record struct {
 	// read as a fresh note (hivecommons/hive#15729). Zero on records
 	// written before it existed; NoteChangedAt falls back to EnteredAt.
 	ReasonChangedAt time.Time `json:"reason_changed_at,omitempty"`
+	// UnblockedAt is when the blocked sweep last lifted the item's block
+	// (hivecommons/hive#15779). A blocked issue has no stage, so the lift
+	// leaves a stage-less record carrying only this time until the next
+	// stage-label pass stages the issue; the dashboard ages the row from
+	// StageSinceAt so "since" restarts at the lift, not at issue creation.
+	UnblockedAt time.Time `json:"unblocked_at,omitempty"`
 	// Author is the item's author login, lower-cased, as the lane saw it
 	// (hivecommons/hive#12502). It lets the dashboard answer "which of this
 	// contributor's PRs are returned to them" from the store alone, with no
@@ -744,6 +750,33 @@ func (r Record) NoteChangedAt() time.Time {
 		return r.ReasonChangedAt
 	}
 	return r.EnteredAt
+}
+
+// StageSinceAt is when the row's since-time starts: stage entry, or the
+// later block lift when the sweep unblocked the item after it entered the
+// stage (or before any stage was recorded).
+func (r Record) StageSinceAt() time.Time {
+	if r.UnblockedAt.After(r.EnteredAt) {
+		return r.UnblockedAt
+	}
+	return r.EnteredAt
+}
+
+// NoteUnblocked records that the blocked sweep lifted key's block at now.
+// A blocked issue carries no stage record (its stage is None), so a
+// stage-less record is created to hold the time; the next ObserveProgress
+// keeps UnblockedAt while it stages the issue, and a None observation
+// drops the record as usual.
+func (s *Store) NoteUnblocked(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[key]
+	r.UnblockedAt = now
+	if r.LastSeen.IsZero() {
+		r.LastSeen = now
+	}
+	s.items[key] = r
+	s.dirty = true
 }
 
 // NoteActivity folds this cycle's activity inputs into key's record and

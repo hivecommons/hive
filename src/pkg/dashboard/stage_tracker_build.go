@@ -80,7 +80,14 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if store == nil {
 			return stagelabels.Record{}, false
 		}
-		return store.Get(stagelabels.Key(repo, number))
+		rec, ok := store.Get(stagelabels.Key(repo, number))
+		if ok && rec.Stage == stagelabels.None {
+			// A stage-less record only remembers the blocked sweep's lift
+			// (hivecommons/hive#15779): the row is still unstaged, but its
+			// since-time starts at the lift rather than at creation.
+			return stagelabels.Record{UnblockedAt: rec.UnblockedAt}, false
+		}
+		return rec, ok
 	}
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
 	fixWork := s.stageTrackerFixWorkLookup()
@@ -111,7 +118,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		if hasRec && rec.Stage != stagelabels.None {
 			stage = rec.Stage
-			t := rec.EnteredAt
+			t := rec.StageSinceAt()
 			it.StageSince = &t
 			it.Reason = rec.Reason
 			stageTrackerRegression(it, rec)
@@ -128,6 +135,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			if total, unsigned, ok := rec.DCOFor(it.Head); ok {
 				it.DCOTotal, it.DCOUnsigned = total, unsigned
 			}
+		}
+		if !hasRec && !rec.UnblockedAt.IsZero() {
+			t := rec.UnblockedAt
+			it.StageSince = &t
 		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
 		var attempt github.MergeAttempt
