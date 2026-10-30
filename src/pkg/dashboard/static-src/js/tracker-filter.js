@@ -206,12 +206,57 @@
 
     // Rows for the current filter. Outside the Pull requests view a PR that
     // is nested under a listed issue is drawn as that issue's sub-row only.
+    // A `blocked` review-backlog issue (review_note_of = its source PR) is
+    // never a row of its own while that PR is open: it folds under the PR's
+    // row (one muted "N review notes blocked on this PR" line), or, when the
+    // PR is not drawn in this view, into the lowest-numbered note of its
+    // group, so a PR with eight notes costs the count one row, not eight.
     function stageTrackerVisible(items, filter, ctx) {
       const f = stageTrackerNormalizeFilter(filter || _stageTrackerFilter);
       const rows = (items || []).filter(it => stageTrackerMatches(it, f, ctx));
       if (f.kind === 'pr') return rows;
       const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
-      return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
+      const out = rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
+      const drawnPRs = new Set(rows.filter(it => it.kind === 'pr').map(it => it.repo + '#' + it.number));
+      const lead = {};
+      for (const it of out) {
+        if (!stageTrackerIsReviewNote(it)) continue;
+        const k = it.repo + '#' + it.review_note_of;
+        if (!(k in lead) || Number(it.number) < lead[k]) lead[k] = Number(it.number);
+      }
+      return out.filter(it => {
+        if (!stageTrackerIsReviewNote(it)) return true;
+        const k = it.repo + '#' + it.review_note_of;
+        return !drawnPRs.has(k) && lead[k] === Number(it.number);
+      });
+    }
+
+    // Pure: an issue the tracker folds as a review note (see stageTrackerVisible).
+    function stageTrackerIsReviewNote(it) {
+      return !!(it && it.kind === 'issue' && Number(it.review_note_of) > 0);
+    }
+
+    // Pure: the review notes folded into this row. On a PR row, its
+    // review_notes; on the lead note of a group whose PR is not drawn, the
+    // other open notes of that group (from the full item list).
+    function stageTrackerFoldedReviewNotes(item, items) {
+      if (!item) return [];
+      if (item.kind === 'pr') return Array.isArray(item.review_notes) ? item.review_notes : [];
+      if (!stageTrackerIsReviewNote(item)) return [];
+      return (items || []).filter(it => stageTrackerIsReviewNote(it) && it.repo === item.repo && it.review_note_of === item.review_note_of && it.number !== item.number)
+        .sort((a, b) => a.number - b.number);
+    }
+
+    // The muted one-line summary of a row's folded review notes, with each
+    // note's number as a link so nothing becomes unreachable.
+    function stageTrackerReviewNotesHtml(item, ctx) {
+      const notes = stageTrackerFoldedReviewNotes(item, ctx && ctx.items);
+      if (!notes.length) return '';
+      const links = notes.map(n => n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener" title="${esc(n.title || '')}">#${Number(n.number)}</a>` : `<span title="${esc(n.title || '')}">#${Number(n.number)}</span>`).join(', ');
+      const lead = item.kind === 'pr'
+        ? `${notes.length} review note${notes.length === 1 ? '' : 's'} blocked on this PR`
+        : `+${notes.length} more review note${notes.length === 1 ? '' : 's'} blocked on PR #${Number(item.review_note_of)}`;
+      return `<div class="ham-review-notes" data-ham-review-notes="${notes.length}">${esc(lead)} · ${links}</div>`;
     }
 
     // The canonical tracker count (owner): rows of the default view — every
@@ -303,15 +348,18 @@
     // spells out how the row count is made ("33 issues + 4 PRs on their
     // own row") in the header and the pill tooltip, so the two pills read
     // as different views of one population rather than a disagreement.
-    function stageTrackerCountsText(page, allCount, attention, open, attentionAll) {
+    function stageTrackerCountsText(page, allCount, attention, open, attentionAll, folded) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
       const attnText = n => n ? n + ' need' + (n === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
       const attn = attnText(attention);
       const attnAll = attnText(Number.isFinite(Number(attentionAll)) ? Number(attentionAll) : attention);
       const rowsWord = n => n === 1 ? 'row' : 'rows';
-      const parts = stageTrackerRowBreakdown(allCount, open);
-      const note = parts.shared ? `${parts.shared} ${parts.shared === 1 ? 'PR' : 'PRs'} shown on ${parts.shared === 1 ? 'its' : 'their'} issue's row` : '';
+      const parts = stageTrackerRowBreakdown(allCount, open, folded);
+      const noteBits = [];
+      if (parts.shared) noteBits.push(`${parts.shared} ${parts.shared === 1 ? 'PR' : 'PRs'} shown on ${parts.shared === 1 ? 'its' : 'their'} issue's row`);
+      if (parts.folded) noteBits.push(`${parts.folded} review ${parts.folded === 1 ? 'note' : 'notes'} folded under ${parts.folded === 1 ? 'its' : 'their'} PR`);
+      const note = noteBits.join(' · ');
       const breakdown = parts.known ? `${parts.issues} ${parts.issues === 1 ? 'issue' : 'issues'} + ${parts.standalonePRs} ${parts.standalonePRs === 1 ? 'PR' : 'PRs'} on ${parts.standalonePRs === 1 ? 'its' : 'their'} own row` : '';
       return {
         showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
@@ -324,15 +372,28 @@
     }
 
     // Pure: how the default view's row count decomposes against the open
-    // item totals. Every open issue is a row; a PR is a row only when it is
-    // not drawn under a listed issue, so standalonePRs = rows − issues and
-    // shared = (issues + PRs) − rows. `known` is false without totals.
-    function stageTrackerRowBreakdown(rowCount, open) {
+    // item totals. Every open issue is a row except a review note folded
+    // under its PR (`folded`, see stageTrackerVisible); a PR is a row only
+    // when it is not drawn under a listed issue, so standalonePRs = rows −
+    // (issues − folded) and shared = (issues − folded + PRs) − rows. `known`
+    // is false without totals. `issues` stays the open-issue total so the
+    // breakdown still adds up to the Overview tile.
+    function stageTrackerRowBreakdown(rowCount, open, folded) {
       const rows = Math.max(0, Number(rowCount) || 0);
-      if (!open || !Number.isFinite(Number(open.issues)) || !Number.isFinite(Number(open.prs))) return { known: false, rows, issues: 0, prs: 0, standalonePRs: 0, shared: 0 };
+      if (!open || !Number.isFinite(Number(open.issues)) || !Number.isFinite(Number(open.prs))) return { known: false, rows, issues: 0, prs: 0, standalonePRs: 0, shared: 0, folded: 0 };
       const issues = Math.max(0, Number(open.issues)), prs = Math.max(0, Number(open.prs));
-      const standalonePRs = Math.min(prs, Math.max(0, rows - issues));
-      return { known: true, rows, issues, prs, standalonePRs, shared: Math.max(0, issues + prs - rows) };
+      const fold = Math.min(issues, Math.max(0, Number(folded) || 0));
+      const standalonePRs = Math.min(prs, Math.max(0, rows - (issues - fold)));
+      return { known: true, rows, issues, prs, standalonePRs, shared: Math.max(0, issues - fold + prs - rows), folded: fold };
+    }
+
+    // Pure: how many issues of the default view are folded review notes
+    // rather than rows (stageTrackerVisible drops them; the count line
+    // explains the difference).
+    function stageTrackerFoldedCount(items, ctx) {
+      const f = stageTrackerDefaultFilter();
+      const shown = new Set(stageTrackerVisible(items, f, ctx).map(it => it.repo + '#' + it.number));
+      return (items || []).filter(it => stageTrackerIsReviewNote(it) && stageTrackerMatches(it, f, ctx) && !shown.has(it.repo + '#' + it.number)).length;
     }
 
     // The tracker's open issue / PR counts: the payload's open_issues/open_prs
@@ -631,6 +692,7 @@
       ctx.events = _stageTrackerEvents;
       ctx.noteTuck = stageTrackerNoteTuckSetting();
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
+      ctx.items = d.items;
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
@@ -655,7 +717,7 @@
       // is the warn-coloured header suffix and the pill's tooltip, counted
       // over every item regardless of filter.
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
-      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll);
+      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll, stageTrackerFoldedCount(d.items, ctx));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
@@ -825,7 +887,7 @@
       "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
       "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
       "approved": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
-      "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "author-online": {"kind": "reason", "plain": "the author's clanker or hive is connected, so hive won't take the PR over", "detail": "Adoption is for authors whose clanker or hive has gone offline; this author's is connected, so the hive leaves the PR with them."},
       "behind": {"kind": "reason", "plain": "the branch is behind the base branch", "detail": "The branch is behind the base branch and must be updated before it can merge."},
       "blocker": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
@@ -846,7 +908,7 @@
       "comment-decision": {"kind": "action", "plain": "recorded the decision on GitHub", "detail": "The hive posted the decision as a `/hive decision` comment, the way a maintainer would."},
       "conflict": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
       "conflicting": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
-      "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "contributor-lane:changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "contributor-lane:sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
@@ -866,7 +928,7 @@
       "hive-policy": {"kind": "rule", "plain": "this changes the hive's own rules", "detail": "This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms."},
       "hold": {"kind": "reason", "plain": "on hold; the hive does nothing until it is released", "detail": "The PR is on hold. The hive does nothing with it until a person releases the hold.", "issue_detail": "The issue is on hold. No agent claims it until a person releases the hold."},
       "human-changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
-      "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "human-only": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
       "label:needs-human": {"kind": "reason", "plain": "marked needs-human; a person must remove the label", "detail": "The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed."},
       "labels-add": {"kind": "action", "plain": "added labels", "detail": "The hive added labels to the item."},
@@ -890,7 +952,7 @@
       "proposal-not-now": {"kind": "rule", "plain": "a hive-filed proposal with no incident or recurrence behind it; declined for now", "detail": "The proposal shows neither an incident it would have prevented nor a repeated class it would end, so its value is speculative. The hive declines it for now and closes it as not planned; re-propose with evidence."},
       "quarantine-flaky": {"kind": "action", "plain": "quarantined the flaky test", "detail": "The flaky test is quarantined with a retry and a deflake task is filed."},
       "rail-hold": {"kind": "rule", "plain": "the item is on hold", "detail": "The item carries the hold label; the hive never acts on a held item until a person releases the hold."},
-      "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "rebase-then-merge": {"kind": "rule", "plain": "only conflicts block it; a rebase then merge", "detail": "Conflicts are the only blocker. The unattended rebase-then-merge path lands with hivecommons/hive#15104; until then the ladder records this rung and moves on."},
       "recommend-only": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
       "recommended": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
@@ -915,6 +977,6 @@
       "supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "supersede-now": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
-      "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
     };

@@ -148,7 +148,7 @@ const (
 	// counted as relay merges.
 	PRAuditPathForge = "forge"
 	// PRAuditPathDashboard marks a merge an operator asked for from the
-	// dashboard's activity monitor ("Approve & merge as maintainer" on a
+	// dashboard's activity monitor ("Merge now as maintainer" on a
 	// Ready-for-human-merge row, hivecommons/hive#15078): the hive's App
 	// performs it, the audit line names the person.
 	PRAuditPathDashboard = "dashboard"

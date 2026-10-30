@@ -19,7 +19,7 @@ import (
 // the button expecting an approval and got three superseding PRs: "I was
 // not asked to supersede them". The SPA now asks for the plan first and
 // shows a confirm popover — Hive would: …; Why: … — with [Let hive do
-// that] [Approve & merge as-is] [Cancel]; nothing is written until a
+// that] [Approve and let hive merge] [Cancel]; nothing is written until a
 // button is pressed, and the ledger records which one.
 
 // delegatedDecisionPlan is the wire shape of POST …/decide-delegated/plan:
@@ -50,10 +50,11 @@ type delegatedDecisionPlan struct {
 	// and the rungs ruled out above it (hivecommons/hive#15289); the
 	// dialog shows it under Details.
 	Ladder *delegatedecision.Ladder `json:"ladder,omitempty"`
-	// MergeableAsIs is true when "Approve & merge as-is" is an honest
-	// alternative: the ladder said mergeable-as-is, or (no ladder) the head
-	// is green, conflict-free and signed off. When false the merge-now
-	// alternative is left out so the dialog cannot contradict itself.
+	// MergeableAsIs is true when "Approve and let hive merge" (and the
+	// secondary merge-now) is an honest alternative: the ladder said
+	// mergeable-as-is, or (no ladder) the head is green, conflict-free and
+	// signed off. When false both merge alternatives are left out so the
+	// dialog cannot contradict itself.
 	MergeableAsIs bool `json:"mergeable_as_is"`
 	// Alternatives are the other buttons, in the popover's option shape;
 	// the SPA adds Cancel itself.
@@ -67,8 +68,9 @@ type delegatedDecisionPlan struct {
 	Notes []string   `json:"notes,omitempty"`
 }
 
-// delegatedPlanAlternativeLabel is the preview's approve-as-is button.
-const delegatedPlanAlternativeLabel = "Approve & merge as-is"
+// delegatedPlanAlternativeLabel is the preview's merge button: the
+// operator approves and the hive merges on its next tick once CI is green.
+const delegatedPlanAlternativeLabel = decisionQueueMergeLabel
 
 func (s *Server) handleRepoItemDecideDelegatedPlan(w http.ResponseWriter, r *http.Request) {
 	owner, repoName, number, ok := s.parseRepoItemPath(w, r)
@@ -155,11 +157,13 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	}
 	kept := plan.Alternatives[:0]
 	for _, alt := range plan.Alternatives {
-		if alt.Action == decisionActionMergeNow {
+		if alt.Action == decisionActionMergeNow || alt.Action == decisionActionQueueMerge {
 			if !plan.MergeableAsIs {
 				continue
 			}
-			alt.Label = delegatedPlanAlternativeLabel
+			if alt.Action == decisionActionQueueMerge {
+				alt.Label = delegatedPlanAlternativeLabel
+			}
 		}
 		kept = append(kept, alt)
 	}
@@ -308,7 +312,7 @@ func delegatedPlanPlain(text string) string {
 	return strings.TrimSuffix(strings.TrimSpace(text), ".")
 }
 
-// delegatedPlanMergeableAsIs says whether "Approve & merge as-is" is an
+// delegatedPlanMergeableAsIs says whether "Approve and let hive merge" is an
 // honest alternative: the ladder's own verdict when it ran, otherwise the
 // head's facts. A preview that says the head is not mergeable must not
 // offer to merge it (hivecommons/hive#15332's dialog).
@@ -322,8 +326,8 @@ func delegatedPlanMergeableAsIs(in delegatedecision.Input, d delegatedecision.De
 	return !in.Conflicting && in.CIGreen && !in.DCOMissing
 }
 
-// delegatedPlanAlternatives are the other buttons: approve & merge as-is
-// (merge-now, in-tracker, for a merger) or approve and let hive merge,
+// delegatedPlanAlternatives are the other buttons: approve and let hive
+// merge (queue-merge, the lead, for a merger), merge now as maintainer,
 // send back, close as superseded.
 func delegatedPlanAlternatives(in delegatedecision.Input, d delegatedecision.Decision, mergerRole bool) []StageTrackerDecisionOption {
 	if in.Kind != delegatedecision.KindPR {
@@ -333,8 +337,9 @@ func delegatedPlanAlternatives(in delegatedecision.Input, d delegatedecision.Dec
 	}
 	opts := delegatedHumanMergeOptions(in, in.Number, mergerRole)
 	if d.Verdict == delegatedecision.VerdictApprove {
-		// The hive would approve anyway: the as-is merge is the same thing
-		// done now.
+		// The hive would approve anyway, so "Approve and let hive merge" is
+		// the primary button under another name; merge-now is the one
+		// alternative left that does something different.
 		for i := range opts {
 			if opts[i].Action == decisionActionQueueMerge {
 				opts = append(opts[:i], opts[i+1:]...)

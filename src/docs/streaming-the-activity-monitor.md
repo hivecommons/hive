@@ -4,7 +4,8 @@ An unattended, 24/7 Twitch stream of the hive dashboard's **Activity Monitor**
 (the stage tracker: every tracked issue and PR walking Open → Actionable →
 Claimed → PR in progress → CI / Review → Merge queue). The first stream is
 hive's own hosted spoke on `hive-oke`, channel
-[`twitch.tv/hivecommons`](https://www.twitch.tv/hivecommons).
+[`twitch.tv/hivecommons`](https://www.twitch.tv/hivecommons). The stream is
+listed alongside the other community links in [Community and support](community.md).
 
 Everything lives in [`src/deploy/stream/`](../deploy/stream/README.md): a
 container that renders the dashboard in a virtual display and pushes it to
@@ -15,8 +16,24 @@ Deployment hive-stream (ns hive-stream, 1 replica)
   Xvfb :99 1920x1080
   authproxy 127.0.0.1:8099 ──Authorization: Bearer──▶ hive dashboard Service :3002
   Chromium --kiosk http://127.0.0.1:8099/?kiosk=1#section-activity-monitor-section
-  ffmpeg x11grab 30 fps + silent audio ──libx264 4500 kbps CBR──▶ rtmp://live.twitch.tv/app/<key>
+    └─ tracker sounds ──▶ PulseAudio null sink "hive" (hive.monitor)
+  ffmpeg x11grab 30 fps + pulse hive.monitor ──libx264 4500 kbps CBR + AAC 128 kbps──▶ rtmp://live.twitch.tv/app/<key>
 ```
+
+### Sound
+
+The stream carries the tracker's sounds — the zap when a PR merges and the
+buzz when a new issue or PR opens. In kiosk mode they are **on by default**
+(a regular browser tab keeps them opt-in); Chromium plays them into a
+PulseAudio null sink inside the container and ffmpeg captures that sink's
+monitor. Two knobs:
+
+- `DASHBOARD_PATH="/?kiosk=1&sound=off#section-activity-monitor-section"`
+  keeps the dashboard silent (the stream still carries a real, silent audio
+  track). Append `&theme=light` or other display flags the same way.
+- `STREAM_AUDIO=silent` skips PulseAudio entirely: Chromium runs
+  `--mute-audio` and ffmpeg synthesises silence with `anullsrc`, the
+  pre-sound behaviour. Default is `STREAM_AUDIO=pulse`.
 
 Nothing here touches Twitch or the cluster until **you** create the Secrets and
 apply the overlay — the steps below are all yours to run.

@@ -841,6 +841,7 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDCOCaveat"),
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_BUTTON_DELEGATE"),
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_BUTTON_MERGE"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_MERGE_ACTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_TITLE"),
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_EYEBROW"),
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_NEXT_MAX"),
@@ -853,7 +854,9 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegatePlanView"),
 		jsFunc(t, html, "stageTrackerDelegatePlanHtml"),
 		jsFunc(t, html, "stageTrackerDelegatePlanVisibleText"),
+		jsFunc(t, html, "stageTrackerDelegatePlanMergeAction"),
 		jsFunc(t, html, "stageTrackerDelegatePlanOffersMerge"),
+		jsFunc(t, html, "stageTrackerDelegatePlanMergeLabel"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeable"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeReason"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),
@@ -920,7 +923,7 @@ const plain = { repo: 'o/r', kind: 'pr', number: 4, url: 'u4', stage: 85, modifi
   // Let hive decide always previews what hive would do (#15126): the
   // plan dialog has no opt-out, and nothing is written until a button is
   // pressed. The delegate-all confirm keeps the opt-out key.
-  const planCalls = []; global.fetch = async (url, init) => { planCalls.push(url); return { ok: true, status: 200, json: async () => ({ would: 'adopt-supersede', summary: 're-author o/r#4 as a hive PR with the same commits and merge it; o/r#4 will be closed as superseded', why: 'Author @k is untrusted and their clanker is offline.', consequences: ['o/r#4 is closed as superseded'], alternatives: [{ action: 'decide:merge-now', label: 'Approve & merge as-is', enabled: false, reason_if_disabled: 'Needs merge rights' }] }) }; };
+  const planCalls = []; global.fetch = async (url, init) => { planCalls.push(url); return { ok: true, status: 200, json: async () => ({ would: 'adopt-supersede', summary: 're-author o/r#4 as a hive PR with the same commits and merge it; o/r#4 will be closed as superseded', why: 'Author @k is untrusted and their clanker is offline.', consequences: ['o/r#4 is closed as superseded'], alternatives: [{ action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: false, reason_if_disabled: 'Needs merge rights' }] }) }; };
   assert.deepStrictEqual(await stageTrackerActionPayload([plain], 'decide:delegate'), { chosen: 'Let hive do that · previewed adopt-supersede' });
   assert.deepStrictEqual(planCalls, ['/api/repos/o/r/items/4/decide-delegated/plan'], 'the preview is the plan route, never the decide route');
   assert.strictEqual(dialogs[0].kind, 'plan'); assert.strictEqual(dialogs[0].cfg.title, 'Let hive decide');
@@ -1008,7 +1011,7 @@ text = stageTrackerResultText({ action: 'approved', target, outcome: 'x', next: 
 assert.ok(text.warn.startsWith('⚠ hivecommons/dibs#510'), text.warn);
 assert.strictEqual(text.posted, '');
 // A human-merge lane: Next names who merges.
-text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approved #510 as @clubanderson.', next: 'Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer.', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 90 }, { id: 'decide:approve' });
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approved #510 as @clubanderson.', next: 'Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Merge now as maintainer.', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 90 }, { id: 'decide:approve' });
 assert.strictEqual(text.warn, '');
 assert.ok(text.next.startsWith('Hive cannot merge this one'), text.next);
 // A Prow-managed repo: the headline says recorded-in-hive, Next says who still approves.
@@ -1261,8 +1264,8 @@ const merger = { user: true, canHold: true, canHuman: true };
 const writer = { user: true, canHold: true, canHuman: false };
 const decision090 = { question: 'This PR is ready to merge, but the hive will not merge it by itself (untrusted author): @Karibhou is not a collaborator…', blocker: 'The hive never merges this unattended.', asked_by: 'the merge lane', since: '2026-10-28T12:00:00Z',
   options: [
-    { action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
-    { action: 'decide:queue-merge', label: 'Approve — let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass once CI is green and the head has soaked' },
+    { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass once CI is green and the head has soaked' },
+    { action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
     { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
     { action: 'decide:direction', label: 'Give direction', enabled: false, reason_if_disabled: 'The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub' },
     { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #317 unmerged, naming the PR that replaces it' },
@@ -1277,9 +1280,10 @@ const issue316 = { repo: 'hivecommons/hotshot', kind: 'issue', number: 316, titl
 // The PR sub-row: the two merge answers lead, then Decide… with the rest,
 // then the generic items.
 let as = stageTrackerRowActions(pr317, merger);
-assert.deepStrictEqual(ids(as), ['decide:merge-now', 'decide:queue-merge', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
-assert.strictEqual(as[0].label, 'Approve & merge as maintainer');
-assert.strictEqual(as[0].hint, 'merges #317 into main now via hive\'s identity, attributed to you', 'the consequence rides as the hint');
+assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.strictEqual(as[0].label, 'Approve and let hive merge');
+assert.strictEqual(as[1].label, 'Merge now as maintainer');
+assert.strictEqual(as[1].hint, 'merges #317 into main now via hive\'s identity, attributed to you', 'the consequence rides as the hint');
 assert.ok(as[0].enabled && as[1].enabled, 'a merger may merge or queue');
 assert.ok(as[0].lead && as[1].lead);
 assert.strictEqual(as[2].sep, true, 'the Decide… group is separated from the lead answers');
@@ -1288,8 +1292,8 @@ assert.deepStrictEqual(ids(as[2].submenu), ['decide:delegate', 'decide:approve',
 // consequence under the label.
 const menu = stageTrackerMenuHtml(as, 'hivecommons/hotshot#317');
 const at = s => menu.indexOf(s);
-assert.ok(at('data-ham-act="decide:merge-now"') > 0 && at('data-ham-act="decide:merge-now"') < at('data-ham-act="decide:queue-merge"'));
-assert.ok(at('data-ham-act="decide:queue-merge"') < at('data-ham-act="decide"'), 'merge answers above Decide…');
+assert.ok(at('data-ham-act="decide:queue-merge"') > 0 && at('data-ham-act="decide:queue-merge"') < at('data-ham-act="decide:merge-now"'));
+assert.ok(at('data-ham-act="decide:merge-now"') < at('data-ham-act="decide"'), 'merge answers above Decide…');
 assert.ok(at('data-ham-act="decide"') < at('data-ham-act="hold"') && at('data-ham-act="hold"') < at('data-ham-act="open"'), 'generic items last');
 assert.ok(menu.includes('<span class="ham-menu-hint">merges #317 into main now via hive&#39;s identity, attributed to you</span>') || menu.includes('<span class="ham-menu-hint">merges #317 into main now via hive\'s identity, attributed to you</span>'), 'consequence line rendered: ' + menu);
 // Hints stack under their label and the menu grows for them (#15175).
@@ -1302,14 +1306,14 @@ assert.ok(stageTrackerMenuHasHints([{ id: 'decide', label: 'Decide…', enabled:
 // A writer without the merger role sees the merge answers, greyed with the
 // role reason — never silently missing.
 as = stageTrackerRowActions(pr317, writer);
-assert.deepStrictEqual(ids(as).slice(0, 2), ['decide:merge-now', 'decide:queue-merge']);
+assert.deepStrictEqual(ids(as).slice(0, 2), ['decide:queue-merge', 'decide:merge-now']);
 assert.strictEqual(as[0].enabled, false); assert.strictEqual(as[0].why, STAGE_TRACKER_WHY_ROLE);
 assert.strictEqual(as[1].enabled, false); assert.strictEqual(as[1].why, STAGE_TRACKER_WHY_ROLE);
 
 // The issue row over its one asking PR: the same lead answers, acting on
 // PR #317 (runRowAction resolves the decision target to the PR).
 as = stageTrackerRowActions(issue316, merger);
-assert.deepStrictEqual(ids(as), ['decide:merge-now', 'decide:queue-merge', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
 assert.strictEqual(as[0].target.number, 317); assert.strictEqual(as[0].target.kind, 'pr');
 assert.strictEqual(as[2].label, 'Decide PR #317…');
 assert.strictEqual(stageTrackerDecisionTarget(issue316).number, 317, 'a human-merge reason parks the PR for the issue row');
@@ -1319,7 +1323,11 @@ assert.deepStrictEqual(req.body, { decision: 'merge-now', comment: '', type: 'pr
 assert.deepStrictEqual(stageTrackerActionRequest(pr317, 'decide:queue-merge', {}).body, { decision: 'queue-merge', comment: '', type: 'pr' });
 assert.strictEqual(STAGE_TRACKER_ACTING_CAPTIONS['decide:merge-now'], 'Merging…');
 assert.strictEqual(STAGE_TRACKER_ACTION_WORDS.merged, 'merged');
-assert.strictEqual(STAGE_TRACKER_ACTION_WORDS['queued-for-merge'], 'queued for merge');
+assert.strictEqual(STAGE_TRACKER_ACTION_WORDS['queued-for-merge'], 'approved — hive will merge on the next tick once CI is green');
+assert.strictEqual(STAGE_TRACKER_ACTING_CAPTIONS['decide:queue-merge'], 'Recording approval…');
+assert.strictEqual(STAGE_TRACKER_ACTION_LABELS['decide:queue-merge'], 'Approve and let hive merge');
+assert.strictEqual(STAGE_TRACKER_ACTION_LABELS['decide:merge-now'], 'Merge now as maintainer');
+assert.deepStrictEqual(STAGE_TRACKER_MERGE_ACTIONS, ['decide:queue-merge', 'decide:merge-now'], 'queue-merge is the lead merge answer');
 
 // A human-authored PR waiting on its author (072): no Decide… submenu. The
 // server's close answers stay in the ⋯ menu with their consequences, but a
@@ -1370,9 +1378,9 @@ assert.ok(leadSB.danger && leadSB.lead);
 assert.strictEqual(leadSB.hint, 'Closes this PR as superseded by #15400, which already carries its change.');
 
 // A server-disabled lead keeps the server's plain-words reason.
-const refused = { ...pr317, decision_needed: { ...decision090, options: [{ action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: false, reason_if_disabled: 'Release the hold first' }] } };
+const refused = { ...pr317, decision_needed: { ...decision090, options: [{ action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: false, reason_if_disabled: 'Release the hold first' }] } };
 as = stageTrackerRowActions(refused, merger);
-assert.strictEqual(as[0].id, 'decide:merge-now'); assert.strictEqual(as[0].enabled, false); assert.strictEqual(as[0].why, 'Release the hold first');
+assert.strictEqual(as[0].id, 'decide:queue-merge'); assert.strictEqual(as[0].enabled, false); assert.strictEqual(as[0].why, 'Release the hold first');
 
 // Generic options the server names (hold / needs-human / retry) are never
 // doubled; a 085 PR's menu is unchanged.
@@ -1384,8 +1392,8 @@ assert.deepStrictEqual(ids(stageTrackerRowActions(pr85, merger)), ['decide', 'ho
 
 // The live case (hivecommons/hive#15078, operator screenshot 2026-10-28):
 // hotshot#316 with its one nested PR #317 at 090. The ISSUE row's ⋯ menu
-// must carry all three — Approve & merge as maintainer, Approve — let hive
-// merge, Let hive decide — and the popover the same, merge answers first.
+// must carry all three — Approve and let hive merge, Merge now as
+// maintainer, Let hive decide — and the popover the same, merge answers first.
 func TestStageTrackerIssueRowWithNested090PRCarriesAllThree(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerDecisionPopPreamble(t, html)+`
@@ -1393,8 +1401,8 @@ const ids = as => as.map(a => a.id);
 const merger = { user: true, canHold: true, canHuman: true };
 const decision090 = { question: 'This PR is ready to merge, but the hive will not merge it by itself (untrusted author).', blocker: 'The hive never merges this unattended.', asked_by: 'the merge lane', since: '2026-10-28T12:00:00Z',
   options: [
-    { action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
-    { action: 'decide:queue-merge', label: 'Approve — let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass' },
+    { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass' },
+    { action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
     { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
     { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #317 unmerged, naming the PR that replaces it' },
     { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #317 unmerged' },
@@ -1405,9 +1413,9 @@ const issue316 = { repo: 'hivecommons/hotshot', kind: 'issue', number: 316, titl
 
 const as = stageTrackerRowActions(issue316, merger);
 const flat = stageTrackerFlatActions(as);
-assert.deepStrictEqual(ids(as).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide'], 'issue row leads with the two merge answers: ' + ids(as));
-assert.ok(flat['decide:merge-now'] && flat['decide:merge-now'].enabled, 'Approve & merge as maintainer present and enabled');
-assert.ok(flat['decide:queue-merge'] && flat['decide:queue-merge'].enabled, 'Approve — let hive merge present and enabled');
+assert.deepStrictEqual(ids(as).slice(0, 3), ['decide:queue-merge', 'decide:merge-now', 'decide'], 'issue row leads with the two merge answers, let-hive-merge first: ' + ids(as));
+assert.ok(flat['decide:queue-merge'] && flat['decide:queue-merge'].enabled, 'Approve and let hive merge present and enabled');
+assert.ok(flat['decide:merge-now'] && flat['decide:merge-now'].enabled, 'Merge now as maintainer present and enabled');
 assert.ok(flat['decide:delegate'] && flat['decide:delegate'].enabled, 'Let hive decide present (in Decide PR #317…) and enabled');
 assert.strictEqual(as[2].label, 'Decide PR #317…');
 assert.strictEqual(as[2].submenu[0].id, 'decide:delegate', 'Let hive decide leads the Decide… group');
@@ -1421,12 +1429,12 @@ assert.ok(menu.indexOf('data-ham-act="decide:merge-now"') < menu.indexOf('data-h
 const dec = stageTrackerDecisionOf(issue316);
 assert.strictEqual(dec.item.number, 317);
 const pop = stageTrackerDecisionOptions(dec.item, merger);
-assert.deepStrictEqual(ids(pop).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide:delegate'], 'popover order: ' + ids(pop));
+assert.deepStrictEqual(ids(pop).slice(0, 3), ['decide:queue-merge', 'decide:merge-now', 'decide:delegate'], 'popover order: ' + ids(pop));
 assert.ok(pop[0].enabled && pop[1].enabled && pop[2].enabled);
 const html = stageTrackerDecisionPopHtml(dec.item, pop, Date.now(), '');
-// The popover shows the one recommended action (merge now) and hands the rest to the row menu.
-assert.ok(html.includes('data-ham-act="decide:merge-now"') && html.includes('>Merge it<') && html.includes('data-ham-more="1"'), html);
-assert.ok(!html.includes('data-ham-act="decide:queue-merge"') && !html.includes('data-ham-act="decide:delegate"'), html);
+// The popover shows the one recommended action (approve and let hive merge) and hands the rest to the row menu.
+assert.ok(html.includes('data-ham-act="decide:queue-merge"') && html.includes('>Let hive merge<') && html.includes('data-ham-more="1"'), html);
+assert.ok(!html.includes('data-ham-act="decide:merge-now"') && !html.includes('data-ham-act="decide:delegate"'), html);
 
 // A 085 popover still leads with Let hive decide.
 const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'],
@@ -1447,8 +1455,8 @@ func TestStageTrackerReauthorAndApprovalCaveats(t *testing.T) {
 const ids = as => as.map(a => a.id);
 const merger = { user: true, canHold: true, canHuman: true };
 const options = [
-  { action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you; 2 of 3 commits have no Signed-off-by, so GitHub refuses the merge where DCO is required' },
-  { action: 'decide:queue-merge', label: 'Approve — let hive merge', enabled: true, consequence: 'records your approval as the trust override for this head; the hive\'s merge sweep merges #317 as-is on its next pass once CI is green and the head has soaked, and does not adopt it' },
+  { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval as the trust override for this head; the hive\'s merge sweep merges #317 as-is on its next pass once CI is green and the head has soaked, and does not adopt it' },
+  { action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you; 2 of 3 commits have no Signed-off-by, so GitHub refuses the merge where DCO is required' },
   { action: 'decide:re-author', label: 'Re-author as hive PR', enabled: true, consequence: 'the hive re-homes #317\'s commits on a hive-owned, signed-off branch and opens a superseding PR; #317 is closed when that one merges; nothing is merged as-is' },
   { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
   { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #317 unmerged' },
@@ -1462,12 +1470,12 @@ const issue316 = { repo: 'hivecommons/hotshot', kind: 'issue', number: 316, url:
 // The re-author choice leads right after the two Approve answers, on the
 // PR sub-row and on the issue row over it.
 let as = stageTrackerRowActions(pr317, merger);
-assert.deepStrictEqual(ids(as).slice(0, 4), ['decide:merge-now', 'decide:queue-merge', 'decide:re-author', 'decide'], ids(as));
+assert.deepStrictEqual(ids(as).slice(0, 4), ['decide:queue-merge', 'decide:merge-now', 'decide:re-author', 'decide'], ids(as));
 assert.strictEqual(as[2].label, 'Re-author as hive PR');
 assert.ok(as[2].enabled && as[2].lead);
 assert.ok(as[2].hint.includes('nothing is merged as-is'));
 as = stageTrackerRowActions(issue316, merger);
-assert.deepStrictEqual(ids(as).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide:re-author'], ids(as));
+assert.deepStrictEqual(ids(as).slice(0, 3), ['decide:queue-merge', 'decide:merge-now', 'decide:re-author'], ids(as));
 assert.strictEqual(as[2].target.number, 317);
 const menu = stageTrackerMenuHtml(as, 'hivecommons/hotshot#316');
 assert.ok(menu.indexOf('data-ham-act="decide:re-author"') > 0 && menu.indexOf('data-ham-act="decide:re-author"') < menu.indexOf('data-ham-act="hold"'));
@@ -1484,10 +1492,10 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
 (async () => {
   // Both Approve confirms warn BEFORE acting and say what approval means.
   await stageTrackerActionPayload([pr317], 'decide:merge-now');
-  assert.strictEqual(dialogs[0].cfg.title, 'Approve & merge as maintainer');
+  assert.strictEqual(dialogs[0].cfg.title, 'Merge now as maintainer');
   assert.ok(dialogs[0].cfg.message.includes('lack a Signed-off-by'), dialogs[0].cfg.message);
   await stageTrackerActionPayload([pr317], 'decide:queue-merge');
-  assert.strictEqual(dialogs[1].cfg.title, 'Approve — let hive merge');
+  assert.strictEqual(dialogs[1].cfg.title, 'Approve and let hive merge');
   assert.ok(dialogs[1].cfg.message.includes("stands in for the author's trust on this version"), dialogs[1].cfg.message);
   assert.ok(dialogs[1].cfg.message.includes('will not adopt or re-author it'), dialogs[1].cfg.message);
   assert.ok(dialogs[1].cfg.message.includes('lack a Signed-off-by'), dialogs[1].cfg.message);
@@ -1614,8 +1622,9 @@ assert.notStrictEqual(stageTrackerItemState(pr), stageTrackerItemState({ ...pr, 
 // would:"), ONE short why, at most two "then" items; the sentinel
 // finding, the rails and the ruled-out rungs sit under a collapsed
 // Details. The visible text for the #15332 case is ≤ 60 words and free of
-// hive vocabulary; "Approve & merge as-is" appears only when the plan says
-// the head is mergeable as it is.
+// hive vocabulary; the merge button — "Approve and let hive merge", or
+// "Merge now as maintainer" when the hive would approve anyway — appears
+// only when the plan says the head is mergeable as it is.
 func TestStageTrackerDelegatePlanDialogIsOneDecision(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
@@ -1669,18 +1678,40 @@ assert.ok(html.indexOf('hive-dialog-btn cancel') < html.indexOf('hive-dialog-btn
 view = stageTrackerDelegatePlanView([Object.assign({}, pr15332, { summary: 'Hive would: Hive would: send #15332 back' })], '');
 assert.strictEqual(view.decisions[0].sentence, 'Send #15332 back.');
 
-// 3. Mergeable as-is: the ladder's approve rung offers the merge button.
+// 3. Mergeable as-is: the ladder's approve rung offers the merge button —
+//    the hive would approve anyway, so the server leaves merge-now as the
+//    one alternative and the button carries that label.
 const green = { ref: 'o/r#8', number: 8, type: 'pr', title: 'fix typo', would: 'approve', rule: 'mergeable-as-is',
   summary: 'Approve #8 as it is and let the merge queue merge it.', why: 'Mergeable and green.', consequences: ['Hive approves the current commit.', '#8 merges once CI is green and it has soaked.'],
   ladder: { decision: 'mergeable-as-is', reason: 'mergeable and green; handed to the merge queue', ruled_out: ['already-fixed: no merged PR has closed this PR\'s issue'] },
-  mergeable_as_is: true, alternatives: [{ action: 'decide:merge-now', label: 'Approve & merge as-is', enabled: true }] };
-html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([green], ''));
-assert.deepStrictEqual(buttons(html), ['Cancel', 'Approve & merge as-is', 'Let hive do that']);
+  mergeable_as_is: true, alternatives: [{ action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true }] };
+view = stageTrackerDelegatePlanView([green], '');
+html = stageTrackerDelegatePlanHtml(view);
+assert.deepStrictEqual(buttons(html), ['Cancel', 'Merge now as maintainer', 'Let hive do that']);
+assert.strictEqual(view.mergeAction, 'decide:merge-now');
 assert.ok(!html.includes('ham-plan-chip') && html.includes('btn-primary hive-dialog-btn primary'), 'no sentinel: plain primary, no chip');
 assert.ok(!html.includes('aria-disabled'), 'enabled with merge rights');
 // …greyed with the reason without merge rights…
 html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([Object.assign({}, green, { alternatives: [{ action: 'decide:merge-now', enabled: false, reason_if_disabled: 'Needs merge rights' }] })], ''));
 assert.ok(html.includes('ham-plan-merge" aria-disabled="true" disabled title="Needs merge rights"'), html);
+// Any other verdict on a mergeable head leads with "Approve and let hive
+// merge" (queue-merge), even when merge-now is listed too; the click runs
+// queue-merge.
+const recommend = Object.assign({}, green, { would: 'recommend-only', summary: 'Recommend only: a maintainer merges #8.',
+  alternatives: [{ action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true }, { action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true }] });
+view = stageTrackerDelegatePlanView([recommend], '');
+html = stageTrackerDelegatePlanHtml(view);
+assert.deepStrictEqual(buttons(html), ['Cancel', 'Approve and let hive merge', 'Let hive do that']);
+assert.strictEqual(view.mergeAction, 'decide:queue-merge');
+assert.strictEqual(view.mergeLabel, STAGE_TRACKER_PLAN_BUTTON_MERGE);
+assert.ok(view.mergeable && !html.includes('aria-disabled'));
+// …greyed on the queue-merge alternative's own reason…
+view = stageTrackerDelegatePlanView([Object.assign({}, recommend, { alternatives: [{ action: 'decide:queue-merge', enabled: false, reason_if_disabled: 'merger role required' }, { action: 'decide:merge-now', enabled: true }] })], '');
+assert.strictEqual(view.mergeable, false); assert.strictEqual(view.mergeWhy, 'merger role required');
+// …a batch sharing merge-now falls back to it; one with no shared merge
+// alternative offers no merge button at all.
+assert.strictEqual(stageTrackerDelegatePlanMergeAction([green, recommend]), 'decide:merge-now');
+assert.strictEqual(stageTrackerDelegatePlanOffersMerge([green, Object.assign({}, recommend, { alternatives: [{ action: 'decide:queue-merge', enabled: true }] })]), false);
 // …and absent when the plan says the head is not mergeable, whatever the alternatives list.
 html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([Object.assign({}, green, { mergeable_as_is: false })], ''));
 assert.deepStrictEqual(buttons(html), ['Cancel', 'Let hive do that']);

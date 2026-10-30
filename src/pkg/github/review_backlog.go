@@ -52,6 +52,14 @@ type reviewBacklogLedger struct {
 	// host in the ledger once (hivecommons/hive#13947), so later passes
 	// skip it and leave closed hosts to the windowed split sweep.
 	SplitBackfilled bool `json:"split_backfilled,omitempty"`
+	// PRFindings maps "<repo>#<pr>" → the findings filed or tracked from
+	// that PR, so a later perspective or head reporting the same finding is
+	// tracked against the existing item instead of filed again
+	// (hivecommons/hive#15627).
+	PRFindings map[string][]reviewBacklogPRFinding `json:"pr_findings,omitempty"`
+	// StillPresentHeads maps "<repo>#<pr>:<item id>" → the last head a "still
+	// present" note was posted for, so each item gets at most one per head.
+	StillPresentHeads map[string]string `json:"still_present_heads,omitempty"`
 }
 
 // reviewBacklogLedgerMu serialises the load→mutate→save cycles of the
@@ -125,6 +133,8 @@ func newReviewBacklogLedger() *reviewBacklogLedger {
 		Fingerprints:      map[string]map[string]reviewBacklogFingerprintRecord{},
 		PRDailyCount:      map[string]int{},
 		SplitKeys:         map[string][]int{},
+		PRFindings:        map[string][]reviewBacklogPRFinding{},
+		StillPresentHeads: map[string]string{},
 	}
 }
 
@@ -160,6 +170,12 @@ func loadReviewBacklog(path string) (*reviewBacklogLedger, error) {
 	}
 	if l.SplitKeys == nil {
 		l.SplitKeys = map[string][]int{}
+	}
+	if l.PRFindings == nil {
+		l.PRFindings = map[string][]reviewBacklogPRFinding{}
+	}
+	if l.StillPresentHeads == nil {
+		l.StillPresentHeads = map[string]string{}
 	}
 	return l, nil
 }
@@ -263,6 +279,15 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 			key := reviewBacklogKey(req.Repo, req.Number, report.Perspective, finding)
 			if prev, ok := ledger.Items[key]; ok {
 				listed = append(listed, reviewBacklogFiled{number: prev.IssueNumber, key: prev.ItemKey, url: prev.IssueURL, title: reviewBacklogIssueTitle(report.Perspective, finding), status: reviewBacklogListedTracked})
+				// The same perspective reporting it again at a new head
+				// leaves the once-per-head "still present" note.
+				if tracked, isTracked := ledger.prFinding(req.Repo, req.Number, finding); isTracked && dailyRemaining > 0 && ledger.stillPresentDue(req.Repo, req.Number, tracked.ref(), headSHA) {
+					if err := sink.AppendToItem(ctx, req.Repo, tracked.ref(), reviewBacklogStillPresentComment(headSHA, []review.Perspective{report.Perspective})); err != nil {
+						return err
+					}
+					ledger.PRDailyCount[dayKey]++
+					dailyRemaining--
+				}
 				continue
 			}
 			fp := ReviewFindingFingerprint(finding)
@@ -277,6 +302,39 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 				RecordedAt:  now.UTC(),
 			}
 			known, ok := ledger.fingerprint(req.Repo, fp)
+			// One item per finding per PR (hivecommons/hive#15627): a
+			// report that names a finding already tracked for this PR —
+			// another perspective's, or an earlier head's carried over —
+			// is a reference, not a filing. A carry-over that refers to
+			// nothing tracked here is dropped outright.
+			carryOver := reviewBacklogCarryOver(finding)
+			tracked, isTracked := ledger.prFinding(req.Repo, req.Number, finding)
+			if !isTracked {
+				for _, n := range reviewRefersTo(finding) {
+					if tracked, isTracked = ledger.prFindingByItem(req.Repo, req.Number, n); isTracked {
+						break
+					}
+				}
+			}
+			if isTracked {
+				record.IssueNumber, record.IssueURL, record.ItemKey = tracked.ItemNumber, tracked.ItemURL, tracked.ItemKey
+				ledger.Items[key] = record
+				listed = append(listed, reviewBacklogFiled{number: tracked.ItemNumber, key: tracked.ItemKey, url: tracked.ItemURL, title: reviewBacklogIssueTitle(report.Perspective, finding), status: reviewBacklogListedTracked})
+				if dailyRemaining > 0 && ledger.stillPresentDue(req.Repo, req.Number, tracked.ref(), headSHA) {
+					if err := sink.AppendToItem(ctx, req.Repo, tracked.ref(), reviewBacklogStillPresentComment(headSHA, []review.Perspective{report.Perspective})); err != nil {
+						return err
+					}
+					ledger.PRDailyCount[dayKey]++
+					dailyRemaining--
+				}
+				continue
+			}
+			if carryOver {
+				c.logger.Info("review backlog: carried-over note is a reference, not filed",
+					slog.String("repo", req.Repo), slog.Int("pr", req.Number),
+					slog.String("perspective", string(report.Perspective)), slog.String("title", strings.TrimSpace(finding.Title)))
+				continue
+			}
 			if ok && known.Destination == destination && known.ItemID != "" {
 				// A closed item must not collect new re-raises; drop the
 				// ledger entry so the finding is re-filed (the create path
@@ -307,6 +365,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 				known.UpdatedAt = now.UTC()
 				ledger.setFingerprint(req.Repo, fp, known)
 				ledger.Items[key] = record
+				ledger.addPRFinding(req.Repo, req.Number, finding, known.ref(), headSHA)
 				ledger.PRDailyCount[dayKey]++
 				dailyRemaining--
 				updated++
@@ -381,6 +440,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 			}
 			record.IssueNumber, record.IssueURL, record.ItemKey = ref.Number, ref.URL, ref.Key
 			ledger.Items[key] = record
+			ledger.addPRFinding(req.Repo, req.Number, finding, ref, headSHA)
 			fpRecord := reviewBacklogFingerprintRecord{
 				Destination: destination,
 				ItemID:      ref.ID,
@@ -390,6 +450,8 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 				PRs:         []int{req.Number},
 				FiledAt:     now.UTC(),
 				UpdatedAt:   now.UTC(),
+				File:        normaliseFingerprintPath(finding.File),
+				Title:       strings.TrimSpace(finding.Title),
 			}
 			if !ref.Reused {
 				// A filing folded into an open twin keeps the twin's own

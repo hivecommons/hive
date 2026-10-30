@@ -85,8 +85,10 @@ func TestDelegatedDecisionPlanPreviewsAdoptWithoutWrites(t *testing.T) {
 }
 
 // The mergeable-as-is rung: a green, conflict-free contributor head is
-// approved as it is, and "Approve & merge as-is" is offered — greyed with
-// the reason when the operator lacks merge rights.
+// approved as it is; "Approve and let hive merge" would be the primary
+// button under another name, so the one merge alternative is "Merge now
+// as maintainer" — greyed with the reason when the operator lacks merge
+// rights.
 func TestDelegatedDecisionPlanMergeableAsIsOffersMerge(t *testing.T) {
 	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/085-needs-decision", "needs-human"}}
 	srv := newDelegatedServer(t, mock)
@@ -105,8 +107,13 @@ func TestDelegatedDecisionPlanMergeableAsIsOffersMerge(t *testing.T) {
 	if plan.Summary != "Approve #8 as it is and let the merge queue merge it." || strings.Contains(plan.Summary, "Hive would") {
 		t.Fatalf("summary %q", plan.Summary)
 	}
-	if len(plan.Alternatives) == 0 || plan.Alternatives[0].Action != decisionActionMergeNow || plan.Alternatives[0].Label != delegatedPlanAlternativeLabel || !plan.Alternatives[0].Enabled {
+	if len(plan.Alternatives) == 0 || plan.Alternatives[0].Action != decisionActionMergeNow || plan.Alternatives[0].Label != decisionMergeNowLabel || !plan.Alternatives[0].Enabled {
 		t.Fatalf("alternatives = %+v", plan.Alternatives)
+	}
+	for _, alt := range plan.Alternatives {
+		if alt.Action == decisionActionQueueMerge {
+			t.Fatalf("an approve verdict must not offer queue-merge twice: %+v", plan.Alternatives)
+		}
 	}
 	// Without the merger role the as-is merge is greyed with the reason.
 	w = postDelegatedPlan(t, srv, 8, "writer", body, nil)
@@ -181,7 +188,9 @@ func TestDelegatedDecisionPlanReadyForHumanMergeUsesShortcut(t *testing.T) {
 	if plan.Would != string(delegatedecision.VerdictRecommendOnly) || !strings.HasPrefix(plan.Summary, "Recommend only: ") {
 		t.Fatalf("plan = %+v", plan)
 	}
-	if plan.Alternatives[0].Action != decisionActionMergeNow || plan.Alternatives[0].Label != delegatedPlanAlternativeLabel {
+	// The lead merge alternative is "Approve and let hive merge"; merge-now
+	// follows as the secondary.
+	if len(plan.Alternatives) < 2 || plan.Alternatives[0].Action != decisionActionQueueMerge || plan.Alternatives[0].Label != "Approve and let hive merge" || plan.Alternatives[1].Action != decisionActionMergeNow {
 		t.Fatalf("alternatives = %+v", plan.Alternatives)
 	}
 	if len(mock.comments) != 0 || len(mock.added) != 0 {
@@ -203,8 +212,8 @@ func TestOperatorActionFromBodyRecordsChosenButton(t *testing.T) {
 	if !ok || req.Action != operatorActionLetHiveDecide || req.Note != "Let hive do that · previewed adopt-supersede" {
 		t.Fatalf("%+v %v", req, ok)
 	}
-	req, ok = operatorActionFromBody("decision", []byte(`{"decision":"merge-now","chosen":"Approve & merge as-is · hive would have adopt-supersede"}`))
-	if !ok || req.Action != operatorActionMergeNow || req.Note != "Approve & merge as-is · hive would have adopt-supersede" {
+	req, ok = operatorActionFromBody("decision", []byte(`{"decision":"merge-now","chosen":"Merge now as maintainer · hive would have adopt-supersede"}`))
+	if !ok || req.Action != operatorActionMergeNow || req.Note != "Merge now as maintainer · hive would have adopt-supersede" {
 		t.Fatalf("%+v %v", req, ok)
 	}
 }

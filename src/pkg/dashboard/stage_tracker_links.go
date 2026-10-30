@@ -396,6 +396,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			items[i].ClosedIssue = stageTrackerClosedIssueAnchor(items[i])
 		}
 	}
+	stageTrackerFoldReviewNotes(items)
 }
 
 // Link evidence arrives after the issue's stage/new narration, including
