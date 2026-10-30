@@ -394,6 +394,35 @@ func TestRebaseMergeWorkflowForkRefusesBeforeArming(t *testing.T) {
 	}
 }
 
+// A fork head without maintainer edits is only unreachable for a
+// contributor's PR: the hive pushes its own heads with its own credentials,
+// so a hive-authored fork PR still arms as it did before the workflow fence.
+func TestRebaseMergeForkWithoutMaintainerEditsKeepsHiveAuthoredBypass(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprint("foreign=", foreign), func(t *testing.T) {
+			store := useRebaseMergeStore(t)
+			mock := &repoItemDecisionMock{prForeign: foreign, prFork: true, prNoMaintainerEdits: true, prMergeState: "dirty"}
+			srv := newRepoItemDecisionServer(t, mock)
+			w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"merge-now","type":"pr"}`)
+			var resp repoItemDecisionResponse
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+			if !foreign {
+				f, ok := store.Get("testorg/testrepo", 8)
+				if w.Code != http.StatusAccepted || resp.Status != repoItemStatusRebaseQd || !ok || !f.HiveAuthored || f.State != rebasemerge.StateRebasing {
+					t.Fatalf("hive-authored fork must still arm: code=%d body=%s follow-through=%+v ok=%v", w.Code, w.Body.String(), f, ok)
+				}
+				return
+			}
+			if w.Code != http.StatusOK || resp.Result == nil || resp.Result.Why != rebasemerge.FailNotReachable {
+				t.Fatalf("contributor fork must be refused as unreachable: code=%d result=%+v", w.Code, resp.Result)
+			}
+			if store.Armed("testorg/testrepo", 8) || len(mock.comments) != 0 || len(mock.merges) != 0 {
+				t.Fatalf("refused request armed or wrote to GitHub: store=%v mock=%+v", store.Live(), mock)
+			}
+		})
+	}
+}
+
 func TestRebaseMergeWorkflowDriftStopsExistingFollowThrough(t *testing.T) {
 	store := useRebaseMergeStore(t)
 	mock := &repoItemDecisionMock{}

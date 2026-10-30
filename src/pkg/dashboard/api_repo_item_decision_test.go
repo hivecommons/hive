@@ -35,12 +35,14 @@ type repoItemDecisionMock struct {
 	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
-	prFork       bool
-	workflowPath string
-	prMergeState string
-	updates      int
-	prRedCI      bool
-	prNoCI       bool
+	prFork bool
+	// prNoMaintainerEdits clears maintainer_can_modify on PR #8.
+	prNoMaintainerEdits bool
+	workflowPath        string
+	prMergeState        string
+	updates             int
+	prRedCI             bool
+	prNoCI              bool
 	// priorComments are the comment bodies GET /comments lists (a prior
 	// delegated decision makes a repeat click a no-op).
 	priorComments []string
@@ -137,7 +139,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			if m.prFork {
 				headRepo = "someone/testrepo"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "maintainer_can_modify": true,
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "maintainer_can_modify": !m.prNoMaintainerEdits,
 				"head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface", "repo": map[string]any{"full_name": headRepo}},
 				"base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "testorg/testrepo"}}})
 		case r.Method == http.MethodGet && strings.Contains(path, "/compare/"):

@@ -62,13 +62,19 @@ func (s *Server) armRebaseThenMerge(ctx context.Context, w http.ResponseWriter, 
 	gh := s.deps.GHClient
 	now := rebaseMergeNow()
 	hiveAuthored := gh.IsHiveAuthorLogin(st.Author)
-	if !st.PushReachable() {
+	// Workflow paths refuse every author: the App token cannot push them
+	// even to the hive's own fork. Plain reachability keeps the hive-authored
+	// bypass — the hive pushes its own heads without maintainer edits.
+	refusal := ""
+	switch {
+	case len(st.WorkflowPushPaths) > 0:
+		refusal = rebasemerge.FailWorkflowPush
+	case !hiveAuthored && !st.PushReachable():
+		refusal = rebasemerge.FailNotReachable
+	}
+	if refusal != "" {
 		f := rebasemerge.Arm(repoFull, number, user, st.BaseRef, st.HeadSHA, false, now)
-		if len(st.WorkflowPushPaths) > 0 {
-			f.FailNow(now, rebasemerge.FailWorkflowPush, st.WorkflowPushPaths)
-		} else {
-			f.FailNow(now, rebasemerge.FailNotReachable, nil)
-		}
+		f.FailNow(now, refusal, st.WorkflowPushPaths)
 		// A 200 with a refused result, not an error: the toast shows the
 		// reason and a recovery step instead of "HTTP 409".
 		jsonStatusResponse(w, http.StatusOK, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: repoItemDecisionMergeNow, Status: rowActionRefused, Head: st.HeadSHA,
