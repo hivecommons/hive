@@ -5461,11 +5461,11 @@
     .oc-nav-item:has(> .oc-nav-count[data-count-delta]) { overflow: visible; z-index: 1; }
     #activity-monitor-waiting-badge[data-zero][data-count-delta] {
       display: inline-flex; position: absolute; right: 3rem;
-      font-size: 0; padding: 0; border: 0;
+      visibility: hidden; padding: 0; border: 0;
     }
     .oc-nav-count[data-count-delta]::after {
       content: attr(data-count-delta); position: absolute; bottom: calc(100% + 2px); right: 0;
-      pointer-events: none; z-index: 1; padding: var(--sp-0) var(--sp-1); border-radius: var(--r-pill);
+      visibility: visible; pointer-events: none; z-index: 1; padding: var(--sp-0) var(--sp-2); border-radius: var(--r-pill);
       background: var(--surface); color: var(--brand); border: 1px solid var(--brand);
       font-size: var(--fs-2xs); line-height: 1.4; font-variant-numeric: tabular-nums;
     }
