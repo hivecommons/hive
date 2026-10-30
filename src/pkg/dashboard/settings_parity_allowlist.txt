@@ -160,6 +160,10 @@ auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-o
 auto_merge.merge_forward_trusted_human[] # TODO #11854
 auto_merge.merge_train.enabled # conflict-aware merge train (#15117); yaml-only
 auto_merge.merge_train.max_rebase_attempts # merge train rebase loop guard (#15117); yaml-only
+auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#15198); yaml-only
+auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
+auto_merge.native_merge_queue.repos[] # native merge queue per-repo allow-list (#15198); yaml-only
+auto_merge.native_merge_queue.skip_current_base_gate # explicit current-base bypass on queue bases (#15198); yaml-only
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
 auto_merge.require_current_base[] # current-base gate per-repo "on" override, written by the Repos tab (#15335)

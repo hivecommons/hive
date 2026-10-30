@@ -8176,6 +8176,63 @@ type AutoMergeConfig struct {
 	// `conflicting` with nothing owning the repair
 	// (hivecommons/hive#15117). Default ON.
 	MergeTrain MergeTrainAutoMergeConfig `yaml:"merge_train,omitempty" json:"merge_train,omitempty"`
+	// NativeMergeQueue lets the sweep lanes enqueue an eligible PR into
+	// GitHub's native merge queue instead of merging it directly when the
+	// base branch requires one (hivecommons/hive#15198). Default OFF and
+	// opt-in per repo: a hive that never sets it keeps the pre-queue
+	// behaviour, including the `merge-queue-required` park.
+	NativeMergeQueue NativeMergeQueueAutoMergeConfig `yaml:"native_merge_queue,omitempty" json:"native_merge_queue,omitempty"`
+}
+
+// NativeMergeQueueAutoMergeConfig is auto_merge.native_merge_queue.*.
+type NativeMergeQueueAutoMergeConfig struct {
+	// Enabled turns the native-queue hand-off on. Default off.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Repos restricts the hand-off to these repositories (owner/repo,
+	// case-insensitive). Empty means every watched repository once Enabled.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// SkipCurrentBaseGate lets a queue-enabled base bypass the
+	// auto_merge.require_current_base gate and the behind update-branch,
+	// because the merge group re-tests the merged result and a new head
+	// would drop the PR from the queue. Default off: the gate stays in
+	// force on queue bases exactly as on any other base.
+	SkipCurrentBaseGate bool `yaml:"skip_current_base_gate,omitempty" json:"skip_current_base_gate,omitempty"`
+	// ProbeTTL bounds how long a base branch's "has a merge queue" answer
+	// is reused before it is re-read from GraphQL. 0/unset means
+	// DefaultNativeMergeQueueProbeTTL.
+	ProbeTTL time.Duration `yaml:"probe_ttl,omitempty" json:"probe_ttl,omitempty"`
+}
+
+// DefaultNativeMergeQueueProbeTTL is how long a base branch's merge-queue
+// probe is cached when auto_merge.native_merge_queue.probe_ttl is unset.
+const DefaultNativeMergeQueueProbeTTL = 30 * time.Minute
+
+// RepoSet is auto_merge.native_merge_queue.repos as a lower-cased membership
+// map; nil means the allow-list is empty (every repo once Enabled).
+func (n NativeMergeQueueAutoMergeConfig) RepoSet() map[string]bool {
+	return repoListSet(n.Repos)
+}
+
+// EnabledFor reports whether repo (owner/repo, matched case-insensitively)
+// may hand PRs to a native merge queue: Enabled and either no allow-list or
+// listed in it.
+func (n NativeMergeQueueAutoMergeConfig) EnabledFor(repo string) bool {
+	if !n.Enabled {
+		return false
+	}
+	set := n.RepoSet()
+	if len(set) == 0 {
+		return true
+	}
+	return set[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// EffectiveProbeTTL is probe_ttl with the default applied.
+func (n NativeMergeQueueAutoMergeConfig) EffectiveProbeTTL() time.Duration {
+	if n.ProbeTTL <= 0 {
+		return DefaultNativeMergeQueueProbeTTL
+	}
+	return n.ProbeTTL
 }
 
 // MergeTrainAutoMergeConfig is auto_merge.merge_train.*.

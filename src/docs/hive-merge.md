@@ -215,6 +215,27 @@ takes effect without a restart.
   outcome becomes `human-approved` and the merge proceeds.
 - **off**: no evaluation.
 
+**A decision is head-scoped — except across the hive's own base refresh.**
+A recorded operator decision (dashboard Approve, `/hive decision …`, a
+hand-applied return label) names the exact head the person saw; a new head
+is a new tree nobody has decided on, so the record is superseded and the
+reviewer's `decision_requested` question stands again. The one head change
+that does not supersede it is the hive's own `require_current_base` refresh:
+a merge commit authored by the App whose parents are the decided head and a
+commit on the base branch, and whose three-dot diff against the base is
+file-for-file (name, status, blob, line counts, patch) identical to the
+decided head's. Before any gate reads the new head — the reviewer-verdict
+stage route, the automerge review gate, operator admission and the hold
+guard — the decision is re-recorded on it with `carried_from_head` naming
+the original, and one INFO line `decision carried over base refresh` is
+logged; the reviewer route then reads `decision_answered=true` instead of
+parking the PR at `stage/085-needs-decision` a second time
+([#15751](https://github.com/hivecommons/hive/issues/15751), seen on #15649). A content push,
+a merge by anyone but the App, a rebase, a refresh whose diff differs, and
+GitHub review approvals (which are never moved between heads) all keep the
+record where it was. The answer for a (PR, head) pair is memoised, so the
+check costs one commit read and two compares per new head.
+
 Each evaluation writes one audit line, action `review_evaluated`, detail
 `lane=<self-merge|trusted-bot|trusted-author> would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`,
 plus `human_approver=<login> overrode=<swarm outcome>` when a human's
