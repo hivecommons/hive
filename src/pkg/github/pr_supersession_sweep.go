@@ -468,6 +468,8 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		return supersessionCloser{}, false
 	}
 	displayRepo := owner + "/" + repo
+	var latest supersessionCloser
+	found := false
 	for _, node := range resp.Data.Repository.Issue.ClosedByPullRequestsReferences.Nodes {
 		if node.Number == currentPR || !node.Merged {
 			continue
@@ -475,9 +477,12 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		if !sameRepoPullURL(node.URL, owner, repo, node.Number) {
 			continue
 		}
-		return supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}, true
+		if !found || node.MergedAt.After(latest.MergedAt) {
+			latest = supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}
+			found = true
+		}
 	}
-	return supersessionCloser{}, false
+	return latest, found
 }
 
 // sameRepoPullURL reports whether a PR URL from closedByPullRequestsReferences
