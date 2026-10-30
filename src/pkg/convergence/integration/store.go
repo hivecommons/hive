@@ -101,6 +101,25 @@ func (s *Store) ForTestedHead(repo, head string) []Evidence {
 	return receipts
 }
 
+func evidenceStateRank(state State) int {
+	switch state {
+	case Unknown:
+		return 0
+	case Waiting:
+		return 1
+	case Running:
+		return 2
+	case Passed:
+		return 3
+	case Rejected:
+		return 4
+	case Superseded:
+		return 5
+	default:
+		return -1
+	}
+}
+
 func (s *Store) ForFailure(repo, head string, suite, check int64) []Evidence {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -325,7 +344,8 @@ func (s *Store) apply(e Event) {
 			}
 		}
 		old, found := s.evidence[k]
-		if !found || (old.State != Superseded && v.ObservedAt.After(old.ObservedAt)) {
+		progresses := v.ObservedAt.Equal(old.ObservedAt) && evidenceStateRank(v.State) > evidenceStateRank(old.State)
+		if !found || old.State != Superseded && (v.ObservedAt.After(old.ObservedAt) || progresses) {
 			next := cloneEvidence(*v)
 			next.ObservedState = v.State
 			if supersededBy != "" {

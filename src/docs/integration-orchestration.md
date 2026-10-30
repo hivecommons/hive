@@ -125,6 +125,10 @@ workflow blob on both the tested revision and trusted target base, workflow
 run/attempt, source/target repositories, suite, physical job membership and check
 App/head/suite/name. One receipt is **one workflow**, not all CI/review/trust gates.
 Changing/removing a policy supersedes affected historical receipts durably.
+`observed_state` retains the producer outcome separately from derived
+supersession. Bounded reconciliation can complete unavailable proof at the same
+workflow update timestamp; late waiting/unknown events cannot regress completed
+proof, and contradictory equal-time terminal evidence fails conservatively.
 Destroyed-group and member-change tombstones prevent out-of-order old receipts
 reviving after restart. A documented native prefix promotion retains the original
 subject only when the exact remaining chain and tested tree/ref match; it never

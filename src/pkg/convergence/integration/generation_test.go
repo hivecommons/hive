@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -84,5 +85,32 @@ func TestFailedAuthorHeadRequiresExactSuiteAndCheckForCandidateContext(t *testin
 		if got := len(store.ForFailure("o/r", tc.head, tc.suite, tc.check)); got != tc.want {
 			t.Fatalf("failure %+v got %d receipts", tc, got)
 		}
+	}
+}
+
+func TestReconciliationCanCompleteSameTimestampProofWithoutLateRegression(t *testing.T) {
+	store := testStore(t)
+	receipt := Evidence{Subject: testSubject(), State: Unknown, ObservedAt: epoch, Source: "github-actions-bound-v1", RunID: 20, SuiteID: 2, CheckIDs: []int64{3}}
+	for n, state := range []State{Unknown, Waiting, Running, Passed, Unknown, Running, Rejected, Passed, Superseded, Passed} {
+		receipt.State = state
+		if err := store.Append(Event{Version: 1, ID: fmt.Sprintf("progress/%d", n), At: epoch.Add(time.Duration(n) * time.Minute), Evidence: &receipt}); err != nil {
+			t.Fatal(err)
+		}
+		current := store.evidence[receipt.Subject.ID()].State
+		want := state
+		switch n {
+		case 4, 5:
+			want = Passed
+		case 7:
+			want = Rejected
+		case 9:
+			want = Superseded
+		}
+		if current != want {
+			t.Fatalf("same-source-time observation %d changed %s to %s", n, want, current)
+		}
+	}
+	if evidenceStateRank("invalid") != -1 {
+		t.Fatal("invalid state ordered as evidence")
 	}
 }
