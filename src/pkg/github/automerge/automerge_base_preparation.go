@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -56,7 +57,7 @@ func (c *Engine) preparationWindow() time.Duration {
 // a new verdict: those are expected to become pending after our refresh.
 func (c *Engine) preparationInvalid(ctx context.Context, owner, repo, base string, number int, expectedHead string, repair bool) (string, error) {
 	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:base_preparation"), owner, repo, number)
-	if isGitHubStatus(err, 404) {
+	if isGitHubStatus(err, http.StatusNotFound) {
 		return "gone", nil
 	}
 	if err != nil {
@@ -146,7 +147,7 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 				next.Lane = lane
 				next.Repair = repair
 				st.Owner = next
-				c.info("automerge base preparation selected", "repo", owner+"/"+repo, "base", base, "pr", next.Number, "head", next.Head)
+				c.info("automerge base preparation selected", "repo", owner+"/"+repo, "base", base, "pr", next.Number, "head", next.Head, "lane", next.Lane)
 				break
 			}
 		}
@@ -154,7 +155,11 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 			if reason == "" {
 				reason = preparationQueued(st.Owner.Number)
 			}
-			c.info("automerge base preparation waiting", "repo", owner+"/"+repo, "base", base, "pr", number, "front", st.Owner.Number, "reason", reason)
+			front := st.Owner.Number
+			if front == 0 && len(st.Waiting) > 0 {
+				front = st.Waiting[0].Number
+			}
+			c.info("automerge base preparation waiting", "repo", owner+"/"+repo, "base", base, "pr", number, "front", front, "reason", reason)
 		}
 		return nil
 	})
@@ -247,6 +252,11 @@ func (c *Engine) observeBasePreparation(lane, owner, repo string, pr *gh.PullReq
 	}
 	if err := c.preparationStore().change(preparationKey(owner, repo, base), func(st *basePreparation) error {
 		keep := !merged && preparationKeepsOwner(reason, evalErr)
+		if reason == basePreparationPrefix+"snapshot-changed" && st.Attempts[pr.GetNumber()].Head == "" {
+			// A push won the race before we issued any refresh. Pending
+			// work on that unreviewed head is not our preparation.
+			keep = false
+		}
 		// Waiting is not preparation yet: a changed or now-pending waiting
 		// head loses its admission ticket and must qualify again.
 		st.Waiting = slices.DeleteFunc(st.Waiting, func(w preparationCandidate) bool {

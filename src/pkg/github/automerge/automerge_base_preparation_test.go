@@ -294,7 +294,6 @@ func TestBasePreparationHeadBaseChangesAndFairRelease(t *testing.T) {
 		if _, _, _, err := preparationGate(c, n, "main", fmt.Sprintf("head%d", n)); err != nil {
 			t.Fatal(err)
 		}
-
 	}
 	// A changed head cannot be updated through a stale snapshot.
 	api.prs[1].Head.SHA = gh.Ptr("pushed1")

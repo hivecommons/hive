@@ -20,7 +20,7 @@ import (
 type BasePreparationStore struct {
 	dir   string
 	mu    sync.Mutex
-	locks sync.Map
+	locks map[string]*sync.Mutex
 	items map[string]basePreparation
 }
 
@@ -47,7 +47,7 @@ type basePreparation struct {
 // NewBasePreparationStore accepts an empty directory for isolated, in-memory
 // tests. Production uses a directory beside the durable stage store.
 func NewBasePreparationStore(dir string) *BasePreparationStore {
-	return &BasePreparationStore{dir: dir, items: map[string]basePreparation{}}
+	return &BasePreparationStore{dir: dir, items: map[string]basePreparation{}, locks: map[string]*sync.Mutex{}}
 }
 
 func preparationKey(owner, repo, base string) string {
@@ -56,8 +56,13 @@ func preparationKey(owner, repo, base string) string {
 }
 
 func (s *BasePreparationStore) change(key string, fn func(*basePreparation) error) error {
-	value, _ := s.locks.LoadOrStore(key, &sync.Mutex{})
-	lockMu := value.(*sync.Mutex)
+	s.mu.Lock()
+	lockMu := s.locks[key]
+	if lockMu == nil {
+		lockMu = &sync.Mutex{}
+		s.locks[key] = lockMu
+	}
+	s.mu.Unlock()
 	lockMu.Lock()
 	defer lockMu.Unlock()
 	if s.dir == "" {

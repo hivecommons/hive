@@ -2594,6 +2594,9 @@ func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, re
 		if wait := preparationWaitReason(err); wait != "" {
 			return AutoMergeSweepEvent{}, wait, nil
 		}
+		if c.requireCurrentBaseFor(owner+"/"+repo) && hgithub.IsUpdateBranchStaleHead(err) {
+			return AutoMergeSweepEvent{}, basePreparationPrefix + "snapshot-changed", nil
+		}
 		switch classifyUpdateBranchError(err, fork) {
 		case updateBranchUpToDate:
 			return AutoMergeSweepEvent{}, "check-pending", nil
