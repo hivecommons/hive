@@ -187,7 +187,6 @@ func (c *Client) CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string
 		HiveAuthored: identity.Matches(safeGetLogin(pr.GetUser())),
 		Held:         c.isHeld(labels) || c.isExempt(labels),
 		KeptOpen:     supersessionHasLabel(pr, SupersessionKeepOpenLabel),
-		HeadAge:      emptyDiffHeadAge(pr, time.Time{}, time.Now()),
 	}
 	if pr.ChangedFiles != nil && *pr.ChangedFiles > 0 {
 		// The GET payload already shows a diff: no compare needed.
@@ -195,10 +194,11 @@ func (c *Client) CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string
 	}
 	if !enabled || facts.Merged || facts.Draft || facts.Held || facts.KeptOpen || facts.DiffFiles > 0 {
 		// Cheap guards first: no compare for a PR the rule cannot touch.
+		// Every guard here decides before the rule reads HeadAge.
 		out.Verdict, out.Reason = DecideHiveEmptyDiffAutoClose(facts)
 		return out, nil
 	}
-	facts.HeadAge = emptyDiffHeadAge(pr, c.headCommitTime(ctx, owner, name, pr), time.Now())
+	facts.HeadAge = emptyDiffHeadAge(pr, c.headCommitTime(ctx, repo, owner, name, pr), time.Now())
 	if !facts.DiffKnown {
 		facts.DiffFiles, facts.DiffKnown = c.prDiffAgainstBase(ctx, owner, name, pr)
 	}
@@ -240,14 +240,22 @@ func (c *Client) CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string
 }
 
 // headCommitTime is the head commit's committer date, or the zero time when
-// it cannot be read.
-func (c *Client) headCommitTime(ctx context.Context, owner, name string, pr *gh.PullRequest) time.Time {
+// it cannot be read (logged, since the caller then falls back to updated_at).
+func (c *Client) headCommitTime(ctx context.Context, repo, owner, name string, pr *gh.PullRequest) time.Time {
 	sha := strings.TrimSpace(pr.GetHead().GetSHA())
 	if sha == "" {
 		return time.Time{}
 	}
 	commit, _, err := c.client.Repositories.GetCommit(WithRESTCaller(ctx, "hive:empty_diff_head_age"), owner, name, sha, nil)
 	if err != nil || commit == nil {
+		if c.logger != nil {
+			msg := "nil commit"
+			if err != nil {
+				msg = err.Error()
+			}
+			c.logger.Warn("empty-diff auto-close: head commit unreadable; measuring head age from updated_at",
+				slog.String("repo", repo), slog.Int("pr", pr.GetNumber()), slog.String("sha", sha), slog.String("error", msg))
+		}
 		return time.Time{}
 	}
 	return commit.GetCommit().GetCommitter().GetDate().Time
@@ -255,14 +263,15 @@ func (c *Client) headCommitTime(ctx context.Context, owner, name string, pr *gh.
 
 // emptyDiffHeadAge measures from the head commit's committer date; updated_at
 // is bumped by labels and comments, so it only stands in when the commit date
-// is unavailable.
+// is unavailable. The age never exceeds the PR's own age: a PR just opened
+// from an old branch is still a just-opened PR whose commits may be arriving.
 func emptyDiffHeadAge(pr *gh.PullRequest, headCommitAt, now time.Time) time.Duration {
 	at := headCommitAt
 	if at.IsZero() {
 		at = pr.GetUpdatedAt().Time
 	}
-	if at.IsZero() {
-		at = pr.GetCreatedAt().Time
+	if created := pr.GetCreatedAt().Time; !created.IsZero() && created.After(at) {
+		at = created
 	}
 	if at.IsZero() {
 		return 0

@@ -107,4 +107,21 @@ func TestEmptyDiffHeadAgeUsesHeadCommit(t *testing.T) {
 	if got := emptyDiffHeadAge(pr, time.Time{}, now); got != time.Minute {
 		t.Fatalf("head age = %v, want 1m from updated_at fallback", got)
 	}
+	// A PR just opened from an old branch: its head commit predates the PR,
+	// so the age is the PR's own age and the just-opened grace period holds.
+	justOpened := &gh.PullRequest{
+		CreatedAt: &gh.Timestamp{Time: now.Add(-2 * time.Minute)},
+		UpdatedAt: &gh.Timestamp{Time: now.Add(-time.Minute)},
+	}
+	if got := emptyDiffHeadAge(justOpened, now.Add(-time.Hour), now); got != 2*time.Minute {
+		t.Fatalf("head age = %v, want 2m floored at created_at", got)
+	}
+	// A head commit pushed after the PR opened measures from the commit.
+	if got := emptyDiffHeadAge(justOpened, now.Add(-90*time.Second), now); got != 90*time.Second {
+		t.Fatalf("head age = %v, want 90s from the head commit", got)
+	}
+	// No commit date and no created_at: updated_at still stands in.
+	if got := emptyDiffHeadAge(&gh.PullRequest{}, time.Time{}, now); got != 0 {
+		t.Fatalf("head age = %v, want 0 with no timestamps", got)
+	}
 }
