@@ -640,6 +640,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		if err := s.gatherDelegatedLadderInput(ctx, repoFull, pr, &in); err != nil {
 			return in, err
 		}
+		in.DiffEmpty = ghpkg.PRChangedFilesClaimsEmpty(pr)
 		state := strings.ToLower(pr.GetMergeableState())
 		in.Conflicting = state == "dirty" || (pr.Mergeable != nil && !pr.GetMergeable())
 		green, err := delegatedHeadCIGreen(ctx, api, owner, repoName, pr, in.Conflicting, state)
