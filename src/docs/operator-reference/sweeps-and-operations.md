@@ -119,8 +119,11 @@ Dashboard: Settings → Labels → "When the PR author maintains the
 repository". Whatever the policy and the clocks say, the row's ⋯ menu on a
 072 / 071 clanker PR offers the operator **Adopt now — hive takes it over**
 (decision API `adopt` + `force: true`: supersede adoption on the next nudged
-sweep, bypassing presence, grace and `maintainer_policy`; `hold` still
-stops it; marker `hive:adopted reason=operator-forced by=@login`) and
+sweep, bypassing presence, grace, `maintainer_policy` and an earlier
+Approve's admission; `hold` still stops it; marker `hive:adopted
+reason=operator-forced by=@login`; the row shows *adopting… (queued)* and
+drops the action until the copy opens — see *Adopt now always wins over an
+earlier Approve* in [App self-merge sweep](README.md#app-self-merge-sweep-auto_merge)) and
 **Reroute to another clanker** (decision API `reroute` + `to: <login>|any`:
 the follow-up work goes to an online contributor clanker's fix queue as a
 `fix-pr` interrupt — the same mechanism as the 072 nudge — with a
