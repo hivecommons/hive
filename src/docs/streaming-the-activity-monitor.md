@@ -4,7 +4,8 @@ An unattended, 24/7 Twitch stream of the hive dashboard's **Activity Monitor**
 (the stage tracker: every tracked issue and PR walking Open → Actionable →
 Claimed → PR in progress → CI / Review → Merge queue). The first stream is
 hive's own hosted spoke on `hive-oke`, channel
-[`twitch.tv/hivecommons`](https://www.twitch.tv/hivecommons).
+[`twitch.tv/hivecommons`](https://www.twitch.tv/hivecommons). The stream is
+listed alongside the other community links in [Community and support](community.md).
 
 Everything lives in [`src/deploy/stream/`](../deploy/stream/README.md): a
 container that renders the dashboard in a virtual display and pushes it to

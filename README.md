@@ -14,6 +14,10 @@
   <a href="#community">Community</a>
 </p>
 
+<p align="center">
+  <a href="https://www.twitch.tv/hivecommons"><img src="https://img.shields.io/twitch/status/hivecommons?style=flat&logo=twitch&label=live" alt="Watch the hive live on Twitch"></a>
+</p>
+
 ---
 
 Hive helps people and AI agents work together across their projects.
@@ -134,7 +138,7 @@ Use official images from `ghcr.io/hivecommons/hive`.
 
 ## Community
 
-[First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Discussions](https://github.com/orgs/hivecommons/discussions).
+[First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Live stream (Twitch)](https://www.twitch.tv/hivecommons) · [Discussions](https://github.com/orgs/hivecommons/discussions).
 
 [Code of Conduct](CODE_OF_CONDUCT.md) · [Project governance](GOVERNANCE.md) · [Report a vulnerability](SECURITY.md) · [Telemetry](src/docs/telemetry.md).
 
