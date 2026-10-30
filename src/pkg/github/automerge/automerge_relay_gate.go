@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
@@ -73,9 +74,9 @@ func (c *Engine) RelayMergeRefusal(ctx context.Context, displayRepo string, numb
 	policy := c.currentContributorLanePolicy()
 	switch {
 	case !policy.Enabled:
-		return relayMergeRefusal(author, "", policy, relayLaneReasonDisabled), nil
+		return relayMergeRefusal(author, "", policy, relayLaneReasonDisabled, 0), nil
 	case !policy.repoAllowed(displayRepo):
-		return relayMergeRefusal(author, "", policy, relayLaneReasonRepo), nil
+		return relayMergeRefusal(author, "", policy, relayLaneReasonRepo, 0), nil
 	}
 	ctx = contextWithExpectedCheckCache(ctx, newExpectedCheckCache())
 	eval, reason, err := c.evaluateContributorLanePR(ctx, displayRepo, owner, repo, number, policy, true)
@@ -89,15 +90,17 @@ func (c *Engine) RelayMergeRefusal(ctx context.Context, displayRepo string, numb
 		c.info("merge relay lane gate: contributor lane admits PR", "repo", displayRepo, "pr", number, "author", author, "admitted_by", contributorLaneAdmitPath(eval.claim))
 		return "", nil
 	}
-	return relayMergeRefusal(author, eval.claim.ObservedTier, policy, reason), nil
+	return relayMergeRefusal(author, eval.claim.ObservedTier, policy, reason, eval.soakRemaining), nil
 }
 
 // relayMergeRefusal renders the refusal the relay records: the lane's own
 // skip reason first (so it matches the sweep log and the stage label), then
 // what the operator can act on — the author, the tier the lane saw against
 // require_tiers, and the soak — and that the lane merges the PR itself once
-// every gate passes, so nobody re-requests it.
-func relayMergeRefusal(author, observedTier string, policy ContributorLanePolicy, reason string) string {
+// every gate passes, so nobody re-requests it. soakLeft is the soak time
+// left when reason is the soaking skip (the reason itself carries no
+// countdown), 0 otherwise.
+func relayMergeRefusal(author, observedTier string, policy ContributorLanePolicy, reason string, soakLeft time.Duration) string {
 	var b strings.Builder
 	b.WriteString(RelayMergeRefusalPrefix)
 	if author != "" {
@@ -110,7 +113,11 @@ func relayMergeRefusal(author, observedTier string, policy ContributorLanePolicy
 	case reason == relayLaneReasonRepo:
 		b.WriteString(" (this repo is outside auto_merge.contributor_lane.repos)")
 	case strings.HasPrefix(reason, contributorLaneReasonSoaking):
-		fmt.Fprintf(&b, " (auto_merge.contributor_lane soak is %s; the lane merges it itself once the soak elapses)", policy.Soak)
+		fmt.Fprintf(&b, " (auto_merge.contributor_lane soak is %s", policy.Soak)
+		if soakLeft > 0 {
+			fmt.Fprintf(&b, ", %s remaining", soakLeft.Round(time.Minute))
+		}
+		b.WriteString("; the lane merges it itself once the soak elapses)")
 	case strings.HasPrefix(reason, "pending: head pushed "):
 		b.WriteString(" (auto_merge.min_head_age; the lane merges it itself once the head is old enough)")
 	default:
