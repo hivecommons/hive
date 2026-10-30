@@ -113,12 +113,13 @@ func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 	_, forcedPending := rec.AdoptionForced()
 	forcedPending = forcedPending && hasRec
 	switch {
+	case held:
+		// The engine stops at a hold without consuming a queued Adopt now.
+		out.AdoptNowReason = takeoverAdoptNowDisabledHold
 	case forcedPending:
 		out.AdoptNowReason = takeoverAdoptNowQueued
 	case !adoptionEnabled:
 		out.AdoptNowReason = takeoverAdoptNowDisabledOff
-	case held:
-		out.AdoptNowReason = takeoverAdoptNowDisabledHold
 	default:
 		out.AdoptNow = true
 	}
