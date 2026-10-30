@@ -92,7 +92,10 @@ jobs:
           # valid tag component, so flatten it.
           line="$(printf '%s' "$REF_NAME" | tr '/' '-')"
           {
-            echo "tags=${IMAGE}:${SHA}"$'\n'"${IMAGE}:${line}-latest"
+            echo "tags<<EOF_TAGS"
+            echo "${IMAGE}:${SHA}"
+            echo "${IMAGE}:${line}-latest"
+            echo "EOF_TAGS"
             echo "push=true"
           } >> "$GITHUB_OUTPUT"
 
