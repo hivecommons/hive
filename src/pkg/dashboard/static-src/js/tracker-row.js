@@ -597,11 +597,18 @@
       // (item.finisher, from the status refresh rather than the current step)
       // says a person must act, now or at a gate further on such as a
       // required approval or a hand merge. The verb and reason are on hover.
+      // The chip already says a person must act, so the needs-human and
+      // needs-decision pills beside it would only repeat it ("🧑 needs a
+      // person" next to "needs human"); they fold into the chip's hover.
       const why = [item.finisher_verb, item.finisher_reason].filter(Boolean).join(' — ');
-      const person = item.finisher === 'person'
-        ? `<span class="ham-badge ham-finisher-person" title="${esc('Hive cannot finish this on its own' + (why ? ': ' + why : ''))}">🧑 needs a person</span>` : '';
+      const isPerson = item.finisher === 'person';
+      const personMod = m => isPerson && (m === 'needs-human' || m === 'needs-decision');
+      const allMods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const folded = allMods.filter(personMod).map(m => STAGE_TRACKER_MOD_TEXT[m] || m.replace(/-/g, ' '));
+      const person = isPerson
+        ? `<span class="ham-badge ham-finisher-person" title="${esc('Hive cannot finish this on its own' + (why ? ': ' + why : '') + (folded.length ? ' · also flagged: ' + folded.join(', ') : ''))}">🧑 needs a person</span>` : '';
       const sentinel = person + stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '');
-      const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
+      const mods = allMods.filter(m => !personMod(m))
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
       // A regression the hive is working through yields the lead pill to any
