@@ -406,6 +406,10 @@ func TestCommitTreeSHA_CachesImmutableMapping(t *testing.T) {
 // sits past the cap on purpose: the guard is allowed to miss it, but it must
 // stop looking rather than fan out over an unbounded number of open PRs.
 func TestFindOpenPRWithIdenticalTree_CapsCandidates(t *testing.T) {
+	// ~60 serial requests: a caution window left by another test would pace
+	// each one ~2-3s apart and stall the package past its timeout (#15700).
+	ResetRateLimitPacingForTest()
+	t.Cleanup(ResetRateLimitPacingForTest)
 	d := &dupTreeServer{
 		branches: map[string]string{"dup": "cafe1111"},
 		trees:    map[string]string{"cafe1111": "eb0b85ab"},
