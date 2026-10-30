@@ -291,6 +291,9 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
     .ham-holder { font-weight: normal; }
+    /* The holder's offline / not-registered state is muted: a flag, not an alarm. */
+    .ham-holder-presence { margin-right: 0; color: var(--text-faint); font-weight: normal; }
+    .ham-holder-presence.ham-presence-offline { --ham-presence-color: var(--text-faint); }
     /* A word with a holder ("PR in progress · @bob's clanker") stays on one
        line: the stage word keeps its width and the name gives way with an
        ellipsis before anything wraps (hivecommons/hive#15541). */

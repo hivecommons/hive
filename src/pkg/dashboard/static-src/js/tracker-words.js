@@ -1237,6 +1237,24 @@
       const dot = p.kind === 'human' ? '' : '<i class="ham-presence-dot"></i>';
       return `<span class="ham-presence ham-presence-${p.state} ham-presence-${p.kind}" role="img" aria-label="${esc(stageTrackerPresenceAria(item, nowMs))}" data-ham-presence="${p.state}" data-ham-presence-kind="${p.kind}">${ico}${dot}</span>`;
     }
+    // The holder's live state after the chevron's "· @odttlnt's clanker":
+    // " · [■] offline 3h" when the row's presence is for that clanker and
+    // it is gone, " · [○] not registered" when no clanker is registered
+    // here for the login. An online clanker adds nothing (the row is
+    // moving, nothing to flag); a human has no presence. The title is the
+    // presence tooltip, so the next automatic step is one hover away.
+    function stageTrackerHolderPresenceHtml(item, claimant, nowMs) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p || p.kind !== 'clanker' || !claimant || claimant.kind !== 'clanker' || !claimant.login) return '';
+      if (String(claimant.login).toLowerCase() !== p.login.toLowerCase()) return '';
+      const now = Number(nowMs) || Date.now();
+      let word = '';
+      if (p.state === 'offline') word = 'offline' + (stageTrackerPresenceGone(p, now) ? ' ' + stageTrackerPresenceGone(p, now) : '');
+      else if (p.state === 'unknown') word = 'not registered';
+      if (!word) return '';
+      const tip = stageTrackerPresenceTip(item, now);
+      return `<span class="ham-holder-presence ham-presence ham-presence-${p.state} ham-presence-clanker" title="${esc(tip)}" aria-label="${esc(tip)}" data-ham-presence="${p.state}"> · <i class="ham-presence-dot" aria-hidden="true"></i>${esc(word)}</span>`;
+    }
     // Pill text with the indicator placed just before the @login (or
     // leading, when the text names nobody): "waiting on [robot ●] @hanthor".
     function stageTrackerPresenceInPillHtml(item, text) {

@@ -335,7 +335,10 @@
       const actorTip = stageTrackerActorTip(item);
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
-      const holderHtml = holderShort ? `<span class="ham-holder"> · ${esc(holderShort)}</span>` : '';
+      // "· @odttlnt's clanker · ■ offline 3h": the holder's live state
+      // rides after the holder when the row's presence is theirs.
+      const holderPresence = holderShort && typeof stageTrackerHolderPresenceHtml === 'function' ? stageTrackerHolderPresenceHtml(item, claimant, nowMs) : '';
+      const holderHtml = holderShort ? `<span class="ham-holder"> · ${esc(holderShort)}${holderPresence}</span>` : '';
       // A row whose next mover is nobody (an unclassified PR under its
       // issue reads "PR in progress") still shows WHO holds it: the
       // holder's own kind icon stands where the actor icon would
