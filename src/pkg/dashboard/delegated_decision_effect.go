@@ -192,7 +192,7 @@ func (s *Server) delegatedStuckWhy(in delegatedecision.Input, d delegatedecision
 		return delegatedecision.GlossaryHold
 	case has("behind"):
 		return delegatedecision.GlossaryBehind
-	case in.Kind == delegatedecision.KindPR && !in.CIGreen && d.Verdict != delegatedecision.VerdictCloseDuplicate && d.Verdict != delegatedecision.VerdictCloseSuperseded:
+	case in.Kind == delegatedecision.KindPR && in.CIRed() && d.Verdict != delegatedecision.VerdictCloseDuplicate && d.Verdict != delegatedecision.VerdictCloseSuperseded:
 		return delegatedecision.GlossaryCIRed
 	}
 	switch {
