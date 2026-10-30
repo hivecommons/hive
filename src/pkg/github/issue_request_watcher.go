@@ -1216,6 +1216,36 @@ func (r CreateIssueRequest) OriginLabel() string {
 	return config.OriginLabelForAgent(r.Origin)
 }
 
+// TitleFiler returns the agent or subsystem name the issue title is tagged
+// with (`[<filer>] …`): the Origin's agent lane (`reviewer-2` → `reviewer`),
+// else a non-lane origin/* label the caller chose (the convergence publisher
+// filing through the forge seam), else the Origin source as written
+// (`governor`, `selfreport`, `dashboard`), else the source of the resolved
+// provenance label.
+func (r CreateIssueRequest) TitleFiler() string {
+	lane := config.OriginLaneFromAgent(r.Origin)
+	if lane != "" && config.IsKnownOriginLane(lane) {
+		return lane
+	}
+	for _, l := range r.Labels {
+		if source := config.OriginSourceOf(l); source != "" && !config.IsKnownOriginLane(source) {
+			return source
+		}
+	}
+	if lane != "" {
+		return lane
+	}
+	if source := config.OriginSourceOf(r.OriginLabel()); source != "" {
+		return source
+	}
+	for _, l := range r.Labels {
+		if source := config.OriginSourceOf(l); source != "" {
+			return source
+		}
+	}
+	return ""
+}
+
 // ErrOriginRequired is returned when a create carries no provenance label and
 // names no Origin source.
 var ErrOriginRequired = errors.New("CreateIssue: provenance is required (set Origin or pass an origin/* label)")
@@ -1255,6 +1285,11 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	if title == "" {
 		return CreateIssueResult{}, fmt.Errorf("CreateIssue: title is required")
 	}
+	// Every issue the hive files names its filer in the title (`[reviewer]
+	// Review backlog (security): …`). Hive-internal filers and the watcher
+	// both land here, so a caller cannot forget it; TitleFor is idempotent
+	// for a title an agent already tagged.
+	title = issueshape.TitleFor(req.TitleFiler(), title)
 	// Same posture and same placement as validateRepoRef above: a request that
 	// is still carrying its template cannot become a useful issue, and unlike a
 	// bad repo ref it would SUCCEED, leaving a human to triage an empty report
@@ -1302,7 +1337,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// twin (#13906). An exact-title match is the same finding and stays
 	// unguarded.
 	if err == nil && scan.subject != nil && req.FoldMatch != nil &&
-		strings.TrimSpace(scan.subject.GetTitle()) != title &&
+		!issueshape.SameTitle(scan.subject.GetTitle(), title) &&
 		!req.FoldMatch(scan.subject.GetTitle(), scan.subject.GetBody()) {
 		scan.subject = nil
 	}
@@ -1778,7 +1813,10 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body st
 				continue
 			}
 			candidate := strings.TrimSpace(is.GetTitle())
-			if candidate == title || reviewBacklogTitlesEqual(candidate, title) {
+			// Exact match ignores the leading `[<agent>]` tag so an issue
+			// filed before titles carried the filer still dedupes its
+			// prefixed re-filing instead of gaining a twin.
+			if candidate == title || issueshape.SameTitle(candidate, title) || reviewBacklogTitlesEqual(candidate, title) {
 				return openIssueMatches{subject: is}, nil
 			}
 			// Pages arrive newest-first, so overwriting leaves the oldest

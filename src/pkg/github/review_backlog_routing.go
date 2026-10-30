@@ -158,6 +158,8 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 }
 
 var (
+	// The optional leading `[<agent>]` tag keeps items filed before titles
+	// carried the filer in the same category as their prefixed successors.
 	reviewBacklogTitleCategoryRE = regexp.MustCompile(`^\s*(?:\[[^\]\s]+\]\s*)?Review backlog \(([^)]+)\):`)
 	reviewBacklogPerspectiveRE   = regexp.MustCompile(`(?m)^\s*Perspective:\s*(\S+)`)
 	reviewBacklogFileLineRE      = regexp.MustCompile(`([A-Za-z0-9_./-]+):(\d+)\b`)
