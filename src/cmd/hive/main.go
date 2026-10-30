@@ -2428,6 +2428,18 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.addUrgent("drain-contributor-websockets", func() {
 		b.dashSrv.DrainContributorsForShutdown()
 	})
+	// Tell the dashboard the pod is going down BEFORE the stream drops
+	// (#15788): an SSE "upgrading" event with phase=restarting and the
+	// target the hub armed (when known), so the operator sees the upgrade
+	// animation instead of a bare "reconnecting". Registered after the
+	// contributor drain with addUrgent so it runs first — the frame is one
+	// write on sockets that are already open, and the drain is what takes
+	// the time. restartAnnounceSettle gives the SSE handler goroutines a
+	// moment to flush before the hooks that follow race the grace period.
+	b.preShutdownHooks.addUrgent("announce-restart", func() {
+		b.dashSrv.AnnounceRestart(time.Now())
+		<-time.After(restartAnnounceSettle)
+	})
 	// Stop the contributor hub's background cleanup loop on the way out
 	// (#6272). On v4 this is a `defer dashSrv.CloseContributeHub()` in main();
 	// v5 has no such single-function scope, so it rides the same shutdown-hook
@@ -5317,6 +5329,11 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// the hub will actually roll us to and renders the hub's schedule.
 				b.dashSrv.SetHubUpgradePolicy(p)
 			}),
+			spoke.UpgradeAnnounceCallback(func(a *spoke.UpgradeAnnounce) {
+				// The hub is about to roll (or has rolled) this pod itself
+				// (#15788): show the upgrade animation before the kill.
+				b.dashSrv.AnnounceUpgrade(*a, time.Now())
+			}),
 			spoke.VisibilityCallback(func(isPublic bool) {
 				if b.cfg.Hub.IsPublic != isPublic {
 					b.logger.Info("hub overrode visibility via heartbeat",
@@ -5766,6 +5783,7 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
+	b.noteBootPhase(bootPhaseFirstEval)
 	initialEvalInterval, initialMode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()), "eval_mode", initialMode)
 	lastEvalInterval := initialEvalInterval

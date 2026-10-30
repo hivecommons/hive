@@ -63,6 +63,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/presence", s.handlePresence)
 	s.mux.HandleFunc("GET /api/prompt-history", s.handlePromptHistory)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
+	s.mux.HandleFunc("POST /api/upgrade/announce", s.handleUpgradeAnnounce)
 	s.mux.HandleFunc("POST /api/release-channel", s.handleReleaseChannelSwitch)
 	// Self-service, owner-only spoke backup (encrypted; includes the bead
 	// ledger the fleet-wide hub backup excludes — see issue #2318).
