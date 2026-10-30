@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -366,9 +367,20 @@ const TrustedHuman071MarkerPrefix = "<!-- hive:human-071-note"
 // (conflict / sign-off / failing checks / requested changes) and what the
 // hive does next.
 func TrustedHuman071Comment(n ContributorNudge, stage stagelabels.Stage) string {
+	return TrustedHuman071Note(n, stage, true)
+}
+
+// TrustedHuman071Note is TrustedHuman071Comment with the @-mention optional:
+// in quiet notification mode the author is mentioned once per cause, and a
+// re-render for a new head with the same cause names them without the @.
+func TrustedHuman071Note(n ContributorNudge, stage stagelabels.Stage, mention bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s head=%s -->\n", TrustedHuman071MarkerPrefix, n.HeadSHA)
-	fmt.Fprintf(&b, "@%s this PR is held at `%s` and the hive will not merge it yet.\n\n", n.Author, stage.Label())
+	at := "@"
+	if !mention {
+		at = ""
+	}
+	fmt.Fprintf(&b, "%s%s this PR is held at `%s` and the hive will not merge it yet.\n\n", at, n.Author, stage.Label())
 	if len(n.FailingChecks) > 0 {
 		b.WriteString("**Failing checks:**\n")
 		for _, c := range n.FailingChecks {
@@ -387,7 +399,7 @@ func TrustedHuman071Comment(n ContributorNudge, stage stagelabels.Stage) string 
 
 // noteTrustedHuman071 posts TrustedHuman071Comment once per head for a
 // trusted human PR in 071. It returns the number of comments posted.
-func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (int, error) {
+func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || obs.Author == "" || obs.HeadSHA == "" || rec.NudgeHead == obs.HeadSHA {
 		return 0, nil
@@ -401,12 +413,21 @@ func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Sto
 		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
 		Reason: obs.Reason, FailingChecks: checks, ReviewAsks: asks, HumanChangesRequested: human, Nudge: 1,
 	}
-	body := TrustedHuman071Comment(n, stagelabels.NeedsAuthor)
-	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	// Normal mode: every head is a fresh comment with a mention. Quiet
+	// mode: one section of the status comment, rewritten per head, and the
+	// author is @-mentioned only when the cause changed since the last
+	// mention — a new head failing the same way is the same ask.
+	mention := !policy.QuietNotifications || rec.MentionDue(obs.Reason)
+	body := TrustedHuman071Note(n, stagelabels.NeedsAuthor, mention)
+	posted, err := c.postStageNote(ctx, policy, obs, prstatus.KeyHuman071Note, body)
+	if err != nil {
 		c.warn("stage labels: trusted human 071 note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return 0, err
 	}
 	store.MarkNudged(key, obs.HeadSHA, 1, false, now)
-	c.info("stage labels: trusted human told why the PR is at 071", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", obs.Reason)
-	return 1, nil
+	if mention {
+		store.MarkMentioned(key, obs.Reason)
+	}
+	c.info("stage labels: trusted human told why the PR is at 071", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", obs.Reason, "mention", mention)
+	return posted, nil
 }

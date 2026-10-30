@@ -435,6 +435,7 @@
     "BaseURL": "",
     "AppAuthoredPRs": null,
     "AppSignedCommits": null,
+    "notifications": {},
     "OAuthBaseURLOverride": "",
     "OAuthAPIURLOverride": ""
   },

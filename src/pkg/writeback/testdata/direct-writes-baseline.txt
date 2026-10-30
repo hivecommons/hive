@@ -9,7 +9,7 @@ raw pkg/github/automerge/automerge_bot_takeover.go 2
 raw pkg/github/automerge/automerge_contributor_adopt.go 15
 raw pkg/github/automerge/automerge_contributor_held_runs.go 1
 raw pkg/github/automerge/automerge_contributor_lane.go 3
-raw pkg/github/automerge/automerge_contributor_nudge.go 3
+raw pkg/github/automerge/automerge_contributor_nudge.go 2
 raw pkg/github/automerge/automerge_contributor_workflow_approval.go 1
 raw pkg/github/automerge/automerge_held_runs.go 3
 raw pkg/github/automerge/automerge_merge_commit.go 1
