@@ -267,7 +267,7 @@
     ];
     const FLEET_COST_DWELL_MS = 4000;
     const FLEET_COST_WINDOWS_HELP = 'today / this week / this month are the cost ledger summed from 00:00 UTC today, Monday 00:00 UTC (ISO week) and the 1st 00:00 UTC, plus the rise since its last reading.';
-    const _fleetCost = { idx: 0, timer: null, hover: false };
+    const _fleetCost = { idx: 0, started: false, hover: false, lastAdvance: -Infinity, clock: () => Date.now() };
     function fleetCostPhrases(f) {
       return FLEET_COST_WINDOWS.map(w => {
         const amount = f && f[w.priced] ? fmtUSD(f[w.usd] || 0) : '$–';
@@ -305,6 +305,11 @@
     // step instead of jumping.
     function fleetCostTick() {
       if (fleetCostPaused()) return;
+      // dashboardSetInterval re-fires the callback the moment the tab is
+      // visible again; hold that early call so the cadence resumes in step.
+      const t = _fleetCost.clock();
+      if (t - _fleetCost.lastAdvance < FLEET_COST_DWELL_MS / 2) return;
+      _fleetCost.lastAdvance = t;
       const prev = _fleetCost.idx;
       _fleetCost.idx = (prev + 1) % FLEET_COST_WINDOWS.length;
       document.querySelectorAll('[data-fleet-cost-rotor]').forEach(el => fleetCostApply(el, prev, _fleetCost.idx));
@@ -312,9 +317,12 @@
     function fleetCostHostOf(node) {
       return node && node.closest ? node.closest('[data-fleet-cost-host]') : null;
     }
+    // The rotor rides the shared dashboard interval registry (paused while
+    // the tab is hidden) rather than adding a bare setInterval.
     function fleetCostRotorStart() {
-      if (_fleetCost.timer) return;
-      _fleetCost.timer = setInterval(fleetCostTick, FLEET_COST_DWELL_MS);
+      if (_fleetCost.started) return;
+      _fleetCost.started = true;
+      dashboardSetInterval('fleetCostRotor', fleetCostTick, FLEET_COST_DWELL_MS);
       document.addEventListener('pointerover', e => { _fleetCost.hover = !!fleetCostHostOf(e.target); });
       document.addEventListener('pointerout', e => { _fleetCost.hover = !!fleetCostHostOf(e.relatedTarget); });
     }

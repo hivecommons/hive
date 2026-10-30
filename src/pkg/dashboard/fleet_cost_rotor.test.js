@@ -63,10 +63,12 @@ function makeEnv({ reducedMotion = false } = {}) {
   };
   const fmtUSD = n => '$' + Number(n).toFixed(2);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const api = new Function('window', 'document', 'setInterval', 'fmtUSD', 'esc',
+  const dashboardSetInterval = (key, fn, ms) => { assert.strictEqual(key, 'fleetCostRotor'); return setInterval(fn, ms); };
+  const api = new Function('window', 'document', 'dashboardSetInterval', 'fmtUSD', 'esc',
     rotorSrc + '\n' + statSrc + '\n' + stripSrc +
     '\nreturn { FLEET_COST_WINDOWS, FLEET_COST_DWELL_MS, _fleetCost, fleetCostPhrases, fleetCostRotorHtml, fleetCostTick, fleetRunStatHtml, fleetRunStripHtml, fleetCostTooltipLines };'
-  )(window, document, setInterval, fmtUSD, esc);
+  )(window, document, dashboardSetInterval, fmtUSD, esc);
+  api._fleetCost.clock = () => now;
   // Seed the fake phrases from the rendered markup so the DOM matches it.
   const rendered = api.fleetRunStatHtml();
   const keys = [...rendered.matchAll(/data-fleet-cost-window="(\w+)"/g)].map(m => m[1]);
@@ -124,6 +126,15 @@ test('pauses while hovered or hidden and resumes in step', () => {
   env.document.hidden = false;
   env.advance(4000);
   assert.deepStrictEqual(env.current(), ['week']);
+  // A brief hide: the interval registry re-fires the tick on
+  // visibilitychange, which must not cut the current dwell short.
+  env.document.hidden = true;
+  env.advance(1000);
+  env.document.hidden = false;
+  env.api.fleetCostTick();
+  assert.deepStrictEqual(env.current(), ['week'], 'early re-fire after a short hide is held');
+  env.advance(3000);
+  assert.deepStrictEqual(env.current(), ['month'], 'next step lands on the original cadence');
 });
 
 test('prefers-reduced-motion swaps instantly with no outgoing phrase', () => {
