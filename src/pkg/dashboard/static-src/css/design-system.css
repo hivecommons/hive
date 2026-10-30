@@ -94,7 +94,7 @@
     }
     .oc-nav-count[data-count-delta]::after {
       content: attr(data-count-delta); position: absolute; bottom: calc(100% + 2px); right: 0;
-      pointer-events: none; z-index: 1; padding: 0 4px; border-radius: var(--r-pill);
+      pointer-events: none; z-index: 1; padding: var(--sp-0) var(--sp-1); border-radius: var(--r-pill);
       background: var(--surface); color: var(--brand); border: 1px solid var(--brand);
       font-size: var(--fs-2xs); line-height: 1.4; font-variant-numeric: tabular-nums;
     }
