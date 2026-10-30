@@ -432,3 +432,44 @@ func TestCmdInceptionAnswerRepliesPlainTextOnRejection(t *testing.T) {
 		t.Fatalf("state = %q", state)
 	}
 }
+
+func TestCmdInceptionSkipAllExplainsOneAnswerRequired(t *testing.T) {
+	var posts []map[string]map[string]string
+	ts := newInceptionBatchServer(t, &posts)
+	defer ts.Close()
+	s := newInceptionBatchService(ts)
+	ctx := context.WithValue(context.Background(), commandRoleContextKey{}, "owner")
+
+	for _, cmd := range []string{"skip 1", "skip 2"} {
+		got, err := s.cmdInception(ctx, cmd)
+		if err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+		if !strings.Contains(got, "it will use its default") {
+			t.Fatalf("%s reply = %q", cmd, got)
+		}
+	}
+	got, err := s.cmdInception(ctx, "skip 3")
+	if err != nil {
+		t.Fatalf("skip 3: %v", err)
+	}
+	if !strings.Contains(got, "Skipped question 3") || !strings.Contains(got, "at least one answer") || strings.Contains(got, "No buffered answers") {
+		t.Fatalf("final skip reply = %q, want the one-answer constraint", got)
+	}
+	if got, _ := s.cmdInception(ctx, "submit"); !strings.Contains(got, "at least one answer") || strings.Contains(got, "No buffered answers") {
+		t.Fatalf("submit after skipping all = %q", got)
+	}
+	if len(posts) != 0 {
+		t.Fatalf("empty batch was submitted: %#v", posts)
+	}
+	got, err = s.cmdInception(ctx, "answer 2 Everyone")
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if !strings.Contains(got, "Submitted 1 answers") || !strings.Contains(got, "remaining 2 questions use their defaults") {
+		t.Fatalf("reply = %q", got)
+	}
+	if len(posts) != 1 || len(posts[0]["answers"]) != 1 || posts[0]["answers"]["q2"] != "Everyone" {
+		t.Fatalf("posts = %#v", posts)
+	}
+}

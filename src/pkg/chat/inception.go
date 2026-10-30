@@ -248,6 +248,9 @@ func (s *Service) cmdInceptionSkip(ctx context.Context, args string) (string, er
 
 	answers, skipped := s.mergedInceptionAnswers(state)
 	if inceptionInterviewDone(state.State.Questions, answers, skipped) {
+		if countInceptionAnswered(state.State.Questions, answers) == 0 {
+			return fmt.Sprintf("⏭️ Skipped question %d. %s", n, inceptionNeedsOneAnswer), nil
+		}
 		return s.submitInceptionBuffer(ctx, state)
 	}
 	return fmt.Sprintf("⏭️ Skipped question %d; it will use its default. Reply `!inception submit` to send your answers, or keep answering.", n), nil
@@ -267,14 +270,19 @@ func (s *Service) submitInceptionBuffer(ctx context.Context, state *inceptionSta
 	key := inceptionRunKey(state)
 	s.mu.Lock()
 	var batch map[string]string
+	var skipped map[string]bool
 	if buf := s.inceptionBuffers[key]; buf != nil {
 		batch = make(map[string]string, len(buf.Answers))
 		for id, v := range buf.Answers {
 			batch[id] = v
 		}
+		skipped = buf.Skipped
 	}
 	s.mu.Unlock()
 	if len(batch) == 0 {
+		if len(skipped) > 0 {
+			return "❌ " + inceptionNeedsOneAnswer, nil
+		}
 		return "❌ No buffered answers to submit. Use `!inception answer <n> <text>` first.", nil
 	}
 	body, _ := json.Marshal(map[string]map[string]string{"answers": batch})
@@ -305,6 +313,10 @@ type inceptionBuffer struct {
 	Answers map[string]string
 	Skipped map[string]bool
 }
+
+// inceptionNeedsOneAnswer mirrors the engine rule that a clarify submission
+// must carry at least one non-empty answer; skips alone cannot leave clarify.
+const inceptionNeedsOneAnswer = "Inception needs at least one answer to leave clarify — skips alone cannot be submitted. Answer any question with `!inception answer <n> <text>`."
 
 // inceptionRunKey identifies an inception run so buffered answers never leak
 // into a later run.
