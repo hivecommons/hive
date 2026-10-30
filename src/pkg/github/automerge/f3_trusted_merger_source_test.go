@@ -226,12 +226,17 @@ func TestF3AuthorizerIsWiredInMain(t *testing.T) {
 // different mechanism (App authorship + required checks) and has no queuer at
 // all. Gating it on a queuer login it never has would disable it permanently.
 func TestF3TrustedMergerGateIsNotBlanket(t *testing.T) {
-	src := f3ReadSource(t, "automerge_sweep_queued.go")
-	// Exactly one call site in the queued-sweep file. A second would mean the
+	// The sweep is split across four files; scan all of them so a leak onto
+	// the self-authored (loop) or trusted-author path is still caught.
+	var src string
+	for _, f := range []string{"automerge_sweep.go", "automerge_sweep_loop.go", "automerge_sweep_queued.go", "automerge_sweep_trusted.go"} {
+		src += f3ReadSource(t, f) + "\n"
+	}
+	// Exactly one call site across the sweep files. A second would mean the
 	// gate leaked onto a path with no queuer identity.
 	calls := regexp.MustCompile(`c\.isTrustedMerger\(`).FindAllString(src, -1)
 	if len(calls) != 1 {
-		t.Errorf("automerge_sweep_queued.go has %d isTrustedMerger call sites, want exactly 1 (the queued "+
+		t.Errorf("automerge_sweep*.go has %d isTrustedMerger call sites, want exactly 1 (the queued "+
 			"sweep). More than one suggests the gate was copied onto a path that has no queuer "+
 			"identity and would fail closed forever; zero means F3 regressed.", len(calls))
 	}
