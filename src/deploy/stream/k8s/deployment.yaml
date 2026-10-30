@@ -46,13 +46,19 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          # Memory: Chromium ~1 Gi, x11grab's bounded MIT-SHM frame queue
+          # (VIDEO_QUEUE_FRAMES x 8.3 MiB, shared with Xvfb), the 512 Mi
+          # memory-backed /dev/shm below — all charged to this cgroup. 3 Gi
+          # OOMKilled the pod in a loop when the encoder fell behind.
+          # CPU: x264 veryfast 1080p30 needs ~2 cores on arm64 plus Chromium's
+          # software raster; a 2-CPU quota starved the encoder.
           resources:
             requests:
               cpu: "1"
-              memory: 2Gi
-            limits:
-              cpu: "2"
               memory: 3Gi
+            limits:
+              cpu: "3"
+              memory: 6Gi
           volumeMounts:
             - name: shm
               mountPath: /dev/shm

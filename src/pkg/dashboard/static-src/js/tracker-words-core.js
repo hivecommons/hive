@@ -478,6 +478,9 @@
     function stageTrackerOverlapBadgeText(item) {
       const o = stageTrackerOverlap(item);
       if (!o) return '';
+      // The server may pin the words (an admitted candidate reads "joins
+      // behind #N next pass" — it is green already, hive#15825).
+      if (o.badge) return String(o.badge);
       if (Number(o.behind) > 0) return STAGE_TRACKER_OVERLAP_CHIP_LEAD + 'joins behind #' + Number(o.behind) + ' when green';
       return STAGE_TRACKER_OVERLAP_CHIP_LEAD + '1st once green';
     }
@@ -493,10 +496,25 @@
       const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
       return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — no member of the train is merge-ready yet; provisionally 1st, merges ahead of ' + (withPRs.length > 1 ? 'them' : 'it') + ' if it is green first';
     }
+    // Pure: the gray lineage pill for a PR the merge train ejected
+    // (hive#15825): `left_train.badge` ("left merge train · pushed 3m
+    // ago"); the hover carries the why ("left the merge train — new push,
+    // CI re-running after push"). '' when the row rides a train or the
+    // server sent no lineage.
+    function stageTrackerLeftTrainBadgeText(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.badge || '');
+    }
     // Pure: the muted badge beside the row's chips; '' without a hint.
     function stageTrackerOverlapBadgeHtml(item) {
       const text = stageTrackerOverlapBadgeText(item);
-      if (!text) return '';
+      if (!text) {
+        const left = stageTrackerLeftTrainBadgeText(item);
+        if (!left) return '';
+        const leftTip = 'Merge train: ' + stageTrackerLeftTrainNote(item);
+        return `<span class="ham-badge ham-badge-overlap" title="${esc(leftTip)}" aria-label="${esc(leftTip)}">${esc(left)}</span>`;
+      }
       const tip = 'Not in the merge queue yet: ' + stageTrackerOverlapTip(item);
       return `<span class="ham-badge ham-badge-overlap" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(text)}</span>`;
     }

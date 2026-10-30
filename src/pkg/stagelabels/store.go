@@ -350,6 +350,15 @@ type Record struct {
 	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
 	// "PR in progress" while the record said 085).
 	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
+	// TrainEjectedWhy / TrainEjectedHead / TrainEjectedAt record the merge
+	// train's last ejection of this PR (hivecommons/hive#15825): the head
+	// it was ejected at, why (head-moved, ci-pending, ci-red,
+	// verdict-owed, conflicting, …) and when. The tracker's gray pill
+	// carries the lineage ("left merge train · pushed 3m ago") while the
+	// row sits back in the CI / Review column; re-admission clears it.
+	TrainEjectedWhy  string    `json:"train_ejected_why,omitempty"`
+	TrainEjectedHead string    `json:"train_ejected_head,omitempty"`
+	TrainEjectedAt   time.Time `json:"train_ejected_at,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -894,6 +903,55 @@ func (s *Store) NotePush(key, sha string, at time.Time) bool {
 	s.items[key] = r
 	s.dirty = true
 	return true
+}
+
+// NoteTrainEjected records that the merge train ejected an existing
+// record's PR at head for why (hivecommons/hive#15825). A zero or future
+// instant reads as now.
+func (s *Store) NoteTrainEjected(key, head, why string, now time.Time) {
+	why = strings.TrimSpace(why)
+	if why == "" {
+		s.ClearTrainEjected(key)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	at := now
+	if clock := s.now(); at.IsZero() || at.After(clock) {
+		at = clock
+	}
+	if r.TrainEjectedWhy == why && r.TrainEjectedHead == head {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = why, strings.TrimSpace(head), at
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearTrainEjected forgets a record's merge-train ejection: the PR rides
+// a train again, or merged.
+func (s *Store) ClearTrainEjected(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.TrainEjectedWhy == "" && r.TrainEjectedHead == "" && r.TrainEjectedAt.IsZero()) {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = "", "", time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// TrainEjected reports the recorded merge-train ejection.
+func (r Record) TrainEjected() (why, head string, at time.Time, ok bool) {
+	if r.TrainEjectedWhy == "" {
+		return "", "", time.Time{}, false
+	}
+	return r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt, true
 }
 
 // PushedSinceWaiting reports whether a push landed after the current
