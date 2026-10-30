@@ -163,7 +163,7 @@ sentinel alert, parked-on-decision), human-merge paths and head-SHA pinning —
 before `hive-merge` merges it. A refusal is terminal for that request (`.denied`),
 names the failing gate in the result the agent sees (for example
 `contributor-lane:claim-tier-untrusted (author tier "untrusted", require_tiers
-merger, trusted)` or `contributor-lane:soaking(remaining=27m)`), and is audited
+merger, trusted)` or `contributor-lane:soaking, 27m0s remaining`), and is audited
 as `merge_request_refused`. An agent cannot use the relay to land a contributor
 PR the lane would not merge; the lane still merges it on its own tick once the
 gates clear. Hive-authored PRs keep the relay's existing checks.
@@ -561,8 +561,10 @@ A PR merges through this tier only when all of the following hold:
   went green — the latest `completed_at` over its check runs, read once per
   (repo, PR, head) and then pinned in process — so a pod restart or upgrade
   does not restart it; a new push restarts
-  the soak and the skip reason reports the time left
-  (`contributor-lane:soaking(remaining=25m0s)`).
+  the soak. The skip reason is the stable `contributor-lane:soaking`; the
+  soak head, start and window are recorded once on the stage record, so the
+  stage tracker computes "N left" from that deadline at request time instead
+  of the hive re-stamping its note every pass.
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
 log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
