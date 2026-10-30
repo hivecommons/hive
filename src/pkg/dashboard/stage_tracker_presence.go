@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -83,8 +84,11 @@ func (s *Server) stageTrackerAdoptionClock() stageTrackerAdoptionClock {
 }
 
 // stageTrackerWaitingOn names the person a PR row waits on: its author at
-// the stages whose caption says "@author must act". "" when the row waits
-// on the hive, a gate or an unnamed maintainer.
+// the stages whose caption says "@author must act", and a clanker's PR the
+// engine has not classified yet (the row reads "PR in progress ·
+// @author's clanker": the clanker is the one on it, so whether it is
+// still there is the row's live fact). "" when the row waits on the hive,
+// a gate or an unnamed maintainer.
 func stageTrackerWaitingOn(it StageTrackerItem, stage stagelabels.Stage) string {
 	if it.Kind != "pr" || strings.TrimSpace(it.Author) == "" {
 		return ""
@@ -92,8 +96,47 @@ func stageTrackerWaitingOn(it StageTrackerItem, stage stagelabels.Stage) string 
 	switch stage {
 	case stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor, stagelabels.PossiblyExisting:
 		return strings.TrimSpace(it.Author)
+	case stagelabels.None:
+		if it.AuthorKind == authorKindClanker {
+			return strings.TrimSpace(it.Author)
+		}
 	}
 	return ""
+}
+
+// stageTrackerOfflineAuthorCaption appends, to the caption of a clanker's
+// PR whose clanker is offline, what that means for the row: on a PR the
+// engine has not classified, nothing — a green PR is reviewed and merged
+// without its author; adoption starts only once the PR is returned to the
+// contributor (red CI, conflicts, review asks) and the clanker stays away
+// for the offline grace. 072 rows carry the adoption line instead
+// (stageTrackerAdoptionCaption) and are left alone here.
+func stageTrackerOfflineAuthorCaption(caption string, p *StageTrackerPresence, stage int, clock stageTrackerAdoptionClock, now time.Time) string {
+	if p == nil || p.Kind != presenceKindClanker || p.State != presenceStateOffline || stage != stagelabels.None.Number() {
+		return caption
+	}
+	gone := stageTrackerAdoptionOfflineFor(StageTrackerAdoption{Since: p.Since, AuthorLastSeen: p.LastSeen}, now)
+	clause := "@" + p.Login + "'s clanker is offline" + gone + "; a green PR is reviewed and merged without its author"
+	if clock.Enabled {
+		grace := orDefault(clock.AdoptAfterOffline, config.DefaultAdoptAfterOffline)
+		clause += " — hive adopts it only once it is returned (red CI, conflicts or review asks) and nothing is pushed for " + stageTrackerShortDuration(grace)
+	}
+	return joinClause(caption, clause)
+}
+
+// stageTrackerShortDuration renders a grace window as "30m" / "2h" /
+// "1h30m".
+func stageTrackerShortDuration(d time.Duration) string {
+	d = d.Round(time.Minute)
+	h, m := int(d/time.Hour), int(d%time.Hour/time.Minute)
+	switch {
+	case h > 0 && m > 0:
+		return fmt.Sprintf("%dh%dm", h, m)
+	case h > 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dm", m)
+	}
 }
 
 // stageTrackerPresenceFor builds the `presence` field for a row waiting on
