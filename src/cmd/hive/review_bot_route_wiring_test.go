@@ -22,6 +22,10 @@ func (f *fakeChangedFilesLister) ReviewDeltaDiff(_ context.Context, _, previousH
 	return review.DeltaDiff{PreviousHead: previousHead}
 }
 
+func (f *fakeChangedFilesLister) ReviewHeadsSamePatch(context.Context, string, string, string, string) bool {
+	return false
+}
+
 func TestPlanReviewDispatch_BotAuthorRouteUsesCheapModel(t *testing.T) {
 	redirectReviewPaths(t)
 	cfg := reviewSwarmConfig()
