@@ -281,7 +281,7 @@
       const recent = (Array.isArray(c.abandoned_prs) ? c.abandoned_prs : []).slice()
         .sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
       const tooltip = recent.map(r => `${r.repo}#${r.pr} → ${r.adopted_into_pr ? '#' + r.adopted_into_pr : 'in-place'} · ${r.reason || 'unknown'} · ${r.at || 'unknown time'}`).join('\n') || 'PRs adopted by the hive';
-      return `<span class="contrib-abandoned" style="color:color-mix(in srgb, var(--red) 70%, var(--muted))" title="${esc(tooltip)}">Abandoned ${count}</span>`;
+      return `<span class="contrib-abandoned" title="${esc(tooltip)}">Abandoned ${count}</span>`;
     }
 
     function renderContributors(contributors) {

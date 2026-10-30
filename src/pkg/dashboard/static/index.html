@@ -3284,6 +3284,7 @@
     .contrib-status-badge.is-online { background: var(--status-ok); color: var(--bg); }
     .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
     .contrib-status-dot.online { background: var(--status-ok); }
+    .contrib-abandoned { color: var(--status-error); font-weight: 600; }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;
@@ -41009,7 +41010,7 @@ function burnAreaChart() {
       const recent = (Array.isArray(c.abandoned_prs) ? c.abandoned_prs : []).slice()
         .sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
       const tooltip = recent.map(r => `${r.repo}#${r.pr} → ${r.adopted_into_pr ? '#' + r.adopted_into_pr : 'in-place'} · ${r.reason || 'unknown'} · ${r.at || 'unknown time'}`).join('\n') || 'PRs adopted by the hive';
-      return `<span class="contrib-abandoned" style="color:color-mix(in srgb, var(--red) 70%, var(--muted))" title="${esc(tooltip)}">Abandoned ${count}</span>`;
+      return `<span class="contrib-abandoned" title="${esc(tooltip)}">Abandoned ${count}</span>`;
     }
 
     function renderContributors(contributors) {
