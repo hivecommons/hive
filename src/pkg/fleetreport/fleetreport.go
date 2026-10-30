@@ -708,6 +708,10 @@ func benignIOTimeout(class, component string) bool {
 // as noise for the generic repeated-error feed (see IsBenignMessage). Keep
 // each entry specific enough that it cannot swallow a real defect.
 var benignSubstrings = []string{
+	// A provider spending-limit refusal is surfaced by the budget notifier and
+	// already withholds agent kicks; it is an account state, not a runtime
+	// defect (#15809).
+	"inference backend refused on a spending limit",
 	// Shutdown and per-request deadlines log cancellation on purpose.
 	"context canceled",
 	"context cancelled",

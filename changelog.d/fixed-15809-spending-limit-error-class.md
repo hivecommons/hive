@@ -1,0 +1,1 @@
+- Inference refusals on a provider spending limit are no longer self-reported as `unclassified_error_repeated`; the budget notice and kick withholding already cover them ([#15809](https://github.com/hivecommons/hive/issues/15809)).
