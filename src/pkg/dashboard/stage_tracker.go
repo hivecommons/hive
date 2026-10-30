@@ -511,6 +511,11 @@ type StageTrackerItem struct {
 	// in_progress or pushed, with the evidence (hivecommons/hive#15280,
 	// stage_tracker_rework.go).
 	Rework *StageTrackerRework `json:"rework,omitempty"`
+	// Push is, on a PR row in the CI / Review column, the push the hive
+	// waits on or the one that just landed, so the gray pill can say
+	// "waiting on @zoe to push · 38m" or "@zoe pushed abc1234 · 2m"
+	// (hivecommons/hive#15784, stage_tracker_push.go).
+	Push *StageTrackerPush `json:"push,omitempty"`
 	// Takeover is, on a 072 / 071 clanker PR, the operator's Adopt now /
 	// Reroute offer and any pending reroute or forced adoption
 	// (hivecommons/hive#15038, stage_tracker_takeover.go).
@@ -708,6 +713,8 @@ type StageTrackerLinkedPR struct {
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
 	// Rework mirrors the nested PR's own row field (hivecommons/hive#15280).
 	Rework *StageTrackerRework `json:"rework,omitempty"`
+	// Push mirrors the nested PR's own row field (hivecommons/hive#15784).
+	Push *StageTrackerPush `json:"push,omitempty"`
 	// Takeover mirrors the nested PR's own row field (hivecommons/hive#15038).
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 	// Supersedes mirrors the nested PR's own row field.
