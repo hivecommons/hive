@@ -1787,6 +1787,7 @@ function isHostOnly(c){return HOST_ONLY_BACKENDS.indexOf(c)>=0;}
 // openrouter/vllm/llm-d/watsonx are UI flavors of the litellm backend: the
 // Justfile only accepts 'litellm' (#6821), so every generated command must
 // say litellm while the option keeps its flavor-specific env exports.
+// MLX is likewise an inference-engine flavor, backed by the Pi coding CLI.
 var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm',mlx:'pi'};
 function setupBackend(v){return SETUP_BACKEND[v]||v;}
 // MLX onboarding generator: pure so CI can execute the actual page logic.
