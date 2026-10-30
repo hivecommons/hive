@@ -241,12 +241,19 @@ so a missing/failed extension cannot silently bypass the transport boundary.
 
 ### Explicit setup (source checkout)
 
-Install Pi using [its official instructions](https://pi.dev), and prepare a
-**separate native Python virtualenv** yourself. These are instructions, not
-automatic setup: ClankeR never runs pip, downloads weights, starts a server,
-or adjusts system memory limits.
+On your chosen hive's `/contribute` page, select **Apple MLX**, macOS and
+Containerized mode, then enter your already-downloaded model's exact ID or
+absolute path. The page generates these actual `just` commands; the public
+hub's `/contribute#apple-mlx` section links here too.
+
+Install `just`, `gh`, native Node **22.19+**, and Pi using
+[its official instructions](https://pi.dev), and prepare a **separate native
+Python virtualenv** yourself. These are instructions, not automatic setup:
+ClankeR never installs packages, downloads weights, automatically starts a
+server, or adjusts system memory limits.
 
 ```bash
+npm install -g @earendil-works/pi-coding-agent@1.4.0
 python3 -m venv .venv-mlx
 .venv-mlx/bin/python -m pip install 'mlx-lm==0.32.2'
 export HIVE_MLX_PYTHON="$PWD/.venv-mlx/bin/python"
@@ -263,13 +270,20 @@ headroom for macOS and other workloads; do not increase wired-memory limits.
 The [MLX-LM README](https://github.com/ml-explore/mlx-lm#long-prompts-and-generations)
 discusses prompt/cache memory trade-offs.
 
-Start the server explicitly with an **already downloaded** model directory.
-Keep Hugging Face offline so a request cannot trigger a new weight download:
+In a separate terminal, from the checkout, start the server explicitly with
+an **already downloaded** model directory (or fully cached Hub ID).
+`contribute-mlx-serve` validates the native runtime, forces Hugging Face
+offline, and runs MLX-LM in the foreground on the configured loopback endpoint:
 
 ```bash
-HF_HUB_OFFLINE=1 "$HIVE_MLX_PYTHON" -m mlx_lm.server \
-  --model /Users/YOU/models/tool-coder --host 127.0.0.1 --port 8080
+HIVE_MLX_PYTHON="$PWD/.venv-mlx/bin/python" \
+  just contribute-mlx-serve /Users/YOU/models/tool-coder
 ```
+
+Stop it with Ctrl-C when finished; stopping the relay does not unload this
+separately managed host server. A missing cached model fails rather than
+downloading. The equivalent direct command is
+`HF_HUB_OFFLINE=1 "$HIVE_MLX_PYTHON" -m mlx_lm.server --model /Users/YOU/models/tool-coder --host 127.0.0.1 --port 8080`.
 
 Use the **exact ID** returned by
 `curl --fail http://127.0.0.1:8080/v1/models`: for a local directory this is its
@@ -286,10 +300,21 @@ shell command. Run it only when you have chosen to load the model:
 ```bash
 just contribute-mlx-setup /Users/YOU/models/tool-coder --verify-tools
 export AGENT_MODEL=mlx//Users/YOU/models/tool-coder
+# Use the URL of the public hive you chose, not the hub directory itself.
+export HIVE_HUB=https://YOUR-CHOSEN-HIVE
 just contribute-check pi
 just contribute-setup pi
-HIVE_CONTAINER_RUNTIME=docker just contribute-hive pi
+just contribute-mlx
 ```
+
+`just contribute-mlx` is the MLX-specific launch entrypoint. It requires an
+`mlx/...` selection and delegates to the existing `just contribute-hive pi`
+coding workflow using Docker; it cannot silently launch another Pi provider.
+An explicitly exported `AGENT_MODEL=mlx/...` wins over a saved model for this
+MLX launch only; otherwise the saved selection must already be `mlx/...`.
+Other Pi launch commands retain their existing profile precedence.
+`just contribute-mlx local` preserves the existing native Pi unconfined
+opt-in gate; it does not set that dangerous flag for you.
 
 For a Hub model ID, the corresponding selection is
 `AGENT_MODEL=mlx/mlx-community/<model>`. Setup preserves unrelated providers
@@ -311,7 +336,9 @@ The endpoint and budgets persist in Pi's provider configuration, not the hub.
 Use a contributor image containing this integration; an older pinned image
 does not acquire it just because the host checkout was updated.
 
-In the onboarding UI, choose **Pi** and enter the same `mlx/...` selection.
+In the onboarding UI, choose **Apple MLX** and enter only the model ID/path;
+the generated commands add the `mlx/` provider prefix. Advanced users can
+still select **Pi** and supply the full `mlx/...` selection themselves.
 Registration reports backend `pi`, provider `mlx` and that exact model through
 the existing protocol. The hive may still reject it under its Model Filter or
 trust policy; MLX setup never changes those policies. Both existing interactive

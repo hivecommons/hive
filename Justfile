@@ -43,6 +43,47 @@ default:
 contribute-mlx-setup model verify:
     node bin/mlx-backend.js configure "$1" "$2"
 
+# Starts only an explicitly chosen, already-downloaded model on Mac loopback.
+[positional-arguments]
+contribute-mlx-serve model:
+    node bin/mlx-backend.js serve "$1"
+
+# Apple MLX is an inference engine for Pi, not a separate coding CLI.
+[positional-arguments]
+contribute-mlx mode="docker":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    _MLX_REQUESTED_MODEL="${AGENT_MODEL:-}"
+    _MLX_REQUESTED_RUNTIME="${HIVE_CONTAINER_RUNTIME:-}"
+    if [[ -f "{{config_dir}}/contributor.env" ]]; then
+      source "{{config_dir}}/contributor.env"
+    fi
+    if [[ -n "$_MLX_REQUESTED_MODEL" ]]; then
+      AGENT_MODEL="$_MLX_REQUESTED_MODEL"
+    fi
+    if [[ -n "$_MLX_REQUESTED_RUNTIME" ]]; then
+      HIVE_CONTAINER_RUNTIME="$_MLX_REQUESTED_RUNTIME"
+    fi
+    if [[ "${AGENT_MODEL:-}" != mlx/* ]]; then
+      echo "ERROR: Select your verified MLX model first: export AGENT_MODEL=mlx/<model-id-or-absolute-path>"
+      echo "  Setup: just contribute-mlx-setup <model-id-or-absolute-path> --verify-tools"
+      exit 1
+    fi
+    case "$1" in
+      docker)
+        if [[ "${HIVE_CONTAINER_RUNTIME:-docker}" != "docker" ]]; then
+          echo "ERROR: Apple MLX requires Docker Desktop 4.34+ host networking, not Podman machine."
+          exit 1
+        fi
+        export HIVE_CONTAINER_RUNTIME=docker
+        ;;
+      local) ;;
+      *) echo "ERROR: MLX mode must be docker or local; Kubernetes cannot reach Mac loopback."; exit 1 ;;
+    esac
+    export AGENT_MODEL
+    export HIVE_MLX_LAUNCH_MODEL="$AGENT_MODEL"
+    just --justfile "{{justfile_directory()}}/Justfile" contribute-hive pi "$1"
+
 # Run the live run-level acceptance test (#8466 layer 2). Requires HIVE_URL and
 # HIVE_TOKEN like the rest of src/test, plus HIVE_RUNS_E2E_KEY or
 # HIVE_RUNS_E2E_REPO/HIVE_RUNS_E2E_ISSUE for the pinned run/spec issue.
@@ -934,6 +975,7 @@ contribute-hive backend="" mode="docker": check-version
       echo "Not set up yet. Run: just contribute-setup <cli>"
       exit 1
     fi
+    _MLX_LAUNCH_MODEL="${HIVE_MLX_LAUNCH_MODEL:-}"
     set -a
     source "{{config_dir}}/gh-auth.env"
     source "{{config_dir}}/contributor.env"
@@ -966,6 +1008,16 @@ contribute-hive backend="" mode="docker": check-version
       BACKEND="${AGENT_BACKEND:-claude}"
     fi
     export AGENT_BACKEND="$BACKEND"
+    # MLX-only launch override: preserve an explicit selection over saved profiles.
+    if [[ -n "${_MLX_LAUNCH_MODEL:-}" ]]; then
+      if [[ "$BACKEND" != "pi" || "$_MLX_LAUNCH_MODEL" != mlx/* ]]; then
+        echo "ERROR: MLX launcher requires the Pi backend and an mlx/<model> selection."
+        exit 1
+      fi
+      export AGENT_MODEL="$_MLX_LAUNCH_MODEL"
+    fi
+    unset HIVE_MLX_LAUNCH_MODEL _MLX_LAUNCH_MODEL
+    # End MLX-only launch override.
     # Bob has no headless credential other than its API key — without it the
     # agent would launch and sit at Bob's key prompt forever. Fail fast.
     if [[ "$BACKEND" == "bob" && -z "${BOB_API_KEY:-}" && -z "${BOBSHELL_API_KEY:-}" ]]; then

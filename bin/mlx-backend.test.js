@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
+const { execFileSync } = require('node:child_process');
 const mlx = require('./mlx-backend.js');
 const pi = require('./pi-backend.js');
 const extension = require('./mlx-pi-extension.js');
@@ -228,6 +229,61 @@ test('Pi inference transport rejects redirects after successful setup', async t 
   const server = http.createServer((req, res) => {
     res.writeHead(307, { Location: 'https://api.openai.com/v1/chat/completions' });
     res.end();
+  });
+
+  test('explicit serve recipe uses native Python, loopback and offline weights without changing RAM settings', t => {
+    const env = fixture(t);
+    const model = path.join(env.HOME, 'model');
+    fs.mkdirSync(model);
+    const calls = [];
+    mlx.serve(model, { ...env, HIVE_MLX_PYTHON: '/chosen/python', HIVE_MLX_ENDPOINT: 'http://127.0.0.1:8081/v1' },
+      () => HOST, (...args) => calls.push(args));
+    assert.equal(calls[0][0], '/chosen/python');
+    assert.deepEqual(calls[0][1], ['-m', 'mlx_lm.server', '--model', model, '--host', '127.0.0.1', '--port', '8081']);
+    assert.equal(calls[0][2].env.HF_HUB_OFFLINE, '1');
+    assert.equal(calls[0][2].stdio, 'inherit');
+    assert.throws(() => mlx.serve(path.join(model, 'missing'), env, () => HOST, () => assert.fail('must not launch')), /directory is missing/);
+    assert.throws(() => mlx.serve(model, { ...env, HIVE_MLX_ENDPOINT: 'http://0.0.0.0:8080/v1' }, () => HOST), /loopback/);
+    assert.throws(() => mlx.serve(model, env, () => { throw new Error('unsupported Rosetta Python'); }, () => assert.fail('must not launch')), /Rosetta/);
+  });
+
+  test('MLX just launcher remains a Pi wrapper with explicit model/runtime refusal', () => {
+    const recipes = fs.readFileSync(path.join(__dirname, '..', 'Justfile'), 'utf8');
+    const launcher = recipes.split('contribute-mlx mode="docker":')[1].split('\n\n')[0];
+    assert.match(launcher, /\$\{AGENT_MODEL:-\}" != mlx\/\*/);
+    assert.match(launcher, /contribute-hive pi "\$1"/);
+    assert.match(launcher, /export HIVE_CONTAINER_RUNTIME=docker/);
+    assert.match(launcher, /Kubernetes cannot reach Mac loopback/);
+    assert.match(recipes, /contribute-mlx-serve model:\n    node bin\/mlx-backend\.js serve "\$1"/);
+  });
+
+  test('MLX launcher preserves explicit model across both saved-profile loads without changing generic Pi defaults', t => {
+    const env = fixture(t);
+    const config = path.join(env.HOME, 'contributor.env');
+    fs.writeFileSync(config, 'AGENT_MODEL=anthropic/saved-hosted-model\nHIVE_CONTAINER_RUNTIME=podman\n');
+    const recipes = fs.readFileSync(path.join(__dirname, '..', 'Justfile'), 'utf8');
+    const launcher = recipes.split('contribute-mlx mode="docker":')[1].split('\n\n')[0]
+      .replaceAll('{{config_dir}}', env.HOME)
+      .replace('{{justfile_directory()}}', path.join(__dirname, '..'));
+    const guard = recipes.split('# MLX-only launch override:')[1].split('# End MLX-only launch override.')[0];
+    const nested = guard.slice(guard.indexOf('\n'));
+    const script = `just() {
+      local _MLX_LAUNCH_MODEL="\${HIVE_MLX_LAUNCH_MODEL:-}"
+      source "${config}"
+      BACKEND=pi
+      ${nested}
+      printf '%s' "$AGENT_MODEL"
+    }\n${launcher}`;
+    const result = execFileSync('bash', ['-s', '--', 'docker'], {
+      input: script, encoding: 'utf8',
+      env: { ...process.env, ...env, AGENT_MODEL: `mlx/${MODEL}`, HIVE_CONTAINER_RUNTIME: 'docker' },
+    });
+    assert.equal(result, `mlx/${MODEL}`);
+    const ordinary = execFileSync('bash', ['-s'], {
+      input: `AGENT_MODEL=anthropic/saved-hosted-model; BACKEND=pi; _MLX_LAUNCH_MODEL='';\n${nested}\nprintf '%s' "$AGENT_MODEL"`,
+      encoding: 'utf8',
+    });
+    assert.equal(ordinary, 'anthropic/saved-hosted-model');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));

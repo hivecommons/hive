@@ -1,7 +1,8 @@
 'use strict';
 
 // MLX-LM supplies inference; Pi supplies the coding tools and task lifecycle.
-// Nothing here installs Python packages, starts a server, or downloads weights.
+// Only the explicit serve command starts a server; nothing installs packages
+// or downloads weights.
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -15,6 +16,7 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const PROBE_MAX_TOKENS = 256;
 const DEFAULT_CONTEXT = 8192;
 const DEFAULT_MAX_TOKENS = 2048;
+const DEFAULT_HTTP_PORT = '80';
 const PROBE_VALUE = 'hive_mlx_tool_check';
 const COMPAT = Object.freeze({
   supportsStore: false,
@@ -192,6 +194,23 @@ function tokenBudget(raw, fallback) {
   return value;
 }
 
+function serve(model, env = process.env, inspectHost = hostInfo, launch = execFileSync) {
+  const selection = parsePiModelSelection(`mlx/${model || ''}`);
+  if (!selection.valid || model === 'default_model') throw new Error('Choose an explicit, already-downloaded MLX model ID or absolute path');
+  inspectHost(env);
+  if (path.isAbsolute(model)) {
+    try {
+      if (!fs.statSync(model).isDirectory()) throw new Error('not a directory');
+    } catch (_) { throw new Error('MLX model directory is missing; download the model yourself before running contribute-mlx-serve'); }
+  }
+  const endpoint = new URL(endpointURL(env.HIVE_MLX_ENDPOINT || DEFAULT_ENDPOINT));
+  launch(env.HIVE_MLX_PYTHON || 'python3', [
+    '-m', 'mlx_lm.server', '--model', model,
+    '--host', endpoint.hostname.replace(/^\[|\]$/g, ''),
+    '--port', endpoint.port || DEFAULT_HTTP_PORT,
+  ], { env: { ...env, HF_HUB_OFFLINE: '1' }, stdio: 'inherit' });
+}
+
 async function configure(model, env = process.env, fetcher, inspectHost = hostInfo) {
   if (typeof model !== 'string' || !model) throw new Error('An explicit MLX model ID or absolute path is required');
   const selection = parsePiModelSelection(`mlx/${model}`);
@@ -271,7 +290,7 @@ function checkRuntime(raw, env = process.env, run = execFileSync) {
   }
 }
 
-module.exports = { endpointURL, validatePlatform, hostInfo, availableModels, parseStream, verifyTools, configure, configuration, check, checkRuntime, DEFAULT_ENDPOINT };
+module.exports = { endpointURL, validatePlatform, hostInfo, availableModels, parseStream, verifyTools, configure, configuration, check, checkRuntime, serve, DEFAULT_ENDPOINT };
 
 if (require.main === module) {
   (async () => {
@@ -279,11 +298,13 @@ if (require.main === module) {
     if (command === 'configure' && flag === '--verify-tools') {
       const selected = await configure(model);
       console.log(`MLX streaming tool round trip verified. Select AGENT_BACKEND=pi AGENT_MODEL=${selected}`);
+    } else if (command === 'serve') {
+      serve(model);
     } else if (command === 'check') {
       await check(model, process.env, undefined, flag === '--endpoint-only' ? null : hostInfo);
       console.log('MLX endpoint/model ready; coding execution is provided by Pi, not MLX-LM');
     } else {
-      throw new Error('Usage: mlx-backend.js configure <model-id-or-absolute-path> --verify-tools (explicitly runs two bounded inference requests), or check mlx/<model>');
+      throw new Error('Usage: mlx-backend.js configure <model> --verify-tools (explicitly runs two bounded inference requests), serve <already-downloaded-model> (foreground, offline, loopback), or check mlx/<model>');
     }
   })().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
