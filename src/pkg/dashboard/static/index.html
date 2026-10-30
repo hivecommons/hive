@@ -492,6 +492,10 @@
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
     .oc-topbar-right { position: relative; z-index: 2; justify-self: end; max-width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }
     .oc-health-badge { --nav-chip-color: var(--status-ok); }
+    /* Waiting on you pill (hivecommons/hive#15638): attention colour, hidden at zero, clickable. */
+    .nav-chip--attention, .oc-waiting-on-you { --nav-chip-color: var(--status-attention); }
+    .oc-waiting-on-you { flex: 0 0 auto; cursor: pointer; font-weight: 600; }
+    .oc-waiting-on-you[hidden] { display: none; }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
@@ -1355,6 +1359,7 @@
     .ham-chips { display: inline-flex; gap: var(--sp-1); }
     .ham-chip { border: var(--line-width) solid var(--line); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); font-size: var(--fs-xs); cursor: pointer; }
     .ham-chip[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+    .ham-chip--waiting[aria-pressed="true"] { color: var(--status-attention); border-color: var(--status-attention); }
     .ham-chip:hover { color: var(--text); border-color: var(--line-strong); }
     .ham-chip[hidden] { display: none; }
     .ham-chip .ham-chip-n { color: var(--text-faint); margin-left: var(--sp-1); }
@@ -5423,6 +5428,10 @@
     .oc-nav-count { margin-left: auto; flex: none; order: 1; }
     /* x/y pills (Overview, Governor) stay hidden until their feed has loaded. */
     .oc-nav-count[hidden] { display: none; }
+    /* second Activity Monitor badge: items waiting on the operator, attention colour until zero. */
+    .oc-nav-count--waiting:not([data-zero]) + .oc-nav-count { margin-left: var(--sp-1); }
+    .oc-nav-count--waiting:not([data-zero]) { --component-status: var(--status-attention); background: color-mix(in srgb, var(--component-status) 16%, transparent); border-color: color-mix(in srgb, var(--component-status) 50%, transparent); color: var(--component-status); }
+    .oc-nav-count--waiting[data-zero] { display: none; }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
@@ -7101,7 +7110,7 @@
     <div class="oc-nav-group" id="dashboard-section-nav-group">
       <div class="oc-nav-label">Dashboard</div>
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
-      <a class="oc-nav-item" data-section="activity-monitor-section" data-action="ocNavigate" data-arg0="activity-monitor-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Hive activity monitor</span><span id="activity-monitor-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="activity-monitor-section" data-action="ocNavigate" data-arg0="activity-monitor-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Hive activity monitor</span><span id="activity-monitor-waiting-badge" class="badge-count oc-nav-count oc-nav-count--waiting" data-zero title="Nothing is waiting on you" aria-label="0 waiting on you">0</span><span id="activity-monitor-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
       <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span></a>
     </div>
@@ -7227,6 +7236,7 @@
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
+      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -7631,6 +7641,7 @@
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, unauthorized, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
+        <button type="button" class="ham-chip ham-chip--waiting" id="activity-monitor-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="false" title="Only items parked on you: a decision asked at 045 / 085, a PR ready for a human merge at 090, an approval the hive cannot give, or a contributor offline past their grace so you are the fallback. Same rows as the sidebar's orange badge and the topbar's Waiting on you pill">Waiting on you</button>
         <label class="ham-repo-filter"><span>Decisions</span><select id="activity-monitor-acted" class="ham-select" data-change-action="hamFilter" data-arg0="acted" data-arg-types="s,v" aria-label="Filter by whether you acted on the row" title="Awaiting my decision: parked on a person, no action recorded yet. I acted: an action was recorded from this dashboard (history badge). Acted, still stuck: acted, but the item has not moved past that stage (amber history badge)"><option value="any">Any</option><option value="awaiting">Awaiting my decision</option><option value="acted">I acted</option><option value="stuck">Acted, still stuck</option></select></label>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
@@ -15077,7 +15088,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
-      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
     var _stageTrackerFilter = stageTrackerDefaultFilter();
     // Type-to-filter text of the "all labels" dialog (not persisted).
@@ -18272,6 +18283,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       f.labels = Array.isArray(f.labels) ? f.labels.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : [];
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
+      f.waitingOnYou = !!f.waitingOnYou;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -18285,7 +18297,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
-      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.waitingOnYou || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -18293,6 +18305,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMatches(item, f, ctx) {
       ctx = ctx || {};
       if (f.kind !== 'all' && item.kind !== f.kind) return false;
+      if (f.waitingOnYou && !item.waiting_on_you) return false;
       if (f.repo && item.repo !== f.repo) return false;
       if (f.q) {
         const q = f.q.trim().toLowerCase();
@@ -18552,6 +18565,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
         case 'needsHuman': f.needsHuman = value === 'toggle' ? !f.needsHuman : !!value; break;
         case 'onHold': f.onHold = value === 'toggle' ? !f.onHold : !!value; break;
+        case 'waitingOnYou': f.waitingOnYou = value === 'toggle' ? !f.waitingOnYou : !!value; break;
         case 'labelsClear': f.labels = []; f.needsHuman = false; f.onHold = false; break;
         case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
         case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
@@ -18576,6 +18590,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setVal('activity-monitor-size', f.size);
       const att = document.getElementById('activity-monitor-attention');
       if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const wait = document.getElementById('activity-monitor-waiting');
+      if (wait) wait.setAttribute('aria-pressed', f.waitingOnYou ? 'true' : 'false');
       const dir = document.getElementById('activity-monitor-dir');
       if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
@@ -18779,6 +18795,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      stageTrackerRenderWaiting(d, nowMs);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
@@ -18881,6 +18898,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       try {
         if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadGrouping();
         if (!_stageTrackerSig && !_stageTrackerEtag) { stageTrackerLoadFilter(); stageTrackerSoundInit(); }
+        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerApplyUrlFilter();
         const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
         if (r.status === 304) {
           // A 304 carries no body, so take generated_at/source from the headers or the "updated" chip goes amber on a quiet hive.
@@ -22836,6 +22854,124 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (strip) stageTrackerAnimateMove(strip, from, to, stageTrackerMotionEffect(id, stageTrackerReducedMotion()));
     }
 
+    /* ---- Waiting on you ---------------------------------------------------
+       The stage tracker payload carries waiting_on_human (stage_tracker_waiting.go):
+       every open item parked on the signed-in operator / maintainers, with a
+       kind (needs-decision, ready-for-human-merge, approve-needed,
+       returned-to-contributor-offline, other-human-wait) and who the wait
+       is attributed to. Three surfaces read it so a human wait is never
+       silent (hivecommons/hive#15638): a second, attention-coloured badge on
+       the "Hive activity monitor" sidebar item, a "Waiting on you · N" pill
+       in the topbar (hidden at 0) and a debounced toast when the count
+       rises. All three land on the Activity Monitor with the Waiting on you
+       filter (?filter=waiting-on-you deep-links to the same view). */
+    const STAGE_TRACKER_WAITING_TOAST_GAP_MS = 10 * 60 * 1000;
+    const STAGE_TRACKER_WAITING_TOAST_MS = 12000;
+    const STAGE_TRACKER_WAITING_TOOLTIP_MAX = 5;
+    const STAGE_TRACKER_WAITING_TOAST_NUMBERS = 3;
+    const STAGE_TRACKER_WAITING_TOAST_KEY = 'hive-waiting-on-you-toast-at';
+    const STAGE_TRACKER_WAITING_FILTER_PARAM = 'waiting-on-you';
+    const STAGE_TRACKER_WAIT_KIND_WORDS = {
+      'needs-decision': 'needs your decision',
+      'ready-for-human-merge': 'ready for you to merge',
+      'approve-needed': 'needs your approval',
+      'returned-to-contributor-offline': 'contributor offline — adopt or reroute',
+      'other-human-wait': 'needs a person',
+    };
+    var _stageTrackerWaitingPrevCount = null;
+
+    // The waiting_on_human block, rebuilt from the per-item flags when an
+    // older spoke sends items without the header block.
+    function stageTrackerWaitingOnYou(d) {
+      const w = d && d.waiting_on_human;
+      if (w && Array.isArray(w.items)) return { count: Number(w.count) || w.items.length, items: w.items };
+      const items = (Array.isArray(d?.items) ? d.items : []).filter(it => it && it.waiting_on_you && !it.nested_under)
+        .map(it => ({ repo: it.repo, number: it.number, type: it.kind, kind: it.wait_kind || 'other-human-wait', since: it.stage_since, who: 'operator' }));
+      return { count: items.length, items };
+    }
+
+    function stageTrackerWaitKindWords(kind) { return STAGE_TRACKER_WAIT_KIND_WORDS[kind] || STAGE_TRACKER_WAIT_KIND_WORDS['other-human-wait']; }
+
+    // Tooltip: "N waiting on you" then the five longest waits, one per line.
+    function stageTrackerWaitingTitle(w, nowMs) {
+      if (!w.count) return 'Nothing is waiting on you';
+      const lines = w.items.slice(0, STAGE_TRACKER_WAITING_TOOLTIP_MAX).map(it => {
+        const since = it.since ? Date.parse(it.since) : NaN;
+        const ago = Number.isFinite(since) && nowMs ? ' · ' + stageTrackerActedAgo(nowMs - since) : '';
+        const who = it.who && it.who !== 'operator' ? ' (@' + it.who + ')' : '';
+        return it.repo.split('/').pop() + '#' + it.number + ' — ' + stageTrackerWaitKindWords(it.kind) + who + ago;
+      });
+      const more = w.count > lines.length ? '\n… and ' + (w.count - lines.length) + ' more' : '';
+      return w.count + ' waiting on you — click to show\n' + lines.join('\n') + more;
+    }
+
+    // Sidebar badge + topbar pill. Called from renderStageTracker on every
+    // payload; the pill hides at zero, the badge keeps data-zero.
+    function stageTrackerRenderWaiting(d, nowMs) {
+      const w = stageTrackerWaitingOnYou(d);
+      const title = stageTrackerWaitingTitle(w, nowMs);
+      const badge = document.getElementById('activity-monitor-waiting-badge');
+      if (badge) {
+        badge.textContent = String(w.count);
+        badge.title = title;
+        badge.setAttribute('aria-label', w.count + ' waiting on you');
+        if (w.count) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', '');
+      }
+      const pill = document.getElementById('oc-waiting-on-you');
+      if (pill) {
+        pill.hidden = !w.count;
+        pill.title = title;
+        pill.setAttribute('aria-label', w.count + ' waiting on you — show in the activity monitor');
+        const label = pill.querySelector('.nav-chip__label');
+        if (label) label.textContent = 'Waiting on you · ' + w.count;
+      }
+      const chip = document.getElementById('activity-monitor-waiting');
+      if (chip) chip.textContent = w.count ? 'Waiting on you (' + w.count + ')' : 'Waiting on you';
+      stageTrackerWaitingToast(w, nowMs);
+    }
+
+    // One toast per ten minutes at most, only when the count rose since the
+    // previous payload, never in kiosk mode (a wall display cannot act).
+    function stageTrackerWaitingToast(w, nowMs) {
+      const prev = _stageTrackerWaitingPrevCount;
+      _stageTrackerWaitingPrevCount = w.count;
+      if (prev === null || w.count <= prev) return;
+      if (typeof window.hiveKioskMode === 'function' && window.hiveKioskMode()) return;
+      let last = 0;
+      try { last = Number(localStorage.getItem(STAGE_TRACKER_WAITING_TOAST_KEY)) || 0; } catch {}
+      if (nowMs - last < STAGE_TRACKER_WAITING_TOAST_GAP_MS) return;
+      try { localStorage.setItem(STAGE_TRACKER_WAITING_TOAST_KEY, String(nowMs)); } catch {}
+      if (typeof showToast !== 'function') return;
+      showToast(stageTrackerWaitingToastText(w), 'warning', { actionLabel: 'Show', onAction: showWaitingOnYou, autoDismissMs: STAGE_TRACKER_WAITING_TOAST_MS });
+    }
+
+    function stageTrackerWaitingToastText(w) {
+      const nums = w.items.slice(0, STAGE_TRACKER_WAITING_TOAST_NUMBERS).map(it => '#' + it.number).join(', ');
+      const tail = w.count > STAGE_TRACKER_WAITING_TOAST_NUMBERS ? ' …' : '';
+      return w.count + (w.count === 1 ? ' item needs' : ' items need') + ' your decision — ' + nums + tail;
+    }
+
+    // Land on the Activity Monitor with only the waiting-on-you rows.
+    function showWaitingOnYou() {
+      if (typeof ocNavigate === 'function') ocNavigate('activity-monitor-section');
+      hamFilter('waitingOnYou', true);
+    }
+
+    // ?filter=waiting-on-you (from a notification link or the pill's URL)
+    // applies the filter once, then drops the parameter so a reload does
+    // not re-apply it over whatever the operator chose next.
+    function stageTrackerApplyUrlFilter() {
+      let url;
+      try { url = new URL(window.location.href); } catch { return false; }
+      if (url.searchParams.get('filter') !== STAGE_TRACKER_WAITING_FILTER_PARAM) return false;
+      url.searchParams.delete('filter');
+      url.hash = '#section-activity-monitor-section';
+      try { history.replaceState(null, '', url.toString()); } catch {}
+      stageTrackerLoadFilter();
+      _stageTrackerFilter.waitingOnYou = true;
+      stageTrackerSaveFilter();
+      return true;
+    }
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
       const m = cadence.match(/^(\d+)(m|h)$/);
