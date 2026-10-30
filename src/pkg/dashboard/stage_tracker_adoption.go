@@ -216,11 +216,24 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 	case a.BlockedBy != "":
 		text += " — not adopted: " + a.BlockedBy
 	case a.AutoDue:
-		text += " — hive adopts it on the next sweep"
+		text += " — hive adopts it on the next sweep" + stageTrackerAdoptionNeverHedge(a, " unless")
 	case a.AutoAdoptAt != nil && a.AutoAdoptAt.After(now):
-		text += " — hive adopts it in " + stageTrackerShortDuration(max(a.AutoAdoptAt.Sub(now), time.Minute)) + " unless a new head lands"
+		text += " — hive adopts it in " + stageTrackerShortDuration(max(a.AutoAdoptAt.Sub(now), time.Minute)) + " unless a new head lands" + stageTrackerAdoptionNeverHedge(a, " or")
 	}
 	return text
+}
+
+// stageTrackerAdoptionNeverHedge qualifies the auto-adopt countdown under
+// maintainer_policy: never. The engine has not read the author's repository
+// permission yet (it only does so once due), so a maintainer's head never
+// reaches the promised moment at all and the row cannot promise adoption for
+// every author the way it does under adopt (hivecommons/hive#15692). lead is
+// the conjunction that joins the clause to the text before it.
+func stageTrackerAdoptionNeverHedge(a StageTrackerAdoption, lead string) string {
+	if a.Policy != config.AdoptionMaintainerPolicyNever {
+		return ""
+	}
+	return lead + " the author maintains this repository"
 }
 
 // stageTrackerAdoptionOfflineFor renders " 26h" for the time the author's
