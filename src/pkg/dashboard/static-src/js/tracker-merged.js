@@ -925,7 +925,10 @@
     // Stateful: a persistent banner, bottom right, for one merge — stays
     // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
     // duration, STAGE_TRACKER_MERGE_BANNER_MS at the default), stacked when
-    // several, with a "show row" link while the row is on the board.
+    // several, with a "show row" link while the row is on the board. The
+    // auto-dismiss goes through toastCountdownBar like every other timed
+    // toast, so the banner drains a .toast-bar along its bottom edge and
+    // hover / focus inside it holds both timer and bar together.
     function stageTrackerMergeBanner(b) {
       if (!document.body) return null;
       let box = document.getElementById('merge-banners');
@@ -943,12 +946,12 @@
       el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
-      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), stageTrackerMergeBannerMs());
+      toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
       return el;
     }
     function stageTrackerMergeBannerDismiss(el) {
       if (!el || !el.parentNode) return;
-      if (el._timer) { clearTimeout(el._timer); el._timer = 0; }
+      toastCountdownCancel(el);
       if (stageTrackerReducedMotion()) { el.remove(); return; }
       el.classList.add('merge-banner-out');
       stageTrackerAfter(el, 'animationend', 180, () => el.remove());

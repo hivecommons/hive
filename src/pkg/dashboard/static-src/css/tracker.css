@@ -571,7 +571,8 @@
        (just the ⟳ and the actor glyph). */
     .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
-    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; position: relative; overflow: hidden; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
     .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
     .merge-banner-head { font-weight: var(--fw-semibold); }

@@ -241,6 +241,12 @@ type Options struct {
 	// parks a copy whose episode is exhausted at 085 instead of leaving it
 	// on its fixing stage (hivecommons/hive#15307). nil reads as no episode.
 	RebaseEpisode func(repo string, number int) (RebaseEpisode, bool)
+	// FixDispatchStatus reads the review fixer's standing on a PR head from
+	// the dispatch state (review.FixDispatchStatusFor through cmd/hive): a
+	// hive PR whose fixer is exhausted parks at 085 instead of reading
+	// "Fixing" with nobody on it (hivecommons/hive#15744). nil reads as
+	// unknown and leaves the fixing stage alone.
+	FixDispatchStatus func(repo string, number int, head string) (review.FixDispatchStatus, bool)
 	// HotspotRecorder receives the merge train's PR file lists and the
 	// conflicts it asks the resolver to repair, so the merge-hotspot
 	// advisor (pkg/hotspot) derives its evidence without polling GitHub
@@ -396,6 +402,7 @@ type Engine struct {
 	mergeTrainPolicy func() MergeTrainPolicy
 	rebaseResolver   RebaseResolver
 	rebaseEpisode    func(repo string, number int) (RebaseEpisode, bool)
+	fixDispatch      func(repo string, number int, head string) (review.FixDispatchStatus, bool)
 	hotspotRecorder  HotspotRecorder
 	mergeTrainState
 }
@@ -456,6 +463,7 @@ func New(transport Transport, opts Options) *Engine {
 		nativeMergeQueuePolicy:            opts.NativeMergeQueue,
 		rebaseResolver:                    opts.RebaseResolver,
 		rebaseEpisode:                     opts.RebaseEpisode,
+		fixDispatch:                       opts.FixDispatchStatus,
 		hotspotRecorder:                   opts.HotspotRecorder,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),

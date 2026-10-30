@@ -268,6 +268,9 @@ type Route struct {
 	Actions []string
 	// ManualMerge means this lane has no unattended way past its rule.
 	ManualMerge bool
+	// ActionsHeading replaces the "How to release it" heading over Actions
+	// when the list is a choice between outcomes, not release steps.
+	ActionsHeading string
 	// Reasons explains the stage: what the author must fix (072/070), what
 	// a person must decide (085), what is still running (060). Empty for a
 	// trust-blocked 090; an approved manual-merge 090 names the rule and
@@ -332,7 +335,33 @@ const (
 	// (hivecommons/hive#15104 guard); the same suffix under
 	// LaneReasonAdoptionStalledPrefix parks a still-open original.
 	LaneReasonRebaseFailedTwice = "rebase-failed-twice"
+	// LaneReasonFixerExhaustedPrefix opens the 085 reason for a hive-authored
+	// PR whose fix dispatcher refused to kick another fix because the
+	// re-engagement cap is spent ("fixer-exhausted:6"); the suffix is the
+	// attempt count (hivecommons/hive#15744). Before this the PR sat at 070
+	// reading "Fixing" with nobody on it (#15308, 13h).
+	LaneReasonFixerExhaustedPrefix = "fixer-exhausted:"
 )
+
+// FixerExhaustedReason renders the 085 reason for a PR whose fixer gave up
+// after attempts tries.
+func FixerExhaustedReason(attempts int) string {
+	return LaneReasonFixerExhaustedPrefix + strconv.Itoa(attempts)
+}
+
+// ParseFixerExhausted reads the attempt count out of a fixer-exhausted
+// reason; ok is false for any other reason.
+func ParseFixerExhausted(reason string) (attempts int, ok bool) {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, LaneReasonFixerExhaustedPrefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(reason, LaneReasonFixerExhaustedPrefix))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
 func RouteHuman(e Evidence) Route {
@@ -691,13 +720,42 @@ func DecisionComment(r Route) string {
 		b.WriteString(actions)
 	}
 	if len(r.Actions) > 0 {
-		b.WriteString("\n\n**How to release it:**\n\n")
+		heading := r.ActionsHeading
+		if heading == "" {
+			heading = "How to release it:"
+		}
+		b.WriteString("\n\n**" + heading + "**\n\n")
 		for _, action := range r.Actions {
 			b.WriteString("- " + action + "\n")
 		}
 	}
 	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "`, `" + PreMergeSoak.Label() + "` or the merge queue on its own. Approval does not bypass CI, hold labels or other merge gates.</sub>")
 	return b.String()
+}
+
+// FixerExhaustedRoute is the 085 route for a hive-authored PR whose fix
+// dispatcher refused another fix because the re-engagement cap is spent
+// (hivecommons/hive#15744). summary is the reviewer's one-line finding the
+// fixer never cleared ("" when unknown). The comment lists the three
+// answers the tracker offers: re-author from scratch (the lead action),
+// hand it to a person, or close it as not planned.
+func FixerExhaustedRoute(head string, attempts int, summary string) Route {
+	reasons := []string{"the hive's fixer gave up after " + strconv.Itoa(attempts) + " attempts on `" + ShortSHA(head) + "`; no fix job is running"}
+	if summary = strings.TrimSpace(summary); summary != "" {
+		reasons = append(reasons, "last reviewer finding: "+summary)
+	}
+	return Route{
+		Stage:          NeedsDecision,
+		Reasons:        reasons,
+		Head:           head,
+		SelfAuthored:   true,
+		ActionsHeading: "Your options:",
+		Actions: []string{
+			"**Re-author from scratch** — *Re-author* in the tracker (or add the `adoption/supersede` label): the hive opens a fresh PR for the same issue from the current base and closes this one as superseded.",
+			"**Hand it to a person** — reply `/hive decision <who or what to change>` or push to the branch yourself; the hive steps back while a human owns it.",
+			"**Close as not planned** — close the PR (or *Close as not planned* under Decide… in the tracker) when the change is no longer wanted.",
+		},
+	}
 }
 
 // DecisionActions names the two things a maintainer can do with a

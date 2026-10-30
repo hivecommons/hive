@@ -918,6 +918,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
+		fixer, fixerKnown := c.fixDispatchStatusFor(obs, pass)
+		pass.FixerExcluded = fixerKnown && fixer.Excluded()
+		if replacement, ok := stageengine.PreserveStageOnStaleDecisionAnswer(prevRec, hadPrev, obs, verdict, pass.FixerExcluded); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+		}
 		if hasLabelFold(obs.Labels, "hold") && !verdict.Terminal {
 			// Who held it and why rides the row (hivecommons/hive#15020);
 			// a reporter-trust hold the hive put on its own PR is lifted
@@ -1110,6 +1116,19 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				verdict.Rank = stageRankOwned
 				obs.Reason = stagelabels.LaneReasonRebaseFailedTwice
 				pass.RebaseFailedTwice = true
+			}
+			if !verdict.Terminal && verdict.Stage == fixingStage(obs) && fixerKnown && fixer.Exhausted() {
+				// The hive's own PR whose fix dispatcher refuses another
+				// fix (re-engagement cap spent, hivecommons/hive#15744):
+				// a person decides (re-author / hand over / close as not
+				// planned) instead of the row reading "Fixing" with
+				// nobody on it for hours (#15308).
+				verdict.Stage = stagelabels.NeedsDecision
+				verdict.Rank = stageRankOwned
+				obs.Reason = stagelabels.FixerExhaustedReason(fixer.Attempts)
+				pass.FixerExhausted = fixer.Attempts
+				route := c.fixerExhaustedRoute(obs, fixer)
+				obs.Route = &route
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can

@@ -666,13 +666,17 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	default:
 		return 0, nil
 	}
-	if obs.Reason == autoMergeReasonHumanMergeRequired {
+	_, fixerExhausted := stagelabels.ParseFixerExhausted(obs.Reason)
+	if obs.Reason == autoMergeReasonHumanMergeRequired || fixerExhausted {
 		// The "waiting for a person" note on a breaking-titled or
 		// owner-flagged PR is an unsolicited write (hivecommons/hive#15442):
 		// it goes through the write-back gate like every other hive
 		// comment, and a refusal leaves the record unmarked so the next
-		// pass asks again.
-		if d := c.writebackAllowed(obs.Display, writebackItemForObservation(obs), writeback.KindNeedsDecisionComment, body); !d.Allowed {
+		// pass asks again. The fixer-exhausted note on the hive's own PR
+		// takes the same gate (hivecommons/hive#15744).
+		item := writebackItemForObservation(obs)
+		item.HiveAuthored = fixerExhausted
+		if d := c.writebackAllowed(obs.Display, item, writeback.KindNeedsDecisionComment, body); !d.Allowed {
 			c.info("stage labels: entry comment withheld by the write-back gate", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reason", d.Reason)
 			return 0, nil
 		}
@@ -708,4 +712,56 @@ func (c *Engine) workflowApprovalSnippet(reason string) string {
 	b.WriteString(strings.TrimRight(workflow, "\n"))
 	b.WriteString("\n```\n\n</details>")
 	return b.String()
+}
+
+// fixDispatchStatusFor reads the review fixer's standing on obs's head for
+// a hive-authored PR; ok is false when the engine has no dispatch reader or
+// the PR is not the hive's (the hive never fixes a PR it did not open).
+func (c *Engine) fixDispatchStatusFor(obs stageObservation, pass *stageengine.PRPassFacts) (review.FixDispatchStatus, bool) {
+	if c == nil || c.fixDispatch == nil || obs.Number <= 0 {
+		return review.FixDispatchStatus{}, false
+	}
+	if obs.Lane != stageLaneSelf && !(pass != nil && pass.AuthorIsApp) && obs.AuthorKind != authorkind.Hive {
+		return review.FixDispatchStatus{}, false
+	}
+	return c.fixDispatch(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)
+}
+
+// fixerExhaustedRoute is the 085 route (and so the entry comment, once per
+// head) for a hive PR whose fixer gave up (hivecommons/hive#15744).
+func (c *Engine) fixerExhaustedRoute(obs stageObservation, fixer review.FixDispatchStatus) stagelabels.Route {
+	v := obs.Detail.Verdict
+	if !obs.Detail.VerdictKnown {
+		v = c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)
+	}
+	return stagelabels.FixerExhaustedRoute(obs.HeadSHA, fixer.Attempts, fixerExhaustedSummary(v, obs.LaneReason))
+}
+
+// fixerExhaustedSummary is the reviewer's one-line reason the fixer kept
+// failing to clear: the first human summary, else the decision question or
+// directive, else the lane's reason in words.
+func fixerExhaustedSummary(v ContributorLaneVerdict, laneReason string) string {
+	for _, s := range v.HumanSummaries {
+		if s = strings.TrimSpace(s); s != "" {
+			return firstLine(s)
+		}
+	}
+	if q := strings.TrimSpace(v.DecisionQuestion); q != "" {
+		return firstLine(q)
+	}
+	if d := strings.TrimSpace(v.DecisionDirective); d != "" {
+		return firstLine(d)
+	}
+	r := strings.TrimSpace(laneReason)
+	for _, prefix := range []string{"contributor-lane:", "reviewer-verdict:"} {
+		r = strings.TrimPrefix(r, prefix)
+	}
+	return strings.NewReplacer("-", " ", "_", " ").Replace(r)
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }

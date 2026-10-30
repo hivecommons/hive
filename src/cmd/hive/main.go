@@ -2202,6 +2202,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		}
 		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
 	}
+	autoMergeOpts.FixDispatchStatus = fixDispatchStatusReader()
 	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
 		if b.cfg == nil {
 			return automerge.DefaultMergeTrainPolicy

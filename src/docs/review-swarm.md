@@ -553,6 +553,13 @@ The PR review queue (`GET /api/review/queue`) shows this state on unreviewed ite
 
 When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick containing the aggregate findings and sends it to `review.fixer_agent`, the classified PR lane, or `scanner`. Fix dispatches are capped by `escalation.MaxReEngagements`; once exhausted, dispatch state records a `requires_human` hold for the PR head so the automated loop stops.
 
+Once that cap is hit the hive is no longer fixing the PR, and the stage must say so ([#15744](https://github.com/hivecommons/hive/issues/15744)):
+
+- The stage engine moves a hive-authored PR the dispatcher refuses with `fix-attempts-exhausted` from `stage/070-fixing` to `stage/085-needs-decision` with reason `fixer-exhausted:<N>`. The tracker captions it `fixer gave up after N attempts — <first line of the reviewer's last finding>`, and the lead action is **Re-author** (`decide:re-author`); *Hand it to a person* (`/hive decision <text>`) and *Close as not planned* sit in the Decide… submenu. One decision comment per head lists the same three options; it goes through the normal write-back gate.
+- A `070-fixing` row never claims `Fixing · @bot` when no fix job is dispatched or running. If the dispatcher excludes the head (attempts exhausted, no enabled fixer, budget), the caption reads `Fixing paused — <why>; no fix job is dispatched` (plus `conflicting with the base branch` when the PR is dirty) and the stage actor is *nobody*.
+- A stale answered decision (`decision-answered`) does not clear `stage/stalled` or move the PR back to 070 while the fixer is excluded and the head has not changed; the 085 park is preserved.
+- The `review fix dispatch excluded … reason=fix-attempts-exhausted` WARN is logged once per (PR, head, reason); later cycles log it at debug.
+
 ### Who may be pushed to: `all_authors` and the retired `fix_human_prs` push
 
 A review-fix kick tells the fixer agent to check out the PR branch and push a commit to it. That is fine on a PR one of the hive's own agents opened; on a contributor's fork (reachable through GitHub's "allow edits by maintainers") or a maintainer's branch it is a bot rewriting someone else's work before any person has looked at it. Reviewing and pushing are therefore separate:

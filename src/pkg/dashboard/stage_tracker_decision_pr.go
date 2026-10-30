@@ -38,6 +38,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// supersedes) after the fixer's two rebase-resolve attempts failed.
 	rebaseFailedTwice := lower == stagelabels.LaneReasonRebaseFailedTwice || (adoptionStalled && adoptionLane == stagelabels.LaneReasonRebaseFailedTwice)
 	reviewerDeferred := lower == stageengine.StageReasonVerdictRequiresHuman || lower == stageengine.StageReasonDecisionRequested
+	// hivecommons/hive#15744: the hive's own PR after its fixer spent the
+	// re-engagement cap; nobody is fixing it any more.
+	fixerAttempts, fixerExhausted := stagelabels.ParseFixerExhausted(base)
 	hiveSupersederStop := stagelabels.HiveSupersederHardStopReason(base)
 
 	// WHAT it is waiting on: the question, most specific source first. A
@@ -82,6 +85,13 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		}
 		d.Blocker = "The hive set `hold` on its own: " + decisionHoldReason(selfHold) + ". It does nothing more until the hold is released."
 		d.BlockerReason = decisionBlockerHoldHive
+	case fixerExhausted:
+		d.AskedBy = decisionAskedByReviewer
+		d.Question = "The hive's fixer gave up on this PR after " + strconv.Itoa(fixerAttempts) + " attempts"
+		if finding := decisionFixerExhaustedFinding(it, verdict); finding != "" {
+			d.Question += ": " + finding
+		}
+		d.Question += ". Re-author it from scratch, hand it to a person, or close it as not planned?"
 	case verdict != nil && decisionFirstNonEmpty(verdict.HumanSummaries) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer handed this to a person: " + decisionFirstNonEmpty(verdict.HumanSummaries)
@@ -141,6 +151,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Blocker = "The hive never merges this by itself. After approval, a maintainer merges."
 	case forkGuarded:
 		d.Blocker = "Neither the author nor the hive can make CI run for this fork PR."
+	case fixerExhausted:
+		d.Blocker = "The fix dispatcher refuses another fix for this head (" + strconv.Itoa(fixerAttempts) + " attempts spent). No agent is on it until a person decides."
+		approveOK, approveWhy = false, "The head still carries the reviewer's unresolved findings; approving does not fix them."
 	case reviewerDeferred:
 		d.Blocker = "The hive will not merge until a person decides."
 		if verdict != nil && strings.TrimSpace(verdict.DecisionFinding) != "" {
@@ -176,6 +189,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		// for merge-now (rebaseMergeFailureOptions).
 		d.Options = slices.Insert(d.Options, 0, decisionOption(decisionActionAdopt, rebasemerge.OptionAdoptFreshLabel, true, ""))
 	}
+	if fixerExhausted {
+		d.Options = decisionLeadWithReauthor(d.Options)
+	}
 	if selfHold != nil {
 		// Release leads: it is the one action that answers the question.
 		d.Options = append([]StageTrackerDecisionOption{decisionHoldOption(true)}, d.Options[:len(d.Options)-1]...)
@@ -205,6 +221,49 @@ func decisionLeadWithCloseSuperseded(opts []StageTrackerDecisionOption, redundan
 		out = append(out, o)
 	}
 	return out
+}
+
+// decisionLeadWithReauthor puts "Re-author" at the front of opts (the lead
+// action for a fixer-exhausted PR, hivecommons/hive#15744) and relabels the
+// won't-fix close as "Close as not planned" so it stays in the Decide…
+// submenu rather than leading a destructive answer.
+func decisionLeadWithReauthor(opts []StageTrackerDecisionOption) []StageTrackerDecisionOption {
+	lead := decisionOption(decisionActionReauthor, "Re-author", true, "")
+	lead.Consequence = "The hive opens a fresh PR for the same issue from the current base and closes this one as superseded."
+	lead.Lead = true
+	out := make([]StageTrackerDecisionOption, 0, len(opts)+1)
+	out = append(out, lead)
+	for _, o := range opts {
+		switch o.Action {
+		case decisionActionReauthor:
+			continue
+		case decisionActionCloseWontfix:
+			o.Label = "Close as not planned"
+			o.Consequence = "Closes this PR as not planned; the issue stays open for someone else."
+		case decisionActionDirection:
+			o.Consequence = "Hands the PR to a person: say who takes it or what to change; the hive steps back."
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// decisionFixerExhaustedFinding is the reviewer's last finding in one line
+// for the fixer-exhausted question: the verdict's human summary or
+// question, else the caption's dash clause.
+func decisionFixerExhaustedFinding(it StageTrackerItem, verdict *review.Aggregate) string {
+	if verdict != nil {
+		if s := decisionFirstNonEmpty(verdict.HumanSummaries); s != "" {
+			return stageTrackerFirstLine(s)
+		}
+		if q := strings.TrimSpace(verdict.DecisionQuestion); q != "" {
+			return stageTrackerFirstLine(q)
+		}
+	}
+	if _, after, ok := strings.Cut(it.Caption, " — "); ok {
+		return strings.TrimSpace(after)
+	}
+	return ""
 }
 
 // decisionHoldReason is the hold's plain-words reason for the popover.

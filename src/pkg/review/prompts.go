@@ -106,7 +106,10 @@ type PullRequest struct {
 	// the PR this cycle (ReviewPriority*), stamped onto its kicks.
 	MergeReady bool
 	CIPending  bool
-	Priority   string
+	// PreparationOwner marks the exact live head of an active base-refresh
+	// owner. It changes slot ordering only, after normal review admission.
+	PreparationOwner bool
+	Priority         string
 }
 
 func PullRequestBodyDigest(title, body string) string {
