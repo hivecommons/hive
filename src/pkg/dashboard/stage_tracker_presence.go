@@ -230,8 +230,5 @@ func stageTrackerPresenceFor(it StageTrackerItem, login string, stage stagelabel
 }
 
 func orDefault(d, def time.Duration) time.Duration {
-	if d <= 0 {
-		return def
-	}
-	return d
+	return automerge.DurationOr(d, def)
 }
