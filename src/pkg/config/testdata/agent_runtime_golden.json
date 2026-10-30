@@ -639,6 +639,7 @@
   "issues": {
     "rfc_existing_check": {}
   },
+  "dedupe": {},
   "contribute": {},
   "HiveID": "",
   "acmm_level": null,
@@ -721,7 +722,8 @@
     "trusted_authors": {},
     "contributor_lane": {},
     "contributor_tier": {},
-    "merge_train": {}
+    "merge_train": {},
+    "native_merge_queue": {}
   },
   "decisions": {
     "delegate": {}

@@ -16897,7 +16897,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        request still on the wire) is a different thing drawn on the chevron;
        this badge appears once the server has recorded the action. */
     const STAGE_TRACKER_ACTED_LABELS = {
-      approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed (read)',
+      approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed',
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
       'queue-merge': 'Approve and let hive merge', 'merge-now': 'Merge now as maintainer',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
@@ -19235,6 +19235,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "adoption-stalled:contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
       "adoption-undone": {"kind": "reason", "plain": "the hive's copy was closed without merging and the adoption was undone", "detail": "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
       "adoption/supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
+      "advisory-in-progress": {"kind": "rule", "plain": "a hive advisory the hive is still working; nothing to decide", "detail": "The issue is a hive advisory whose items are still being worked: the sweep ticks each as it closes or merges and closes the advisory when all are resolved. Nothing is written and nobody is parked on it."},
+      "advisory-resolved": {"kind": "rule", "plain": "a hive advisory whose items are all resolved; closed as completed", "detail": "The issue is a hive advisory (a dedupe checklist or triage note) and every item it lists is closed or merged, so nothing is left to read; the hive closes it as completed."},
       "already-fixed": {"kind": "rule", "plain": "the issue was already fixed by a merged PR; closed as superseded", "detail": "The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it."},
       "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
       "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
@@ -19252,7 +19254,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "ci-failing": {"kind": "reason", "plain": "CI is failing on this branch", "detail": "Required checks are failing on this branch; nothing merges until they are green."},
       "ci-ratchet": {"kind": "rule", "plain": "a CI hygiene gate, landed as a ratchet", "detail": "A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked."},
       "ci-red": {"kind": "reason", "plain": "CI is failing on this branch", "detail": "Required checks are failing on this branch; nothing merges until they are green."},
+      "close": {"kind": "action", "plain": "closed as completed; its items are tracked by the hive", "detail": "The hive closed the advisory as completed: every item it listed is resolved, or the hive's sweep tracks the rest."},
       "close-as-duplicate": {"kind": "action", "plain": "closed as a duplicate", "detail": "Closed because an older item already tracks the same work."},
+      "close-completed": {"kind": "action", "plain": "closed as completed; its items are tracked by the hive", "detail": "The hive closed the advisory as completed: every item it listed is resolved, or the hive's sweep tracks the rest."},
       "close-duplicate": {"kind": "action", "plain": "closed as a duplicate", "detail": "Closed because an older item already tracks the same work."},
       "close-not-now": {"kind": "action", "plain": "declined for now; closed as not planned", "detail": "The hive declined the proposal for now and closed it as not planned, with the reason and what evidence would reopen it."},
       "close-superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
@@ -19294,8 +19298,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "not-closed-yet": {"kind": "reason", "plain": "the close didn't land", "detail": "The hive decided to close it, but it is still open; the close call did not land."},
       "not-merged-yet": {"kind": "reason", "plain": "the merge queue hasn't merged it", "detail": "The hive approved it but the merge queue has not merged it; its lane reason says what still blocks it."},
       "not-now": {"kind": "action", "plain": "declined for now; closed as not planned", "detail": "The hive declined the proposal for now and closed it as not planned, with the reason and what evidence would reopen it."},
-      "operator-action": {"kind": "action", "plain": "told the spoke owner what to do; nothing for an agent here", "detail": "The hive named the spoke owner and the one action they take (for example re-authenticate the provider). The item stays parked, gets no approved-direction, and clears when the report stops recurring."},
       "one-pr-per-issue": {"kind": "rule", "plain": "two PRs fix the same issue; the merge queue keeps one", "detail": "Two open PRs declare the same closing issue. The merge queue carries one PR per issue — a green head first, then the earlier-opened — and the other closes as superseded with credit."},
+      "operator-action": {"kind": "action", "plain": "told the spoke owner what to do; nothing for an agent here", "detail": "The hive named the spoke owner and the one action they take (for example re-authenticate the provider). The item stays parked, gets no approved-direction, and clears when the report stops recurring."},
       "owner-only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
       "owner_only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
       "park-label-stuck": {"kind": "reason", "plain": "stage/045-needs-decision is still on the issue; the scanner skips it until that label clears", "detail": "The hive approved the issue and applied approved-direction, but the stage/045-needs-decision park label was never removed, so the scanner still skips the issue. Lift the park (it removes the label through the hive's audited label path) or re-evaluate the issue so the stage engine re-reads it."},
@@ -19368,7 +19372,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
-      'decide:close-read': 'Close (read)',
+      'decide:close-read': 'Close now',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:re-author': 'Re-author as hive PR',
@@ -19710,6 +19714,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
     // Pure: the actions that apply to one row in its current state.
+    // The Close-now hint and confirm text of an advisory row. A checklist
+    // the hive is working (advisory.total > 0) says so: the sweep ticks the
+    // items and closes it itself, so closing now is optional.
+    function stageTrackerAdvisoryCloseHint(advisory) {
+      if (!advisory) return '';
+      if (advisory.empty) return 'nothing found · closes as completed';
+      if (advisory.total > 0 && advisory.resolved < advisory.total) return 'optional · hive is working ' + advisory.resolved + '/' + advisory.total + ' items; close anyway';
+      if (advisory.total > 0) return 'all items resolved · closes as completed';
+      return 'advisory acknowledged · closes as completed';
+    }
+    function stageTrackerAdvisoryCloseMessage(items, refs, who) {
+      const adv = items && items.length === 1 ? stageTrackerAdvisoryOf(items[0]) : null;
+      if (adv && adv.total > 0 && adv.resolved < adv.total) {
+        return 'Close ' + refs + ' now, as ' + who + '? The hive is working its items (' + adv.resolved + '/' + adv.total + ' resolved) and closes it itself when all are; closing now is optional. The issue closes as completed with a note that you read it.';
+      }
+      return 'Close ' + refs + ' as read, as ' + who + '? It is an advisory for maintainers — nothing waits on it; the issue closes as completed with a note that you read it.';
+    }
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
@@ -19737,10 +19758,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const triage = stageTrackerTriageNeeded(item);
       if (triage) out.push({ id: 'accept-triage', label: 'Accept triage', hint: stageTrackerTriageHint(item, ctx, ctx.nowMs, ctx.governor), enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, lead: true });
       // An advisory issue (hivecommons/hive#15381) asks for one thing:
-      // read it, then close it. "Close (read)" leads; it is the existing
-      // decision close path with the verdict `close-read`.
+      // read it, then close it. "Close now" leads; it is the existing
+      // decision close path with the verdict `close-read`. A checklist the
+      // hive is still working says so: closing it is optional
+      // (hivecommons/hive#15754).
       const advisory = typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
-      if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: advisory.empty ? 'nothing found · closes as completed' : 'advisory acknowledged · closes as completed', lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
+      if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: stageTrackerAdvisoryCloseHint(advisory), lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
       for (const a of lead) out.push(a);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
@@ -20950,7 +20973,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return v == null ? null : { comment: v };
         }
         case 'decide:close-read':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Close (read)', message: 'Close ' + refs + ' as read, as ' + who + '? It is an advisory for maintainers — nothing waits on it; the issue closes as completed with a note that you read it.', confirmLabel: 'Close' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Close advisory', message: stageTrackerAdvisoryCloseMessage(items, refs, who), confirmLabel: 'Close' })) ? {} : null;
         case 'decide:merge-now': {
           const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
           if (items.some(stageTrackerNeedsRebase)) {

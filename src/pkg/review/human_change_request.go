@@ -72,6 +72,20 @@ type HumanChangeRequest struct {
 	// URL is the review's or comment's HTML URL, when known.
 	URL        string    `json:"url,omitempty"`
 	RecordedAt time.Time `json:"recorded_at"`
+	// CarriedFromHead is the head the person actually decided on when the
+	// hive moved this record forward over its own base refresh: the new
+	// head is a merge of the base branch into CarriedFromHead that left the
+	// PR's diff untouched (hivecommons/hive#15649 → see CarryOverBaseRefresh).
+	CarriedFromHead string `json:"carried_from_head,omitempty"`
+}
+
+// CarriesOverBaseRefresh reports whether the request may follow the PR onto
+// a head that is a pure base refresh of the one it was recorded on. Only a
+// person's own instruction travels — a `/hive decision`, a dashboard Approve
+// or a hand-applied stage label. A GitHub review names one commit and is
+// never moved to another.
+func (r HumanChangeRequest) CarriesOverBaseRefresh() bool {
+	return r.Source != HumanChangeRequestSourceReview && strings.TrimSpace(r.Actor) != ""
 }
 
 // IsApproval reports whether the request is a bare approval rather than an
@@ -256,6 +270,37 @@ func (s *HumanChangeRequests) Forget(repo string, number int, source string, sou
 	}
 	s.items = kept
 	return s.persist()
+}
+
+// Newest returns the newest request recorded against repo#number at any
+// head. It is how the base-refresh carry finds the decision the PR's
+// previous head still holds.
+func (s *HumanChangeRequests) Newest(repo string, number int) (HumanChangeRequest, bool) {
+	if s == nil {
+		return HumanChangeRequest{}, false
+	}
+	repo = strings.TrimSpace(repo)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	var newest HumanChangeRequest
+	found := false
+	for _, item := range s.items {
+		if item.Number != number || !strings.EqualFold(item.Repo, repo) {
+			continue
+		}
+		if !found || item.RecordedAt.After(newest.RecordedAt) {
+			newest = item
+			found = true
+		}
+	}
+	return newest, found
+}
+
+// HumanChangeRequestNewestStore is the optional store capability the
+// base-refresh carry needs: the PR's newest decision regardless of head.
+type HumanChangeRequestNewestStore interface {
+	Newest(repo string, number int) (HumanChangeRequest, bool)
 }
 
 // Lookup returns the request recorded from source/sourceID against

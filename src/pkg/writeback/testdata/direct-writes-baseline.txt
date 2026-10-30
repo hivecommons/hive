@@ -22,7 +22,6 @@ raw pkg/github/automerge/reporter_trust_release.go 2
 raw pkg/github/automerge/self_authorization_release.go 2
 raw pkg/github/client.go 12
 raw pkg/github/close_on_merge.go 3
-raw pkg/github/dedupe_advisory_close.go 1
 raw pkg/github/duplicate_sweep.go 2
 raw pkg/github/fleet_report.go 2
 raw pkg/github/gfi_forge.go 1
@@ -85,7 +84,6 @@ wrap pkg/github/claimed_by_label.go 5
 wrap pkg/github/clarity_gate_resume.go 1
 wrap pkg/github/close_on_merge.go 6
 wrap pkg/github/decomposed_parents.go 1
-wrap pkg/github/dedupe_advisory_close.go 3
 wrap pkg/github/fleet_report.go 5
 wrap pkg/github/fleet_report_legacy_sweep.go 2
 wrap pkg/github/gfi_forge.go 1

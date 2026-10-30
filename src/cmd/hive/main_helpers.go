@@ -52,8 +52,11 @@ var holdGuardHumanChangeRequests = func() review.HumanChangeRequestStore {
 // the person reviewed the tree on the branch now, which the gate-lift
 // timeline cannot show when the hive removed the label for them. Fails
 // closed: no record, a change request, an unknown or untrusted actor, or an
-// empty head never cover the head.
-func holdGuardOperatorApproval(cfg *config.Config, repo string, number int, headSHA string) (string, bool) {
+// empty head never cover the head. The one head change that does not
+// supersede the record is the hive's own base refresh — a merge of the base
+// branch by the App that leaves the PR's diff as the person saw it — which
+// carries the approval onto the new head first (hivecommons/hive#15649).
+func holdGuardOperatorApproval(ctx context.Context, cfg *config.Config, ghClient *github.Client, repo string, number int, headSHA string) (string, bool) {
 	headSHA = strings.TrimSpace(headSHA)
 	if cfg == nil || headSHA == "" {
 		return "", false
@@ -62,7 +65,7 @@ func holdGuardOperatorApproval(cfg *config.Config, repo string, number int, head
 	if store == nil {
 		return "", false
 	}
-	req, ok := store.For(repo, number, headSHA)
+	req, ok := ghClient.RecordedDecisionFor(ctx, store, repo, number, headSHA)
 	if !ok || !req.IsApproval() || !strings.EqualFold(strings.TrimSpace(req.HeadSHA), headSHA) {
 		return "", false
 	}
@@ -201,7 +204,7 @@ func enforceHoldGuard(
 		// gate label on their behalf, so the timeline below shows a hive
 		// lift that can never cover the head. The head-keyed approval by a
 		// trusted merger is the review the guard asks for: accept it.
-		if login, ok := holdGuardOperatorApproval(cfg, repo, pr.Number, pr.HeadSHA); ok {
+		if login, ok := holdGuardOperatorApproval(ctx, cfg, ghClient, repo, pr.Number, pr.HeadSHA); ok {
 			store.Clear(repo, pr.Number)
 			logger.Info("hold guard: current head approved by a trusted merger through the hive's decision record; head accepted",
 				"repo", repo, "pr", pr.Number,

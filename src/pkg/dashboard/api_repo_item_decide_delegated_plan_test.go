@@ -251,3 +251,85 @@ func TestDelegatedPlanWhyAlreadyLandedNamesTheEvidence(t *testing.T) {
 		t.Fatalf("why %q", why)
 	}
 }
+
+// hivecommons/hive#15754: the plan for #15734 (an issue) said "Approve
+// #15734 as it is and let the merge queue merge it" — PR wording. The
+// default-approve plan branches on kind, and an advisory's plan is a
+// close (all items resolved) or a no-write "keep open" (items remain).
+func TestDelegatedPlanWordingIssueVsPRVsAdvisory(t *testing.T) {
+	approve := delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "default-approve"}
+	for _, tc := range []struct {
+		name         string
+		in           delegatedecision.Input
+		d            delegatedecision.Decision
+		wantSummary  string
+		wantNext     []string
+		wantNotMatch string
+	}{
+		{"pr default-approve", delegatedecision.Input{Kind: delegatedecision.KindPR, Number: 8}, approve,
+			"Approve #8 as it is and let the merge queue merge it.",
+			[]string{"Hive approves the current commit.", "#8 merges once CI is green and it has soaked."}, ""},
+		{"issue default-approve", delegatedecision.Input{Kind: delegatedecision.KindIssue, Number: 15734}, approve,
+			"Approve the direction of #15734 and let the hive pick it up.",
+			[]string{"Hive records approval and removes the needs-decision hold.", "An agent claims #15734 on the next cycle."}, "merge"},
+		{"advisory resolved", delegatedecision.Input{Kind: delegatedecision.KindIssue, Number: 15734, Advisory: &delegatedecision.AdvisoryChecklist{Resolved: 5, Total: 5}},
+			delegatedecision.Decision{Verdict: delegatedecision.VerdictClose, Rule: delegatedecision.RuleAdvisoryResolved},
+			"Close the advisory — its items are tracked by the hive.",
+			[]string{"#15734 is closed as completed with a note that its items are resolved."}, ""},
+		{"advisory in progress", delegatedecision.Input{Kind: delegatedecision.KindIssue, Number: 15734, Advisory: &delegatedecision.AdvisoryChecklist{Resolved: 2, Total: 5}},
+			delegatedecision.Decision{Verdict: delegatedecision.VerdictRefused, Rule: delegatedecision.RuleAdvisoryInProgress, KeepsPark: true},
+			"Keep open; hive is working 2/5 items.",
+			[]string{"Nothing is written; the sweep ticks items as they close or merge.", "The advisory closes itself once every item is resolved."}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			summary, next := delegatedPlanWording(tc.in, tc.d)
+			if summary != tc.wantSummary {
+				t.Fatalf("summary %q, want %q", summary, tc.wantSummary)
+			}
+			if strings.Join(next, "|") != strings.Join(tc.wantNext, "|") {
+				t.Fatalf("consequences %q, want %q", next, tc.wantNext)
+			}
+			if tc.wantNotMatch != "" && strings.Contains(strings.ToLower(summary+" "+strings.Join(next, " ")), tc.wantNotMatch) {
+				t.Fatalf("issue wording mentions %q: %q %q", tc.wantNotMatch, summary, next)
+			}
+		})
+	}
+}
+
+// End to end on the plan endpoint: issue #7 as a dedupe checklist with
+// items open plans a no-write keep-open; with every item ticked it plans
+// a close; as an ordinary parked issue it plans the issue approval.
+func TestDelegatedDecisionPlanIssueAndAdvisory(t *testing.T) {
+	checklist := "<!-- hive:dedupe-checklist repo=testorg/testrepo -->\nDecision required: yes\n\n- [x] #1 — close as superseded by #4\n- [ ] #2 — close as superseded by #5\n"
+	for _, tc := range []struct {
+		name      string
+		body      string
+		labels    []string
+		wantWould string
+		wantRule  string
+		wantSum   string
+	}{
+		{"advisory in progress", checklist, []string{"agent/dedupe", "stage/045-needs-decision"}, string(delegatedecision.VerdictRefused), delegatedecision.RuleAdvisoryInProgress, "Keep open; hive is working 1/2 items."},
+		{"advisory resolved", strings.ReplaceAll(checklist, "- [ ]", "- [x]"), []string{"agent/dedupe"}, string(delegatedecision.VerdictClose), delegatedecision.RuleAdvisoryResolved, "Close the advisory — its items are tracked by the hive."},
+		{"ordinary issue", "Please add a flag.", []string{"stage/045-needs-decision"}, string(delegatedecision.VerdictApprove), "default-approve", "Approve the direction of #7 and let the hive pick it up."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &repoItemDecisionMock{issueTitle: "triage: duplicates", issueBody: tc.body, issueLabels: tc.labels}
+			srv := newDelegatedServer(t, mock)
+			w := postDelegatedPlan(t, srv, 7, "writer", `{"type":"issue"}`, map[string]string{"X-Hive-Role": "merger"})
+			if w.Code != http.StatusOK {
+				t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+			}
+			var plan delegatedDecisionPlan
+			if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil {
+				t.Fatal(err)
+			}
+			if plan.Would != tc.wantWould || plan.Rule != tc.wantRule || plan.Summary != tc.wantSum || plan.Writes {
+				t.Fatalf("plan would=%q rule=%q summary=%q writes=%v", plan.Would, plan.Rule, plan.Summary, plan.Writes)
+			}
+			if len(mock.comments) != 0 || len(mock.edits) != 0 {
+				t.Fatalf("a plan may not write: %v %v", mock.comments, mock.edits)
+			}
+		})
+	}
+}

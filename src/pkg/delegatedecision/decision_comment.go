@@ -47,6 +47,9 @@ func ExpectedEffect(d Decision, kind Kind) Effect {
 	case d.Verdict == VerdictNotNow:
 		return Effect{Waits: true, What: "this issue is closed as not planned; re-propose it with the incident or recurrence it would prevent",
 			IfNot: "Close it by hand on GitHub, or approve it yourself if you want it built anyway."}
+	case d.Verdict == VerdictClose:
+		return Effect{Waits: true, What: "this advisory is closed as completed; its items are tracked by the hive",
+			IfNot: "Close it by hand on GitHub, or leave it: the hive's sweep closes it once every item is resolved."}
 	case d.Verdict == VerdictAdoptSupersede:
 		return Effect{Waits: true,
 			What:  "the hive closes this PR and opens a fresh hive-authored PR with the same commits and sign-off, then finishes that one",
@@ -78,7 +81,7 @@ func ActionPlainOn(d Decision, kind Kind) string {
 	switch d.Verdict {
 	case VerdictApprove, VerdictQuarantineFlaky, VerdictAcceptRatchet, VerdictAcceptProposal, VerdictDirection,
 		VerdictCloseDuplicate, VerdictCloseSuperseded, VerdictOwnerOnly, VerdictRecommendOnly, VerdictRefused,
-		VerdictOperatorAction, VerdictNotNow:
+		VerdictOperatorAction, VerdictNotNow, VerdictClose:
 		return VerdictPlainOn(d.Verdict, kind)
 	case VerdictAdoptSupersede:
 		return PlainOn(GlossarySupersede, kind)
@@ -125,6 +128,8 @@ func CommentBodyWith(d Decision, hiveID, requester string, opts CommentOptions) 
 		// Not a `/hive decision` line: the unpark sweep must not read a
 		// declined proposal as an approval.
 		fmt.Fprintf(&b, "%s\n\nRationale: %s. Closed as not planned.", CapitalizeFirst(d.Text), d.Rationale)
+	case d.Verdict == VerdictClose:
+		fmt.Fprintf(&b, "%s\n\nRationale: %s. Closed as completed.", CapitalizeFirst(d.Text), d.Rationale)
 	case d.KeepsPark:
 		park := LabelNeedsDecision
 		if opts.Kind == KindIssue {

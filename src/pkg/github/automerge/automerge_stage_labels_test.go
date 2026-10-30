@@ -123,6 +123,15 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 				out = []map[string]any{}
 			}
 			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && !strings.Contains(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/"):
+			// The decision carry (#15649) asks the PR for its base branch
+			// before proving a new head is the hive's own base refresh.
+			n, _ := strconv.Atoi(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"))
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "base": map[string]any{"ref": "main"}})
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
+			// No single-commit detail is seeded: a new head is never a base
+			// refresh here, so a recorded decision stays on its own head.
+			http.NotFound(w, r)
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/commits"):
 			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/commits"))
 			api.commitReads++

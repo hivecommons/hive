@@ -501,6 +501,9 @@ type Client struct {
 	stageEngineMu sync.Mutex
 	stageWriter   *stageWriter
 	stageEngines  map[*stagelabels.Store]stageengine.Reconciler
+	// baseRefresh is the decision carry's memo (pr_decision_base_refresh.go).
+	baseRefreshOnce sync.Once
+	baseRefresh     *BaseRefreshChecker
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
