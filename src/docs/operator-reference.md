@@ -2077,6 +2077,29 @@ installation now and releases every item blocked on that permission when it is
 there. `GET /api/status` carries the same picture as
 `capabilities: {missing: ["workflows"], blocked_items: N, by_permission: {workflows: N}}`.
 
+#### Onboarding errors point to the Getting Started guide
+
+Every setup problem the dashboard's **🧭 Guide** (top navbar; also *Getting
+Started* in the sidebar) has a step for is classified server-side and rendered
+with a tip — *New hive? Open the 🧭 Guide → step ‘Install the Forge App
+(GitHub App)’ for the install URL and permissions checklist* — whose link opens
+the guide at that step. The classification rides the status payload as
+`onboardingIssues: [{kind, guideStep, message}]`, on system alerts as
+`onboarding: true` + `guideStep`, and on the embedded `deepHealth` checks
+(`github_auth`, `repo_target`) as `onboarding`/`guideStep`. Kinds:
+`github-app-not-installed`, `github-app-wrong-installation`,
+`github-app-permissions`, `github-app-credentials`, `github-base-url`
+(→ step `github-app`), `repo-target`, `no-repos` (→ `repos`), `no-agents`
+(→ `add-agent`), `proxy-token` (→ `welcome`). Error text is unchanged; the tip
+is appended. While any onboarding issue is active the Guide chip stays visible
+even if the checklist was dismissed earlier. The guide's GitHub App step shows
+the concrete install URL for the configured forge host (`githubAppInstallURL`,
+GHES-aware; on an enterprise host with no `github_app_slug` it says what to
+configure instead of linking to github.com). The guide, its entry points and
+the ⚙️ Governor Config gear require a non-`read` role from `GET /api/role` —
+a read-only viewer sees none of them and must be granted access via Manage
+Access.
+
 ## Runtime diagnostics (`debug`, `GOMEMLIMIT`, `mem:` log line)
 
 Added for [#14681](https://github.com/hivecommons/hive/issues/14681) (hive

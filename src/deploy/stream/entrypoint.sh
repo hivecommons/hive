@@ -14,8 +14,17 @@
 #
 # Every process is supervised here: Chromium and ffmpeg are restarted with
 # backoff when they exit, the page is reloaded every RELOAD_EVERY so a rolled
-# SPA is picked up, and a progress file for the healthcheck is kept fresh by
-# ffmpeg itself. Nothing in this script ever prints a secret.
+# SPA is picked up (or sooner, when Chromium's RSS crosses
+# CHROMIUM_RSS_RELOAD_MIB), and a progress file for the healthcheck is kept
+# fresh by ffmpeg itself. Nothing in this script ever prints a secret.
+#
+# Memory budget (hivecommons/hive OOM incident, 16x OOMKilled at 3 Gi): the
+# x11grab input hands ffmpeg one MIT-SHM segment per raw 1080p frame (8.3 MiB),
+# shared with Xvfb and charged to the pod's memory cgroup once. If x264 falls
+# behind — Chromium's startup burst, a CPU-throttled pod — the input thread
+# queues frames up to -thread_queue_size, so a 1024-deep queue can pin 8.5 GiB.
+# VIDEO_QUEUE_FRAMES bounds that to a few hundred MiB; frames are skipped
+# instead of hoarded. Audio packets are tiny, so the pulse queue stays deep.
 set -euo pipefail
 
 : "${DASHBOARD_URL:?DASHBOARD_URL is required (https origin of the hive dashboard)}"
@@ -32,6 +41,12 @@ FPS="${FPS:-30}"
 BITRATE="${BITRATE:-4500k}"
 X264_PRESET="${X264_PRESET:-veryfast}"
 RELOAD_EVERY="${RELOAD_EVERY:-30m}"
+# Reload the tab early when all Chromium processes together exceed this RSS
+# (MiB), well under the pod limit, instead of letting the kernel pick a victim.
+CHROMIUM_RSS_RELOAD_MIB="${CHROMIUM_RSS_RELOAD_MIB:-3584}"
+RSS_CHECK_EVERY="${RSS_CHECK_EVERY:-30}"       # seconds between RSS checks
+VIDEO_QUEUE_FRAMES="${VIDEO_QUEUE_FRAMES:-16}" # x11grab -thread_queue_size (raw frames, ~8 MiB each at 1080p)
+AUDIO_QUEUE_PACKETS="${AUDIO_QUEUE_PACKETS:-1024}"
 STREAM_AUDIO="${STREAM_AUDIO:-pulse}"          # pulse | silent
 PULSE_SINK_NAME="${PULSE_SINK_NAME:-hive}"
 DISPLAY_NUM="${DISPLAY_NUM:-:99}"
@@ -41,6 +56,31 @@ BACKOFF_MIN=2
 BACKOFF_MAX=60
 KEYINT=$(( FPS * 2 ))                          # Twitch wants a 2 s keyframe interval
 BUFSIZE="$(( ${BITRATE%k} * 2 ))k"
+
+# nproc reports the node's cores inside a pod; x264 would spawn 1.5x that and
+# thrash against the CPU quota. Size the encoder from the cgroup quota instead.
+cgroup_cpus() {
+  local q p v2=/sys/fs/cgroup/cpu.max v1=/sys/fs/cgroup/cpu/cpu.cfs_quota_us
+  if [ -r "$v2" ] && read -r q p < "$v2" && [ "$q" != max ]; then
+    echo $(( (q + p - 1) / p )); return
+  fi
+  if [ -r "$v1" ] && read -r q < "$v1" && read -r p < "${v1%quota_us}period_us" && [ "$q" -gt 0 ]; then
+    echo $(( (q + p - 1) / p )); return
+  fi
+  nproc
+}
+ENC_THREADS="${ENC_THREADS:-$(cgroup_cpus)}"
+
+# Duration strings for sleep (30m, 2h, 90s, 45) → seconds, for the reload timer.
+to_seconds() {
+  case "$1" in
+    *h) echo $(( ${1%h} * 3600 )) ;;
+    *m) echo $(( ${1%m} * 60 )) ;;
+    *s) echo $(( ${1%s} )) ;;
+    *)  echo $(( $1 )) ;;
+  esac
+}
+RELOAD_SECONDS="$(to_seconds "$RELOAD_EVERY")"
 
 case "$STREAM_AUDIO" in pulse|silent) ;; *) echo "STREAM_AUDIO must be 'pulse' or 'silent' (got '$STREAM_AUDIO')" >&2; exit 1 ;; esac
 
@@ -111,6 +151,8 @@ chromium_loop() {
       --disable-infobars --disable-session-crashed-bubble --noerrdialogs --hide-scrollbars \
       --disable-features=TranslateUI,MediaRouter --check-for-update-interval=31536000 \
       --disable-background-networking --disable-component-update --disable-sync \
+      --disable-extensions --disable-dev-shm-usage --renderer-process-limit=1 \
+      --js-flags=--max-old-space-size=1024 \
       --user-data-dir="$RUN_DIR/profile" --no-sandbox \
       "$KIOSK_URL" >"$RUN_DIR/chromium.log" 2>&1 || true
     (( SECONDS - started > 60 )) && backoff=$BACKOFF_MIN
@@ -121,12 +163,24 @@ chromium_loop() {
 chromium_loop &
 pids+=($!)
 
-# ---- 4. periodic reload (new SPA rolls) -------------------------------------
+# ---- 4. periodic reload (new SPA rolls) + Chromium RSS guard ---------------
+reload_tab() {
+  xdotool search --onlyvisible --class chromium >/dev/null 2>&1 || return 1
+  xdotool search --onlyvisible --class chromium | head -1 | xargs -r -I{} xdotool key --window {} F5
+}
+# Sum of RSS (MiB) over every chromium process (browser, renderers, gpu, utility).
+chromium_rss_mib() { ps -C chromium -o rss= 2>/dev/null | awk '{s+=$1} END{printf "%d", s/1024}'; }
 reload_loop() {
+  local since=0 rss
   while :; do
-    sleep "$RELOAD_EVERY"
-    if xdotool search --onlyvisible --class chromium >/dev/null 2>&1; then
-      xdotool search --onlyvisible --class chromium | head -1 | xargs -r -I{} xdotool key --window {} F5 && log "page reloaded (RELOAD_EVERY=$RELOAD_EVERY)"
+    sleep "$RSS_CHECK_EVERY"; since=$(( since + RSS_CHECK_EVERY ))
+    rss="$(chromium_rss_mib)"
+    if (( rss > CHROMIUM_RSS_RELOAD_MIB )); then
+      reload_tab && log "chromium RSS ${rss}MiB > ${CHROMIUM_RSS_RELOAD_MIB}MiB; page reloaded early"
+      since=0
+    elif (( since >= RELOAD_SECONDS )); then
+      reload_tab && log "page reloaded (RELOAD_EVERY=$RELOAD_EVERY, chromium RSS ${rss}MiB)"
+      since=0
     fi
   done
 }
@@ -145,7 +199,7 @@ sink() {
 }
 # Audio input for ffmpeg: the null sink's monitor, or synthesised silence.
 AUDIO_IN=(-f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100")
-[ "$STREAM_AUDIO" = pulse ] && AUDIO_IN=(-thread_queue_size 1024 -f pulse -i "${PULSE_SINK_NAME}.monitor")
+[ "$STREAM_AUDIO" = pulse ] && AUDIO_IN=(-thread_queue_size "$AUDIO_QUEUE_PACKETS" -f pulse -i "${PULSE_SINK_NAME}.monitor")
 ffmpeg_loop() {
   local backoff=$BACKOFF_MIN out limit=() rc=0
   out="$(sink)" || exit 1
@@ -154,12 +208,12 @@ ffmpeg_loop() {
   sleep 5
   while :; do
     local started=$SECONDS
-    log "ffmpeg starting (${VIDEO_SIZE}@${FPS}, ${BITRATE} CBR, keyint ${KEYINT}, audio ${STREAM_AUDIO}, sink ${out%%/*}…)"
+    log "ffmpeg starting (${VIDEO_SIZE}@${FPS}, ${BITRATE} CBR, keyint ${KEYINT}, x264 threads ${ENC_THREADS}, video queue ${VIDEO_QUEUE_FRAMES} frames, audio ${STREAM_AUDIO}, sink ${out%%/*}…)"
     # shellcheck disable=SC2086
     ffmpeg -nostdin -y -hide_banner -loglevel warning -progress "$PROGRESS" \
-      -thread_queue_size 1024 -f x11grab -framerate "$FPS" -video_size "$VIDEO_SIZE" -draw_mouse 0 -i "$DISPLAY_NUM" \
+      -thread_queue_size "$VIDEO_QUEUE_FRAMES" -f x11grab -framerate "$FPS" -video_size "$VIDEO_SIZE" -draw_mouse 0 -i "$DISPLAY_NUM" \
       "${AUDIO_IN[@]}" \
-      -c:v libx264 -preset "$X264_PRESET" -tune zerolatency -pix_fmt yuv420p \
+      -c:v libx264 -preset "$X264_PRESET" -tune zerolatency -pix_fmt yuv420p -threads "$ENC_THREADS" \
       -b:v "$BITRATE" -minrate "$BITRATE" -maxrate "$BITRATE" -bufsize "$BUFSIZE" \
       -g "$KEYINT" -keyint_min "$KEYINT" -sc_threshold 0 -r "$FPS" \
       -c:a aac -b:a 128k -ac 2 -ar 44100 -shortest "${limit[@]}" \
