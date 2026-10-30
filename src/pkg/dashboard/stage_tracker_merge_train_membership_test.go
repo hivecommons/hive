@@ -62,8 +62,8 @@ func TestStageTrackerMergeTrainUnderRepairLeaves(t *testing.T) {
 	if alone.MergeTrain != nil || alone.LeftTrain != nil {
 		t.Fatalf("a train of one is no train: train %+v left %+v", alone.MergeTrain, alone.LeftTrain)
 	}
-	if alone.MergeGate != nil && (alone.MergeGate.State == MergeGateStateQueuedBehind || strings.Contains(alone.MergeGate.Reason, "#15405")) {
-		t.Fatalf("survivor gate still names the train: %+v", alone.MergeGate)
+	if alone.MergeGate == nil || alone.MergeGate.State != MergeGateStateReady || strings.Contains(alone.MergeGate.Reason, "#15405") {
+		t.Fatalf("survivor gate = %+v, want the 080 row's own ready state", alone.MergeGate)
 	}
 	if strings.Contains(alone.Caption, "#15405") || strings.Contains(alone.Caption, "merge train") {
 		t.Fatalf("survivor caption still names the train: %q", alone.Caption)

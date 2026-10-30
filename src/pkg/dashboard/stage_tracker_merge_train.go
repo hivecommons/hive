@@ -275,9 +275,17 @@ func stageTrackerLeaveMergeTrain(it *StageTrackerItem, why string) {
 	}
 	mt := it.MergeTrain
 	if it.MergeGate != nil && (it.MergeGate.State == mt.State || it.MergeGate.State == MergeGateStateTrainFront) {
+		// Back to the stage's own gate state (ready at 080, pending at
+		// 060); off the gate there is no gate.
 		it.MergeGate.State = ""
+		switch it.Stage {
+		case stagelabels.Reviewed.Number():
+			it.MergeGate.State = MergeGateStatePending
+		case stagelabels.AwaitingMergeAdmission.Number():
+			it.MergeGate.State = MergeGateStateReady
+		}
 		it.MergeGate.Reason = ""
-		if reflect.DeepEqual(*it.MergeGate, StageTrackerMergeGate{}) {
+		if it.MergeGate.State == "" || reflect.DeepEqual(*it.MergeGate, StageTrackerMergeGate{}) {
 			it.MergeGate = nil
 		}
 	}
