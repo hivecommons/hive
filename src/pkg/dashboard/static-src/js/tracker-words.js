@@ -1302,10 +1302,22 @@
       const a = item && item.kind === 'pr' ? item.adoption : null;
       return !!(a && a.due && a.action === 'decide:adopt');
     }
-    // The chip text: "adopt?" when the owner is asked, else "waiting on @x".
+    // Whether an Adopt now is queued on the row (`adoption.queued_by` /
+    // `takeover.forced_by`): the operator already acted; the sweep has not
+    // opened the copy yet. The row reads as acted on and offers no Adopt.
+    const STAGE_TRACKER_ADOPTION_QUEUED_CHIP = 'adopting… (queued)';
+    function stageTrackerAdoptionQueued(item) {
+      const a = item && item.kind === 'pr' ? item.adoption : null;
+      const tk = item && item.kind === 'pr' ? item.takeover : null;
+      return !!((a && a.queued_by) || (tk && tk.forced_by));
+    }
+    // The chip text: "adopt?" when the owner is asked, "adopting… (queued)"
+    // once Adopt now was pressed, else "waiting on @x".
     function stageTrackerAdoptionChipText(item) {
       const a = item && item.adoption;
       if (!a) return '';
+      // Guarded: the test harnesses load helpers by name.
+      if (typeof stageTrackerAdoptionQueued === 'function' && stageTrackerAdoptionQueued(item)) return STAGE_TRACKER_ADOPTION_QUEUED_CHIP;
       if (stageTrackerAdoptOffered(item)) return 'adopt?';
       if (a.blocked_by) return 'not adopted';
       // Guarded: the test harnesses load helpers by name.
@@ -1550,14 +1562,16 @@
       ctx = ctx || {};
       const write = ctx.canHold !== false && !!ctx.user;
       const whyWrite = write ? '' : STAGE_TRACKER_WHY_WRITE;
-      const adoptOk = write && !!tk.adopt_now;
+      const adoptOk = write && !!tk.adopt_now && !tk.forced_by;
       const adoptWhy = adoptOk ? '' : (whyWrite || tk.adopt_now_reason || 'Not available on this row');
       const rerouteOk = write && !!tk.reroute;
       const rerouteWhy = rerouteOk ? '' : (whyWrite || tk.reroute_reason || 'Not available on this row');
-      return [
-        { id: 'decide:adopt-now', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt-now'] + '…', note: STAGE_TRACKER_ADOPT_NOW_CONSEQUENCE, enabled: adoptOk, why: adoptWhy, danger: true },
-        { id: 'decide:reroute', label: STAGE_TRACKER_ACTION_LABELS['decide:reroute'], note: tk.rerouted && tk.rerouted.to ? 'rerouted → @' + tk.rerouted.to + ' already; pick again to move it' : (rerouteOk ? 'hands the reviewer\'s requested changes to another online clanker' : ''), enabled: rerouteOk, why: rerouteWhy, submenu: stageTrackerRerouteOptions(tk, rerouteOk, rerouteWhy, nowMs) },
-      ];
+      const out = [];
+      // Adopt now is spent once pressed: the row shows "adopting… (queued)"
+      // instead of offering the same action again (hivecommons/hive#15038).
+      if (!tk.forced_by) out.push({ id: 'decide:adopt-now', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt-now'] + '…', note: STAGE_TRACKER_ADOPT_NOW_CONSEQUENCE, enabled: adoptOk, why: adoptWhy, danger: true });
+      out.push({ id: 'decide:reroute', label: STAGE_TRACKER_ACTION_LABELS['decide:reroute'], note: tk.rerouted && tk.rerouted.to ? 'rerouted → @' + tk.rerouted.to + ' already; pick again to move it' : (rerouteOk ? 'hands the reviewer\'s requested changes to another online clanker' : ''), enabled: rerouteOk, why: rerouteWhy, submenu: stageTrackerRerouteOptions(tk, rerouteOk, rerouteWhy, nowMs) });
+      return out;
     }
     // Pure: the "rerouted → @x" pill with the target's presence dot; '' when
     // the row is not rerouted.

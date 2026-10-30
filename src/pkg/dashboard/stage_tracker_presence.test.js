@@ -23,6 +23,8 @@ const src = [
   pick(/function agentNowAgo\(ms\) \{[\s\S]*?\n    \}\n/, 'agentNowAgo'),
   pick(/function stageTrackerAdoptionTip\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionTip'),
   pick(/function stageTrackerAdoptOffered\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptOffered'),
+  pick(/const STAGE_TRACKER_ADOPTION_QUEUED_CHIP = [^\n]*\n/, 'STAGE_TRACKER_ADOPTION_QUEUED_CHIP'),
+  pick(/function stageTrackerAdoptionQueued\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionQueued'),
   pick(/function stageTrackerAdoptionChipText\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionChipText'),
   pick(/function stageTrackerAdoptionChipHtml\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionChipHtml'),
   pick(/const STAGE_TRACKER_ICONS = \{[\s\S]*?\n    \};\n/, 'STAGE_TRACKER_ICONS'),
