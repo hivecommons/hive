@@ -1,58 +1,12 @@
 package dashboard
 
 import (
-	"strings"
 	"testing"
-	"time"
-
-	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/stageengine/prstage"
-	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// A train's front still at 050 (CI running, no verdict) — hive's own
-// #15577 — carries its queue slot as provisional, its gate reason says
-// "once it is ready", and the siblings parked behind it at 080 do not.
-func TestStageTrackerMergeTrainProvisionalFront(t *testing.T) {
-	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-	s, store := stageTrackerFixture(t, now)
-	overlap := []string{"tracker-words.js"}
-	store.Observe(stagelabels.Key("acme/console", 15577), stagelabels.ReviewPending, "required-check-pending:build-and-test")
-	store.Observe(stagelabels.Key("acme/console", 15578), stagelabels.AwaitingMergeAdmission,
-		prstage.MergeTrain{State: prstage.MergeTrainStateQueuedBehind, Front: 15577, Position: 2, Size: 2, OverlapFiles: overlap}.Reason())
-	s.statusMu.Lock()
-	for n, stage := range map[int]string{15577: "stage/050-review-pending", 15578: "stage/080-awaiting-merge-admission"} {
-		s.status.Repos[0].OpenPrs = append(s.status.Repos[0].OpenPrs,
-			FrontendPR{PullRequest: github.PullRequest{Number: n, Title: "Tracker words", Author: "someone", BaseRef: "v5", Labels: []string{stage}}})
-	}
-	s.statusMu.Unlock()
-	resp := s.buildStageTracker(s.status, store, now)
-	var front, rider *StageTrackerItem
-	for i := range resp.Items {
-		switch resp.Items[i].Number {
-		case 15577:
-			front = &resp.Items[i]
-		case 15578:
-			rider = &resp.Items[i]
-		}
-	}
-	if front == nil || front.MergeTrain == nil || rider == nil || rider.MergeTrain == nil {
-		t.Fatalf("expected both rows to carry merge_train: front=%+v rider=%+v", front, rider)
-	}
-	if !front.MergeTrain.Provisional {
-		t.Errorf("front at 050 should carry merge_train.provisional: %+v", front.MergeTrain)
-	}
-	if front.MergeGate == nil || !strings.Contains(front.MergeGate.Reason, "once it is ready") || strings.Contains(front.MergeGate.Reason, "merges next") {
-		t.Errorf("provisional front's gate reason should say once it is ready, not merges next: %+v", front.MergeGate)
-	}
-	if rider.MergeTrain.Provisional {
-		t.Errorf("rider at 080 is merge-ready; its slot is not provisional: %+v", rider.MergeTrain)
-	}
-	if !stageTrackerMergeTrainProvisional(stagelabels.Reviewed.Number()) || stageTrackerMergeTrainProvisional(stagelabels.AwaitingMergeAdmission.Number()) || stageTrackerMergeTrainProvisional(0) {
-		t.Errorf("provisional is every stage between 0 and 080, exclusive")
-	}
-}
-
+// The server seats no train member below 080 any more (hivecommons/
+// hive#15653 — stage_tracker_merge_train_overlap_test.go); the SPA keeps
+// the provisional words as the fallback for a payload that still does.
 // Ratchet (hive's own #15577: the chevron read "Merge queued · 1st" while
 // the caption said "check build-and-test still running"): for every
 // stage × queue state the chevron headline — the gate chip's word, else
