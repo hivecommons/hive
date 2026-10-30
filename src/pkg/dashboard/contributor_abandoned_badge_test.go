@@ -27,7 +27,7 @@ records[6].reason = 'operator_takeover';
 const before = JSON.stringify(records);
 const badge = contributorAbandonedBadge({abandoned: 7, abandoned_prs: records});
 assert(badge.includes('Abandoned 7'), badge);
-assert(badge.includes('color-mix(in srgb, var(--red) 70%, var(--muted))'), 'muted red missing');
+assert(badge.includes('class="contrib-abandoned"'), 'badge class missing');
 assert(badge.includes('org/repo#7 → #90 · operator_takeover · 2026-10-07T12:00:00Z'), badge);
 assert(badge.includes('org/repo#6 → in-place · offline'), badge);
 assert(badge.indexOf('org/repo#7') < badge.indexOf('org/repo#6'), 'not newest first');
