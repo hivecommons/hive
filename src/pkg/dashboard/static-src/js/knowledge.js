@@ -150,6 +150,16 @@
       return formatNumber(total) + ' fact' + (total === 1 ? '' : 's');
     }
 
+    // Validate the same layer totals used by the displayed facts badge.
+    // Missing layers are unknown, not an empty knowledge base.
+    function kbSidebarFactCount(stats) {
+      if (!stats || typeof stats.enabled !== 'boolean') return null;
+      if (!stats.enabled) return 0;
+      if (!Array.isArray(stats.layers) || stats.layers.some(l => !l || !Number.isSafeInteger(l.total_pages) || l.total_pages < 0)) return null;
+      const count = kbTotalFactsFromStats(stats);
+      return Number.isSafeInteger(count) ? count : null;
+    }
+
     // ── Document Sources ──
     const DOC_CONTENT_ICONS = { 'text/html': '🌐', 'application/pdf': '📄', 'text/plain': '📝', 'text/markdown': '📝', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📋' };
 
@@ -228,13 +238,21 @@
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
         if (!r.ok) return;
         const prev = _kbCache;
-        _kbCache = await r.json();
+        const next = await r.json();
+        const kbBadge = document.getElementById('knowledge-sidebar-badge');
+        const kbFacts = kbSidebarFactCount(next);
+        if (kbFacts === null) {
+          navCountDelta(kbBadge, null);
+          return;
+        }
+        _kbCache = next;
         _kbCache._documents = (docsR && docsR.ok) ? await docsR.json() : [];
         setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
-        var kbBadge = document.getElementById('knowledge-sidebar-badge');
         if (kbBadge) {
-          var kbFacts = kbTotalFactsFromStats(_kbCache);
-          setSidebarCountBadge(kbBadge, _kbCache && _kbCache.enabled ? kbFacts : 0, kbFactsLabel(kbFacts));
+          // Toggling priming changes what the badge shows, not stored facts.
+          if (prev && prev.enabled !== _kbCache.enabled) navCountDelta(kbBadge, null);
+          setSidebarCountBadge(kbBadge, kbFacts, kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
+          navCountDelta(kbBadge, kbFacts, kbFactsLabel(kbFacts));
         }
         if (_kbInitialLoad && _kbCache && _kbCache.enabled) {
           _kbSetupView = 'none';
@@ -2397,4 +2415,3 @@
       await kcSyncNow(name);
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
-

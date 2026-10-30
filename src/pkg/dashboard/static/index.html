@@ -5455,6 +5455,33 @@
     .oc-nav-count--waiting:not([data-zero]) + .oc-nav-count { margin-left: var(--sp-1); }
     .oc-nav-count--waiting:not([data-zero]) { --component-status: var(--status-attention); background: color-mix(in srgb, var(--component-status) 16%, transparent); border-color: color-mix(in srgb, var(--component-status) 50%, transparent); color: var(--component-status); }
     .oc-nav-count--waiting[data-zero] { display: none; }
+    /* A short, out-of-flow net delta on explicitly wired navigation counts.
+       Keep the zero waiting badge visible just long enough to show its drop. */
+    .oc-nav-count[data-count-delta] { position: relative; }
+    .oc-nav-item:has(> .oc-nav-count[data-count-delta]) { overflow: visible; z-index: 1; }
+    #activity-monitor-waiting-badge[data-zero][data-count-delta] {
+      display: inline-flex; position: absolute; right: 3rem;
+      font-size: 0; padding: 0; border: 0;
+    }
+    .oc-nav-count[data-count-delta]::after {
+      content: attr(data-count-delta); position: absolute; bottom: calc(100% + 2px); right: 0;
+      pointer-events: none; z-index: 1; padding: 0 4px; border-radius: var(--r-pill);
+      background: var(--surface); color: var(--brand); border: 1px solid var(--brand);
+      font-size: var(--fs-2xs); line-height: 1.4; font-variant-numeric: tabular-nums;
+    }
+    #contributors-sidebar-badge[data-count-delta]::after,
+    #knowledge-sidebar-badge[data-count-delta]::after {
+      bottom: auto; top: 50%; right: calc(100% + var(--sp-1)); translate: 0 -50%;
+    }
+    [data-count-direction="up"] { --nav-count-start: 3px; }
+    [data-count-direction="down"] { --nav-count-start: -3px; }
+    [data-count-phase="a"]::after { animation: nav-count-a 220ms ease-out; }
+    [data-count-phase="b"]::after { animation: nav-count-b 220ms ease-out; }
+    @keyframes nav-count-a { from { opacity: 0; transform: translateY(var(--nav-count-start)); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes nav-count-b { from { opacity: 0; transform: translateY(var(--nav-count-start)); } to { opacity: 1; transform: translateY(0); } }
+    @media (prefers-reduced-motion: reduce) {
+      [data-count-phase]::after { animation: none; }
+    }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
@@ -19123,6 +19150,59 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerRenderLabelDialog();
     }
 
+    // Only explicitly wired navigation counts participate. Keep raw-number
+    // baselines outside the DOM: filters/routes can redraw without live data.
+    const NAV_COUNT_CUE_MS = 1400;
+    const _navCountDeltas = new Map();
+    function navCountDelta(badge, count, label, live = true) {
+      if (!badge) return;
+      let state = _navCountDeltas.get(badge.id);
+      const replaced = state && state.badge !== badge;
+      if (replaced) state.clear();
+      if (!state || replaced) {
+        state = { badge, count: null, timer: null, phase: false, delta: '', label: '' };
+        state.clear = () => {
+          if (state.timer !== null) clearTimeout(state.timer);
+          state.timer = null;
+          state.delta = '';
+          badge.removeAttribute('data-count-delta');
+          badge.removeAttribute('data-count-direction');
+          badge.removeAttribute('data-count-phase');
+          if (state.label) badge.setAttribute('aria-label', state.label);
+        };
+        _navCountDeltas.set(badge.id, state);
+      }
+      if (!Number.isSafeInteger(count) || count < 0) {
+        state.clear();
+        state.count = null;
+        return;
+      }
+      state.label = label;
+      const previous = state.count;
+      state.count = count;
+      if (previous === null || previous === count || replaced) {
+        badge.setAttribute('aria-label', label + state.delta);
+        return;
+      }
+      state.clear();
+      // Re-rendering cached rows is not a new observation. A reconnect is
+      // simply a net count change; never claim it was a merge/open event.
+      if (!live || document.hidden) return;
+      const delta = count - previous;
+      state.delta = ', ' + (delta > 0 ? 'increased' : 'decreased') + ' by ' + Math.abs(delta);
+      badge.setAttribute('aria-label', label + state.delta);
+      badge.setAttribute('data-count-delta', (delta > 0 ? '↑ +' : '↓ ') + delta);
+      badge.setAttribute('data-count-direction', delta > 0 ? 'up' : 'down');
+      state.phase = !state.phase;
+      badge.setAttribute('data-count-phase', state.phase ? 'a' : 'b');
+      state.timer = setTimeout(state.clear, NAV_COUNT_CUE_MS);
+    }
+
+    function stageTrackerSidebarCountsUnknown() {
+      for (const id of ['activity-monitor-sidebar-badge', 'activity-monitor-waiting-badge']) {
+        navCountDelta(document.getElementById(id), null);
+      }
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -19176,7 +19256,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerPollErrorSince = 0;
     }
 
-    function renderStageTracker(data) {
+    function renderStageTracker(data, countRefresh = false) {
       if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
       // Row-action feedback rides the payload: a result toast leaves and a
       // row stops "acting" once the item it targets reads a new state.
@@ -19187,6 +19267,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Rows under a "Merging" hold the payload already dropped ride along (#15245).
       const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
+        stageTrackerSidebarCountsUnknown();
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
       }
@@ -19233,7 +19314,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
-      stageTrackerRenderWaiting(d, nowMs);
+      navCountDelta(badge, counts.badge, counts.badgeTitle, !!data || countRefresh);
+      stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
@@ -19331,7 +19413,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerNudgeAt = Date.now();
       fetchStageTracker();
     }
-
     async function fetchStageTracker() {
       try {
         if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadGrouping();
@@ -21936,7 +22017,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerMergingHoldTimer = 0;
       if (!_stageTracker || typeof _stageTracker !== 'object') return;
       stageTrackerNoteMerges(_stageTracker);
-      renderStageTracker();
+      renderStageTracker(undefined, true);
     }
 
     /* ---- tracker-cues: merged — pinned row, glyph flight, "Merged" chip ---
@@ -22646,7 +22727,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (items only ever list open work and the audit side list is pr_merged
     // only); when a recently_closed list lands, mark those issue keys true
     // in stageTrackerMergeState and they will zap through the same path.
-
     /* ---- Merge queue popover (hivecommons/hive#15395) ----------------------
        The sticky bar's "Merge queue" chip lists every merge train in the
        payload in merge order — #, title, state, ETA — so an operator can
@@ -23552,8 +23632,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // older spoke sends items without the header block.
     function stageTrackerWaitingOnYou(d) {
       const w = d && d.waiting_on_human;
-      if (w && Array.isArray(w.items)) return { count: Number(w.count) || w.items.length, items: w.items };
-      const items = (Array.isArray(d?.items) ? d.items : []).filter(it => it && it.waiting_on_you && !it.nested_under)
+      if (w) return { count: Array.isArray(w.items) && Number.isSafeInteger(w.count) && w.count >= 0 ? w.count : null, items: Array.isArray(w.items) ? w.items : [] };
+      if (!Array.isArray(d?.items)) return { count: null, items: [] };
+      const items = d.items.filter(it => it && it.waiting_on_you && !it.nested_under)
         .map(it => ({ repo: it.repo, number: it.number, type: it.kind, kind: it.wait_kind || 'other-human-wait', since: it.stage_since, who: 'operator' }));
       return { count: items.length, items };
     }
@@ -23575,15 +23656,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Sidebar badge + topbar pill. Called from renderStageTracker on every
     // payload; the pill hides at zero, the badge keeps data-zero.
-    function stageTrackerRenderWaiting(d, nowMs) {
+    function stageTrackerRenderWaiting(d, nowMs, live = true) {
       const w = stageTrackerWaitingOnYou(d);
-      const title = stageTrackerWaitingTitle(w, nowMs);
       const badge = document.getElementById('activity-monitor-waiting-badge');
+      if (w.count === null) {
+        navCountDelta(badge, null);
+        _stageTrackerWaitingPrevCount = null;
+        return;
+      }
+      const title = stageTrackerWaitingTitle(w, nowMs);
       if (badge) {
         badge.textContent = String(w.count);
         badge.title = title;
         badge.setAttribute('aria-label', w.count + ' waiting on you');
         if (w.count) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', '');
+        navCountDelta(badge, w.count, w.count + ' waiting on you', live);
       }
       const pill = document.getElementById('oc-waiting-on-you');
       if (pill) {
@@ -37038,6 +37125,16 @@ function burnAreaChart() {
       return formatNumber(total) + ' fact' + (total === 1 ? '' : 's');
     }
 
+    // Validate the same layer totals used by the displayed facts badge.
+    // Missing layers are unknown, not an empty knowledge base.
+    function kbSidebarFactCount(stats) {
+      if (!stats || typeof stats.enabled !== 'boolean') return null;
+      if (!stats.enabled) return 0;
+      if (!Array.isArray(stats.layers) || stats.layers.some(l => !l || !Number.isSafeInteger(l.total_pages) || l.total_pages < 0)) return null;
+      const count = kbTotalFactsFromStats(stats);
+      return Number.isSafeInteger(count) ? count : null;
+    }
+
     // ── Document Sources ──
     const DOC_CONTENT_ICONS = { 'text/html': '🌐', 'application/pdf': '📄', 'text/plain': '📝', 'text/markdown': '📝', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📋' };
 
@@ -37116,13 +37213,21 @@ function burnAreaChart() {
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
         if (!r.ok) return;
         const prev = _kbCache;
-        _kbCache = await r.json();
+        const next = await r.json();
+        const kbBadge = document.getElementById('knowledge-sidebar-badge');
+        const kbFacts = kbSidebarFactCount(next);
+        if (kbFacts === null) {
+          navCountDelta(kbBadge, null);
+          return;
+        }
+        _kbCache = next;
         _kbCache._documents = (docsR && docsR.ok) ? await docsR.json() : [];
         setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
-        var kbBadge = document.getElementById('knowledge-sidebar-badge');
         if (kbBadge) {
-          var kbFacts = kbTotalFactsFromStats(_kbCache);
-          setSidebarCountBadge(kbBadge, _kbCache && _kbCache.enabled ? kbFacts : 0, kbFactsLabel(kbFacts));
+          // Toggling priming changes what the badge shows, not stored facts.
+          if (prev && prev.enabled !== _kbCache.enabled) navCountDelta(kbBadge, null);
+          setSidebarCountBadge(kbBadge, kbFacts, kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
+          navCountDelta(kbBadge, kbFacts, kbFactsLabel(kbFacts));
         }
         if (_kbInitialLoad && _kbCache && _kbCache.enabled) {
           _kbSetupView = 'none';
@@ -39285,7 +39390,6 @@ function burnAreaChart() {
       await kcSyncNow(name);
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
-
     // ── Vault Management ──
 
     function kbOpenVaults() {
@@ -40631,12 +40735,17 @@ function burnAreaChart() {
       refreshSectionCardShell('contributors-section');
       const sidebarBadge = document.getElementById('contributors-sidebar-badge');
       const statusBadge = document.getElementById('contributors-status-badge');
-      if (!pool) return;
-      const onlineCount = Number(pool.online) || 0;
-      const totalCount = Number(pool.registered) || 0;
+      if (!pool || !Number.isSafeInteger(pool.online) || pool.online < 0 ||
+          !Number.isSafeInteger(pool.registered) || pool.registered < 0) {
+        navCountDelta(sidebarBadge, null);
+        return;
+      }
+      const onlineCount = pool.online;
+      const totalCount = pool.registered;
       const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
       // Same two-part pill as Governor / Overview: "online/total".
       if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
+      navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
         statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
@@ -40668,7 +40777,6 @@ function burnAreaChart() {
     }
 
     // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit
-
     // ── System resource gauge history for sparklines ──
     // NOTE: these mini-sparklines still read this in-memory array, which resets
     // on reload. The disk/mem/cpu percentages ARE now persisted server-side in
