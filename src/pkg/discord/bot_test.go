@@ -1085,3 +1085,36 @@ func TestSendMessageTo_OtherChannelAndEmptyChannel(t *testing.T) {
 		t.Fatal("empty channel must error before any request")
 	}
 }
+
+func TestSendMessageTo_SuppressesMentions(t *testing.T) {
+	var body []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	b := newTestBot(ts, "chan")
+	if err := b.SendMessageTo("rfc-channel", "RFC: @everyone <@&123>"); err != nil {
+		t.Fatalf("SendMessageTo returned error: %v", err)
+	}
+
+	var got struct {
+		Content         string `json:"content"`
+		AllowedMentions struct {
+			Parse []string `json:"parse"`
+		} `json:"allowed_mentions"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got.Content != "RFC: @everyone <@&123>" {
+		t.Errorf("content changed: %q", got.Content)
+	}
+	if !strings.Contains(string(body), `"allowed_mentions":{"parse":[]}`) {
+		t.Errorf("allowed_mentions.parse must be an empty array, body: %s", body)
+	}
+	if got.AllowedMentions.Parse == nil || len(got.AllowedMentions.Parse) != 0 {
+		t.Errorf("allowed_mentions.parse = %#v, want empty non-nil", got.AllowedMentions.Parse)
+	}
+}
