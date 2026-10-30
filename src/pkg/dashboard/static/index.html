@@ -2137,6 +2137,8 @@
        list with one Preview button each plus a sample row the previews play on. */
     .sts-hint { color: var(--muted); font-size: var(--fs-xs); margin: 0; }
     .sts-row { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); flex-wrap: wrap; }
+    .sts-timing-input { width: 6em; }
+    .sts-timing-unit { color: var(--muted); }
     .sts-motion-list { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
     .sts-motion-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-sm); }
     .sts-motion-item:has(input:checked) { border-color: var(--line-strong); background: var(--panel-strong); color: var(--text); }
@@ -14625,6 +14627,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
     // / duplicate_issue carry the numbers).
     const STAGE_TRACKER_GATE_DUPLICATE_PREFIX = 'duplicate-of:';
+    // merge_gate.state of a PR the queue holds because an open PR in
+    // another lane claims the same issue and nobody has decided which
+    // lands (hivecommons/hive#15810): "claim-conflict:15793".
+    const STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX = 'claim-conflict:';
+    // Pure: the other claimant of a "claim-conflict:<n>" gate state; 0 for
+    // any other state.
+    function stageTrackerGateClaimConflictOf(state) {
+      state = String(state || '');
+      return state.indexOf(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX) === 0 ? Number(state.slice(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX.length)) || 0 : 0;
+    }
     // Pure: the PR number a "duplicate-of:<n>" gate state yields to; 0 for
     // any other state.
     function stageTrackerGateDuplicateOf(state) {
@@ -14639,6 +14651,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
       const dup = stageTrackerGateDuplicateOf(state);
       if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
+      // Inline prefix read (hivecommons/hive#15810): this function is
+      // lifted alone into node by the Go tests.
+      if (state.indexOf('claim-conflict:') === 0) {
+        const conflict = Number(state.slice('claim-conflict:'.length)) || 0;
+        if (conflict) return 'Held · duplicate of #' + conflict + ' · needs decision';
+      }
       if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
       const plain = state.replace(/[-_]+/g, ' ').trim();
       return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';
@@ -15539,6 +15557,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // kept one and holds this one — "Duplicate of #15402 · needs a
       // pick"; no clock, no train. Let hive decide on either row closes
       // the held one as superseded.
+      // Two open PRs for one issue in different lanes (hivecommons/hive#15810):
+      // the queue admits neither until a person keeps one and closes the
+      // other; the row's decision options name both PRs.
+      const conflictWith = typeof stageTrackerGateClaimConflictOf === 'function' ? stageTrackerGateClaimConflictOf(state) : 0;
+      if (conflictWith) {
+        const issue = Number(mg.duplicate_issue) || 0;
+        const tip = 'This PR and #' + conflictWith + ' both claim' + (issue ? ' #' + issue : ' the same issue') + " from different merge lanes. Hive's merge queue admits neither until one is closed or approved, so two implementations of one fix never both land. Keep this one (Approve) or close it as superseded by #" + conflictWith + '.' + lastSeen;
+        return { state, word: word, detail: 'needs decision', tip, cue: 'waiting', until: 0, duplicateOf: conflictWith };
+      }
       const dupOf = stageTrackerGateDuplicateOf(state);
       if (dupOf) {
         const issue = Number(mg.duplicate_issue) || 0;
@@ -21182,12 +21209,48 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // toast says why in plain words and carries the next actions.
     const STAGE_TRACKER_ACTION_NO_EFFECT = 'no-effect';
     const STAGE_TRACKER_RESULT_TOAST_MAX = 5;
-    // An informational result toast ("adopted", "/lgtm posted", a no-op)
-    // closes itself after this long, with the countdown bar and hover /
-    // focus pause every timed toast gets; it still leaves earlier on × or
-    // when the tracker reports the target in a new state. Errors and
-    // toasts carrying next-action buttons wait for the operator instead.
-    const STAGE_TRACKER_RESULT_TOAST_MS = 15000;
+    // Tracker toast lifetimes (hivecommons/hive#15813). An informational
+    // result toast ("adopted", "/lgtm posted", a no-op) and the waiting-on-you
+    // nudge close after the info duration; an
+    // error result closes after the error duration (it keeps its × for an
+    // earlier dismissal); a toast carrying next-action buttons is a prompt
+    // and waits for the operator. Both durations are the hive's
+    // dashboard.stage_tracker.toast_info_s / toast_error_s, read from the
+    // tracker payload's settings block; this browser's localStorage copy
+    // is only the fallback for when the server write was refused.
+    const STAGE_TRACKER_TOAST_DEFAULT_S = Object.freeze({ info: 15, error: 30 });
+    const STAGE_TRACKER_TOAST_MIN_S = 3;
+    const STAGE_TRACKER_TOAST_MAX_S = 120;
+    const STAGE_TRACKER_TOAST_KEY = 'hive.tracker.toastS';
+    // The merge banner stays this many times longer than an info toast
+    // (30 s at the default), so the two move together.
+    const STAGE_TRACKER_MERGE_BANNER_FACTOR = 2;
+    // Pure: a toast duration in seconds, or 0 when the value is not a
+    // usable number (0 itself means "the default").
+    function stageTrackerToastSecondsValid(v) {
+      const n = Number(v);
+      if (!isFinite(n) || n <= 0) return 0;
+      return Math.max(STAGE_TRACKER_TOAST_MIN_S, Math.min(Math.round(n), STAGE_TRACKER_TOAST_MAX_S));
+    }
+    // Pure: the effective duration in seconds for kind ('info' | 'error').
+    // This browser's fallback copy wins when present — it only exists when
+    // the hive refused the write, so the payload still carries the old
+    // value — then the server's settings block, then the default.
+    function stageTrackerToastSeconds(kind, settings, local) {
+      kind = kind === 'error' ? 'error' : 'info';
+      const fromLocal = stageTrackerToastSecondsValid(local && local[kind]);
+      if (fromLocal) return fromLocal;
+      const fromServer = stageTrackerToastSecondsValid(settings && settings['toast_' + kind + '_s']);
+      if (fromServer) return fromServer;
+      return STAGE_TRACKER_TOAST_DEFAULT_S[kind];
+    }
+    function stageTrackerToastLocal() {
+      try { const v = JSON.parse(localStorage.getItem(STAGE_TRACKER_TOAST_KEY) || 'null'); return v && typeof v === 'object' ? v : null; } catch { return null; }
+    }
+    function stageTrackerToastMs(kind) {
+      return stageTrackerToastSeconds(kind, _stageTracker && _stageTracker.settings, stageTrackerToastLocal()) * 1000;
+    }
+    function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
@@ -21322,8 +21385,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let _stageTrackerResultToasts = [];
     // Build and show the result toast; it leaves on ×, when the tracker
     // reports the target in a new state (see stageTrackerResultToastsSync)
-    // or, for a plain informational result, after
-    // STAGE_TRACKER_RESULT_TOAST_MS (see stageTrackerResultToastTimed).
+    // or, for a plain informational result, after the info toast duration
+    // (see stageTrackerResultToastTimed); an error leaves after the error
+    // toast duration.
     function stageTrackerResultToast(result, item, ctx) {
       const text = stageTrackerResultText(result, item, ctx);
       const container = document.getElementById('toast-container');
@@ -21361,7 +21425,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (container) container.appendChild(el);
       makeToastSticky(el);
-      if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));
+      if (text.type === 'error') toastCountdownBar(el, stageTrackerToastMs('error'), () => dismissToast(el, null, null, true));
+      else if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, stageTrackerToastMs('info'), () => dismissToast(el, null, null, true));
       const key = stageTrackerTargetKey(result.target) || stageTrackerItemKey(item);
       const entry = { el, key, state: stageTrackerItemState(stageTrackerItemByKey(_stageTracker, key)), result, text };
       if (text.type !== 'error') _stageTrackerResultToasts.push(entry);
@@ -22520,7 +22585,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { number: num, head: `${num ? '#' + num + ' ' : ''}merged${b.preview ? ' (test)' : ''}`, text: `${b.title || b.repo || ''}${paren ? ' (' + paren + ')' : ''}`.trim() };
     }
     // Stateful: a persistent banner, bottom right, for one merge — stays
-    // until dismissed or STAGE_TRACKER_MERGE_BANNER_MS, stacked when
+    // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
+    // duration, STAGE_TRACKER_MERGE_BANNER_MS at the default), stacked when
     // several, with a "show row" link while the row is on the board.
     function stageTrackerMergeBanner(b) {
       if (!document.body) return null;
@@ -22539,7 +22605,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
-      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), STAGE_TRACKER_MERGE_BANNER_MS);
+      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), stageTrackerMergeBannerMs());
       return el;
     }
     function stageTrackerMergeBannerDismiss(el) {
@@ -23095,7 +23161,81 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + stageTrackerConfirmSectionHtml(state.skippedConfirms)
         + stageTrackerCelebrateSectionHtml(state.celebrate !== false, state.celebrateGlyph)
         + stageTrackerNoteTuckSectionHtml(state.noteTuck !== false)
+        + stageTrackerTimingSectionHtml(state.timing || {})
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
+    }
+    // Pure: the Toasts & timing section (hivecommons/hive#15813) — the info
+    // and error toast durations and the contributor lane's pre-merge soak.
+    // Values are the hive's (every browser sees the same), written through
+    // the dashboard's config overlay so they survive a reload and a roll.
+    function stageTrackerTimingSectionHtml(t) {
+      const num = (id, action, value, min, max, unit, label) => `<label class="overview-settings-field">${label} <span class="sts-timing-unit">(${unit})</span><input type="number" class="sts-timing-input" id="${id}" min="${min}" max="${max}" step="1" value="${esc(String(value))}" data-change-action="${action}" data-arg-types="t" aria-label="${label} in ${unit}"></label>`;
+      const info = stageTrackerToastSecondsValid(t.toastInfoS) || STAGE_TRACKER_TOAST_DEFAULT_S.info;
+      const error = stageTrackerToastSecondsValid(t.toastErrorS) || STAGE_TRACKER_TOAST_DEFAULT_S.error;
+      const soak = Number(t.soakMinutes) >= 1 ? Math.round(Number(t.soakMinutes)) : STAGE_TRACKER_SOAK_DEFAULT_MIN;
+      return `<section class="overview-settings-section" id="sts-timing" aria-labelledby="sts-timing-title">
+          <div class="overview-settings-card-title" id="sts-timing-title">Toasts &amp; timing</div>
+          <p class="sts-hint">How long the tracker's toasts stay: result and waiting-on-you toasts use the info duration, failed actions the error duration, and the merge banner twice the info duration. ${STAGE_TRACKER_TOAST_MIN_S}–${STAGE_TRACKER_TOAST_MAX_S} s; every toast keeps its × and pauses while hovered. Saved for the whole hive (dashboard.stage_tracker.toast_info_s / toast_error_s).</p>
+          <div class="sts-row">${num('sts-toast-info', 'stageTrackerToastInfoChange', info, STAGE_TRACKER_TOAST_MIN_S, STAGE_TRACKER_TOAST_MAX_S, 's', 'Info toast')}${num('sts-toast-error', 'stageTrackerToastErrorChange', error, STAGE_TRACKER_TOAST_MIN_S, STAGE_TRACKER_TOAST_MAX_S, 's', 'Error toast')}<span class="text-muted" id="sts-toast-note">${t.fallback ? 'Saved in this browser only — the hive refused the write.' : 'Defaults ' + STAGE_TRACKER_TOAST_DEFAULT_S.info + ' s / ' + STAGE_TRACKER_TOAST_DEFAULT_S.error + ' s.'}</span></div>
+          <p class="sts-hint">The contributor lane holds a green head this long before it merges (auto_merge.contributor_lane.soak_minutes, default ${STAGE_TRACKER_SOAK_DEFAULT_MIN}). The lane re-reads it on every pass, so a running soak follows the new window too — a head counts as soaked once it has been green for this long.</p>
+          <div class="sts-row">${num('sts-soak', 'stageTrackerSoakChange', soak, 1, 100000, 'minutes', 'Pre-merge soak')}</div>
+        </section>`;
+    }
+    const STAGE_TRACKER_SOAK_DEFAULT_MIN = 30;
+    // The settings the Timing section shows: the tracker payload's block
+    // (the hive's values), with the browser fallback when a write failed.
+    function stageTrackerTimingState() {
+      const st = (_stageTracker && _stageTracker.settings) || {};
+      const local = stageTrackerToastLocal();
+      return {
+        toastInfoS: stageTrackerToastSeconds('info', st, local),
+        toastErrorS: stageTrackerToastSeconds('error', st, local),
+        soakMinutes: st.soak_minutes,
+        fallback: !!(local && local.fallback),
+      };
+    }
+    function stageTrackerTimingHeaders() {
+      return Object.assign({ 'Content-Type': 'application/json' }, typeof _inceptionAuthHeaders === 'function' ? _inceptionAuthHeaders() : {});
+    }
+    // Save one toast duration: the hive first (PUT /api/config/dashboard),
+    // this browser's localStorage only when that write is refused.
+    async function stageTrackerSaveToastSeconds(kind, input) {
+      const secs = stageTrackerToastSecondsValid(input && input.value);
+      if (!secs) { if (input) input.value = String(stageTrackerToastSeconds(kind, _stageTracker && _stageTracker.settings, stageTrackerToastLocal())); return false; }
+      if (input) input.value = String(secs);
+      const field = 'toast_' + kind + '_s';
+      let saved = false;
+      try {
+        const r = await fetch('/api/config/dashboard', { method: 'PUT', headers: stageTrackerTimingHeaders(), body: JSON.stringify({ stage_tracker: { [field]: secs } }) });
+        saved = !!(r && r.ok);
+      } catch { saved = false; }
+      if (saved) {
+        if (_stageTracker) { _stageTracker.settings = Object.assign({}, _stageTracker.settings, { [field]: secs }); }
+        try { localStorage.removeItem(STAGE_TRACKER_TOAST_KEY); } catch {}
+      } else if (!(window.hiveKioskMode && window.hiveKioskMode())) {
+        try { localStorage.setItem(STAGE_TRACKER_TOAST_KEY, JSON.stringify(Object.assign({}, stageTrackerToastLocal() || {}, { [kind]: secs, fallback: true }))); } catch {}
+      }
+      stageTrackerRenderSettings();
+      if (typeof showToast === 'function') showToast(saved ? (kind === 'error' ? 'Error' : 'Info') + ' toasts now stay ' + secs + ' s' : 'Could not save to the hive — ' + secs + ' s applies in this browser only', saved ? 'success' : 'warning');
+      return saved;
+    }
+    function stageTrackerToastInfoChange(input) { return stageTrackerSaveToastSeconds('info', input); }
+    function stageTrackerToastErrorChange(input) { return stageTrackerSaveToastSeconds('error', input); }
+    // Save the contributor lane's soak through the auto-merge config
+    // endpoint (the same write the Settings page makes).
+    async function stageTrackerSoakChange(input) {
+      const mins = Math.round(Number(input && input.value));
+      if (!isFinite(mins) || mins < 1) { if (input) input.value = String(stageTrackerTimingState().soakMinutes || STAGE_TRACKER_SOAK_DEFAULT_MIN); return false; }
+      let ok = false, msg = '';
+      try {
+        const r = await fetch('/api/config/auto-merge', { method: 'PUT', headers: stageTrackerTimingHeaders(), body: JSON.stringify({ contributor_lane: { soak_minutes: mins } }) });
+        ok = !!(r && r.ok);
+        if (!ok && r) { try { const j = await r.json(); msg = j && j.error ? j.error : ''; } catch {} }
+      } catch (e) { msg = e && e.message ? e.message : ''; }
+      if (ok && _stageTracker) _stageTracker.settings = Object.assign({}, _stageTracker.settings, { soak_minutes: mins });
+      stageTrackerRenderSettings();
+      if (typeof showToast === 'function') showToast(ok ? 'Pre-merge soak is now ' + mins + ' min — applies on the lane\'s next pass' : 'Could not save the soak' + (msg ? ': ' + msg : ''), ok ? 'success' : 'error');
+      return ok;
     }
     // Pure: the Merges section — the "Celebrate merges" toggle, the glyph.
     function stageTrackerCelebrateSectionHtml(on, glyph) {
@@ -23103,7 +23243,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const opts = Object.keys(STAGE_TRACKER_CELEBRATE_GLYPHS).map(id => `<option value="${esc(id)}"${id === glyphId ? ' selected' : ''}>${esc(STAGE_TRACKER_CELEBRATE_GLYPHS[id])}${id === STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT ? ' (default)' : ''}</option>`).join('');
       return `<section class="overview-settings-section" id="sts-celebrate" aria-labelledby="sts-celebrate-title">
           <div class="overview-settings-card-title" id="sts-celebrate-title">Merges</div>
-          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a glyph (the bee) rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count rolls up like an odometer, and a banner at the bottom right names the merge until dismissed (or 30 s). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
+          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a glyph (the bee) rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count rolls up like an odometer, and a banner at the bottom right names the merge until dismissed (or twice the info toast duration — see Toasts &amp; timing). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
           <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange" data-arg-types="c"${on ? ' checked' : ''}>Celebrate merges <span class="text-muted">(default on)</span></label><label class="overview-settings-field">Glyph <select class="ham-select" id="sts-celebrate-glyph" data-change-action="stageTrackerCelebrateGlyphChange" data-arg-types="v" aria-label="Celebration glyph">${opts}</select></label><button type="button" class="hv-btn btn-sm" data-action="stageTrackerTestCelebration" data-stop="1" title="Close this dialog and play one celebration on a row in view — the count does not change">Test celebration</button></div>
         </section>`;
     }
@@ -23174,7 +23314,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), timing: stageTrackerTimingState(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }
@@ -23395,7 +23535,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        rises. All three land on the Activity Monitor with the Waiting on you
        filter (?filter=waiting-on-you deep-links to the same view). */
     const STAGE_TRACKER_WAITING_TOAST_GAP_MS = 10 * 60 * 1000;
-    const STAGE_TRACKER_WAITING_TOAST_MS = 12000;
     const STAGE_TRACKER_WAITING_TOOLTIP_MAX = 5;
     const STAGE_TRACKER_WAITING_TOAST_NUMBERS = 3;
     const STAGE_TRACKER_WAITING_TOAST_KEY = 'hive-waiting-on-you-toast-at';
@@ -23471,7 +23610,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (nowMs - last < STAGE_TRACKER_WAITING_TOAST_GAP_MS) return;
       try { localStorage.setItem(STAGE_TRACKER_WAITING_TOAST_KEY, String(nowMs)); } catch {}
       if (typeof showToast !== 'function') return;
-      showToast(stageTrackerWaitingToastText(w), 'warning', { actionLabel: 'Show', onAction: showWaitingOnYou, autoDismissMs: STAGE_TRACKER_WAITING_TOAST_MS });
+      showToast(stageTrackerWaitingToastText(w), 'warning', { actionLabel: 'Show', onAction: showWaitingOnYou, autoDismissMs: stageTrackerToastMs('info') });
     }
 
     function stageTrackerWaitingToastText(w) {

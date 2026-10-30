@@ -10,7 +10,6 @@
        rises. All three land on the Activity Monitor with the Waiting on you
        filter (?filter=waiting-on-you deep-links to the same view). */
     const STAGE_TRACKER_WAITING_TOAST_GAP_MS = 10 * 60 * 1000;
-    const STAGE_TRACKER_WAITING_TOAST_MS = 12000;
     const STAGE_TRACKER_WAITING_TOOLTIP_MAX = 5;
     const STAGE_TRACKER_WAITING_TOAST_NUMBERS = 3;
     const STAGE_TRACKER_WAITING_TOAST_KEY = 'hive-waiting-on-you-toast-at';
@@ -86,7 +85,7 @@
       if (nowMs - last < STAGE_TRACKER_WAITING_TOAST_GAP_MS) return;
       try { localStorage.setItem(STAGE_TRACKER_WAITING_TOAST_KEY, String(nowMs)); } catch {}
       if (typeof showToast !== 'function') return;
-      showToast(stageTrackerWaitingToastText(w), 'warning', { actionLabel: 'Show', onAction: showWaitingOnYou, autoDismissMs: STAGE_TRACKER_WAITING_TOAST_MS });
+      showToast(stageTrackerWaitingToastText(w), 'warning', { actionLabel: 'Show', onAction: showWaitingOnYou, autoDismissMs: stageTrackerToastMs('info') });
     }
 
     function stageTrackerWaitingToastText(w) {

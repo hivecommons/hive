@@ -4966,6 +4966,51 @@ type DashboardStageTrackerConfig struct {
 	// age takes the muted-stale tone (hivecommons/hive#15784). 0 means the
 	// default (4); a negative value never marks the wait stale.
 	WaitingPushStaleH int `yaml:"waiting_push_stale_h,omitempty" json:"waiting_push_stale_h,omitempty"`
+	// ToastInfoS is how many seconds the activity monitor's informational
+	// toasts (action results, waiting-on-human nudges, the merge banner)
+	// stay up before dismissing themselves (hivecommons/hive#15813).
+	// 0 means the default (15); values are clamped to 3..120.
+	ToastInfoS int `yaml:"toast_info_s,omitempty" json:"toast_info_s,omitempty"`
+	// ToastErrorS is the same for error toasts. 0 means the default (30);
+	// values are clamped to 3..120.
+	ToastErrorS int `yaml:"toast_error_s,omitempty" json:"toast_error_s,omitempty"`
+}
+
+// Defaults and bounds for dashboard.stage_tracker.toast_info_s and
+// toast_error_s. The bounds are shared with the settings modal's number
+// fields and the PUT validation so every path agrees on what is legal.
+const (
+	DefaultStageTrackerToastInfoS  = 15
+	DefaultStageTrackerToastErrorS = 30
+	MinStageTrackerToastS          = 3
+	MaxStageTrackerToastS          = 120
+)
+
+// stageTrackerToastSeconds applies the shared default/clamp rule for a
+// toast duration knob.
+func stageTrackerToastSeconds(configured, def int) int {
+	if configured == 0 {
+		return def
+	}
+	return min(max(configured, MinStageTrackerToastS), MaxStageTrackerToastS)
+}
+
+// StageTrackerToastInfo is the effective dashboard.stage_tracker.toast_info_s
+// as a duration.
+func (c *Config) StageTrackerToastInfo() time.Duration {
+	if c == nil {
+		return DefaultStageTrackerToastInfoS * time.Second
+	}
+	return time.Duration(stageTrackerToastSeconds(c.Dashboard.StageTracker.ToastInfoS, DefaultStageTrackerToastInfoS)) * time.Second
+}
+
+// StageTrackerToastError is the effective
+// dashboard.stage_tracker.toast_error_s as a duration.
+func (c *Config) StageTrackerToastError() time.Duration {
+	if c == nil {
+		return DefaultStageTrackerToastErrorS * time.Second
+	}
+	return time.Duration(stageTrackerToastSeconds(c.Dashboard.StageTracker.ToastErrorS, DefaultStageTrackerToastErrorS)) * time.Second
 }
 
 // defaultStageTrackerWaitingPushStale is the default

@@ -314,6 +314,15 @@ func humanizeStageReason(reason string) string {
 		return clause + " — approved by @" + approver
 	}
 	lower := strings.ToLower(r)
+	if front, ok := strings.CutPrefix(r, "base-refresh:queued-behind#"); ok {
+		if front == "0" {
+			return "waiting for admission to final base preparation"
+		}
+		return "queued for base refresh behind PR #" + front
+	}
+	if r == "base-refresh:preparing" {
+		return "preparing the current base; current-head CI and review must complete"
+	}
 	switch lower {
 	case "actionable", "live agent claim", "live issue claim", "open pr covers it":
 		return ""
