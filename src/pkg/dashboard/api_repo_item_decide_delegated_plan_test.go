@@ -348,6 +348,7 @@ func TestDelegatedDecisionPlanIssueAndAdvisory(t *testing.T) {
 func TestDelegatedDecisionPlanAdoptedRequiresHumanIsFixersNotCI(t *testing.T) {
 	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "unstable", prTidePending: true, prLabels: []string{"stage/085-needs-decision"}}
 	srv := newDelegatedServer(t, mock)
+	srv.stageStore = stagelabels.NewStore("", time.Now)
 	key := stagelabels.Key("testorg/testrepo", 8)
 	srv.stageStore.Observe(key, stagelabels.NeedsDecision, stageengine.StageReasonVerdictRequiresHuman)
 	srv.stageStore.MarkAdoptedInPlace(key, "feedfacefeedfacefeedfacefeedfacefeedface", "contributor-offline", time.Now())
@@ -386,6 +387,7 @@ func TestDelegatedDecisionPlanAdoptedRequiresHumanIsFixersNotCI(t *testing.T) {
 	// the plan never says CI is red of a head with no failing check.
 	mock2 := &repoItemDecisionMock{prForeign: true, prMergeState: "unstable", prTidePending: true, prLabels: []string{"stage/085-needs-decision"}}
 	srv2 := newDelegatedServer(t, mock2)
+	srv2.stageStore = stagelabels.NewStore("", time.Now)
 	srv2.stageStore.Observe(key, stagelabels.NeedsDecision, stageengine.StageReasonVerdictRequiresHuman)
 	w = postDelegatedPlan(t, srv2, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
 	if w.Code != http.StatusOK {
