@@ -1752,6 +1752,24 @@
     .cue-event.cue-event-fading { opacity: 0.55; }
     .cue-setback .cue-event-who { color: var(--status-error); }
     .cue-merged .cue-event-who { color: var(--green); }
+    /* Hive note, show then tuck: with auto-collapse on the line is
+       [icon][body]; tucking wipes the body away from its right edge
+       (clip-path) while the text slides a few px left and fades, so it
+       reads as sliding into the ⬡-i icon. The line keeps one fixed height
+       either way so the chevrons above never shift. The icon is the only
+       click target; hover shows its tooltip (the whole note and its age).
+       Reduced motion: an instant toggle. */
+    .cue-event.cue-event-tuckable { display: flex; align-items: center; gap: 0; height: 1.6em; line-height: 1.6em; overflow: hidden; }
+    .cue-event-ico { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 1.6em; height: 1.6em; margin: 0 var(--sp-1) 0 0; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; transition: color 200ms ease-in-out, background 200ms ease-in-out; }
+    .cue-event-ico:hover, .cue-event-ico:focus-visible { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+    .cue-event-ico:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: 1px; }
+    .cue-event-ico-svg { width: 1em; height: 1em; }
+    .cue-event-tucked .cue-event-ico { color: var(--text); }
+    .cue-event-body { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: 1; transform: none; clip-path: inset(0 0 0 0); transition: clip-path 400ms ease-in-out, opacity 350ms ease-in-out, transform 400ms ease-in-out; }
+    .cue-event-tucked .cue-event-body { opacity: 0; transform: translateX(-8px); clip-path: inset(0 100% 0 0); pointer-events: none; }
+    .cue-event-tuckable .cue-event-who { margin-right: var(--sp-1); }
+    @media (prefers-reduced-motion: reduce) { .cue-event-body, .cue-event-ico { transition: none; } }
+    .ham-rm-preview .cue-event-body { transition: none; }
     @keyframes cue-acting-stripes { to { background-position: 34px 0; } }
     @keyframes cue-event-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
     /* Merged: the row is pinned for a moment, its ✓ cell glows, a small
@@ -17220,9 +17238,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let _stageTrackerEvents = {};
     // Pure: the events map after payload d at nowMs — new lines for what
     // changed, expired lines gone.
-    function stageTrackerEventsNext(events, prevStates, nextStates, stages, nowMs) {
+    // ttlMs (default STAGE_TRACKER_EVENT_MS) is how long a line lives
+    // untouched; Infinity (auto-collapse on) keeps it, tucked into its icon,
+    // until a newer line replaces it or its row leaves the payload.
+    function stageTrackerEventsNext(events, prevStates, nextStates, stages, nowMs, ttlMs) {
+      const ttl = typeof ttlMs === 'number' ? ttlMs : STAGE_TRACKER_EVENT_MS;
       const out = {};
-      for (const k of Object.keys(events || {})) if (nowMs - events[k].at < STAGE_TRACKER_EVENT_MS) out[k] = events[k];
+      for (const k of Object.keys(events || {})) if (nowMs - events[k].at < ttl && (!prevStates || ttl !== Infinity || nextStates[k])) out[k] = events[k];
       if (!prevStates) return out;
       for (const k of Object.keys(nextStates)) {
         const text = stageTrackerEventText(prevStates[k], nextStates[k], stages);
@@ -17233,8 +17255,127 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNoteEvents(d, nowMs) {
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       const next = stageTrackerStateMap(d && d.items);
-      _stageTrackerEvents = stageTrackerEventsNext(_stageTrackerEvents, _stageTrackerStates, next, d && d.stages, nowMs);
+      const ttl = typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting() ? Infinity : STAGE_TRACKER_EVENT_MS;
+      _stageTrackerEvents = stageTrackerEventsNext(_stageTrackerEvents, _stageTrackerStates, next, d && d.stages, nowMs, ttl);
       _stageTrackerStates = next;
+    }
+    /* ---- Hive notes: show, then tuck ---------------------------------------
+       Owner (2026-10-29): "show the hive comments when they are new for
+       30s. then they should shrink to the left inside a hive-info icon.
+       someone can click on the icon to expand the info for another 30s.
+       then it shrinks back again." A line opens for
+       STAGE_TRACKER_CAPTION_SHOW_MS from the moment it is written (or
+       re-opened by a click), then tucks: the text slides leftward into the
+       ⬡-i icon that sits where "Hive:" sat; the icon's tooltip keeps the
+       whole line and its age. Click / Enter / Space on the icon re-opens it
+       for another window, or tucks it at once while open. Hover never
+       opens it. One shared timer (never one per row) fires the next tuck;
+       a hidden tab pauses every open window (stageTrackerNoteShift) so a
+       line is not spent unseen. The tucked state lives in the events map
+       and is applied in place; stageTrackerRowSrcKey ignores it so a tuck
+       never swaps the row's node mid-slide. The ⚙ → Hive notes toggle
+       ("Auto-collapse hive notes", default on) turns this off and the
+       line keeps the old 2-minute fade instead. */
+    const STAGE_TRACKER_CAPTION_SHOW_MS = 30000;
+    const STAGE_TRACKER_NOTE_TUCK_KEY = 'hive.tracker.notetuck';
+    const STAGE_TRACKER_NOTE_LABEL = 'Hive note';
+    const STAGE_TRACKER_NOTE_ICON = '<svg class="cue-event-ico-svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/><path d="M8 7.2v4"/><circle cx="8" cy="5" r=".4"/></svg>';
+    function stageTrackerNoteTuckSetting() {
+      try { return localStorage.getItem(STAGE_TRACKER_NOTE_TUCK_KEY) !== '0'; } catch { return true; }
+    }
+    function stageTrackerSetNoteTuck(on) {
+      try { localStorage.setItem(STAGE_TRACKER_NOTE_TUCK_KEY, on ? '1' : '0'); } catch {}
+      if (typeof renderStageTracker === 'function') renderStageTracker();
+    }
+    function stageTrackerNoteTuckChange(checked) { stageTrackerSetNoteTuck(!!checked); }
+    // Pure: whether the line is open (text showing) at nowMs. auto=false
+    // (toggle off) keeps every line open.
+    function stageTrackerNoteOpen(ev, nowMs, auto) {
+      if (!ev) return false;
+      if (auto === false) return true;
+      if (ev.tucked) return false;
+      return nowMs - (typeof ev.openAt === 'number' ? ev.openAt : ev.at) < STAGE_TRACKER_CAPTION_SHOW_MS;
+    }
+    // Pure: the event after a click at nowMs — tucked at once while open,
+    // re-opened for another window while tucked.
+    function stageTrackerNoteToggled(ev, nowMs, auto) {
+      if (!ev) return ev;
+      if (stageTrackerNoteOpen(ev, nowMs, auto)) return Object.assign({}, ev, { tucked: true });
+      return Object.assign({}, ev, { tucked: false, openAt: nowMs });
+    }
+    // Pure: ms until the next open line tucks; Infinity when none is open.
+    function stageTrackerNoteNextDue(events, nowMs, auto) {
+      let due = Infinity;
+      if (auto === false) return due;
+      for (const k of Object.keys(events || {})) {
+        const ev = events[k];
+        if (!stageTrackerNoteOpen(ev, nowMs, auto)) continue;
+        due = Math.min(due, (typeof ev.openAt === 'number' ? ev.openAt : ev.at) + STAGE_TRACKER_CAPTION_SHOW_MS - nowMs);
+      }
+      return Math.max(0, due);
+    }
+    // Pure: every open window moved later by byMs (the time the tab was
+    // hidden); the age ("· 26s ago") keeps counting wall-clock time.
+    function stageTrackerNoteShift(events, byMs) {
+      const out = {};
+      for (const k of Object.keys(events || {})) {
+        const ev = events[k];
+        out[k] = ev && !ev.tucked ? Object.assign({}, ev, { openAt: (typeof ev.openAt === 'number' ? ev.openAt : ev.at) + byMs }) : ev;
+      }
+      return out;
+    }
+    // Pure: the icon's tooltip — the whole line and its age.
+    function stageTrackerNoteTitle(ev, nowMs) {
+      if (!ev) return '';
+      const age = stageTrackerAgoText(ev.at, nowMs);
+      return (ev.who === 'you' ? 'You' : 'Hive') + ': ' + ev.text + (age ? ' · ' + age : '');
+    }
+    let _stageTrackerNoteTimer = 0;
+    let _stageTrackerNoteHiddenAt = 0;
+    // Apply the open / tucked state to every line in place and arm the one
+    // shared timer for the next tuck.
+    function stageTrackerNoteSync(el, nowMs) {
+      if (!el || typeof el.querySelectorAll !== 'function') return;
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      const auto = stageTrackerNoteTuckSetting();
+      // While the tab is hidden the open windows are frozen at the moment
+      // it went hidden (the age keeps counting).
+      const openNow = _stageTrackerNoteHiddenAt || nowMs;
+      for (const p of Array.from(el.querySelectorAll('.cue-event[data-cue-key]'))) {
+        const ev = _stageTrackerEvents[p.getAttribute('data-cue-key')];
+        const open = !ev || stageTrackerNoteOpen(ev, openNow, auto);
+        if (open) p.classList.remove('cue-event-tucked'); else p.classList.add('cue-event-tucked');
+        const btn = p.querySelector('.cue-event-ico');
+        if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); const t = stageTrackerNoteTitle(ev, nowMs); if (btn.title !== t) btn.title = t; }
+      }
+      stageTrackerNoteSchedule(nowMs);
+    }
+    function stageTrackerNoteSchedule(nowMs) {
+      if (_stageTrackerNoteTimer) { clearTimeout(_stageTrackerNoteTimer); _stageTrackerNoteTimer = 0; }
+      if (document.hidden) return;
+      const due = stageTrackerNoteNextDue(_stageTrackerEvents, nowMs, stageTrackerNoteTuckSetting());
+      if (due === Infinity) return;
+      _stageTrackerNoteTimer = setTimeout(() => { _stageTrackerNoteTimer = 0; stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), Date.now()); }, due);
+    }
+    // The icon's click (and Enter / Space, it is a button).
+    function stageTrackerNoteToggle(key) {
+      const ev = _stageTrackerEvents[key];
+      if (!ev) return;
+      const nowMs = Date.now();
+      _stageTrackerEvents[key] = stageTrackerNoteToggled(ev, nowMs, stageTrackerNoteTuckSetting());
+      stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), nowMs);
+    }
+    // Hidden tab: stop the clock on every open line; visible again: give
+    // back the hidden time and re-arm.
+    function stageTrackerNoteVisibility(hidden, nowMs) {
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      if (hidden) {
+        _stageTrackerNoteHiddenAt = nowMs;
+        if (_stageTrackerNoteTimer) { clearTimeout(_stageTrackerNoteTimer); _stageTrackerNoteTimer = 0; }
+        return;
+      }
+      if (_stageTrackerNoteHiddenAt) { _stageTrackerEvents = stageTrackerNoteShift(_stageTrackerEvents, nowMs - _stageTrackerNoteHiddenAt); _stageTrackerNoteHiddenAt = 0; }
+      stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), nowMs);
     }
     // The owner's own action writes the row's line at once ("you: approved").
     function stageTrackerNoteOwnerEvent(key, text, nowMs) {
@@ -17243,12 +17384,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Pure: the event line markup; the age is filled in place by
     // stageTrackerCueAgeSync so a ticking clock never re-renders the row.
+    // With auto-collapse (ctx.noteTuck, else the setting) the line carries
+    // its ⬡-i button and the tucked class for its state at nowMs, so a
+    // fresh node arrives already tucked; stageTrackerNoteSync keeps the
+    // state and the button's tooltip current in place.
     function stageTrackerEventHtml(key, ctx) {
       const ev = ctx && ctx.events ? ctx.events[key] : null;
       if (!ev) return '';
       const nowMs = ctx && typeof ctx.nowMs === 'number' ? ctx.nowMs : Date.now();
-      const fading = nowMs - ev.at > STAGE_TRACKER_EVENT_MS * 2 / 3;
-      return `<p class="cue-event${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}"><span class="cue-event-who">${esc(ev.who === 'you' ? 'You' : 'Hive')}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span></p>`;
+      const auto = ctx && typeof ctx.noteTuck === 'boolean' ? ctx.noteTuck : (typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting());
+      const fading = !auto && nowMs - ev.at > STAGE_TRACKER_EVENT_MS * 2 / 3;
+      const open = !auto || stageTrackerNoteOpen(ev, nowMs, auto);
+      const who = ev.who === 'you' ? 'You' : 'Hive';
+      const body = `<span class="cue-event-who">${esc(who)}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`;
+      if (!auto) return `<p class="cue-event${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}">${body}</p>`;
+      const ico = `<button type="button" class="cue-event-ico" aria-label="${STAGE_TRACKER_NOTE_LABEL}" aria-expanded="${open ? 'true' : 'false'}" title="${esc(stageTrackerNoteTitle(ev, nowMs))}" data-action="stageTrackerNoteToggle" data-arg0="${esc(key)}" data-stop="1">${STAGE_TRACKER_NOTE_ICON}</button>`;
+      return `<p class="cue-event cue-event-tuckable${open ? '' : ' cue-event-tucked'}" data-cue-key="${esc(key)}">${ico}<span class="cue-event-body">${body}</span></p>`;
     }
     const STAGE_TRACKER_CUE_TICK_MS = 15000;
     function stageTrackerCueAgeSync(el, nowMs) {
@@ -17259,6 +17410,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (n.textContent !== t) n.textContent = t;
       }
       if (typeof stageTrackerGateCountdownSync === 'function') stageTrackerGateCountdownSync(el, nowMs);
+      if (typeof stageTrackerNoteSync === 'function') stageTrackerNoteSync(el, nowMs);
     }
     let _stageTrackerCueTimer = null;
     function stageTrackerCueTick() {
@@ -17562,8 +17714,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // -- keyed row reconcile ---------------------------------------------
     // Pure: a row's source with the one-render move stamp removed, so the
     // render after a move sees the same row and keeps its (animating) node.
+    // The hive note's open / tucked state is applied in place
+    // (stageTrackerNoteSync), so it is not a reason to swap the node either.
     function stageTrackerRowSrcKey(html) {
-      return String(html || '').replace(/ data-ham-prev-col="\d+" data-ham-col="\d+"/g, '');
+      return String(html || '').replace(/ data-ham-prev-col="\d+" data-ham-col="\d+"/g, '').replace(/ cue-event-tucked"/g, '"').replace(/ aria-expanded="(?:true|false)"/g, '').replace(/ title="(?:You|Hive): [^"]*" data-action="stageTrackerNoteToggle"/g, ' data-action="stageTrackerNoteToggle"');
     }
     // Pure: whether the stamped move attributes name this strip.
     function stageTrackerRowHasMove(html) { return / data-ham-prev-col="\d+"/.test(String(html || '')); }
@@ -18279,6 +18433,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
+      ctx.noteTuck = stageTrackerNoteTuckSetting();
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
@@ -22092,6 +22247,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + stageTrackerRepoSectionHtml(state.repoChip, state.group)
         + stageTrackerConfirmSectionHtml(state.skippedConfirms)
         + stageTrackerCelebrateSectionHtml(state.celebrate !== false, state.celebrateGlyph)
+        + stageTrackerNoteTuckSectionHtml(state.noteTuck !== false)
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
     }
     // Pure: the Merges section — the "Celebrate merges" toggle, the glyph.
@@ -22105,6 +22261,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </section>`;
     }
     function stageTrackerCelebrateChange(checked) { stageTrackerSetCelebrate(!!checked); }
+    // Pure: the "Hive notes" section — the auto-collapse toggle.
+    function stageTrackerNoteTuckSectionHtml(on) {
+      return `<section class="overview-settings-section" id="sts-notetuck" aria-labelledby="sts-notetuck-title">
+          <div class="overview-settings-card-title" id="sts-notetuck-title">Hive notes</div>
+          <p class="sts-hint">The "Hive: …" line under a row's chevrons shows for ${Math.round(STAGE_TRACKER_CAPTION_SHOW_MS / 1000)} s when it is new, then slides left into a small ⬡ icon so the list stays quiet; the icon's tooltip keeps the whole note and its age, and a click (or Enter / Space) opens it for another ${Math.round(STAGE_TRACKER_CAPTION_SHOW_MS / 1000)} s. A hidden tab pauses the clock. Off, the line stays open and fades out after two minutes as before.</p>
+          <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-notetuck-on" data-change-action="stageTrackerNoteTuckChange" data-arg-types="c"${on ? ' checked' : ''}>Auto-collapse hive notes <span class="text-muted">(default on)</span></label></div>
+        </section>`;
+    }
     function stageTrackerCelebrateGlyphChange(v) { stageTrackerSetCelebrateGlyph(v); }
     // Pure: the first row whose box is inside the viewport (top edge in
     // view is enough), else the first row at all — so the test plays
@@ -22163,7 +22327,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }
@@ -46127,6 +46291,7 @@ function burnAreaChart() {
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'visible') sseWatchdogTick(true);
       if (document.visibilityState === 'visible') { agentLogsResumeIfSkipped(); stageTrackerResumeIfSkipped(); }
+      if (typeof stageTrackerNoteVisibility === 'function') stageTrackerNoteVisibility(document.visibilityState !== 'visible');
     });
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];
