@@ -1064,6 +1064,22 @@
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
     }
+    // Pure: the hover note for a refusal that belongs to an earlier head
+    // (merge_gate.prior_head_merge_failed*): the PR's head moved, or the
+    // record fell back below 080 to wait on CI, after GitHub refused the
+    // merge. The chevron reads the live stage; this line is the history —
+    // "merge attempt on previous head failed: branch protection". '' when
+    // there is none. Never a chevron word.
+    function stageTrackerPriorHeadMergeFailedNote(item) {
+      const mg = item && item.merge_gate;
+      if (!mg || (!mg.prior_head_merge_failed && !mg.prior_head_merge_failed_kind)) return '';
+      const why = String(mg.prior_head_merge_failed || '').trim();
+      const fallback = why && !mg.prior_head_merge_failed_kind ? stageTrackerMergeRefusalFromRaw(why) : null;
+      const kind = mg.prior_head_merge_failed_kind || (fallback && fallback.kind) || '';
+      const detail = kind === 'checks-pending' ? 'required checks had not reported' : (STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || stageTrackerMergeFailedShort(why));
+      const head = String(mg.prior_head_merge_failed_head || '').slice(0, 7);
+      return 'merge attempt on previous head' + (head ? ' ' + head : '') + ' failed: ' + detail;
+    }
     // Pure: a refusal's first line, cut to STAGE_TRACKER_MERGE_FAILED_SHORT_MAX
     // (tooltips and toasts; the pill detail comes from the refusal kind).
     function stageTrackerMergeFailedShort(why) {

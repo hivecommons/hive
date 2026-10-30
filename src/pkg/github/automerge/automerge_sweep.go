@@ -2021,7 +2021,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 
 	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
-	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
+	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, evaluatedHeadSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
@@ -2425,7 +2425,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 
 	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
-	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
+	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
@@ -2779,7 +2779,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 
 	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, pr, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
-	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
+	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
@@ -3195,9 +3195,9 @@ func mergeAPIErrorNotApplied(err error) error {
 // executeMergeEffect runs the merge call through the mutation boundary and
 // brackets it with a merge attempt (hivecommons/hive#15245) so the tracker
 // shows "Merging" for the call's duration and a refusal's reason after.
-func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
+func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, head string, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
 	slug := owner + "/" + repo
-	hgithub.BeginMergeAttempt(slug, number, hgithub.PRAuditPathSweep)
+	hgithub.BeginMergeAttemptOnHead(slug, number, hgithub.PRAuditPathSweep, head)
 	out, err := c.executeMergeEffectOnce(ctx, claim, owner, repo, number, merge)
 	switch {
 	case err != nil:

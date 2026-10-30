@@ -1213,6 +1213,8 @@ Every PR at the gate now carries `merge_gate: {state, reason, sweep_running, las
 | any stage after the merge call drew *N of M required status checks are expected* (`merge_failed_kind: checks-pending`, `merge_failed_checks`) | **Waiting for CI** | *4 checks* | ⟳ while the sweep is on it, else 🕓 — *hive tried to merge this (automerge sweep) 1m ago before its required checks had reported — 4 required checks haven't finished. It merges once they pass.* |
 
 A merge outcome (**Merging**, **Merge failed**, **Waiting for CI**) always lights the **Merge queue** column, whatever numeric stage the lane fell back to (hivecommons/docs#512 drew "Merge failed" in CI / Review because the PR sat at 060).
+
+A refusal is scoped to the head it failed on. Once the PR head moves (merge-from-base, a new push) or the record falls back below 080 to wait on CI (`required-check-pending:*`) after the refusal, the chevron reads the live stage word (**CI running · build-and-test**, **Review pending**) and the refusal survives only in the hover — *merge attempt on previous head 92d4cef failed: branch protection* (`merge_gate.prior_head_merge_failed`, `prior_head_merge_failed_kind`, `prior_head_merge_failed_text`, `prior_head_merge_failed_at`, `prior_head_merge_failed_head`). The chevron and the caption never disagree about whether a merge is failing now ([#15611](https://github.com/hivecommons/hive/issues/15611); hive#15574 read "Merge failed · branch protection" over a caption waiting on CI for the new head).
 | 110 | **Merged** (the ✓ cap) | — | — |
 
 #### Merging is held for the toast's lifetime
