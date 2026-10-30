@@ -370,6 +370,26 @@ func TestStageTrackerTakeoverQueuedAfterAdoptNow(t *testing.T) {
 	}
 }
 
+// A hold added after Adopt now: the engine stops at the hold without
+// consuming the request, so the row must not keep saying "queued".
+func TestStageTrackerTakeoverHoldAfterAdoptNowNotQueued(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyNever, offlinePresence(now.Add(-26*time.Hour)))
+	s.rerouteCandidates = func(string) []RerouteCandidate { return []RerouteCandidate{{Login: "bee2", Capable: true}} }
+	store.NoteAdoptionForced(stagelabels.Key("hivecommons/hive", 14524), "andan02", now.Add(-time.Minute))
+	pr := status.Repos[0].OpenPrs[0].(FrontendPR)
+	pr.Labels = append(pr.Labels, "hold")
+	status.Repos[0].OpenPrs[0] = pr
+	s.UpdateStatus(status)
+	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
+	if tk := it.Takeover; tk == nil || tk.AdoptNow || tk.AdoptNowReason != takeoverAdoptNowDisabledHold {
+		t.Fatalf("takeover = %+v", it.Takeover)
+	}
+	if a := it.Adoption; a != nil && (a.QueuedBy != "" || strings.HasPrefix(a.Text, "Adopting…")) {
+		t.Fatalf("adoption still queued under a hold: %+v", a)
+	}
+}
+
 func TestStageTrackerTakeoverDisabledReasons(t *testing.T) {
 	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
 	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyNever, offlinePresence(now.Add(-26*time.Hour)))

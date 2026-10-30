@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -128,7 +129,7 @@ func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 	if rec.AdoptedHead != "" && (it.Head == "" || rec.Adopted(it.Head) || rec.AdoptedInPlace()) {
 		return nil
 	}
-	if by, ok := rec.AdoptionForced(); ok {
+	if by, ok := rec.AdoptionForced(); ok && !slices.Contains(it.Modifiers, modHold) {
 		// An operator pressed Adopt now and the sweep has not landed yet:
 		// the row reads as acted on, whatever held adoption before.
 		out := &StageTrackerAdoption{Author: it.Author, Policy: policy, Due: true, QueuedBy: by, Nudges: rec.NudgeCount}
