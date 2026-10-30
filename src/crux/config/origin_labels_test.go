@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // Exactly one origin/* label: a caller's label is kept and canonicalised,
@@ -137,5 +138,17 @@ func TestOriginVocabularyIsConsistent(t *testing.T) {
 	}
 	if got, ok := FirstOriginLabel([]string{"kind/bug", "origin/forge", "origin/guide"}); !ok || got != "origin/forge" {
 		t.Fatalf("FirstOriginLabel = %q %v", got, ok)
+	}
+}
+
+func TestOriginSourceDescriptionsFitGitHubCap(t *testing.T) {
+	for _, source := range KnownOriginSources() {
+		desc, ok := OriginLabelDescription(OriginLabel(source))
+		if !ok {
+			t.Fatalf("no description for %q", source)
+		}
+		if n := utf8.RuneCountInString(desc); n > GitHubLabelDescriptionMax {
+			t.Errorf("origin/%s description is %d runes (max %d)", source, n, GitHubLabelDescriptionMax)
+		}
 	}
 }

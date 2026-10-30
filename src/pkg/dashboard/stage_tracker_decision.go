@@ -78,6 +78,13 @@ type StageTrackerDecisionOption struct {
 	// URL is set on link options (open:app-settings): the SPA opens it
 	// instead of posting an action (hivecommons/hive#15099).
 	URL string `json:"url,omitempty"`
+	// Lead marks a destructive option (decide:close-*) the row may show as
+	// its inline lead button. The SPA never leads a row with a close
+	// unless the server says the close is the answer — a reviewer naming
+	// the PR that supersedes this one (RedundantOf). Without it a human's
+	// PR waiting on its author led with "Close as superseded" just because
+	// the non-destructive options already sat in the Decide… submenu.
+	Lead bool `json:"lead,omitempty"`
 }
 
 // Action ids shared with the SPA's row context menu
@@ -558,7 +565,7 @@ func decisionForWaitingOnAuthor(it StageTrackerItem, held bool) *StageTrackerDec
 	if clause := decisionPlainReason(strings.TrimSpace(it.Reason)); strings.TrimSpace(it.Reason) != "" && clause != "the hive parked it" {
 		what = "a new commit (" + clause + ")"
 	}
-	d.Question = "This PR waits on " + who + " for " + what + ". The hive never rewrites a person's PR. Wait for them, or close it?"
+	d.Question = "This PR waits on " + who + " to push " + what + ". The hive never rewrites a person's PR; it waits unless you say otherwise."
 	d.Blocker = "Nothing for the hive to do until " + who + " pushes."
 	if held {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
@@ -890,6 +897,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 func decisionLeadWithCloseSuperseded(opts []StageTrackerDecisionOption, redundantOf int) []StageTrackerDecisionOption {
 	lead := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
 	lead.Consequence = "Closes this PR as superseded by #" + strconv.Itoa(redundantOf) + ", which already carries its change."
+	lead.Lead = true
 	out := make([]StageTrackerDecisionOption, 0, len(opts)+1)
 	out = append(out, lead)
 	for _, o := range opts {

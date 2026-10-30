@@ -358,11 +358,19 @@
       const server = d && Array.isArray(d.options) ? d.options : [];
       const out = [];
       for (const o of server) {
-        if (!o || !o.action || STAGE_TRACKER_GENERIC_ACTIONS.indexOf(o.action) >= 0 || o.action.indexOf('decide:') !== 0 || (taken && taken[o.action])) continue;
+        // A server-marked lead (`lead`) heads the menu even when the
+        // Decide… submenu lists the same verb generically: the row's
+        // answer is this one, with its consequence.
+        if (!o || !o.action || STAGE_TRACKER_GENERIC_ACTIONS.indexOf(o.action) >= 0 || o.action.indexOf('decide:') !== 0 || (taken && taken[o.action] && !o.lead)) continue;
         const allowed = stageTrackerActionAllowed(o.action, ctx);
         const enabled = !!o.enabled && allowed.enabled;
         const why = enabled ? '' : (o.enabled ? allowed.why : (o.reason_if_disabled || 'Not available on this row'));
-        out.push({ id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, hint: o.consequence || '', enabled, why, danger: /^decide:close-/.test(o.action), lead: true, target: dec.item });
+        // A destructive option never leads the row on its own: only when
+        // the server marks it (`lead`, the reviewer named the PR that
+        // supersedes this one) does a close become the inline button. It
+        // still sits in the ⋯ menu either way.
+        const danger = /^decide:close-/.test(o.action);
+        out.push({ id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, hint: o.consequence || '', enabled, why, danger, lead: !danger || !!o.lead, target: dec.item });
       }
       return out;
     }
@@ -434,8 +442,9 @@
       const lead = actions.find(a => a.lead);
       if (lead) return lead;
       const decide = actions.find(a => a.id === 'decide');
-      if (decide && Array.isArray(decide.submenu) && decide.submenu.length) {
-        const o = decide.submenu.find(x => x.enabled) || decide.submenu[0];
+      const safe = decide && Array.isArray(decide.submenu) ? decide.submenu.filter(x => x && !x.danger) : [];
+      if (safe.length) {
+        const o = safe.find(x => x.enabled) || safe[0];
         const enabled = !!decide.enabled && !!o.enabled;
         return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
       }
@@ -455,12 +464,28 @@
       const host = typeof window !== 'undefined' && window.location ? String(window.location.hostname || '') : '';
       if ((host === 'localhost' || host === '127.0.0.1') && typeof console !== 'undefined' && console.warn) console.warn('[tracker] ' + msg);
     }
+    // Pure: the lead the row itself renders. An issue row whose lead acts
+    // on a nested PR (stageTrackerDecisionTarget resolved to the one parked
+    // PR) renders none when that PR has its own sub-row carrying the same
+    // button — "Let hive decide" showed twice per item (hive#15320 →
+    // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
+    // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    function stageTrackerLeadActionOnRow(item, ctx, subRows) {
+      const a = stageTrackerLeadAction(item, ctx);
+      if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
+      const t = a.target;
+      if (t.kind !== 'pr') return a;
+      const lp = subRows.find(x => x && Number(x.number) === Number(t.number) && !x.superseded && (!x.repo || !t.repo || x.repo === t.repo));
+      if (!lp) return a;
+      const sub = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : null;
+      return sub && stageTrackerLeadAction(sub, ctx) ? null : a;
+    }
     // The inline lead button for a row: a real <button> carrying the same
     // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
     // '' when the row has no lead. Click handling is delegated in
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
-    function stageTrackerLeadActionHtml(item, ctx) {
-      const a = stageTrackerLeadAction(item, ctx);
+    function stageTrackerLeadActionHtml(item, ctx, subRows) {
+      const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');

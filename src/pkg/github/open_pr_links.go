@@ -30,7 +30,7 @@ const (
 	// — the stage engine re-derives the issue's stage from the PR itself.
 	HasOpenPRLabel            = "has-open-pr"
 	hasOpenPRLabelColor       = "0e8a16"
-	hasOpenPRLabelDescription = "An open pull request already links this issue with Fixes/Closes/Resolves; the hive will not dispatch it again"
+	hasOpenPRLabelDescription = "An open PR already links this issue with Fixes/Closes/Resolves; the hive will not dispatch it again"
 
 	// ClaimBlockReasonOpenPRPrefix prefixes the IssueClaimBlockReason for an
 	// issue an open PR already links: "open PR already linked: #14775".

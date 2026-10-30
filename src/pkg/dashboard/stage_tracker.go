@@ -636,7 +636,10 @@ type StageTrackerLinkedPR struct {
 	SoakRemainingSeconds int64                   `json:"soak_remaining_seconds,omitempty"`
 	MergeGate            *StageTrackerMergeGate  `json:"merge_gate,omitempty"`
 	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
-	Soak                 *StageTrackerSoak       `json:"soak,omitempty"`
+	// LeftTrain mirrors the nested PR's own row field so the sub-row's
+	// hover can say it left its train while under repair.
+	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`
+	Soak      *StageTrackerSoak      `json:"soak,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
 	// LastOperatorAction / OperatorActionCount mirror the nested PR's own

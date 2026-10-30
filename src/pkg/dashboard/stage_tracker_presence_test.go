@@ -54,8 +54,10 @@ func TestStageTrackerPresenceOnlineWaits(t *testing.T) {
 	}
 }
 
-// Offline clanker: red square, next=adopt, adopt_at = last heartbeat (when
-// later than the nudge) + after_offline — adoptionDue's offline rule.
+// Offline clanker: red square, next=adopt, adopt_at per
+// automerge.AutoAdoption's offline rule: a heartbeat after the nudge
+// extends the wait by at most one window (nudge + after_offline), so a
+// heartbeat 23h after the first nudge does not restart a 4h clock.
 func TestStageTrackerPresenceOfflineAdopts(t *testing.T) {
 	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
 	seen := now.Add(-3 * time.Hour)
@@ -65,9 +67,16 @@ func TestStageTrackerPresenceOfflineAdopts(t *testing.T) {
 	if p == nil || p.State != "offline" || p.Kind != "clanker" || p.Next != "adopt" {
 		t.Fatalf("presence = %+v", p)
 	}
-	if p.AdoptAt == nil || !p.AdoptAt.Equal(seen.Add(4*time.Hour)) {
+	nudged := now.Add(-26 * time.Hour)
+	if p.AdoptAt == nil || !p.AdoptAt.Equal(nudged.Add(8*time.Hour)) {
+		t.Fatalf("adopt_at = %v, want nudge+4h (one-window cap)+4h", p.AdoptAt)
+	}
+	// A heartbeat inside the first window counts from the heartbeat.
+	s.presenceLookup = offlinePresence(nudged.Add(time.Hour))
+	if p = presenceOf(t, s, store, status, now, 14524); p.AdoptAt == nil || !p.AdoptAt.Equal(nudged.Add(5*time.Hour)) {
 		t.Fatalf("adopt_at = %v, want last_seen+4h", p.AdoptAt)
 	}
+	s.presenceLookup = offlinePresence(seen)
 	// A heartbeat older than the first nudge: the clock counts from the nudge.
 	s.presenceLookup = offlinePresence(now.Add(-40 * time.Hour))
 	if p = presenceOf(t, s, store, status, now, 14524); p.AdoptAt == nil || !p.AdoptAt.Equal(now.Add(-26*time.Hour).Add(4*time.Hour)) {
@@ -300,7 +309,7 @@ const w = stageTrackerPresenceChipHtml(online);
 assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s clanker \(online, last seen 2 min ago\) — hive is waiting for them" aria-label="Waiting on @Danathar&#39;s clanker \([^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<i class="ham-presence-dot"><\/i><\/span>@Danathar<\/span>$/.test(w), w);
 // A human: the person glyph and the handle, nothing else — no dot, no "(human · no clanker)" qualifier.
 const hw = stageTrackerPresenceChipHtml(human);
-assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*>[\s\S]*<\/svg><\/span>@zoe<\/span>$/.test(hw), hw);
+assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*>[\s\S]*<\/svg><\/span>@zoe to push<\/span>$/.test(hw), hw);
 assert.ok(!hw.includes('no clanker') && !hw.includes('ham-presence-dot'), hw);
 assert.strictEqual(stageTrackerPresenceChipHtml({ kind: 'pr', stage: 71 }), '');
 // The Needs-human popover names the presence under the question.
