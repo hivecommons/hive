@@ -56,6 +56,17 @@ func TestRingBuffer_LastMoreThanCount(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_LastNonPositive(t *testing.T) {
+	rb := NewRingBuffer(5)
+	rb.Write("a")
+	if got := rb.Last(-1); got != nil {
+		t.Fatalf("Last(-1) = %v, want nil", got)
+	}
+	if got := rb.Last(0); got != nil {
+		t.Fatalf("Last(0) = %v, want nil", got)
+	}
+}
+
 func TestRingBuffer_Empty(t *testing.T) {
 	rb := NewRingBuffer(5)
 	got := rb.Last(10)
