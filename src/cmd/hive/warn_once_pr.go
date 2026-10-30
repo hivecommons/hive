@@ -44,6 +44,7 @@ func (w *prWarnOnce) retain(active map[string]struct{}) {
 }
 
 var (
-	humanLabelWarn    prWarnOnce
-	reviewExpiredWarn prWarnOnce
+	humanLabelWarn     prWarnOnce
+	reviewExpiredWarn  prWarnOnce
+	reviewPromotedWarn prWarnOnce
 )
