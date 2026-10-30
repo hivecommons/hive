@@ -198,7 +198,8 @@ func TestModalScrollFadeFollowsTheme(t *testing.T) {
 		t.Error("tokens.css light block does not re-declare --modal-scroll-fade; the fade would stay dark in light mode")
 	}
 	for _, v := range strings.Split(tokens, "\n") {
-		if strings.Contains(v, "--modal-scroll-fade:") && (strings.Contains(v, "#") || strings.Contains(v, "rgb")) {
+		// "rgb(" rather than "rgb": the colour space in color-mix(in srgb, …) is not a literal.
+		if strings.Contains(v, "--modal-scroll-fade:") && (strings.Contains(v, "#") || strings.Contains(v, "rgb(") || strings.Contains(v, "rgba(")) {
 			t.Errorf("--modal-scroll-fade must derive from a surface token, found a literal: %s", strings.TrimSpace(v))
 		}
 	}
