@@ -2,6 +2,7 @@ package logscrub
 
 import (
 	"context"
+	"encoding"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -129,6 +130,13 @@ func scrubAttr(a slog.Attr) slog.Attr {
 		switch v := a.Value.Any().(type) {
 		case error, fmt.Stringer:
 			return slog.String(a.Key, scrub(fmt.Sprint(v)))
+		case encoding.TextMarshaler:
+			text, err := v.MarshalText()
+			if err != nil {
+				// Do not let the inner handler render an unsanitized error.
+				return slog.String(a.Key, scrub("!ERROR:"+err.Error()))
+			}
+			return slog.String(a.Key, scrub(string(text)))
 		}
 	}
 	if a.Value.Kind() == slog.KindString {

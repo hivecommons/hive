@@ -13,6 +13,15 @@ type scrubTestStringer string
 
 func (s scrubTestStringer) String() string { return string(s) }
 
+type scrubTestTextMarshaler struct {
+	text string
+	err  error
+}
+
+func (v scrubTestTextMarshaler) MarshalText() ([]byte, error) {
+	return []byte(v.text), v.err
+}
+
 type scrubTestLogValuer struct {
 	value slog.Value
 }
@@ -29,12 +38,16 @@ func TestScrubsRenderedAttributes(t *testing.T) {
 	}{
 		{"error", slog.Any("value", errors.New(text))},
 		{"stringer", slog.Any("value", scrubTestStringer(text))},
+		{"text-marshaler", slog.Any("value", scrubTestTextMarshaler{text: text})},
+		{"text-marshaler-error", slog.Any("value", scrubTestTextMarshaler{text: token, err: errors.New(text)})},
+		{"logvaluer-text-marshaler", slog.Any("value", scrubTestLogValuer{slog.AnyValue(scrubTestTextMarshaler{text: text})})},
 		{"logvaluer-string", slog.Any("value", scrubTestLogValuer{slog.StringValue(text)})},
 		{"logvaluer-error", slog.Any("value", scrubTestLogValuer{slog.AnyValue(errors.New(text))})},
 		{"logvaluer-chain", slog.Any("value", scrubTestLogValuer{slog.AnyValue(scrubTestLogValuer{slog.StringValue(text)})})},
 		{"logvaluer-group", slog.Any("value", scrubTestLogValuer{slog.GroupValue(
 			slog.Any("error", errors.New(text)),
 			slog.Any("stringer", scrubTestStringer(text)),
+			slog.Any("text-marshaler", scrubTestTextMarshaler{text: text}),
 			slog.Any("lazy", scrubTestLogValuer{slog.StringValue(text)}),
 		)})},
 		{"nested-group", slog.Group("value", slog.Group("nested", slog.Any("error", errors.New(text))))},
