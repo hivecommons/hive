@@ -94,6 +94,16 @@ func TestRouteHumanFixEvidence(t *testing.T) {
 	if r := RouteHuman(e); len(r.Reasons) != 2 || r.LaneReason != LaneReasonChangesRequested {
 		t.Fatalf("multi-reason route = %+v", r)
 	}
+	// Red CI on a clanker's PR goes back to the clanker (072) even when the
+	// reviewer also said requires_human: a failing check is the author's to
+	// fix first and never alone parks the PR at 085 (hivecommons/hive#15722).
+	e = readyEvidence()
+	e.AuthorKind = authorkind.Clanker
+	e.Verdict = VerdictRequiresHuman
+	e.Checks = CheckSummary{Total: 2, Green: 1, Red: []string{"unit"}, Known: true}
+	if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != "check-failing:unit" {
+		t.Fatalf("clanker red CI + requires_human route = %+v", r)
+	}
 }
 
 // TestRouteHumanPendingStaysAtReview: no current-head verdict, or a head
