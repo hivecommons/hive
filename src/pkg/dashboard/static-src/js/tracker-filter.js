@@ -206,25 +206,10 @@
     // is nested under a listed issue is drawn as that issue's sub-row only.
     function stageTrackerVisible(items, filter, ctx) {
       const f = stageTrackerNormalizeFilter(filter || _stageTrackerFilter);
-      const rows = stageTrackerFoldSuperseded((items || []).filter(it => stageTrackerMatches(it, f, ctx)));
+      const rows = (items || []).filter(it => stageTrackerMatches(it, f, ctx));
       if (f.kind === 'pr') return rows;
       const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
       return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
-    }
-    // Pure: drop every PR row whose `superseded_by` names a PR that is
-    // itself drawn open on this page — as a row or as a listed issue's
-    // open sub-row. A superseded PR is closed and not listed (owner,
-    // hivecommons/hive#15526); the copy's "adopted from" chip is its one
-    // trace. A superseder that is not drawn (filtered out, another page,
-    // closed) leaves the original a row of its own.
-    function stageTrackerFoldSuperseded(rows) {
-      const drawn = new Set();
-      for (const it of rows) {
-        if (!it) continue;
-        if (it.kind === 'pr' && String(it.state || '') !== 'closed') drawn.add(it.repo + '#' + it.number);
-        if (it.kind === 'issue' && Array.isArray(it.linked_prs)) for (const lp of it.linked_prs) if (lp && String(lp.state || '') !== 'closed' && (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') < 0) drawn.add(it.repo + '#' + lp.number);
-      }
-      return rows.filter(it => !(it && it.kind === 'pr' && Number(it.superseded_by) > 0 && Number(it.superseded_by) !== Number(it.number) && drawn.has(it.repo + '#' + Number(it.superseded_by))));
     }
 
     // The canonical tracker count (owner): rows of the default view — every

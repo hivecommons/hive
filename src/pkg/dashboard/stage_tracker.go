@@ -649,9 +649,11 @@ type StageTrackerLinkedPR struct {
 	Lineage *StageTrackerLineage `json:"lineage,omitempty"`
 	// State is "closed" for an adopted original the hive (or a person)
 	// closed once its copy existed (hivecommons/hive#15126): the sub-row
-	// is one dimmed line "#N <title> · closed · superseded by #M" with no
-	// chevron track. SupersededBy is the copy; Title is cached from the
-	// copy (same commits, same title), never fetched live.
+	// is one muted line "#N <title> superseded · closed · hive adopted →
+	// #M" with no chevron track, listed only while the copy is listed open
+	// (hivecommons/hive#15511). SupersededBy is the copy (set on an open
+	// original too, once the copy exists); Title is cached from the copy
+	// (same commits, same title), never fetched live.
 	State        string `json:"state,omitempty"`
 	SupersededBy int    `json:"superseded_by,omitempty"`
 	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).
@@ -3147,7 +3149,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			}
 			seen[lp.Number] = true
 			pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]
-			if pr == nil && (open == nil || !open(it.Repo, lp.Number)) {
+			if pr == nil && (open == nil || !open(it.Repo, lp.Number)) && !stageTrackerClosedOriginalListed(it, lp, prs) {
 				return
 			}
 			if pr != nil {
@@ -3278,6 +3280,15 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 	}
 	it.Caption = prefix + strings.Join(progress, "; ")
 	it.Actor = "its PR"
+}
+
+// stageTrackerClosedOriginalListed keeps a closed adopted original in its
+// issue's list while the hive copy that superseded it is itself listed
+// open there: it draws as one muted "superseded · closed · hive adopted →
+// #M" line (hivecommons/hive#15511). Once the copy merges or closes the
+// original leaves with it.
+func stageTrackerClosedOriginalListed(issue *StageTrackerItem, lp StageTrackerLinkedPR, prs map[string]*StageTrackerItem) bool {
+	return lp.State == "closed" && lp.SupersededBy > 0 && prs[issue.Repo+"#"+strconv.Itoa(lp.SupersededBy)] != nil
 }
 
 // stageTrackerLinkedPRSupersededByListed reports whether lp is the

@@ -943,22 +943,6 @@
       }
       return true;
     }
-    // Pure: the listed, open PR a nested original is folded into — its
-    // superseder (`superseded_by` from the server; `adopted_by` while the
-    // copy is live, for a payload without it) when that copy is itself
-    // listed under the issue and not closed — else 0. A superseded PR is
-    // closed and not listed (owner, hivecommons/hive#15526 under #15511
-    // drew the original as a dimmed second row beside hive's #15574): it
-    // lives only in the copy's "adopted from" chip. A closed original
-    // whose copy is not in the list still draws as one dimmed line.
-    function stageTrackerLinkedFoldedInto(lp, issue) {
-      if (!lp) return 0;
-      const live = lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice' && lp.adopted_by_state !== 'copy-failed';
-      const by = Number(lp.superseded_by) || (live ? Number(lp.adopted_by) || 0 : 0);
-      if (!(by > 0) || by === Number(lp.number)) return 0;
-      const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
-      return linked.some(x => x && Number(x.number) === by && String(x.state || '') !== 'closed' && (Array.isArray(x.modifiers) ? x.modifiers : []).indexOf('merged') < 0) ? by : 0;
-    }
     // Pure: an issue's open nested PRs as row items.
     function stageTrackerNestedOpenPRs(issue) {
       if (!issue || issue.kind === 'pr') return [];
@@ -1061,7 +1045,7 @@
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
-      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded || stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
+      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded ? superseded + ' · ' + stageTrackerLinkedSupersededTip(lp) : stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       // One line (hivecommons/hive: "consolidate from 3 lines of text to
       // 1"): connector, repo chip, author icon + #N + title, the lineage /
       // adopted-from chip, then the base pill — all siblings of the flex-row
@@ -1072,11 +1056,13 @@
       ref = stageTrackerPRPillsHtml(ref, lineage || null, lp.base_ref);
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       if (superseded) {
-        // The adopted original: one dimmed line, no chevron track, no row
-        // tools, no needs-human styling — the copy carries the chevron.
+        // The adopted original: one muted line, no chevron track, no row
+        // tools, no needs-human styling — the copy carries the chevron. The
+        // trailing note never wraps; the title ellipsizes first (owner,
+        // hivecommons/hive#15511: "superseded · hive adopted → #15574").
         return `<div class="ham-sub ham-sub-superseded" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}" data-ham-superseded-by="${Number(lp.superseded_by || lp.adopted_by) || 0}">
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref + ` <span class="ham-superseded-note">· ${esc(superseded)}</span>`], '', stageTrackerActedBadgeHtml(pr, nowMs))}
+            ${stageTrackerHeadColsHtml([ref + ` <span class="ham-superseded-note" title="${esc(stageTrackerLinkedSupersededTip(lp))}">${esc(superseded)}</span>`], '', stageTrackerActedBadgeHtml(pr, nowMs))}
           </div>
         </div>`;
       }
@@ -1111,7 +1097,7 @@
       return stageTrackerLinkedElsewhere(item).map(lp => `<a class="ham-badge ham-linked-elsewhere" href="${esc(lp.url || '#')}" target="_blank" rel="noopener" title="${esc('PR #' + (Number(lp.number) || 0) + ' covers this issue too; its row is drawn under #' + Number(lp.drawn_under))}">↳ #${Number(lp.number) || 0} · under #${Number(lp.drawn_under)}</a>`).join(' ');
     }
     function stageTrackerLinkedSorted(item, stages) {
-      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedFoldedInto(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y) - stageTrackerAnchor(x.stage, stages, 'pr', x)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }

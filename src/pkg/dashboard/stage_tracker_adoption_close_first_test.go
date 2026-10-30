@@ -66,8 +66,10 @@ func TestStageTrackerCloseFirstCopyFailedSaysWhy(t *testing.T) {
 // A closed original (#15184, closed first when its copy #15247 opened)
 // must not ride under its issue as a bare sub-row with an empty ladder:
 // the claims index still names it "open" for a while, and the status
-// enumeration's bucket reason still names it. The live copy keeps the
-// trace as `supersedes` metadata only (hivecommons/hive#15135 follow-up).
+// enumeration's bucket reason still names it. It rides as the muted
+// "superseded · closed · hive adopted → #15247" line while the copy is
+// open (hivecommons/hive#15511), and the live copy keeps the trace as
+// `supersedes` metadata (hivecommons/hive#15135 follow-up).
 func TestStageTrackerClosedSupersededPRNotASubRow(t *testing.T) {
 	now := time.Date(2026, 10, 29, 2, 30, 0, 0, time.UTC)
 	s := newTestServer()
@@ -100,8 +102,11 @@ func TestStageTrackerClosedSupersededPRNotASubRow(t *testing.T) {
 		}
 	}
 	issue := trackerItem(t, resp, "issue", 15183)
-	if len(issue.LinkedPRs) != 1 || issue.LinkedPRs[0].Number != 15247 {
-		t.Fatalf("issue 15183 linked_prs = %+v (want only the live copy #15247)", issue.LinkedPRs)
+	if len(issue.LinkedPRs) != 2 || issue.LinkedPRs[0].Number != 15247 || issue.LinkedPRs[1].Number != 15184 {
+		t.Fatalf("issue 15183 linked_prs = %+v (want the live copy #15247 and the muted closed original)", issue.LinkedPRs)
+	}
+	if c := issue.LinkedPRs[1]; c.State != "closed" || c.SupersededBy != 15247 || c.Caption != "superseded · closed · hive adopted → #15247" || c.Title == "" || c.Stage != 0 {
+		t.Fatalf("closed original must be the muted line, never a bare numbered row: %+v", c)
 	}
 	lp := issue.LinkedPRs[0]
 	if lp.Stage != 70 || lp.Title == "" {

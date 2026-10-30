@@ -787,11 +787,15 @@ as "Adopted → #15574 · superseded" with the gate saying
 label to close in the adopting pass; without it the gate keeps it open after
 supersession (`needs-opt-in-label`, or a fork the hive cannot edit) and it
 sits at 072 "superseded by #N" until the copy merges. Either way the
-superseded original is **not a row of its own** in the Activity Monitor
-while its copy is listed: the tracker marks it `superseded_by: M` and the
-SPA folds it into the copy's "adopted from @x's #N" chip, whose hover says
-whether #N is closed or still open and closing when the copy merges. The
-issue's caption, open-PR count, parked-PR check and "Let hive decide — all N
+superseded original draws in the Activity Monitor as one muted,
+chevron-less line under the issue (greyed title, no stage strip) whose
+trailing note reads "superseded · hive adopted → #M" — or "superseded ·
+closed · hive adopted → #M" once it is closed — on a single line (the title
+ellipsizes first); the hover carries the long form ("Hive re-authored this
+PR as #M with the same commits and sign-off. This PR closes as superseded
+when #M merges." / "…is closed as superseded."). The tracker marks it
+`superseded_by: M`; the line stays only while #M is open and listed and
+drops once #M merges or closes. The issue's caption, open-PR count, parked-PR check and "Let hive decide — all N
 PRs" fan-out all see only the hive's copy: the original's review verdict never
 gates the issue, and the copy's body carries every `Fixes #N` / `Refs #N` line
 of the original (an annotated `Refs #N — partial` travels as the bare
