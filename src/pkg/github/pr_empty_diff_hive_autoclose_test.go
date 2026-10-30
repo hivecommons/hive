@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -113,6 +114,68 @@ func TestReviewRedundantOfNumber(t *testing.T) {
 		if got := reviewRedundantOfNumber(body); got != want {
 			t.Fatalf("%q → %d, want %d", body, got, want)
 		}
+	}
+}
+
+// hivecommons/hive#15603: updated_at is bumped by labels and comments, so a
+// recently touched PR with an old head must still count as old — and a PR
+// just opened from an old branch must still count as just opened.
+func TestEmptyDiffHeadAgeFlooredAtCreatedAt(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	pr := &gh.PullRequest{UpdatedAt: &gh.Timestamp{Time: now.Add(-time.Minute)}}
+	if got := emptyDiffHeadAge(pr, now.Add(-time.Hour), now); got != time.Hour {
+		t.Fatalf("head age = %v, want 1h from the head commit", got)
+	}
+	if got := emptyDiffHeadAge(pr, time.Time{}, now); got != time.Minute {
+		t.Fatalf("head age = %v, want 1m from updated_at fallback", got)
+	}
+	// A PR just opened from an old branch: its head commit predates the PR,
+	// so the age is the PR's own age and the just-opened grace period holds.
+	justOpened := &gh.PullRequest{
+		CreatedAt: &gh.Timestamp{Time: now.Add(-2 * time.Minute)},
+		UpdatedAt: &gh.Timestamp{Time: now.Add(-time.Minute)},
+	}
+	if got := emptyDiffHeadAge(justOpened, now.Add(-time.Hour), now); got != 2*time.Minute {
+		t.Fatalf("head age = %v, want 2m floored at created_at", got)
+	}
+	// A head commit pushed after the PR opened measures from the commit.
+	if got := emptyDiffHeadAge(justOpened, now.Add(-90*time.Second), now); got != 90*time.Second {
+		t.Fatalf("head age = %v, want 90s from the head commit", got)
+	}
+	// No commit date and no created_at: updated_at still stands in.
+	if got := emptyDiffHeadAge(&gh.PullRequest{}, time.Time{}, now); got != 0 {
+		t.Fatalf("head age = %v, want 0 with no timestamps", got)
+	}
+}
+
+// A head already on the base lists no commits in base...head, so the
+// compare's commit dates are empty; the merge base is the head itself and
+// its date must stand in, not updated_at (hivecommons/hive#15603).
+func TestPRDiffAgainstBaseHeadOnBaseUsesMergeBaseDate(t *testing.T) {
+	headDate := time.Date(2026, 10, 29, 11, 0, 0, 0, time.UTC)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/hivecommons/hive/compare/v5...head999", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  "behind",
+			"commits": []any{},
+			"files":   []any{},
+			"merge_base_commit": map[string]any{
+				"sha":    "head999",
+				"commit": map[string]any{"committer": map[string]any{"date": headDate.Format(time.RFC3339)}},
+			},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, slog.Default())
+	pr := &gh.PullRequest{Base: &gh.PullRequestBranch{Ref: gh.Ptr("v5")}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("head999")}}
+	files, headAt, known := c.prDiffAgainstBase(context.Background(), "hivecommons", "hive", pr)
+	if !known || len(files) != 0 {
+		t.Fatalf("diff = %d files, known=%v; want empty and known", len(files), known)
+	}
+	if !headAt.Equal(headDate) {
+		t.Fatalf("headAt = %v, want merge-base (head) date %v", headAt, headDate)
 	}
 }
 
