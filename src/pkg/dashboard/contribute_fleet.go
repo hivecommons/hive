@@ -19,6 +19,32 @@ func (h *ContributeWSHub) ActiveCount() int {
 	return len(seen)
 }
 
+// LastHeartbeats returns, per connected GitHub username (as the profile
+// spells it), the freshest pong across that contributor's live sockets.
+// It is the registry-wide form of the lookup Presence() does for one
+// author, so callers can apply the presence window themselves.
+func (h *ContributeWSHub) LastHeartbeats() map[string]time.Time {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make(map[string]time.Time)
+	for _, c := range h.connections {
+		c.mu.Lock()
+		user := ""
+		if c.profile != nil {
+			user = c.profile.GitHubUsername
+		}
+		pong := c.lastPong
+		c.mu.Unlock()
+		if user == "" {
+			continue
+		}
+		if pong.After(out[user]) {
+			out[user] = pong
+		}
+	}
+	return out
+}
+
 // relayConnectedSince reports whether a relay finished authenticating at or
 // after since. Only the timestamp counts: a relay that connected before the
 // window and merely stayed up wrote no relay_* row in it, so counting it

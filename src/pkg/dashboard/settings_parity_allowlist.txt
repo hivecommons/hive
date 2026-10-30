@@ -470,6 +470,7 @@ forgestate.freshness_bound_s # yaml-only until readers migrate (#13373)
 forgestate.reconcile_interval_s # yaml-only until readers migrate (#13373)
 forgestate.search_budget # yaml-only until readers migrate (#13373)
 scanner.skip_issues_with_open_pr # open-PR dispatch guard (#14799); yaml-only
+security.sensitive_paths[] # TODO #15640
 self_experiments.scheduler.enabled # TODO #11854
 self_experiments.scheduler.interval_s # TODO #11854
 self_experiments.scheduler.mode # TODO #11854

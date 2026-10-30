@@ -230,9 +230,13 @@ type ContributorProfile struct {
 	Collaborators    []CollaboratorRecord         `json:"collaborators,omitempty"`
 	OperatorMessages []ContributorOperatorMessage `json:"operator_messages,omitempty"`
 	Active           bool                         `json:"active,omitempty"`
-	CurrentTask      *WSTaskAssign                `json:"current_task,omitempty"`
-	ActiveTasks      []WSTaskAssign               `json:"active_tasks,omitempty"`
-	Sessions         int                          `json:"sessions,omitempty"`
+	// Online is the tracker's presence verdict (heartbeat within
+	// governor.labels.stage.presence_window); filled on the list response
+	// only, never persisted.
+	Online      bool           `json:"online,omitempty"`
+	CurrentTask *WSTaskAssign  `json:"current_task,omitempty"`
+	ActiveTasks []WSTaskAssign `json:"active_tasks,omitempty"`
+	Sessions    int            `json:"sessions,omitempty"`
 	// Version is the profile's optimistic-concurrency token (hivecommons/hive H2,
 	// CWE-613/639). It is bumped on every persisted change. A caller that loaded the
 	// profile at version N may only persist its edit if the on-disk version is still

@@ -322,6 +322,59 @@ decision marker parks the PR for a person. The reviewer template
 issue/spec and PR body before asking, and to cite the answer
 (`per #<issue>: …`) instead of raising a question the issue already settled.
 
+**Contributor and human-authored PRs: no decision in CI/Review unless the
+review found something fishy or insecure.** The owner's rules
+([#15640](https://github.com/hivecommons/hive/issues/15640)), verbatim:
+
+> there should be no decisions by a human while these are in ci/review —
+> unless the review found something.
+> unless you find something fishy and insecure happening at the pr in
+> progress level, then we can let things go and then decide in merge
+> queue, if needed.
+> we dont want to create a log jam during pr in progress.
+> i always have the last word when it comes to merge of untrusted.
+
+So while a PR the hive did not author is in CI/Review, the hive runs CI and
+the review swarm to completion on its own, and the stage always has an
+active mover (CI, the swarm, the clanker fixing, the hive adopting). The
+**only** early exit to `stage/085-needs-decision` is a concrete security /
+trust finding — one predicate, `review.IsSecuritySensitiveFinding`
+(`src/pkg/review/security_finding.go`):
+
+- the reviewer's `<!-- hive-decision-risk: high -->` marker;
+- the security perspective withholding approval (`requires_human`);
+- a decision question in a security-class risk class — `security`,
+  `permissions-credentials`, `sensitive-paths` (workflows, CODEOWNERS,
+  branch protection, deploy, Dockerfiles, dependency manifests, …);
+- an in-scope finding on a sensitive path: `sentinel.DefaultSensitivePaths`
+  plus the operator's extra globs in `security.sensitive_paths`;
+- an in-scope finding, or the review summary, flagging insecure or
+  suspicious behaviour (injection, exfiltration, secrets, unpinned actions,
+  supply chain, …).
+
+A sentinel alert (`contributor-lane:sentinel-blocked`), a workflow-path or
+tests-removed lane rule and a reporter-trust hold are the lane-side
+equivalents and park the PR the same way. The finding is recorded as
+`decision_finding` and the 085 comment and tracker popover print it as
+`the review found: …` next to the reviewer's question, so the operator is
+told WHAT was found.
+
+Everything else the review raises — ordinary nits and findings, a duplicate,
+naming, scope, sequencing, licensing, a failing optional check, a conflict
+— never asks a person during CI/Review: a finding goes back to the
+clanker / adoption path as `changes_requested`; a bare question is
+advisory, the aggregate is `approve`, recorded as
+`no security finding — the PR keeps moving; a person has the last word at the merge gate; recorded as advisory: <question>`,
+and the PR moves on. At the merge gate the untrusted-author invariant
+holds: a contributor the lane cannot vouch for parks at
+`stage/090-ready-for-human-merge` (`contributor-lane:claim-tier-untrusted`,
+`untrusted-author-role`, the human-merge rule) and waits for the operator's
+merge-now / queue-merge — the hive never auto-merges an untrusted author's
+PR, green, approved and soaked or not. `self_authored_decision_policy:
+escalate` restores the old park-on-every-marker behavior for these PRs too.
+review. The same `self_authored_decision_policy: escalate` switch restores
+the old park-on-every-marker behavior for these PRs too.
+
 Two decision questions never reach the swarm or a person at all, because
 the hive already owns the answer:
 
