@@ -97,6 +97,10 @@ type ContributorPoolStatus struct {
 	// PresenceWindow is the window Online was judged against ("15m").
 	PresenceWindow string         `json:"presence_window"`
 	ByRole         map[string]int `json:"by_role,omitempty"`
+	// Abandoned totals adopted PRs across all registered profiles, including
+	// offline and revoked contributors. Login keys are canonical lowercase.
+	Abandoned        int            `json:"abandoned"`
+	AbandonedByLogin map[string]int `json:"abandoned_by_login"`
 }
 
 func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
@@ -110,13 +114,31 @@ func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 		window = s.contributeHub.presenceWindow()
 		online = countOnlineContributors(profiles, s.contributeHub.LastHeartbeats(), window, time.Now())
 	}
+	abandoned, abandonedByLogin := contributorAbandonedCounts(profiles)
 	return &ContributorPoolStatus{
-		Active:         active,
-		Online:         online,
-		Registered:     len(profiles),
-		PresenceWindow: stageTrackerShortDuration(window),
-		ByRole:         byRole,
+		Abandoned:        abandoned,
+		AbandonedByLogin: abandonedByLogin,
+		Active:           active,
+		Online:           online,
+		Registered:       len(profiles),
+		PresenceWindow:   stageTrackerShortDuration(window),
+		ByRole:           byRole,
 	}
+}
+
+// contributorAbandonedCounts reads the persisted counters, not the size of
+// the recent-PR tooltip. Presence and trust tier do not filter historical cost.
+func contributorAbandonedCounts(profiles []ContributorProfile) (int, map[string]int) {
+	total := 0
+	byLogin := make(map[string]int)
+	for _, p := range profiles {
+		total += p.Abandoned
+		login := strings.ToLower(strings.TrimSpace(p.GitHubUsername))
+		if login != "" {
+			byLogin[login] += p.Abandoned
+		}
+	}
+	return total, byLogin
 }
 
 // countOnlineContributors counts the registered profiles whose freshest
