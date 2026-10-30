@@ -4961,6 +4961,28 @@ type DashboardStageTrackerConfig struct {
 	// refused. Each status publish starts a sweep when one is due. 0
 	// means the default (300); a negative value disables it.
 	ClosedSweepIntervalS int `yaml:"closed_sweep_interval_s,omitempty" json:"closed_sweep_interval_s,omitempty"`
+	// WaitingPushStaleH is how many hours a PR row in the CI / Review
+	// column may wait for its author to push before the waiting-on pill's
+	// age takes the muted-stale tone (hivecommons/hive#15784). 0 means the
+	// default (4); a negative value never marks the wait stale.
+	WaitingPushStaleH int `yaml:"waiting_push_stale_h,omitempty" json:"waiting_push_stale_h,omitempty"`
+}
+
+// defaultStageTrackerWaitingPushStale is the default
+// dashboard.stage_tracker.waiting_push_stale_h.
+const defaultStageTrackerWaitingPushStale = 4 * time.Hour
+
+// StageTrackerWaitingPushStale is the effective
+// dashboard.stage_tracker.waiting_push_stale_h as a duration; 0 means a
+// wait is never marked stale.
+func (c *Config) StageTrackerWaitingPushStale() time.Duration {
+	if c == nil || c.Dashboard.StageTracker.WaitingPushStaleH == 0 {
+		return defaultStageTrackerWaitingPushStale
+	}
+	if c.Dashboard.StageTracker.WaitingPushStaleH < 0 {
+		return 0
+	}
+	return time.Duration(c.Dashboard.StageTracker.WaitingPushStaleH) * time.Hour
 }
 
 // defaultStageTrackerClosedSweepInterval is the default

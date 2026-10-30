@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // webhookTrackerRefresh is the activity-monitor half of a GitHub webhook
@@ -352,6 +353,7 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) i
 		return 0
 	}
 	s.recordMergedSnapshots(snaps)
+	s.notePushedSnapshots(snaps)
 	if s.deps != nil && s.deps.ApplyWebhookItems != nil {
 		s.deps.ApplyWebhookItems(snaps)
 	}
@@ -402,6 +404,28 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) i
 		s.invalidateStageTrackerForWebhook()
 	}
 	return changed
+}
+
+// notePushedSnapshots books the head each open PR re-read reports on its
+// stage record (stagelabels.Store.NotePush) so a `pull_request` synchronize
+// delivery shows as "pushed abc1234" on the activity monitor at once, ahead
+// of the enumerate that re-stages the PR (hivecommons/hive#15784). Reads
+// whose head the store already knows change nothing; the store decides.
+func (s *Server) notePushedSnapshots(snaps []github.WebhookItemSnapshot) int {
+	store := s.stageStoreOrShared()
+	if store == nil {
+		return 0
+	}
+	booked := 0
+	for _, snap := range snaps {
+		if !snap.IsPR || !snap.Open() || snap.HeadSHA == "" {
+			continue
+		}
+		if store.NotePush(stagelabels.Key(snap.Repo, snap.Number), snap.HeadSHA, snap.FetchedAt) {
+			booked++
+		}
+	}
+	return booked
 }
 
 // snapshotOlderThanListed reports whether the listed copy of the snapshot's
