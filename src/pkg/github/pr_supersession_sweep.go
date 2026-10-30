@@ -435,52 +435,75 @@ func (c *Client) resolveIssueClosingPR(ctx context.Context, issueDisplayRepo, ow
 	return supersessionCloser{}, false, nil
 }
 
+// closedByReferencePageCap bounds closedByPullRequestsReferences pagination
+// (10 pages of 10 nodes) so a pathological issue cannot loop the sweep.
+const closedByReferencePageCap = 10
+
 func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo string, issue, currentPR int) (supersessionCloser, bool) {
-	payload := map[string]any{
-		"query": `query($owner:String!,$repo:String!,$issue:Int!){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:10){nodes{number url merged mergedAt}}}}}`,
-		"variables": map[string]any{
-			"owner": owner,
-			"repo":  repo,
-			"issue": issue,
-		},
-	}
-	req, err := c.client.NewRequest("POST", "graphql", payload)
-	if err != nil {
-		return supersessionCloser{}, false
-	}
-	var resp struct {
-		Data struct {
-			Repository struct {
-				Issue struct {
-					ClosedByPullRequestsReferences struct {
-						Nodes []struct {
-							Number   int       `json:"number"`
-							URL      string    `json:"url"`
-							Merged   bool      `json:"merged"`
-							MergedAt time.Time `json:"mergedAt"`
-						} `json:"nodes"`
-					} `json:"closedByPullRequestsReferences"`
-				} `json:"issue"`
-			} `json:"repository"`
-		} `json:"data"`
-	}
-	if _, err := c.client.Do(ctx, req, &resp); err != nil {
-		return supersessionCloser{}, false
-	}
 	displayRepo := owner + "/" + repo
 	var latest supersessionCloser
 	found := false
-	for _, node := range resp.Data.Repository.Issue.ClosedByPullRequestsReferences.Nodes {
-		if node.Number == currentPR || !node.Merged {
-			continue
+	after := ""
+	for page := 0; page < closedByReferencePageCap; page++ {
+		variables := map[string]any{
+			"owner": owner,
+			"repo":  repo,
+			"issue": issue,
+			"after": nil,
 		}
-		if !sameRepoPullURL(node.URL, owner, repo, node.Number) {
-			continue
+		if after != "" {
+			variables["after"] = after
 		}
-		if !found || node.MergedAt.After(latest.MergedAt) {
-			latest = supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}
-			found = true
+		payload := map[string]any{
+			"query":     `query($owner:String!,$repo:String!,$issue:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:10,after:$after){pageInfo{hasNextPage endCursor}nodes{number url merged mergedAt}}}}}`,
+			"variables": variables,
 		}
+		req, err := c.client.NewRequest("POST", "graphql", payload)
+		if err != nil {
+			return supersessionCloser{}, false
+		}
+		var resp struct {
+			Data struct {
+				Repository struct {
+					Issue struct {
+						ClosedByPullRequestsReferences struct {
+							PageInfo struct {
+								HasNextPage bool   `json:"hasNextPage"`
+								EndCursor   string `json:"endCursor"`
+							} `json:"pageInfo"`
+							Nodes []struct {
+								Number   int       `json:"number"`
+								URL      string    `json:"url"`
+								Merged   bool      `json:"merged"`
+								MergedAt time.Time `json:"mergedAt"`
+							} `json:"nodes"`
+						} `json:"closedByPullRequestsReferences"`
+					} `json:"issue"`
+				} `json:"repository"`
+			} `json:"data"`
+		}
+		// Fail closed: a partial read could surface a stale closer, which is
+		// the very bug paging fixes. Callers fall back to the closing commit.
+		if _, err := c.client.Do(ctx, req, &resp); err != nil {
+			return supersessionCloser{}, false
+		}
+		refs := resp.Data.Repository.Issue.ClosedByPullRequestsReferences
+		for _, node := range refs.Nodes {
+			if node.Number == currentPR || !node.Merged {
+				continue
+			}
+			if !sameRepoPullURL(node.URL, owner, repo, node.Number) {
+				continue
+			}
+			if !found || node.MergedAt.After(latest.MergedAt) {
+				latest = supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}
+				found = true
+			}
+		}
+		if !refs.PageInfo.HasNextPage || refs.PageInfo.EndCursor == "" {
+			break
+		}
+		after = refs.PageInfo.EndCursor
 	}
 	return latest, found
 }
