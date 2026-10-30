@@ -10,6 +10,12 @@ and the existing pipeline caption when those heads match. Matching PR rows gain
 **Preparing base** or **Waiting for preparation behind #N** annotations; their
 underlying CI / Review stages do not change.
 
+The waiting count includes only open PR snapshots with matching ticket heads.
+Known closed, merged, held, draft, or expired tickets are inactive and excluded
+from the displayed queue and active count; unmatched tickets remain explicitly
+unverified, not active waiters. Persisted FIFO ticket order is not a promise of
+actual merge order.
+
 These are persisted lifecycle observations, not proof of green exact-head CI,
 review approval, a ready train seat, or GitHub native queue membership. Changed
 heads, held/draft/expired tickets, absent PRs, and unreadable/missing preparation

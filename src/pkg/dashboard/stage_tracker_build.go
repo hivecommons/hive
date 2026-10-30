@@ -488,7 +488,23 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
-	resp.BasePreparation = s.stageTrackerPreparation(resp.Items, now)
+	preparationState := s.stageTrackerPRStateResolver(nil, resp.Merged24h)
+	resp.BasePreparation = s.stageTrackerPreparation(resp.Items, now, func(repo string, number int) string {
+		for _, merged := range resp.Merged24h {
+			if merged.Number == number && strings.EqualFold(merged.Repo, repo) {
+				return blockedOnPRStateMerged
+			}
+		}
+		if state := preparationState(repo, number); state != "" {
+			return state
+		}
+		for _, closed := range resp.RecentlyClosed {
+			if closed.Number == number && strings.EqualFold(closed.Repo, repo) {
+				return blockedOnPRStateClosed
+			}
+		}
+		return ""
+	})
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)

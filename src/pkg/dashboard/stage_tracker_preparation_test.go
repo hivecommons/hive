@@ -156,6 +156,39 @@ func TestStageTrackerPreparationDecisionClearedRemainsOpen(t *testing.T) {
 	}
 }
 
+func TestStageTrackerPreparationRefreshedOwnerAndStaleMergedTickets(t *testing.T) {
+	now := time.Date(2026, 10, 30, 21, 25, 0, 0, time.UTC)
+	ticket := func(n int, head string) automerge.BasePreparationMember {
+		return automerge.BasePreparationMember{Number: n, HeadSHA: head, Since: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour)}
+	}
+	owner := ticket(15820, "daa73d2d18ecb27ed262fabc96a2d5ce0a173119")
+	waiting := []automerge.BasePreparationMember{ticket(15802, "head2"), ticket(15865, "head65"), ticket(15859, "head59"), ticket(15792, "merged-head"), ticket(15874, "merged-head")}
+	snap := automerge.BasePreparationSnapshot{Enabled: true, Present: true, ObservedAt: now, Owner: &owner, Waiting: waiting}
+	s := &Server{deps: &Dependencies{Config: &config.Config{AutoMerge: config.AutoMergeConfig{RequireCurrentBase: []string{"hivecommons/hive"}}},
+		BasePreparation: func(string, string) (automerge.BasePreparationSnapshot, error) { return snap, nil }}}
+	rows := []StageTrackerItem{{Repo: "hivecommons/hive", Kind: "pr", Number: owner.Number, BaseRef: "v5", Head: "bb1984f907a87df4bc0b3c1a732a62c55682375e", Stage: 50, Caption: "Review pending on refreshed head"}}
+	for _, w := range waiting[:3] {
+		rows = append(rows, StageTrackerItem{Repo: "hivecommons/hive", Kind: "pr", Number: w.Number, BaseRef: "v5", Head: w.HeadSHA, Stage: 80})
+	}
+	q := s.stageTrackerPreparation(rows, now, func(repo string, number int) string {
+		if repo == "hivecommons/hive" && (number == 15792 || number == 15874) {
+			return blockedOnPRStateMerged
+		}
+		return ""
+	})
+	if q[0].Owner.State != "unverified" || q[0].Owner.Pipeline != "" || q[0].Owner.HeadSHA != owner.HeadSHA || q[0].Owner.CurrentHead != rows[0].Head {
+		t.Fatal("refreshed owner attached admitted-head evidence to its new head")
+	}
+	for i, w := range q[0].Waiting {
+		if i < 3 && (w.State != "current" || w.Behind != 15820 || w.Number != waiting[i].Number) {
+			t.Fatalf("lost eligible FIFO ticket: %+v", w)
+		}
+		if i >= 3 && w.State != "inactive" {
+			t.Fatalf("known merged PR remained an active waiter: %+v", w)
+		}
+	}
+}
+
 func TestStageTrackerPreparationRendering(t *testing.T) {
 	html := indexHTML(t)
 	var js strings.Builder
@@ -186,9 +219,16 @@ const document = {getElementById:()=>chip};
 function stageTrackerQueuePopDraw(){}
 stageTrackerQueueSync([],now,queues);
 assert.strictEqual(chip.hidden,false);
-assert.strictEqual(count.textContent,'0 train PRs · 2 prep tickets');
+assert.strictEqual(count.textContent,'0 train PRs · 1 owner · 1 waiting');
 stageTrackerQueueSync([],now,[{state:'unavailable'}]);
 assert.strictEqual(count.textContent,'0 train PRs · prep unknown');
+const stale = {...waiter,number:15792,state:'inactive',detail:'PR merged'};
+const unknown = {...waiter,number:15819,state:'unverified',detail:'PR absent from current open snapshot'};
+stageTrackerQueueSync([],now,[{...queues[0],waiting:[waiter,stale,unknown]}]);
+assert.strictEqual(count.textContent,'0 train PRs · 1 owner · 1 waiting · 1 unverified tickets');
+const clean = stageTrackerPreparationPopHtml([{...queues[0],waiting:[waiter,stale,unknown]}],now);
+assert.ok(!clean.includes('#15792') && clean.includes('1 inactive tickets excluded'),clean);
+assert.ok(clean.includes('ticket order is not guaranteed merge order'),clean);
 stageTrackerQueueSync([],now,[]);
 assert.strictEqual(chip.hidden,true);
 const decision = {repo:'hivecommons/hive',kind:'pr',number:15882,stage:85,head:'e8e0ecb59825d0e01b7a59491cd66bdcfdb70024'};

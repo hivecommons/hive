@@ -31,7 +31,7 @@ type StageTrackerPreparationQueue struct {
 	Waiting    []StageTrackerPreparation `json:"waiting,omitempty"`
 }
 
-func (s *Server) stageTrackerPreparation(items []StageTrackerItem, now time.Time) []StageTrackerPreparationQueue {
+func (s *Server) stageTrackerPreparation(items []StageTrackerItem, now time.Time, state ...func(string, int) string) []StageTrackerPreparationQueue {
 	if s.deps == nil || s.deps.Config == nil {
 		return nil
 	}
@@ -75,8 +75,13 @@ func (s *Server) stageTrackerPreparation(items []StageTrackerItem, now time.Time
 			continue
 		}
 		q.State, q.ObservedAt = "observed", snapshot.ObservedAt
+		front := 0
 		project := func(m automerge.BasePreparationMember, role string, behind int) *StageTrackerPreparation {
 			p := &StageTrackerPreparation{Role: role, Behind: behind, Number: m.Number, HeadSHA: m.HeadSHA, Since: m.Since, State: "unverified", Detail: "PR absent from current open snapshot"}
+			if len(state) > 0 && state[0] != nil && stageTrackerLinkedPRFinished(state[0](d.repo, m.Number)) {
+				p.State, p.Detail = "inactive", "PR closed or merged; stale ticket awaiting scheduler reconciliation"
+				return p
+			}
 			if !m.ExpiresAt.IsZero() && !now.Before(m.ExpiresAt) {
 				p.State, p.Detail = "inactive", "Ticket expired; awaiting scheduler reconciliation"
 			}
@@ -99,9 +104,15 @@ func (s *Server) stageTrackerPreparation(items []StageTrackerItem, now time.Time
 					p.Detail = "Current head unknown"
 				case it.Head != m.HeadSHA:
 					p.Detail = "Head changed; current preparation unverified"
+					if role == "owner" {
+						front = m.Number // ownership survives refresh; head-specific proofs do not
+					}
 				default:
 					p.State, p.Detail = "current", "Ticket matches the current open PR snapshot"
 					p.Pipeline = it.Caption
+					if role == "owner" {
+						front = m.Number
+					}
 				}
 				if p.State == "current" || (role == "owner" && p.State == "unverified") {
 					it.Preparation = p
@@ -110,12 +121,8 @@ func (s *Server) stageTrackerPreparation(items []StageTrackerItem, now time.Time
 			}
 			return p
 		}
-		front := 0
 		if snapshot.Owner != nil {
 			q.Owner = project(*snapshot.Owner, "owner", 0)
-			if q.Owner.State == "current" {
-				front = q.Owner.Number
-			}
 		}
 		for _, m := range snapshot.Waiting {
 			p := project(m, "waiting", front)

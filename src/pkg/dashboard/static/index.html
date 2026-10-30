@@ -22910,6 +22910,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: the popover body.
     function stageTrackerPreparationWord(p) {
       if (!p) return '';
+      if (p.state === 'inactive') return 'Inactive preparation ticket · ' + (p.detail || 'not currently eligible');
       if (p.state !== 'current') return (p.role === 'owner' ? 'Recorded preparation owner' : 'Recorded waiting ticket') + ' · ' + (p.detail || 'current state unknown');
       return p.role === 'owner' ? 'Preparing base' : (Number(p.behind) > 0 ? 'Waiting for preparation behind #' + Number(p.behind) : 'Waiting for preparation; owner not confirmed');
     }
@@ -22928,7 +22929,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerPreparationPopHtml(queues, nowMs) {
       return (Array.isArray(queues) ? queues : []).map(q => {
-        const members = (q.owner ? [q.owner] : []).concat(q.waiting || []);
+        const recorded = (q.owner ? [q.owner] : []).concat(q.waiting || []);
+        const members = recorded.filter(p => p.state !== 'inactive');
+        const inactive = recorded.length - members.length;
         const heading = `<div class="ham-queue-train">Base preparation · ${esc(q.repo || '')} → ${esc(q.base_ref || 'unknown base')}</div>`;
         if (q.state !== 'observed') return heading + `<div class="ham-empty">${esc(q.message || 'Preparation unknown')}</div>`;
         const rows = members.map(p => {
@@ -22937,7 +22940,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return `<li><span class="ham-merged-num">#${Number(p.number) || 0}</span><span class="ham-merged-meta">${esc(meta)}</span></li>`;
         }).join('');
         const observed = Date.parse(q.observed_at || '');
-        return heading + (rows ? `<ol class="ham-merged-list ham-queue-list ham-preparation-list">${rows}</ol>` : `<div class="ham-empty">${esc(q.message || 'No recorded preparation tickets')}</div>`) + `<div class="ham-merged-pop-foot">Persisted FIFO tickets, not ready train seats or GitHub native queue membership. Owner head changes are unverified here. Read ${esc(Number.isFinite(observed) ? new Date(observed).toISOString() : 'time unknown')}; CI / Review stages remain unchanged.</div>`;
+        return heading + (rows ? `<ol class="ham-merged-list ham-queue-list ham-preparation-list">${rows}</ol>` : `<div class="ham-empty">${esc(q.message || 'No currently eligible preparation tickets')}</div>`) + `<div class="ham-merged-pop-foot">Persisted FIFO tickets, not ready train seats or GitHub native queue membership; ticket order is not guaranteed merge order. ${inactive ? esc(String(inactive)) + ' inactive tickets excluded. ' : ''}Owner head changes are unverified here. Read ${esc(Number.isFinite(observed) ? new Date(observed).toISOString() : 'time unknown')}; CI / Review stages remain unchanged.</div>`;
       }).join('');
     }
     function stageTrackerQueuePopHtml(items, nowMs, preparation) {
@@ -22977,13 +22980,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const trains = stageTrackerQueueTrains(_stageTrackerQueueItems);
       const n = trains.reduce((a, t) => a + t.members.length, 0);
       const stalled = trains.some(t => t.mt && t.mt.stalled);
-      const prepTickets = _stageTrackerPreparationQueues.reduce((n, q) => n + (q.owner ? 1 : 0) + (q.waiting || []).length, 0);
+      const prepOwners = _stageTrackerPreparationQueues.filter(q => q.owner && q.owner.state !== 'inactive').length;
+      const prepWaiting = _stageTrackerPreparationQueues.reduce((n, q) => n + (q.waiting || []).filter(p => p.state === 'current').length, 0);
+      const prepUnverified = _stageTrackerPreparationQueues.reduce((n, q) => n + (q.waiting || []).filter(p => p.state === 'unverified').length, 0);
+      const prepSummary = prepOwners + ' owner · ' + prepWaiting + ' waiting' + (prepUnverified ? ' · ' + prepUnverified + ' unverified tickets' : '');
       const prepUnknown = _stageTrackerPreparationQueues.some(q => q.state !== 'observed');
       chip.hidden = !trains.length && !_stageTrackerPreparationQueues.length;
       const nEl = chip.querySelector('.ham-queue-n');
-      const count = _stageTrackerPreparationQueues.length ? n + ' train PRs · ' + (prepUnknown ? 'prep unknown' : prepTickets + ' prep tickets') : String(n);
+      const count = _stageTrackerPreparationQueues.length ? n + ' train PRs · ' + (prepUnknown ? 'prep unknown' : prepSummary) : String(n);
       if (nEl && nEl.textContent !== count) nEl.textContent = count;
-      const title = (trains.length ? 'Merge queue: ' + n + ' PRs in ' + trains.length + (trains.length === 1 ? ' train' : ' trains') + (stalled ? ' · stalled' : '') : 'Merge queue: no ready train') + (_stageTrackerPreparationQueues.length ? ' · base preparation: ' + (prepUnknown ? 'state unknown' : prepTickets + ' recorded tickets (not readiness)') : '');
+      const title = (trains.length ? 'Merge queue: ' + n + ' PRs in ' + trains.length + (trains.length === 1 ? ' train' : ' trains') + (stalled ? ' · stalled' : '') : 'Merge queue: no ready train') + (_stageTrackerPreparationQueues.length ? ' · base preparation: ' + (prepUnknown ? 'state unknown' : prepSummary + ' (not readiness; excludes inactive tickets)') : '');
       if (chip.title !== title) chip.title = title;
       chip.classList.toggle('ham-queue-stalled', stalled);
       stageTrackerQueuePopDraw(nowMs);
