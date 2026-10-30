@@ -92,7 +92,10 @@ jobs:
           # valid tag component, so flatten it.
           line="$(printf '%s' "$REF_NAME" | tr '/' '-')"
           {
-            echo "tags=${IMAGE}:${SHA}"$'\n'"${IMAGE}:${line}-latest"
+            echo "tags<<EOF_TAGS"
+            echo "${IMAGE}:${SHA}"
+            echo "${IMAGE}:${line}-latest"
+            echo "EOF_TAGS"
             echo "push=true"
           } >> "$GITHUB_OUTPUT"
 
@@ -104,6 +107,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up QEMU for arm64 emulation
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -114,7 +122,7 @@ jobs:
           # Repo root: the Dockerfile compiles src/deploy/stream/authproxy.
           context: .
           file: src/deploy/stream/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: ${{ steps.ref.outputs.push == 'true' }}
           tags: ${{ steps.ref.outputs.tags }}
           provenance: false

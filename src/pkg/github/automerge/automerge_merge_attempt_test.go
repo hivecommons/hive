@@ -19,7 +19,7 @@ func TestExecuteMergeEffectRecordsMergeAttempt(t *testing.T) {
 
 	var during hgithub.MergeAttempt
 	var seen bool
-	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 41, func(context.Context) (effects.Result, error) {
+	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 41, "", func(context.Context) (effects.Result, error) {
 		during, seen = hgithub.MergeAttemptFor("acme/widget", 41)
 		return effects.Result{Provenance: "merge-sha"}, nil
 	})
@@ -35,7 +35,7 @@ func TestExecuteMergeEffectRecordsMergeAttempt(t *testing.T) {
 	}
 
 	// A refusal ends the attempt with its words.
-	_, err = engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 42, func(context.Context) (effects.Result, error) {
+	_, err = engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 42, "", func(context.Context) (effects.Result, error) {
 		return effects.Result{}, errors.New("405 Pull Request is not mergeable")
 	})
 	if err == nil {
@@ -45,7 +45,7 @@ func TestExecuteMergeEffectRecordsMergeAttempt(t *testing.T) {
 		t.Fatalf("refused attempt: %+v", a)
 	}
 	// A call that returns without a merge SHA did not merge.
-	if _, err = engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 43, func(context.Context) (effects.Result, error) {
+	if _, err = engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 43, "", func(context.Context) (effects.Result, error) {
 		return effects.Result{}, nil
 	}); err != nil {
 		t.Fatal(err)
