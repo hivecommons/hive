@@ -300,7 +300,7 @@ const w = stageTrackerPresenceChipHtml(online);
 assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s clanker \(online, last seen 2 min ago\) — hive is waiting for them" aria-label="Waiting on @Danathar&#39;s clanker \([^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<i class="ham-presence-dot"><\/i><\/span>@Danathar<\/span>$/.test(w), w);
 // A human: the person glyph and the handle, nothing else — no dot, no "(human · no clanker)" qualifier.
 const hw = stageTrackerPresenceChipHtml(human);
-assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*>[\s\S]*<\/svg><\/span>@zoe<\/span>$/.test(hw), hw);
+assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*>[\s\S]*<\/svg><\/span>@zoe to push<\/span>$/.test(hw), hw);
 assert.ok(!hw.includes('no clanker') && !hw.includes('ham-presence-dot'), hw);
 assert.strictEqual(stageTrackerPresenceChipHtml({ kind: 'pr', stage: 71 }), '');
 // The Needs-human popover names the presence under the question.
