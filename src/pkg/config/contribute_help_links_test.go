@@ -37,4 +37,13 @@ func TestContributeHelpLinksDefault(t *testing.T) {
 	if !strings.Contains(links[0].URL, "src/docs/contributor-relay.md") {
 		t.Fatalf("default docs link = %#v", links[0])
 	}
+	found := false
+	for _, l := range links {
+		if l.URL == "https://www.twitch.tv/hivecommons" && strings.Contains(l.Label, "Twitch") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("default links = %#v, want Twitch live stream link", links)
+	}
 }
