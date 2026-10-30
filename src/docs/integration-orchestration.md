@@ -161,7 +161,9 @@ by this feature. Missing or unsupported attestations remain unknown;
 generic author workflow metadata is not actual combined-checkout proof.
 
 Actual GitHub workflow jobs are keyed by repository/job/run attempt, so shared
-jobs count once. Accounting clips assigned-runner wall time to the observation
+jobs count once. Reordered queued deliveries and partial completion metadata
+cannot erase already observed physical runner execution. Accounting clips
+assigned-runner wall time to the observation
 window, includes canceled execution, and excludes queued/skipped work that never
 executed. Unfinished work is accounted only through its last observation.
 Incomplete cohorts, ambiguous base attribution and bounded pagination overflow

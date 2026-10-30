@@ -411,8 +411,21 @@ func (s *Store) apply(e Event) {
 	}
 	if j := e.Job; j != nil {
 		old, found := s.jobs[j.Key()]
-		if !found || (!j.ObservedAt.Before(old.ObservedAt) && (old.Status != "completed" || j.Status == "completed")) {
+		wasRunning := old.Status == "in_progress" || old.Status == "running"
+		regressesRunning := wasRunning && j.Status != "in_progress" && j.Status != "running" && j.Status != "completed"
+		if !found || (!j.ObservedAt.Before(old.ObservedAt) && !regressesRunning && (old.Status != "completed" || j.Status == "completed")) {
 			next := cloneJob(*j)
+			if old.RunnerID > 0 && (wasRunning || old.Status == "completed" && old.Conclusion != "skipped") {
+				if next.RunnerID == 0 {
+					next.RunnerID = old.RunnerID
+				}
+				if next.StartedAt.IsZero() {
+					next.StartedAt = old.StartedAt
+				}
+				if next.CompletedAt.IsZero() && old.Status == "completed" {
+					next.CompletedAt = old.CompletedAt
+				}
+			}
 			for _, id := range old.Candidates {
 				next.Candidates = appendCandidate(next.Candidates, id)
 			}

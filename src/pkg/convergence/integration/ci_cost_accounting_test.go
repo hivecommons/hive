@@ -28,6 +28,7 @@ func TestAssignedMetadataDoesNotTurnQueuedSkippedOrIncompleteJobsIntoKnownExecut
 			if job.CompletedAt.After(job.ObservedAt) {
 				job.ObservedAt = job.CompletedAt
 			}
+
 			report := cost(map[string]Job{job.Key(): job}, coverage, "o/r", "v5", from, through)
 			if report.Complete != tc.complete || report.ObservedRunnerMinutes != tc.minutes {
 				t.Fatalf("incorrect actual execution: %+v", report)
