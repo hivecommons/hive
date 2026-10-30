@@ -27,7 +27,9 @@ import (
 //   - the stage pass elects a merge commit when the head mixes contributor
 //     commits with hive commits, every commit is signed, and the repo is
 //     not squash-only (auto_merge.squash_only); it writes
-//     `merge-method/merge`, leaves one note per head, and does not route
+//     `merge-method/merge`, leaves one note per head once that write
+//     landed (a write the write-back gate suppressed refuses the election
+//     on the next pass instead), and does not route
 //     the PR to 071/072 or 085 on hive-signoff-attribution;
 //   - the attribution check (.github/workflows/dco-squash-attribution.yml)
 //     reads the label and accepts a bot's self-signed commit under it;
@@ -49,6 +51,10 @@ const (
 	mergeCommitRefusedSquashOnly = "squash-only"
 	mergeCommitRefusedUnsigned   = "unsigned-commits"
 	mergeCommitRefusedHiveOnly   = "no-contributor-commits"
+	// mergeCommitRefusedLabelsSuppressed: the write-back gate kept the
+	// hive's labels off the PR, so `merge-method/merge` cannot land
+	// (hivecommons/hive#15710).
+	mergeCommitRefusedLabelsSuppressed = "labels-suppressed"
 )
 
 type mergeCommitDecision struct {

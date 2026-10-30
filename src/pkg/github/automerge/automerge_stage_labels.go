@@ -444,6 +444,9 @@ type prStagePending struct {
 	want  stagelabels.Desired
 	tr    stagelabels.Transition
 	facts stageengine.Facts
+	// mergeCommit carries the head's commit stats when the lane elected a
+	// merge commit: its note is posted only once the write landed.
+	mergeCommit *dcoStats
 }
 
 // removeNonStageLabel takes one non-hive label off a PR (the stray
@@ -964,6 +967,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
+		var mergeCommitStats *dcoStats
 		// dcoRead is true once the commit check for this head was read (or
 		// served from the cache) without error; it is what gates caching, not
 		// the label state, which is reset below for informational no-dco and
@@ -1025,15 +1029,19 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// to 070 where nothing can act (hivecommons/hive OWNERS
 				// PRs of 2026-10-20).
 				election := mergeCommitElection(stats, role, policy, obs.Display)
+				if election.Elected && hadPrev && prevRec.LabelsSuppressed && !stagelabels.HasMergeCommitLabel(obs.Labels) {
+					// The write-back gate keeps the hive's labels off this
+					// PR, so `merge-method/merge` cannot land and the
+					// attribution check would stay on the squash rule
+					// (hivecommons/hive#15710): take the fallback instead.
+					election = mergeCommitDecision{Refused: mergeCommitRefusedLabelsSuppressed}
+				}
 				obs.Detail.MergeCommit, obs.Detail.MergeCommitRefused = election.Elected, election.Refused
 				if election.Elected {
 					want.MergeCommit = stagelabels.MergeCommitWanted
 					pass.MergeCommit = want.MergeCommit
-					n, err := c.noteMergeCommit(ctx, store, key, obs, stats)
-					result.Comments += n
-					if err != nil && firstErr == nil {
-						firstErr = err
-					}
+					elected := stats
+					mergeCommitStats = &elected
 				} else {
 					want.MergeCommit, pass.MergeCommit = stagelabels.MergeCommitNotWanted, stagelabels.MergeCommitNotWanted
 					verdict.Stage = fixingStage(obs)
@@ -1166,7 +1174,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		pass.AuthorKind = obs.AuthorKind
 		pass.Stalled, pass.KindLabels = want.Stalled, want.KindLabels
 		facts.PR.Pass = pass
-		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts})
+		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts, mergeCommit: mergeCommitStats})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads
 	// each PR before writing so a stage another writer placed since the
@@ -1209,6 +1217,17 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		if out.Changed() {
 			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", out.Stage.String(), "role", role.String(), "author_kind", obs.AuthorKind.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "clamped", out.Clamped, "wanted", out.Wanted.String(), "reason", obs.Reason, "lane", obs.Lane)
+		}
+		if p.mergeCommit != nil && err == nil && !out.Suppressed {
+			// The note promises the label; it is posted only once the
+			// write landed (hivecommons/hive#15710). A suppressed write
+			// leaves the record marked and the next pass refuses the
+			// election with the reason named.
+			n, nerr := c.noteMergeCommit(ctx, store, key, obs, *p.mergeCommit)
+			result.Comments += n
+			if nerr != nil && firstErr == nil {
+				firstErr = nerr
+			}
 		}
 		if want.Stalled && want.Stage.StallNote() {
 			if rec, ok := store.Get(key); ok && !rec.StallCommented {
