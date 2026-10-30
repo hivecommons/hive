@@ -63,6 +63,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/presence", s.handlePresence)
 	s.mux.HandleFunc("GET /api/prompt-history", s.handlePromptHistory)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
+	s.mux.HandleFunc("POST /api/upgrade/announce", s.handleUpgradeAnnounce)
 	s.mux.HandleFunc("POST /api/release-channel", s.handleReleaseChannelSwitch)
 	// Self-service, owner-only spoke backup (encrypted; includes the bead
 	// ledger the fleet-wide hub backup excludes — see issue #2318).
@@ -883,6 +884,15 @@ func (s *Server) sentinelLabel() string {
 		return config.DefaultSentinelLabel
 	}
 	return s.deps.Config.Sentinel.LabelOrDefault()
+}
+
+// hiveSupersedingAutoMerge is the live hive-superseding auto-merge switch
+// (config.HiveSupersedingAutoMergeConfig; nil config = on).
+func (s *Server) hiveSupersedingAutoMerge() bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return true
+	}
+	return s.deps.Config.AutoMerge.HiveSuperseding.AutoMergeEnabled()
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

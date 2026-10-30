@@ -858,5 +858,12 @@
     const VERSION_UPGRADE_DONE_MS = 30000;
     const VERSION_UPGRADE_LONG_MS = 15 * 60 * 1000;
     const VERSION_UPGRADE_POLL_MS = 5000;
+    // Pod rolls (#15788): poll faster while the pod is down, hold the
+    // "Upgraded ✓" outcome for the standard toast countdown, and pace the
+    // on-demand preview.
+    const VERSION_ROLL_POLL_MS = 2000;
+    const VERSION_ROLL_TOAST_MS = 15000;
+    const VERSION_ROLL_DEMO_STEP_MS = 4000;
+    const VERSION_ROLL_DEMO_START_MS = 1500;
     let _versionUpgradePollTimer = null;
 

@@ -56,6 +56,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		PendingGateway:   &HeartbeatGatewayConfig{Name: "gw", Key: "k"},
 		ClusterID:        "vllm-d",
 		RestartSpoke:     true,
+		UpgradeAnnounce:  &UpgradeAnnounce{Target: "deadbeef", Source: UpgradeSourceHub, Reason: "hub-managed upgrade"},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if beats.Add(1) == 1 {
@@ -79,6 +80,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		gotGateway      *HeartbeatGatewayConfig
 		gotClusterID    string
 		gotRestart      bool
+		gotAnnounce     *UpgradeAnnounce
 		gotSwitchBranch string
 	)
 	fired := make(chan struct{}, 1)
@@ -130,6 +132,11 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		gotSwitchBranch = tag
 		mu.Unlock()
 	})
+	onAnnounce := UpgradeAnnounceCallback(func(a *UpgradeAnnounce) {
+		mu.Lock()
+		defer mu.Unlock()
+		gotAnnounce = a
+	})
 	onRestart := RestartSpokeCallback(func() {
 		mu.Lock()
 		gotRestart = true
@@ -148,7 +155,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	go func() {
 		defer close(done)
 		StartHeartbeat(ctx, srv.URL, collect, 50*time.Millisecond, nil2Logger(),
-			onUpgrade, onApp, onBanner, onVis, onUsers, onProject, onGateway, onClusterID, onSwitch, onRestart)
+			onUpgrade, onApp, onBanner, onVis, onUsers, onProject, onGateway, onClusterID, onSwitch, onRestart, onAnnounce)
 	}()
 
 	// RestartSpoke is the last dispatch in processHeartbeatResponse, so once it
@@ -199,6 +206,9 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	}
 	if !gotRestart {
 		t.Error("restart-spoke callback did not record")
+	}
+	if gotAnnounce == nil || gotAnnounce.Target != "deadbeef" || gotAnnounce.Source != UpgradeSourceHub {
+		t.Errorf("upgrade-announce callback got %+v, want hub announce for deadbeef (#15788)", gotAnnounce)
 	}
 }
 

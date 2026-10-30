@@ -917,7 +917,7 @@ func runEvalCycle(
 	// paused agent or exhausted budget. Fully guarded/cheap: with no `triggers:`
 	// configured, celEngineFor returns nil and celMatchedAgents does zero work.
 	if celEngine := celEngineFor(cfg, logger); celEngine != nil {
-		celAgents := celMatchedAgents(celEngine, actionable, cfg, gov, agentMgr.IsPaused, logger)
+		celAgents := celMatchedAgentsOnce(celEngine, actionable, cfg, gov, agentMgr.IsPaused, logger, &globalCELSeen)
 		if len(celAgents) > 0 {
 			before := len(agentsDue)
 			agentsDue = unionAgents(agentsDue, celAgents)

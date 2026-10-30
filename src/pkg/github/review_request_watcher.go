@@ -15,6 +15,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -298,6 +299,19 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	threadID := strings.TrimSpace(req.ThreadID)
 	// A "comment" that names a thread is an in-thread reply, not a PR review.
 	threadReply := okEvent && apiEvent == "COMMENT" && threadID != ""
+	// Quiet notification mode: a review whose whole body is the clean
+	// acknowledgement ("**Reviewed** — no findings from …") is recorded as
+	// a verdict and never submitted. Submitting it emails the author and
+	// every watcher to say nothing happened; the verdict still reaches the
+	// evidence bundle and the Activity Monitor. The request keeps its
+	// report, so the shape checks below treat it exactly as record_verdict.
+	noFindingsSuppressed := false
+	if okEvent && !recordOnly && !resolveThread && threadID == "" && !req.Revise &&
+		c.notificationsQuiet() && strings.TrimSpace(req.Report) != "" && review.NoFindingsAcknowledgement(req.Body) {
+		recordOnly = true
+		noFindingsSuppressed = true
+		req.Event = ReviewEventRecordVerdict
+	}
 	// Validate shape BEFORE authorizing or touching the API — a hopeless request
 	// must never retry.
 	var shapeErr string
@@ -462,6 +476,17 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// state record_verdict and a note, so the agent's own loop is done.
 	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
+			if c.notificationsQuiet() && strings.TrimSpace(req.Body) != "" {
+				// The head already carries its one hive review. The
+				// findings are not dropped: they go into the PR's status
+				// comment, edited in place, where a later perspective's
+				// findings for the same head join them without another
+				// review submission (and another email).
+				if _, ferr := c.UpsertPRStatusSection(ctx, req.Repo, req.Number, prstatus.KeyReviewFindingsPrefix+verdictSlug(req.Agent), reviewFindingsSection(req)); ferr != nil {
+					c.logger.Warn("review-request watcher: could not fold findings into the status comment",
+						slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", ferr.Error()))
+				}
+			}
 			c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), nil, nowFn())
 			if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 				c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
@@ -487,12 +512,16 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 				slog.String("repo", req.Repo), slog.Int("number", req.Number),
 				slog.String("error", err.Error()))
 		}
-		c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: ReviewEventRecordVerdict, At: nowFn().UTC().Format(time.RFC3339)})
+		resp := ReviewResponse{OK: true, Number: req.Number, State: ReviewEventRecordVerdict, At: nowFn().UTC().Format(time.RFC3339)}
+		if noFindingsSuppressed {
+			resp.Note = reviewNoFindingsSuppressedNote
+		}
+		c.writeReviewResult(path, resp)
 		_ = os.Remove(path)
 		c.reviewRetries.clear(path)
 		c.logger.Info("review-request watcher: verdict recorded without a comment",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
-			slog.String("agent", req.Agent))
+			slog.String("agent", req.Agent), slog.Bool("no_findings_suppressed", noFindingsSuppressed))
 		return
 	}
 
@@ -924,5 +953,24 @@ func (c *Client) maxReviewsPerHead() int {
 	if c.combinedPerspectivesFn != nil && c.combinedPerspectivesFn() {
 		return 1
 	}
+	if c.notificationsQuiet() {
+		// One review submission per head, whatever the perspective count:
+		// later perspectives' findings join it through the status comment.
+		return 1
+	}
 	return c.perspectives.Len()
+}
+
+// reviewNoFindingsSuppressedNote is the result-file note for a clean
+// acknowledgement the quiet mode recorded instead of submitting.
+const reviewNoFindingsSuppressedNote = "comment suppressed: no-findings acknowledgement recorded as a verdict (github.notifications.mode: quiet)"
+
+// reviewFindingsSection renders a perspective's findings for the status
+// comment: who found them, then the body as written.
+func reviewFindingsSection(req ReviewRequest) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Review findings** from `%s`", strings.TrimSpace(req.Agent))
+	b.WriteString(" (folded here because this head already carries its hive review):\n\n")
+	b.WriteString(strings.TrimSpace(req.Body))
+	return b.String()
 }

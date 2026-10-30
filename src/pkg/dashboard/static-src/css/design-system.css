@@ -84,6 +84,33 @@
     .oc-nav-count--waiting:not([data-zero]) + .oc-nav-count { margin-left: var(--sp-1); }
     .oc-nav-count--waiting:not([data-zero]) { --component-status: var(--status-attention); background: color-mix(in srgb, var(--component-status) 16%, transparent); border-color: color-mix(in srgb, var(--component-status) 50%, transparent); color: var(--component-status); }
     .oc-nav-count--waiting[data-zero] { display: none; }
+    /* A short, out-of-flow net delta on explicitly wired navigation counts.
+       Keep the zero waiting badge visible just long enough to show its drop. */
+    .oc-nav-count[data-count-delta] { position: relative; }
+    .oc-nav-item:has(> .oc-nav-count[data-count-delta]) { overflow: visible; z-index: 1; }
+    #activity-monitor-waiting-badge[data-zero][data-count-delta] {
+      display: inline-flex; position: absolute; right: 3rem;
+      visibility: hidden; padding: 0; border: 0;
+    }
+    .oc-nav-count[data-count-delta]::after {
+      content: attr(data-count-delta); position: absolute; bottom: calc(100% + 2px); right: 0;
+      visibility: visible; pointer-events: none; z-index: 1; padding: var(--sp-0) var(--sp-2); border-radius: var(--r-pill);
+      background: var(--surface); color: var(--brand); border: 1px solid var(--brand);
+      font-size: var(--fs-2xs); line-height: 1.4; font-variant-numeric: tabular-nums;
+    }
+    #contributors-sidebar-badge[data-count-delta]::after,
+    #knowledge-sidebar-badge[data-count-delta]::after {
+      bottom: auto; top: 50%; right: calc(100% + var(--sp-1)); translate: 0 -50%;
+    }
+    [data-count-direction="up"] { --nav-count-start: 3px; }
+    [data-count-direction="down"] { --nav-count-start: -3px; }
+    [data-count-phase="a"]::after { animation: nav-count-a 220ms ease-out; }
+    [data-count-phase="b"]::after { animation: nav-count-b 220ms ease-out; }
+    @keyframes nav-count-a { from { opacity: 0; transform: translateY(var(--nav-count-start)); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes nav-count-b { from { opacity: 0; transform: translateY(var(--nav-count-start)); } to { opacity: 1; transform: translateY(0); } }
+    @media (prefers-reduced-motion: reduce) {
+      [data-count-phase]::after { animation: none; }
+    }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }

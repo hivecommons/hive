@@ -51,7 +51,7 @@
       _stageTrackerPollErrorSince = 0;
     }
 
-    function renderStageTracker(data) {
+    function renderStageTracker(data, countRefresh = false) {
       if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
       // Row-action feedback rides the payload: a result toast leaves and a
       // row stops "acting" once the item it targets reads a new state.
@@ -62,6 +62,7 @@
       // Rows under a "Merging" hold the payload already dropped ride along (#15245).
       const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
+        stageTrackerSidebarCountsUnknown();
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
       }
@@ -108,7 +109,8 @@
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
-      stageTrackerRenderWaiting(d, nowMs);
+      navCountDelta(badge, counts.badge, counts.badgeTitle, !!data || countRefresh);
+      stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
@@ -206,4 +208,3 @@
       _stageTrackerNudgeAt = Date.now();
       fetchStageTracker();
     }
-

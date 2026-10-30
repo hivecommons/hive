@@ -493,12 +493,17 @@
       refreshSectionCardShell('contributors-section');
       const sidebarBadge = document.getElementById('contributors-sidebar-badge');
       const statusBadge = document.getElementById('contributors-status-badge');
-      if (!pool) return;
-      const onlineCount = Number(pool.online) || 0;
-      const totalCount = Number(pool.registered) || 0;
+      if (!pool || !Number.isSafeInteger(pool.online) || pool.online < 0 ||
+          !Number.isSafeInteger(pool.registered) || pool.registered < 0) {
+        navCountDelta(sidebarBadge, null);
+        return;
+      }
+      const onlineCount = pool.online;
+      const totalCount = pool.registered;
       const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
       // Same two-part pill as Governor / Overview: "online/total".
       if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
+      navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
         statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
@@ -530,4 +535,3 @@
     }
 
     // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit
-

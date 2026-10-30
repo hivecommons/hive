@@ -3577,6 +3577,11 @@ type GitHubConfig struct {
 	// reporterTrustHoldEnvOverride is set by HIVE_REPORTER_TRUST_HOLD and never
 	// serialized, for the same reason as selfAuthorizationHoldEnvOverride.
 	reporterTrustHoldEnvOverride *bool `yaml:"-" json:"-"`
+	// Notifications governs how loudly the hive's own PR bookkeeping reaches
+	// people. Every new issue comment and every review submission emails
+	// the author and every watcher; editing an existing comment does not.
+	// See GitHubNotificationsConfig.
+	Notifications GitHubNotificationsConfig `yaml:"notifications,omitempty" json:"notifications,omitempty"`
 	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
 	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
 	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be
@@ -8337,6 +8342,10 @@ type AutoMergeConfig struct {
 	// opt-in per repo: a hive that never sets it keeps the pre-queue
 	// behaviour, including the `merge-queue-required` park.
 	NativeMergeQueue NativeMergeQueueAutoMergeConfig `yaml:"native_merge_queue,omitempty" json:"native_merge_queue,omitempty"`
+	// HiveSuperseding is the owner's rule for the hive's own superseding
+	// copies of other PRs (@clubanderson: "if a pr is superseded by a pr
+	// that a hive agent creates, it should auto merge"). Default ON.
+	HiveSuperseding HiveSupersedingAutoMergeConfig `yaml:"hive_superseding,omitempty" json:"hive_superseding,omitempty"`
 }
 
 // NativeMergeQueueAutoMergeConfig is auto_merge.native_merge_queue.*.
@@ -8388,6 +8397,26 @@ func (n NativeMergeQueueAutoMergeConfig) EffectiveProbeTTL() time.Duration {
 		return DefaultNativeMergeQueueProbeTTL
 	}
 	return n.ProbeTTL
+}
+
+// HiveSupersedingAutoMergeConfig is auto_merge.hive_superseding.*.
+type HiveSupersedingAutoMergeConfig struct {
+	// AutoMerge: a PR the hive App authored that declares "Supersedes #N"
+	// auto-merges with no operator decision. A reviewer's requires_human
+	// — a risk-class question or a security-sensitive finding included —
+	// is routed to the fixer and re-reviewed like any other finding; the
+	// PR parks at stage 085 only for a sentinel finding nobody has
+	// acknowledged or an emergent hard-stop (fix attempts exhausted, a
+	// hold, CI red after fixes, an unresolvable base conflict). nil/unset
+	// means ON; `auto_merge: false` restores the ordinary hive-authored
+	// routing, where such findings wait for a person.
+	AutoMerge *bool `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+}
+
+// AutoMergeEnabled reports the auto_merge.hive_superseding.auto_merge
+// switch; unset is on.
+func (h HiveSupersedingAutoMergeConfig) AutoMergeEnabled() bool {
+	return h.AutoMerge == nil || *h.AutoMerge
 }
 
 // MergeTrainAutoMergeConfig is auto_merge.merge_train.*.
