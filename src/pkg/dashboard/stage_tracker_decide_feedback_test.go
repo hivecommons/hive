@@ -32,7 +32,7 @@ func TestStageTrackerCoveredIssueDropsPRChipJS(t *testing.T) {
 
 func TestStageTrackerHumanChevronSaysWhyJS(t *testing.T) {
 	html := indexHTML(t)
-	if !strings.Contains(html, "function stageTrackerHumanWhy(item, kind)") || !strings.Contains(html, "stageTrackerHumanWhy(item, sa.kind)") {
+	if !strings.Contains(html, "function stageTrackerHumanWhy(item, kind)") || !strings.Contains(html, "sa.why || humanWhy(item, sa.kind)") {
 		t.Error("the human next-move tooltip must fall back to the row's reason")
 	}
 }

@@ -16641,10 +16641,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return String(item.human_merge_reason_text || item.reason || '').trim();
     }
     function stageTrackerActorTip(item) {
+      // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
+      const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';
       const sa = stageTrackerStageActor(item);
-      if (!sa) { const k = stageTrackerActorKind(item); const w = stageTrackerHumanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
+      if (!sa) { const k = stageTrackerActorKind(item); const w = humanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
       if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
-      const why = sa.why || stageTrackerHumanWhy(item, sa.kind);
+      const why = sa.why || humanWhy(item, sa.kind);
       return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
     // Who holds the row: the payload's claimant {kind, login, agent, hive,
