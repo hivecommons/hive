@@ -270,6 +270,12 @@
     .ham-badge-overlap { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
     .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
+    /* Push progress on the waiting-on pill (hive PR 15784): the wait's age
+       rides last; past dashboard.stage_tracker.waiting_push_stale_h it takes
+       the muted warning tone. "@zoe pushed abc1234 · 2m" links to the commit. */
+    .ham-push-stale { color: color-mix(in srgb, var(--status-warn) 70%, var(--text-faint)); }
+    .ham-badge-push { text-decoration: none; }
+    .ham-badge-push:hover { color: var(--text-muted); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
        waits on, drawn as the same glyphs the stage chevrons use — a person
        for a human (nothing more: a human has no presence to report) or the
