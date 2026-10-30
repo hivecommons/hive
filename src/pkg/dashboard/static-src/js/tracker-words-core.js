@@ -163,6 +163,16 @@
     // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
     // / duplicate_issue carry the numbers).
     const STAGE_TRACKER_GATE_DUPLICATE_PREFIX = 'duplicate-of:';
+    // merge_gate.state of a PR the queue holds because an open PR in
+    // another lane claims the same issue and nobody has decided which
+    // lands (hivecommons/hive#15810): "claim-conflict:15793".
+    const STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX = 'claim-conflict:';
+    // Pure: the other claimant of a "claim-conflict:<n>" gate state; 0 for
+    // any other state.
+    function stageTrackerGateClaimConflictOf(state) {
+      state = String(state || '');
+      return state.indexOf(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX) === 0 ? Number(state.slice(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX.length)) || 0 : 0;
+    }
     // Pure: the PR number a "duplicate-of:<n>" gate state yields to; 0 for
     // any other state.
     function stageTrackerGateDuplicateOf(state) {
@@ -177,6 +187,12 @@
       if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
       const dup = stageTrackerGateDuplicateOf(state);
       if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
+      // Inline prefix read (hivecommons/hive#15810): this function is
+      // lifted alone into node by the Go tests.
+      if (state.indexOf('claim-conflict:') === 0) {
+        const conflict = Number(state.slice('claim-conflict:'.length)) || 0;
+        if (conflict) return 'Held · duplicate of #' + conflict + ' · needs decision';
+      }
       if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
       const plain = state.replace(/[-_]+/g, ' ').trim();
       return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';

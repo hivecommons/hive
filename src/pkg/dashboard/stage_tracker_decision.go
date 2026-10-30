@@ -203,6 +203,8 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 	switch {
 	case it.Kind == "pr" && it.MergeTrain != nil && it.MergeTrain.State == MergeGateStateRebaseExhausted:
 		return decisionForMergeTrain(it, held)
+	case it.Kind == "pr" && it.MergeGate != nil && mergeGateClaimConflictOf(it.MergeGate.State) > 0:
+		return decisionForClaimConflict(it, held)
 	case it.Kind == "issue" && it.Blocker != nil && !it.Mirrored && (slices.Contains(it.Modifiers, modNeedsHuman) || it.Stage == stagelabels.IssueNeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
 		// A structured blocker outranks the generic park wording: the
 		// person is not being asked to decide, the hive is saying what it

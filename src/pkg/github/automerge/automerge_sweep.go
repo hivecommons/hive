@@ -252,6 +252,13 @@ type Engine struct {
 	inactiveQueueMu   sync.Mutex
 	inactiveQueueLast map[string]time.Time
 
+	// claimantsMu / claimants: the full open-PR list the legacy (no
+	// forge-state source) /pulls listing returned per owner/name this
+	// pass, kept before any event narrowing so the same-issue claim gate
+	// sees every claimant (hivecommons/hive#15810).
+	claimantsMu sync.Mutex
+	claimants   map[string][]*gh.PullRequest
+
 	nativeMergeQueuePolicy func() NativeMergeQueuePolicy
 	nativeQueueProbeMu     sync.Mutex
 	nativeQueueProbes      map[string]nativeQueueProbe
@@ -1171,6 +1178,13 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
 				continue
 			}
+			if _, held := train.claimConflictOf(number); held {
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[autoMergeReasonMergeTrainClaimConflict]++
+				stage(c.mergeTrainClaimConflictSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				repoSkipped++
@@ -1404,6 +1418,11 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			if _, held := train.duplicateOf(number); held {
 				result.Skipped++
 				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
+			if _, held := train.claimConflictOf(number); held {
+				result.Skipped++
+				stage(c.mergeTrainClaimConflictSkip(train, number), false, nil)
 				continue
 			}
 			if train.isSibling(number) {

@@ -379,6 +379,12 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		if train.State == prstage.MergeTrainStateRebaseExhausted {
 			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 		}
+		if train.State == prstage.MergeTrainStateClaimConflict {
+			// Another lane's open PR claims the same issue and nobody has
+			// decided which lands (hivecommons/hive#15810): a person's
+			// call, so 085 — not a turn in the queue.
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+		}
 		if train.State == prstage.MergeTrainStateDuplicateOf {
 			// Two open PRs fix one issue and the queue kept the other
 			// (hivecommons/hive#15469): this one goes back to its author

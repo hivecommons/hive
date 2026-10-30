@@ -174,6 +174,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if c := stageTrackerSoakCaption(rec, now); c != "" {
 			it.Caption = c
 		}
+		if c := stageTrackerClaimConflictCaption(it); c != "" {
+			it.Caption, it.Actor = c, StageActorHuman
+		}
 		if hasRec && rec.Stage != stagelabels.None {
 			if at := stageTrackerNoteChangedAt(rec, now); !at.IsZero() {
 				it.NoteChangedAt = &at
@@ -828,6 +831,7 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 	resp := build(status, s.stageStoreOrShared(), now)
 	s.stageTrackerEnrichSoftLinks(resp.Items, stageTrackerRepoQualifier(status), now)
 	resp.CacheTTLSeconds = int64(ttl / time.Second)
+	resp.Settings = s.stageTrackerSettings()
 	// The encoded body carries source=cache: that is what every later hit
 	// serves verbatim, and what the ETag validates. The building request
 	// alone rewrites the marker to fresh on its way out (handleStageTracker).
