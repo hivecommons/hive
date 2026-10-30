@@ -617,7 +617,7 @@ The people who lend their computers or AI helpers to your projects, and how far 
 
 **What it tells you.** A contributor is a person who signed up to help. Some connect their own AI worker. This section lists them and their trust level.
 
-**How the numbers are worked out.** The summary shows active contributors and all registered contributors. Active means seen recently.
+**How the numbers are worked out.** The sidebar pill and the section header read **online/total**, for example `3/12`: how many registered contributors are online right now over how many have registered. *Online* means the contributor's relay sent a heartbeat within the presence window — `governor.labels.stage.presence_window`, 15 minutes by default. It is the same test the tracker uses when it says *waiting on @name (offline 13m)*, so the two never disagree. Hover the pill for *N online · M registered (heartbeat within 15m)*. The list puts online contributors first; each card's dot is green when online and grey when offline.
 
 **What it is good for.** Use it to give trusted people more access, or remove access. Share the `/contribute` link to invite people.
 

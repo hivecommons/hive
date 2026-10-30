@@ -83,25 +83,65 @@ var inviteTrustTiers = map[string]bool{"trusted": true, "merger": true, "advisor
 // the inviter username. An empty string means the token is invalid, tampered,
 // or expired — the caller must treat that as "no attribution" (a plain
 // self-registration), never as an error.
+// ContributorPoolStatus feeds the sidebar's Contributors "online/total"
+// pill and the section header. Online uses the SAME presence predicate the
+// stage tracker's "waiting on @x (offline 13m)" reads
+// (ContributeWSHub.Presence): a registered contributor whose relay
+// heartbeat landed within governor.labels.stage.presence_window (15m by
+// default). Active is the older "has a live socket" count kept for callers
+// that still read it.
 type ContributorPoolStatus struct {
-	Active     int            `json:"active"`
-	Registered int            `json:"registered"`
-	ByRole     map[string]int `json:"by_role,omitempty"`
+	Active     int `json:"active"`
+	Online     int `json:"online"`
+	Registered int `json:"registered"`
+	// PresenceWindow is the window Online was judged against ("15m").
+	PresenceWindow string         `json:"presence_window"`
+	ByRole         map[string]int `json:"by_role,omitempty"`
 }
 
 func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 	profiles := listContributorProfiles()
-	active := 0
+	active, online := 0, 0
 	var byRole map[string]int
+	window := config.DefaultPresenceWindow
 	if s.contributeHub != nil {
 		active = s.contributeHub.ActiveCount()
 		byRole = s.contributeHub.RoleBreakdown()
+		window = s.contributeHub.presenceWindow()
+		online = countOnlineContributors(profiles, s.contributeHub.LastHeartbeats(), window, time.Now())
 	}
 	return &ContributorPoolStatus{
-		Active:     active,
-		Registered: len(profiles),
-		ByRole:     byRole,
+		Active:         active,
+		Online:         online,
+		Registered:     len(profiles),
+		PresenceWindow: stageTrackerShortDuration(window),
+		ByRole:         byRole,
 	}
+}
+
+// countOnlineContributors counts the registered profiles whose freshest
+// relay heartbeat is within window of now — the tracker's presence
+// predicate (liveConnectionsFor) applied across the registry, so the
+// sidebar pill and the "(offline 13m)" caption never disagree. A profile
+// with no heartbeat, or one exactly older than the window, is offline;
+// a heartbeat landing exactly at the window edge still counts, as in
+// liveConnectionsFor.
+func countOnlineContributors(profiles []ContributorProfile, lastSeen map[string]time.Time, window time.Duration, now time.Time) int {
+	if len(profiles) == 0 || len(lastSeen) == 0 {
+		return 0
+	}
+	byUser := make(map[string]time.Time, len(lastSeen))
+	for user, t := range lastSeen {
+		byUser[strings.ToLower(strings.TrimSpace(user))] = t
+	}
+	n := 0
+	for _, p := range profiles {
+		t, ok := byUser[strings.ToLower(strings.TrimSpace(p.GitHubUsername))]
+		if ok && !t.IsZero() && now.Sub(t) <= window {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *Server) registerContributeRoutes() {
