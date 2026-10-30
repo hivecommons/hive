@@ -1,3 +1,4 @@
+# Hive operator reference
 
 This page is a concise operator reference for fields and runtime knobs that are
 easy to miss in `hive.yaml.example`. It was checked against `pkg/config/config.go`
