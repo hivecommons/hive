@@ -42,10 +42,17 @@ func TestDecisionForPRRedundantOfLeadsWithCloseSuperseded(t *testing.T) {
 	if len(d.Options) == 0 || d.Options[0].Action != decisionActionCloseSuperseded || !strings.Contains(d.Options[0].Consequence, "#15427") {
 		t.Fatalf("lead option = %+v, want close-superseded naming #15427", d.Options)
 	}
+	// The one place a close is the row's inline lead: the server says so.
+	if !d.Options[0].Lead {
+		t.Fatalf("redundant-of close-superseded not marked lead: %+v", d.Options[0])
+	}
 	seen := 0
 	for _, o := range d.Options {
 		if o.Action == decisionActionCloseSuperseded {
 			seen++
+		}
+		if o.Lead && o.Action != decisionActionCloseSuperseded {
+			t.Fatalf("unexpected lead option %+v", o)
 		}
 	}
 	if seen != 1 {
@@ -61,5 +68,36 @@ func TestDecisionForPRRedundantOfLeadsWithCloseSuperseded(t *testing.T) {
 	plain := decisionForPR(it, &review.Aggregate{DecisionRequested: true, DecisionQuestion: "rename the flag?"}, "", false)
 	if plain.RedundantOf != 0 || plain.Options[0].Action != decisionActionDelegate {
 		t.Fatalf("plain decision = %+v", plain)
+	}
+	for _, o := range plain.Options {
+		if o.Lead {
+			t.Fatalf("plain decision marks %s lead", o.Action)
+		}
+	}
+}
+
+// A human's PR waiting on its own author offers the closes in the menu but
+// never marks one as the row's lead — the SPA shows no destructive inline
+// button for a row that only waits on a person to push.
+func TestDecisionForWaitingOnAuthorNeverLeadsWithClose(t *testing.T) {
+	it := StageTrackerItem{Repo: "hivecommons/hive", Number: 15626, Kind: "pr", Stage: 72, Author: "clubanderson", AuthorKind: authorKindHuman, Reason: "changes-requested"}
+	d := decisionForWaitingOnAuthor(it, false)
+	if d == nil || len(d.Options) == 0 || d.Options[0].Action != decisionActionDelegate {
+		t.Fatalf("decision = %+v", d)
+	}
+	if !strings.Contains(d.Question, "waits on @clubanderson to push") || strings.Contains(d.Question, "close it?") {
+		t.Fatalf("question = %q", d.Question)
+	}
+	closes := 0
+	for _, o := range d.Options {
+		if o.Lead {
+			t.Fatalf("option %s marked lead on a waiting-on-author row", o.Action)
+		}
+		if strings.HasPrefix(o.Action, "decide:close-") {
+			closes++
+		}
+	}
+	if closes != 2 {
+		t.Fatalf("closes in the menu = %d, want 2: %+v", closes, d.Options)
 	}
 }

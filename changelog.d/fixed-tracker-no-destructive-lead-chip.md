@@ -1,0 +1,1 @@
+- Activity Monitor tracker: a human-authored PR waiting on its own author no longer leads with the red "Close as superseded" inline button; a close leads only when the server marks it (`lead`, the reviewer named the superseding PR), and the pill reads "waiting on @author to push".
