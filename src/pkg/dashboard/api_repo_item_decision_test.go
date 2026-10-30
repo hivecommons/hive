@@ -42,6 +42,9 @@ type repoItemDecisionMock struct {
 	updates             int
 	prRedCI             bool
 	prNoCI              bool
+	// prTidePending is hivecommons/hive#15722's head: every check green,
+	// only the tide merge-metadata context pending (GitHub: "unstable").
+	prTidePending bool
 	// priorComments are the comment bodies GET /comments lists (a prior
 	// delegated decision makes a repeat click a no-op).
 	priorComments []string
@@ -169,6 +172,8 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				_, _ = io.WriteString(w, `{"state":"failure","statuses":[{"context":"ci/test","state":"failure"}]}`)
 			case m.prNoCI:
 				_, _ = io.WriteString(w, `{"state":"pending","statuses":[]}`)
+			case m.prTidePending:
+				_, _ = io.WriteString(w, `{"state":"pending","statuses":[{"context":"ci/test","state":"success"},{"context":"tide","state":"pending"}]}`)
 			default:
 				_, _ = io.WriteString(w, `{"state":"success","statuses":[{"context":"ci/test","state":"success"}]}`)
 			}

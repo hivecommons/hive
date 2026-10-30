@@ -7,8 +7,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func postDelegatedPlan(t *testing.T, srv *Server, number int, user, body string, hdr map[string]string) *httptest.ResponseRecorder {
@@ -331,5 +334,109 @@ func TestDelegatedDecisionPlanIssueAndAdvisory(t *testing.T) {
 				t.Fatalf("a plan may not write: %v %v", mock.comments, mock.edits)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#15722, the live case: a clanker's PR the hive adopted in
+// place (contributor-lane:adopted-by-hive), parked at 085 by the reviewer's
+// requires_human / high-risk marker, every check green and only the tide
+// context pending (mergeable_state "unstable"). The preview said "Send
+// #15722 back to its author with one instruction: make CI green" / "CI is
+// red". It must read the recorded park reason instead, never call a
+// pending-only head red, and — the hive being the author now — hand the
+// finding to the hive's own fixer.
+func TestDelegatedDecisionPlanAdoptedRequiresHumanIsFixersNotCI(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "unstable", prTidePending: true, prLabels: []string{"stage/085-needs-decision"}}
+	srv := newDelegatedServer(t, mock)
+	srv.stageStore = stagelabels.NewStore("", time.Now)
+	key := stagelabels.Key("testorg/testrepo", 8)
+	srv.stageStore.Observe(key, stagelabels.NeedsDecision, stageengine.StageReasonVerdictRequiresHuman)
+	srv.stageStore.MarkAdoptedInPlace(key, "feedfacefeedfacefeedfacefeedfacefeedface", "contributor-offline", time.Now())
+
+	// The tracker row's words, as the SPA sends them.
+	body := `{"type":"pr","reason":"reviewer-verdict:requires_human","caption":"the reviewer marked this change high-risk"}`
+	w := postDelegatedPlan(t, srv, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var plan delegatedDecisionPlan
+	if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("summary: %s\nwhy: %s\nconsequences: %v", plan.Summary, plan.Why, plan.Consequences)
+	if plan.Would != string(delegatedecision.VerdictDirection) || plan.Rule != delegatedecision.RuleAdoptedFixer {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if !strings.HasPrefix(plan.Summary, "Have hive's fixer address the reviewer's finding") || !strings.Contains(plan.Summary, "no action needed from you") {
+		t.Fatalf("summary %q", plan.Summary)
+	}
+	if !strings.Contains(plan.Why, "requires_human") {
+		t.Fatalf("why %q does not name the recorded park reason", plan.Why)
+	}
+	for _, text := range append([]string{plan.Summary, plan.Why}, plan.Consequences...) {
+		lower := strings.ToLower(text)
+		if strings.Contains(text, "CI") || strings.Contains(lower, "back to its author") {
+			t.Errorf("a green head parked on requires_human is described as red or returned: %q", text)
+		}
+	}
+	if len(mock.comments) != 0 {
+		t.Fatalf("a plan may not write: %v", mock.comments)
+	}
+
+	// The same head, not adopted: the clanker's PR is not "red" either —
+	// the plan never says CI is red of a head with no failing check.
+	mock2 := &repoItemDecisionMock{prForeign: true, prMergeState: "unstable", prTidePending: true, prLabels: []string{"stage/085-needs-decision"}}
+	srv2 := newDelegatedServer(t, mock2)
+	srv2.stageStore = stagelabels.NewStore("", time.Now)
+	srv2.stageStore.Observe(key, stagelabels.NeedsDecision, stageengine.StageReasonVerdictRequiresHuman)
+	w = postDelegatedPlan(t, srv2, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var plan2 delegatedDecisionPlan
+	if err := json.Unmarshal(w.Body.Bytes(), &plan2); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("not adopted: summary: %s\nwhy: %s", plan2.Summary, plan2.Why)
+	for _, text := range append([]string{plan2.Summary, plan2.Why}, plan2.Consequences...) {
+		if strings.Contains(text, "CI is red") || strings.Contains(text, "make CI green") {
+			t.Errorf("not adopted: head with green checks called red: %q", text)
+		}
+	}
+}
+
+// delegatedPlanInstruction / delegatedPlanBlockers: pending checks are not
+// red, and the recorded reviewer finding is the WHY.
+func TestDelegatedPlanPendingCIIsNotRed(t *testing.T) {
+	in := delegatedecision.Input{Kind: delegatedecision.KindPR, Number: 15722, Author: "clubanderson", OwnerAuthor: true, TrustedAuthor: true, CIGreen: false, CIPending: true, Conflicting: true}
+	d := delegatedecision.Decide(in)
+	if d.Verdict != delegatedecision.VerdictDirection {
+		t.Fatalf("verdict %s rule %s", d.Verdict, d.Rule)
+	}
+	summary, _ := delegatedPlanWording(in, d)
+	if summary != "Send #15722 back to its author with one instruction: rebase onto the base branch, nothing else." {
+		t.Fatalf("summary %q", summary)
+	}
+	if why := delegatedPlanWhy(in, d); why != "It conflicts with the base branch." {
+		t.Fatalf("why %q", why)
+	}
+	in.Conflicting, in.ReviewerRequiresHuman, in.ReviewerFinding = false, true, "the reviewer marked this change high-risk"
+	in.AdoptedByHive, in.OwnerAuthor, in.TrustedAuthor, in.Author = true, false, false, "mendezr"
+	d = delegatedecision.Decide(in)
+	if d.Rule != delegatedecision.RuleAdoptedFixer {
+		t.Fatalf("verdict %s rule %s", d.Verdict, d.Rule)
+	}
+	summary, next := delegatedPlanWording(in, d)
+	if summary != "Have hive's fixer address the reviewer's finding (the reviewer marked this change high-risk) on #15722; no action needed from you." {
+		t.Fatalf("summary %q", summary)
+	}
+	if why := delegatedPlanWhy(in, d); why != "The reviewer returned requires_human: the reviewer marked this change high-risk." {
+		t.Fatalf("why %q", why)
+	}
+	if len(next) != 2 {
+		t.Fatalf("then items %v", next)
+	}
+	if delegatedPlanMergeableAsIs(in, d) {
+		t.Fatal("a head with checks still running is not mergeable as it is")
 	}
 }

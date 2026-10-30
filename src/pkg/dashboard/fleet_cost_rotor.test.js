@@ -19,6 +19,9 @@ function pick(re, what) {
 const rotorSrc = pick(/\/\/ --- fleet cost rotor \(begin\) ---[\s\S]*?\/\/ --- fleet cost rotor \(end\) ---/, 'fleet cost rotor block');
 const statSrc = pick(/function fleetRunStatHtml\(\) \{[\s\S]*?\n    \}\n/, 'fleetRunStatHtml');
 const stripSrc = pick(/function fleetRunStripHtml\(\) \{[\s\S]*?\n    \}\n/, 'fleetRunStripHtml');
+// The real formatters, so the test sees exactly what the tile prints.
+const fmtSrc = pick(/function fmtUSD\(n\) \{[\s\S]*?\n    \}\n/, 'fmtUSD') + pick(/function fmtUSDWhole\(n\) \{[\s\S]*?\n    \}\n/, 'fmtUSDWhole');
+const formatNumber = (value, locale, options) => new Intl.NumberFormat(locale || undefined, options || {}).format(value);
 
 // Minimal DOM stand-in: one rotor whose phrases are plain objects with a
 // classList, plus a document with fake timers and a visibility flag.
@@ -61,13 +64,12 @@ function makeEnv({ reducedMotion = false } = {}) {
     }
     now = until;
   };
-  const fmtUSD = n => '$' + Number(n).toFixed(2);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const dashboardSetInterval = (key, fn, ms) => { assert.strictEqual(key, 'fleetCostRotor'); return setInterval(fn, ms); };
-  const api = new Function('window', 'document', 'dashboardSetInterval', 'fmtUSD', 'esc',
-    rotorSrc + '\n' + statSrc + '\n' + stripSrc +
-    '\nreturn { FLEET_COST_WINDOWS, FLEET_COST_DWELL_MS, _fleetCost, fleetCostPhrases, fleetCostRotorHtml, fleetCostTick, fleetRunStatHtml, fleetRunStripHtml, fleetCostTooltipLines };'
-  )(window, document, dashboardSetInterval, fmtUSD, esc);
+  const api = new Function('window', 'document', 'dashboardSetInterval', 'formatNumber', 'esc',
+    fmtSrc + '\n' + rotorSrc + '\n' + statSrc + '\n' + stripSrc +
+    '\nreturn { FLEET_COST_WINDOWS, FLEET_COST_DWELL_MS, _fleetCost, fleetCostPhrases, fleetCostRotorHtml, fleetCostTick, fleetRunStatHtml, fleetRunStripHtml, fleetCostTooltipLines, fmtUSD, fmtUSDWhole };'
+  )(window, document, dashboardSetInterval, formatNumber, esc);
   api._fleetCost.clock = () => now;
   // Seed the fake phrases from the rendered markup so the DOM matches it.
   const rendered = api.fleetRunStatHtml();
@@ -151,21 +153,48 @@ test('markup: fixed agent count, four phrases in one rotor, tooltip lists all fo
   assert.match(r, /<span class="fleet-run-count">3 · <\/span><span class="fleet-cost-rotor" data-fleet-cost-rotor/);
   assert.strictEqual((r.match(/class="fcr-phrase/g) || []).length, 4);
   assert.strictEqual((r.match(/data-fleet-cost-rotor/g) || []).length, 1, 'all phrases share one rotor cell');
-  assert.match(r, /\$53\.91<\/span> <span class="fcr-window">this hour</);
-  assert.match(r, /\$120\.50<\/span> <span class="fcr-window">today</);
-  assert.match(r, /\$410\.00<\/span> <span class="fcr-window">this week</);
-  assert.match(r, /\$1234\.56<\/span> <span class="fcr-window">this month</);
-  assert.strictEqual(env.api.fleetCostTooltipLines(env.window._lastStatus.fleetRun), '$53.91 this hour · $120.50 today · $410.00 this week · $1234.56 this month');
-  assert.match(r, /title="RUNNING[^"]*\$53\.91 this hour · \$120\.50 today · \$410\.00 this week · \$1234\.56 this month/);
+  // Hour keeps cents; today / week / month are whole dollars (#15614 follow-up).
+  assert.match(r, /\$53\.91<\/span> <span class="fcr-window">this hr</);
+  assert.match(r, /\$121<\/span> <span class="fcr-window">today</);
+  assert.match(r, /\$410<\/span> <span class="fcr-window">this wk</);
+  assert.match(r, /\$1,235<\/span> <span class="fcr-window">this mo</);
+  assert.strictEqual(env.api.fleetCostTooltipLines(env.window._lastStatus.fleetRun), '$53.91 this hr · $121 today · $410 this wk · $1,235 this mo');
+  assert.match(r, /title="RUNNING[^"]*\$53\.91 this hr · \$121 today · \$410 this wk · \$1,235 this mo/);
   // Unpriced windows read "$–" rather than a guess.
   const unpriced = env.api.fleetCostPhrases({ hourUSD: 1, hourPriced: true, windowsPriced: false }).map(p => p.text);
-  assert.deepStrictEqual(unpriced, ['$1.00 this hour', '$– today', '$– this week', '$– this month']);
+  assert.deepStrictEqual(unpriced, ['$1.00 this hr', '$– today', '$– this wk', '$– this mo']);
 });
 
-test('never a second line: nowrap + ellipsis on the tile, phrases share one grid area', () => {
+test('whole-dollar windows: nearest dollar, comma-grouped, never a decimal point', () => {
+  const { fmtUSDWhole, fleetCostPhrases } = makeEnv().api;
+  assert.strictEqual(fmtUSDWhole(0), '$0');
+  assert.strictEqual(fmtUSDWhole(0.5), '$1');
+  assert.strictEqual(fmtUSDWhole(0.49), '<$1', 'a real but sub-dollar spend is not shown as $0');
+  assert.strictEqual(fmtUSDWhole(9.99), '$10');
+  assert.strictEqual(fmtUSDWhole(999.99), '$1,000');
+  assert.strictEqual(fmtUSDWhole(1010), '$1,010');
+  assert.strictEqual(fmtUSDWhole(1010.4), '$1,010');
+  assert.strictEqual(fmtUSDWhole(12345.67), '$12,346');
+  assert.strictEqual(fmtUSDWhole(null), '—');
+  assert.strictEqual(fmtUSDWhole(NaN), '—');
+  const phrases = fleetCostPhrases({ running: 2, hourUSD: 25.27, hourPriced: true, dayUSD: 1010.4, weekUSD: 5728.9, monthUSD: 11128.01, windowsPriced: true });
+  assert.deepStrictEqual(phrases.map(p => p.amount), ['$25.27', '$1,010', '$5,729', '$11,128']);
+  for (const p of phrases.slice(1)) assert.doesNotMatch(p.amount, /\./, p.key + ' window must not carry cents');
+});
+
+test('never a second line, and no host ellipsis: the host is a flex row whose rotor shrinks', () => {
   const css = html.match(/<style\b[^>]*>([\s\S]*?)<\/style>/)[1];
-  assert.match(css, /\.fleet-run-stat \.val, \.fleet-run-stat \.gm-val \{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; \}/);
-  assert.match(css, /\.fleet-cost-rotor \{ display: inline-grid; grid-template-areas: 'phrase';/);
+  // A text-overflow ellipsis on the host was painted at the rotor's left
+  // edge when count + rotor overflowed the tile, surfacing as a stray dot
+  // between "$" and the digits ("$.1,010"). Only the phrase may ellipsize.
+  const hostRule = css.match(/\.fleet-run-stat \.val, \.fleet-run-stat \.gm-val \{([^}]*)\}/);
+  assert.ok(hostRule, 'host rule present');
+  assert.match(hostRule[1], /display: flex;/);
+  assert.match(hostRule[1], /white-space: nowrap;/);
+  assert.match(hostRule[1], /min-width: 0;/);
+  assert.doesNotMatch(hostRule[1], /text-overflow/);
+  assert.match(css, /\.fleet-run-count \{ flex: none;/);
+  assert.match(css, /\.fleet-cost-rotor \{ display: inline-grid; grid-template-areas: 'phrase'; flex: 0 1 auto; min-width: 0;/);
   assert.match(css, /\.fleet-cost-rotor \.fcr-phrase \{ grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/);
   // Amber/text tokens only in the rotor rules — no raw colours.
   const rotorCss = css.match(/\.fleet-run-stat[\s\S]*?prefers-reduced-motion: reduce\) \{[\s\S]*?\}\s*\}/)[0];
