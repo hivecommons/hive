@@ -357,6 +357,53 @@ func TestPersistReviewDispatchState_KeepsOnlyDeliveredKicks(t *testing.T) {
 	}
 }
 
+// The persist made from onReviewDelivered runs while later kicks of the same
+// pass are still being sent. It must keep their pending rows on disk, or a
+// verdict from one of them finds no dispatch row and binds as advisory
+// (hivecommons/hive#15559).
+func TestPersistReviewDispatchStateInProgress_KeepsKicksStillDelivering(t *testing.T) {
+	redirectReviewPaths(t)
+	now := time.Now().UTC()
+	delivered := review.DispatchKick{
+		Kind: "review", Agent: "reviewer", Repo: "hivecommons/hive",
+		Number: 4321, HeadSHA: reviewTestSHA, Perspective: review.PerspectiveSecurity,
+	}
+	inFlight := review.DispatchKick{
+		Kind: "review", Agent: "decider", Repo: "hivecommons/hive",
+		Number: 4321, HeadSHA: reviewTestSHA, Perspective: review.PerspectiveStyle, Decision: true,
+	}
+	plan := review.DispatchPlan{
+		ReviewKicks: []review.DispatchKick{delivered, inFlight},
+		State: review.DispatchState{
+			GeneratedAt: now,
+			Pending: []review.PendingReview{
+				{Repo: delivered.Repo, Number: delivered.Number, HeadSHA: delivered.HeadSHA, Perspective: delivered.Perspective, Agent: delivered.Agent, Dispatched: now},
+				{Repo: inFlight.Repo, Number: inFlight.Number, HeadSHA: inFlight.HeadSHA, Perspective: inFlight.Perspective, Agent: inFlight.Agent, Decision: true, Dispatched: now},
+			},
+		},
+	}
+
+	persistReviewDispatchStateInProgress(plan, []review.DispatchKick{delivered}, restoreTestLogger())
+
+	state, err := review.LoadDispatchState("")
+	if err != nil {
+		t.Fatalf("load persisted state: %v", err)
+	}
+	if len(state.Pending) != 2 {
+		t.Fatalf("persisted pending = %+v, want both the delivered and the in-flight kick", state.Pending)
+	}
+
+	persistReviewDispatchState(plan, []review.DispatchKick{delivered}, restoreTestLogger())
+
+	state, err = review.LoadDispatchState("")
+	if err != nil {
+		t.Fatalf("load persisted state: %v", err)
+	}
+	if len(state.Pending) != 1 || state.Pending[0].Agent != delivered.Agent {
+		t.Fatalf("end-of-pass pending = %+v, want only the delivered kick", state.Pending)
+	}
+}
+
 func TestPersistReviewDispatchState_WriteFailureIsNonFatal(t *testing.T) {
 	dir := redirectReviewPaths(t)
 	// Point the state file inside a plain file so MkdirAll/rename must fail.
