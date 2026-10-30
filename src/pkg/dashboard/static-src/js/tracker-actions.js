@@ -1709,12 +1709,48 @@
     // toast says why in plain words and carries the next actions.
     const STAGE_TRACKER_ACTION_NO_EFFECT = 'no-effect';
     const STAGE_TRACKER_RESULT_TOAST_MAX = 5;
-    // An informational result toast ("adopted", "/lgtm posted", a no-op)
-    // closes itself after this long, with the countdown bar and hover /
-    // focus pause every timed toast gets; it still leaves earlier on × or
-    // when the tracker reports the target in a new state. Errors and
-    // toasts carrying next-action buttons wait for the operator instead.
-    const STAGE_TRACKER_RESULT_TOAST_MS = 15000;
+    // Tracker toast lifetimes (hivecommons/hive#15813). An informational
+    // result toast ("adopted", "/lgtm posted", a no-op) and the waiting-on-you
+    // nudge close after the info duration; an
+    // error result closes after the error duration (it keeps its × for an
+    // earlier dismissal); a toast carrying next-action buttons is a prompt
+    // and waits for the operator. Both durations are the hive's
+    // dashboard.stage_tracker.toast_info_s / toast_error_s, read from the
+    // tracker payload's settings block; this browser's localStorage copy
+    // is only the fallback for when the server write was refused.
+    const STAGE_TRACKER_TOAST_DEFAULT_S = Object.freeze({ info: 15, error: 30 });
+    const STAGE_TRACKER_TOAST_MIN_S = 3;
+    const STAGE_TRACKER_TOAST_MAX_S = 120;
+    const STAGE_TRACKER_TOAST_KEY = 'hive.tracker.toastS';
+    // The merge banner stays this many times longer than an info toast
+    // (30 s at the default), so the two move together.
+    const STAGE_TRACKER_MERGE_BANNER_FACTOR = 2;
+    // Pure: a toast duration in seconds, or 0 when the value is not a
+    // usable number (0 itself means "the default").
+    function stageTrackerToastSecondsValid(v) {
+      const n = Number(v);
+      if (!isFinite(n) || n <= 0) return 0;
+      return Math.max(STAGE_TRACKER_TOAST_MIN_S, Math.min(Math.round(n), STAGE_TRACKER_TOAST_MAX_S));
+    }
+    // Pure: the effective duration in seconds for kind ('info' | 'error').
+    // This browser's fallback copy wins when present — it only exists when
+    // the hive refused the write, so the payload still carries the old
+    // value — then the server's settings block, then the default.
+    function stageTrackerToastSeconds(kind, settings, local) {
+      kind = kind === 'error' ? 'error' : 'info';
+      const fromLocal = stageTrackerToastSecondsValid(local && local[kind]);
+      if (fromLocal) return fromLocal;
+      const fromServer = stageTrackerToastSecondsValid(settings && settings['toast_' + kind + '_s']);
+      if (fromServer) return fromServer;
+      return STAGE_TRACKER_TOAST_DEFAULT_S[kind];
+    }
+    function stageTrackerToastLocal() {
+      try { const v = JSON.parse(localStorage.getItem(STAGE_TRACKER_TOAST_KEY) || 'null'); return v && typeof v === 'object' ? v : null; } catch { return null; }
+    }
+    function stageTrackerToastMs(kind) {
+      return stageTrackerToastSeconds(kind, _stageTracker && _stageTracker.settings, stageTrackerToastLocal()) * 1000;
+    }
+    function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
@@ -1849,8 +1885,9 @@
     let _stageTrackerResultToasts = [];
     // Build and show the result toast; it leaves on ×, when the tracker
     // reports the target in a new state (see stageTrackerResultToastsSync)
-    // or, for a plain informational result, after
-    // STAGE_TRACKER_RESULT_TOAST_MS (see stageTrackerResultToastTimed).
+    // or, for a plain informational result, after the info toast duration
+    // (see stageTrackerResultToastTimed); an error leaves after the error
+    // toast duration.
     function stageTrackerResultToast(result, item, ctx) {
       const text = stageTrackerResultText(result, item, ctx);
       const container = document.getElementById('toast-container');
@@ -1888,7 +1925,8 @@
       }
       if (container) container.appendChild(el);
       makeToastSticky(el);
-      if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));
+      if (text.type === 'error') toastCountdownBar(el, stageTrackerToastMs('error'), () => dismissToast(el, null, null, true));
+      else if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, stageTrackerToastMs('info'), () => dismissToast(el, null, null, true));
       const key = stageTrackerTargetKey(result.target) || stageTrackerItemKey(item);
       const entry = { el, key, state: stageTrackerItemState(stageTrackerItemByKey(_stageTracker, key)), result, text };
       if (text.type !== 'error') _stageTrackerResultToasts.push(entry);

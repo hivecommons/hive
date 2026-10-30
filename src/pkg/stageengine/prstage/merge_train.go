@@ -43,7 +43,13 @@ const (
 	// the tracker reads "returned" with the gate pill "Duplicate of #N"
 	// rather than "Approved; waiting its turn" (hivecommons/hive#15469).
 	MergeTrainStateDuplicateOf = "duplicate-of"
-	MergeTrainReasonMaxFiles   = 4
+	// MergeTrainStateClaimConflict: two or more open PRs claim the same
+	// issue and no decision has been recorded on this one, so every lane
+	// refuses to admit it (hivecommons/hive#15810). Front is the other
+	// claimant, Position the issue. Unlike DuplicateOf the queue picked
+	// nobody: the PR parks at 085 until a person or the delegate decides.
+	MergeTrainStateClaimConflict = "claim-conflict"
+	MergeTrainReasonMaxFiles     = 4
 )
 
 // MergeTrain is the decoded form of a merge-train reason.
@@ -155,6 +161,12 @@ func ParseMergeTrain(reason string) (m MergeTrain, ok bool) {
 	return m, true
 }
 
+// ClaimConflictCaption is the chevron caption of a PR held on an undecided
+// same-issue claim conflict: "held · duplicate of #B · needs decision".
+func ClaimConflictCaption(other int) string {
+	return "held · duplicate of #" + strconv.Itoa(other) + " · needs decision"
+}
+
 // IsMergeTrainReason reports whether reason carries a merge-train position.
 func IsMergeTrainReason(reason string) bool {
 	return strings.HasPrefix(strings.TrimSpace(reason), MergeTrainReasonPrefix)
@@ -197,6 +209,8 @@ func (m MergeTrain) Sentence() string {
 			issue = " for issue #" + strconv.Itoa(m.Position)
 		}
 		return "duplicate of #" + strconv.Itoa(m.Front) + issue + "; superseded by #" + strconv.Itoa(m.Front) + " — the merge queue carries one PR per issue; close it or let the delegate decide"
+	case MergeTrainStateClaimConflict:
+		return ClaimConflictCaption(m.Front) + " (both claim issue #" + strconv.Itoa(m.Position) + "; the merge queue admits neither until one is closed or approved)"
 	}
 	return "behind #" + strconv.Itoa(m.Front) + " in merge train (" + slot + files + ")"
 }
