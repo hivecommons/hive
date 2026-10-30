@@ -105,7 +105,9 @@ type HiveEmptyDiffAutoCloseFacts struct {
 	DiffKnown bool
 	DiffFiles int
 	// HeadAge is now minus the head commit's date when the compare
-	// reported one, else minus the PR's last update (or creation).
+	// reported one, else minus the PR's last update (or creation). It
+	// never exceeds the PR's own age: a PR just opened from an old branch
+	// is still a just-opened PR.
 	HeadAge time.Duration
 	// ReviewerConfirmed: the reviewer verdict for this very head says the
 	// change is already on the base. The head has been read, so the
@@ -302,7 +304,7 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 		HiveAuthored:      identity.Matches(safeGetLogin(pr.GetUser())),
 		Held:              c.isHeld(labels) || c.isExempt(labels),
 		KeptOpen:          supersessionHasLabel(pr, SupersessionKeepOpenLabel),
-		HeadAge:           emptyDiffHeadAge(pr, now),
+		HeadAge:           emptyDiffHeadAge(pr, time.Time{}, now),
 		ReviewerConfirmed: reviewed,
 	}
 	if pr.ChangedFiles != nil && *pr.ChangedFiles > 0 && !reviewed {
@@ -325,9 +327,7 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 	if !facts.DiffKnown {
 		files, headAt, known := c.prDiffAgainstBase(ctx, owner, name, pr)
 		facts.DiffFiles, facts.DiffKnown = len(files), known
-		if !headAt.IsZero() {
-			facts.HeadAge = now.Sub(headAt)
-		}
+		facts.HeadAge = emptyDiffHeadAge(pr, headAt, now)
 		if known && len(files) > 0 && reviewed {
 			match, matchKnown := c.prFilesIdenticalOnBase(ctx, owner, name, strings.TrimSpace(pr.GetBase().GetRef()), files)
 			facts.TreeMatchesBase = match && matchKnown
@@ -418,10 +418,17 @@ func alreadyLandedIssueNote(pr, redundantOf int, base string) string {
 	return fmt.Sprintf("The hive closed its own #%d as superseded: the change it carried is already on `%s`, so this issue is done. Reopen if that's wrong.", pr, base)
 }
 
-func emptyDiffHeadAge(pr *gh.PullRequest, now time.Time) time.Duration {
-	at := pr.GetUpdatedAt().Time
+// emptyDiffHeadAge measures from the compare's newest commit (headAt) when
+// it is known; updated_at, which labels and comments bump, stands in only
+// when it is not. The age never exceeds the PR's own age: a PR just opened
+// from an old branch is still a just-opened PR whose commits may be arriving.
+func emptyDiffHeadAge(pr *gh.PullRequest, headAt, now time.Time) time.Duration {
+	at := headAt
 	if at.IsZero() {
-		at = pr.GetCreatedAt().Time
+		at = pr.GetUpdatedAt().Time
+	}
+	if created := pr.GetCreatedAt().Time; !created.IsZero() && created.After(at) {
+		at = created
 	}
 	if at.IsZero() {
 		return 0

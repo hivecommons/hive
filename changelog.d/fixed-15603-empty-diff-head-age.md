@@ -1,1 +1,1 @@
-- Empty-diff autoclose now measures head age from the head commit instead of `updated_at`, which labels and comments bump ([#15603](https://github.com/hivecommons/hive/issues/15603))
+- Empty-diff autoclose head age is floored at the PR's `created_at`, so a PR just opened from an old branch keeps its just-opened grace period ([#15603](https://github.com/hivecommons/hive/issues/15603))

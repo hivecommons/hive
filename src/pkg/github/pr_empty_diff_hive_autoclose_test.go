@@ -111,8 +111,9 @@ func TestReviewRedundantOfNumber(t *testing.T) {
 }
 
 // hivecommons/hive#15603: updated_at is bumped by labels and comments, so a
-// recently touched PR with an old head must still count as old.
-func TestEmptyDiffHeadAgeUsesHeadCommit(t *testing.T) {
+// recently touched PR with an old head must still count as old — and a PR
+// just opened from an old branch must still count as just opened.
+func TestEmptyDiffHeadAgeFlooredAtCreatedAt(t *testing.T) {
 	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 	pr := &gh.PullRequest{UpdatedAt: &gh.Timestamp{Time: now.Add(-time.Minute)}}
 	if got := emptyDiffHeadAge(pr, now.Add(-time.Hour), now); got != time.Hour {
