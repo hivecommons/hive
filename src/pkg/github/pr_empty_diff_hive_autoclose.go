@@ -187,7 +187,8 @@ func PRChangedFilesClaimsEmpty(pr *gh.PullRequest) bool {
 // prDiffAgainstBase measures the PR's diff as GitHub shows it: the compare
 // base...head. known is false when the compare failed or the file list
 // was cut short. headAt is the newest commit's committer date when the
-// compare listed commits (zero otherwise).
+// compare listed commits; when it listed none the head is already on the
+// base, so it is the merge base's date. Zero when neither is readable.
 func (c *Client) prDiffAgainstBase(ctx context.Context, owner, name string, pr *gh.PullRequest) (files []*gh.CommitFile, headAt time.Time, known bool) {
 	base := strings.TrimSpace(pr.GetBase().GetRef())
 	head := strings.TrimSpace(pr.GetHead().GetSHA())
@@ -202,6 +203,9 @@ func (c *Client) prDiffAgainstBase(ctx context.Context, owner, name string, pr *
 		if at := commit.GetCommit().GetCommitter().GetDate().Time; at.After(headAt) {
 			headAt = at
 		}
+	}
+	if mb := comparison.GetMergeBaseCommit(); len(comparison.Commits) == 0 && strings.EqualFold(mb.GetSHA(), head) {
+		headAt = mb.GetCommit().GetCommitter().GetDate().Time
 	}
 	if (resp != nil && resp.NextPage != 0) || len(comparison.Files) >= githubCompareFileLimit {
 		return comparison.Files, headAt, false

@@ -1,6 +1,11 @@
 package github
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +143,36 @@ func TestEmptyDiffHeadAgeFlooredAtCreatedAt(t *testing.T) {
 	// No commit date and no created_at: updated_at still stands in.
 	if got := emptyDiffHeadAge(&gh.PullRequest{}, time.Time{}, now); got != 0 {
 		t.Fatalf("head age = %v, want 0 with no timestamps", got)
+	}
+}
+
+// A head already on the base lists no commits in base...head, so the
+// compare's commit dates are empty; the merge base is the head itself and
+// its date must stand in, not updated_at (hivecommons/hive#15603).
+func TestPRDiffAgainstBaseHeadOnBaseUsesMergeBaseDate(t *testing.T) {
+	headDate := time.Date(2026, 10, 29, 11, 0, 0, 0, time.UTC)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/hivecommons/hive/compare/v5...head999", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  "behind",
+			"commits": []any{},
+			"files":   []any{},
+			"merge_base_commit": map[string]any{
+				"sha":    "head999",
+				"commit": map[string]any{"committer": map[string]any{"date": headDate.Format(time.RFC3339)}},
+			},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, slog.Default())
+	pr := &gh.PullRequest{Base: &gh.PullRequestBranch{Ref: gh.Ptr("v5")}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("head999")}}
+	files, headAt, known := c.prDiffAgainstBase(context.Background(), "hivecommons", "hive", pr)
+	if !known || len(files) != 0 {
+		t.Fatalf("diff = %d files, known=%v; want empty and known", len(files), known)
+	}
+	if !headAt.Equal(headDate) {
+		t.Fatalf("headAt = %v, want merge-base (head) date %v", headAt, headDate)
 	}
 }
