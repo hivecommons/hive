@@ -460,7 +460,7 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		}
 		req, err := c.client.NewRequest("POST", "graphql", payload)
 		if err != nil {
-			return latest, found
+			return supersessionCloser{}, false
 		}
 		var resp struct {
 			Data struct {
@@ -482,8 +482,10 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 				} `json:"repository"`
 			} `json:"data"`
 		}
+		// Fail closed: a partial read could surface a stale closer, which is
+		// the very bug paging fixes. Callers fall back to the closing commit.
 		if _, err := c.client.Do(ctx, req, &resp); err != nil {
-			return latest, found
+			return supersessionCloser{}, false
 		}
 		refs := resp.Data.Repository.Issue.ClosedByPullRequestsReferences
 		for _, node := range refs.Nodes {
