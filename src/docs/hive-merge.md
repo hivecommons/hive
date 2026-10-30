@@ -472,7 +472,13 @@ gray lineage pill ("left merge train · pushed 3m ago"). Among ready
 members the order is the readiness tiers above, then age. The one
 exception is a member the train itself made dirty by merging the front
 ahead of it: it keeps its seat (trailing every clean member) while the
-resolver rebases it, so the rebase keeps its place in line.
+resolver rebases it, so the rebase keeps its place in line. Its row still
+shows in the CI / Review column while the rebase runs ("Rebasing · attempt
+1/2"): the rebased head has no CI or verdicts yet. The tracker's train
+header counts seated members only — a candidate or an ejected row never
+adds to "merge train · N PRs" — and a seated row always reads its seat
+("Merge train · 2nd of 2 · behind #15771"); "checking now" is said only
+of the PR the sweep is evaluating at that moment.
 
 ### Trusted-author auto-merge
 

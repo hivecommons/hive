@@ -407,6 +407,11 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		if name := o.Detail.RedCheck(o.HeadSHA); name != "" {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
 		}
+		if train.State == prstage.MergeTrainStateRebasing {
+			// The hive is rebasing it: the head it pushes has no CI and no
+			// verdicts yet, so it is being fixed (070), not merge-queued.
+			return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned}
+		}
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {

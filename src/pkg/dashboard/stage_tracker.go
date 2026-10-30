@@ -401,6 +401,12 @@ type StageTrackerItem struct {
 	// behalf: which attempt of the loop guard this is, or that the hive
 	// ran out and a person must resolve it.
 	Rebase *StageTrackerRebase `json:"rebase,omitempty"`
+	// ciRed is the listing's CI verdict on the current head (failure or
+	// named failing checks), unexported: the merge train view drops such
+	// a row from its train (hivecommons/hive#15825) whatever its record
+	// says — a header read "8 PRs" over seven seats because a red 090
+	// row was counted.
+	ciRed bool
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head

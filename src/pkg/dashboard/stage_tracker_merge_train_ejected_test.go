@@ -149,3 +149,51 @@ func TestStageTrackerAdmittedCandidateRidesNoTrain(t *testing.T) {
 		t.Fatalf("caption = %q", it.Caption)
 	}
 }
+
+// TestStageTrackerNotGreenOrReviewedIsNotInMergeQueueColumn_RedCheckRiderUnseated:
+// the live header read "merge train · 8 PRs" over seven seats — the eighth
+// was a red-check row at 090. A member whose current head has a failing
+// check holds no seat and is not counted in the train's size.
+func TestStageTrackerNotGreenOrReviewedIsNotInMergeQueueColumn_RedCheckRiderUnseated(t *testing.T) {
+	now := time.Date(2026, 10, 30, 17, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	overlap := []string{"tracker-row.js"}
+	for i, n := range []int{15771, 15834, 15831} {
+		st := prstage.MergeTrainStateQueuedBehind
+		if i == 0 {
+			st = prstage.MergeTrainStateFront
+		}
+		stage := stagelabels.AwaitingMergeAdmission
+		if n == 15831 {
+			stage = stagelabels.ReadyForHumanMerge
+		}
+		store.Observe(stagelabels.Key("acme/console", n), stage, prstage.MergeTrain{State: st, Front: 15771, Position: i + 1, Size: 3, OverlapFiles: overlap}.Reason())
+		pr := github.PullRequest{Number: n, Title: "Tracker", Author: "hive-app[bot]", AppAuthored: true, BaseRef: "v5", Labels: []string{stage.Label(), "author/hive"}}
+		if n == 15831 {
+			pr.CIStatus = "failure"
+			pr.FailingChecks = []string{"build-and-test"}
+		}
+		s.statusMu.Lock()
+		s.status.Repos[0].OpenPrs = append(s.status.Repos[0].OpenPrs, FrontendPR{PullRequest: pr})
+		s.statusMu.Unlock()
+	}
+	resp := s.buildStageTracker(s.status, store, now)
+	red := trackerItem(t, resp, "pr", 15831)
+	if red.MergeTrain != nil {
+		t.Fatalf("a red-check row holds no seat: %+v", red.MergeTrain)
+	}
+	if red.LeftTrain == nil || red.LeftTrain.Why != "checks-failing" {
+		t.Fatalf("red row lineage = %+v", red.LeftTrain)
+	}
+	front := trackerItem(t, resp, "pr", 15771)
+	rider := trackerItem(t, resp, "pr", 15834)
+	if front.MergeTrain == nil || front.MergeTrain.Size != 2 || rider.MergeTrain == nil || rider.MergeTrain.Size != 2 || rider.MergeTrain.Position != 2 {
+		t.Fatalf("size counts seated members only: front=%+v rider=%+v", front.MergeTrain, rider.MergeTrain)
+	}
+	if got := front.MergeTrain.Members; len(got) != 2 || got[0] != 15771 || got[1] != 15834 {
+		t.Fatalf("members = %v", got)
+	}
+	if !strings.Contains(rider.MergeGate.Reason, "behind #15771 in merge train (2nd of 2") || !strings.Contains(rider.Caption, "behind #15771") {
+		t.Fatalf("rider words = gate %q caption %q", rider.MergeGate.Reason, rider.Caption)
+	}
+}

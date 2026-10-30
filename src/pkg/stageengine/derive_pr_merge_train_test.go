@@ -22,7 +22,9 @@ func TestClassifyStageMergeTrainReasons(t *testing.T) {
 			human  bool
 		}{
 			{"queued-behind", prstage.MergeTrain{State: prstage.MergeTrainStateQueuedBehind, Front: 15074, Position: 3, Size: 4, OverlapFiles: files}.Reason(), stagelabels.AwaitingMergeAdmission, false},
-			{"rebasing", prstage.MergeTrain{State: prstage.MergeTrainStateRebasing, Front: 15074, Position: 2, Size: 4, Attempt: 1, MaxAttempts: 2, OverlapFiles: files}.Reason(), stagelabels.AwaitingMergeAdmission, false},
+			// hivecommons/hive#15825: a head the train is rebasing has no
+			// CI and no verdicts yet — being fixed, never merge-queued.
+			{"rebasing", prstage.MergeTrain{State: prstage.MergeTrainStateRebasing, Front: 15074, Position: 2, Size: 4, Attempt: 1, MaxAttempts: 2, OverlapFiles: files}.Reason(), stagelabels.Fixing, false},
 			{"exhausted", prstage.MergeTrain{State: prstage.MergeTrainStateRebaseExhausted, Front: 15074, Position: 2, Size: 4, Attempt: 2, MaxAttempts: 2, OverlapFiles: files}.Reason(), stagelabels.NeedsDecision, true},
 			// hivecommons/hive#15810: an undecided same-issue claim across
 			// lanes is a person's call, not a turn in the queue.
