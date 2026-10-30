@@ -85,7 +85,9 @@ The shared token works because the streamer reaches the dashboard over the
 in-cluster Service and hive's hive is `hub_proxied: true`, so the spoke still
 honours `Authorization: Bearer <dashboard.auth_token>`. The token is injected
 by a loopback proxy inside the pod; it never appears in the URL, in Chromium's
-history, in logs, or on screen.
+history, in logs, or on screen. The proxy forwards only `GET`/`HEAD`: the shared
+token is an unscoped owner credential, and a display never mutates, so a
+misbehaving page in the kiosk cannot pause agents or change settings with it.
 
 **Alternative — the public route.** To stream a hive you cannot reach
 in-cluster (or from a laptop with `docker compose`), set `DASHBOARD_URL` to the
