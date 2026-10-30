@@ -197,7 +197,7 @@ func celMatchedAgents(
 //
 // Cheap and nil-safe: a nil engine, nil actionable, or empty rules returns an
 // empty result with zero per-item work.
-func celMatchedAgents(
+func celMatchedAgentsOnce(
 	engine *celtrigger.Engine,
 	actionable *github.ActionableResult,
 	cfg *config.Config,
@@ -220,7 +220,7 @@ func celMatchedAgents(
 
 	consider := func(ev celtrigger.NormalizedEvent, source string) {
 		for _, agentName := range engine.MatchAgents(ev) {
-			if _, seen := candidates[agentName]; seen {
+			if _, dup := candidates[agentName]; dup {
 				continue
 			}
 			candidates[agentName] = candidate{source: source, number: ev.Number}
