@@ -98,3 +98,54 @@ func UnchosenOptionList(text string) (string, bool) {
 	m := unchosenOptionListRE.FindString(text)
 	return m, m != ""
 }
+
+// agentTitlePrefixRE matches the leading `[<agent>]` tag every hive-filed
+// issue title carries (`[scanner] …`, `[reviewer] …`, `[selfreport] …`). A
+// filer-chosen tag with spaces (`[ACMM L0] …`) counts too, so it is kept
+// rather than stacked under a second tag.
+var agentTitlePrefixRE = regexp.MustCompile(`^\s*\[([^\]\n]+)\]\s*`)
+
+// TitleFor returns title carrying a leading `[<agent>]` tag, the convention
+// every issue the hive files follows so a reader can tell which agent or
+// subsystem filed it. The tag is the lowercased agent (lane) name as the
+// dashboard shows it. It is idempotent: a title that already starts with a
+// bracketed tag — the same agent, or a tag the filer chose itself such as
+// `[Tests]` or `[DCO]` — is returned unchanged, so a title is never
+// double-prefixed. An empty agent leaves the title as it is.
+func TitleFor(agent, title string) string {
+	title = strings.TrimSpace(title)
+	agent = strings.ToLower(strings.TrimSpace(agent))
+	if agent == "" || title == "" || HasAgentPrefix(title) {
+		return title
+	}
+	return "[" + agent + "] " + title
+}
+
+// HasAgentPrefix reports whether title starts with a bracketed `[tag]`.
+func HasAgentPrefix(title string) bool {
+	return agentTitlePrefixRE.MatchString(title)
+}
+
+// AgentPrefix returns the tag inside a title's leading `[tag]`, lowercased,
+// or "" when the title carries none.
+func AgentPrefix(title string) string {
+	m := agentTitlePrefixRE.FindStringSubmatch(title)
+	if m == nil {
+		return ""
+	}
+	return strings.ToLower(m[1])
+}
+
+// StripAgentPrefix returns title without its leading `[tag]`, trimmed. It is
+// the key dedupe compares on so an issue filed before titles carried the
+// filing agent still matches its prefixed re-filing.
+func StripAgentPrefix(title string) string {
+	return strings.TrimSpace(agentTitlePrefixRE.ReplaceAllString(strings.TrimSpace(title), ""))
+}
+
+// SameTitle reports whether two issue titles are the same title once the
+// leading `[<agent>]` tag is ignored: `Review backlog (security): x` and
+// `[reviewer] Review backlog (security): x` are one finding, not two.
+func SameTitle(a, b string) bool {
+	return StripAgentPrefix(a) == StripAgentPrefix(b)
+}
