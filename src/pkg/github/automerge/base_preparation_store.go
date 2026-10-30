@@ -71,6 +71,21 @@ func (s *BasePreparationStore) destinationLock(key string) *sync.Mutex {
 	return lock
 }
 
+func (s *BasePreparationStore) readState(key string) (basePreparation, bool, error) {
+	var st basePreparation
+	data, err := os.ReadFile(s.statePath(key) + ".json")
+	if errors.Is(err, os.ErrNotExist) {
+		return st, false, nil
+	}
+	if err != nil {
+		return st, false, err
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return basePreparation{}, false, err
+	}
+	return st, true, nil
+}
+
 type preparationOwnerSnapshot struct {
 	Present      bool
 	Owner        preparationCandidate
@@ -93,17 +108,11 @@ func (s *BasePreparationStore) ownerSnapshot(key string) (preparationOwnerSnapsh
 		st, present = s.items[key]
 		s.mu.Unlock()
 	} else {
-		data, err := os.ReadFile(s.statePath(key) + ".json")
-		if errors.Is(err, os.ErrNotExist) {
-			return preparationOwnerSnapshot{}, nil
-		}
+		var err error
+		st, present, err = s.readState(key)
 		if err != nil {
 			return preparationOwnerSnapshot{}, err
 		}
-		if err := json.Unmarshal(data, &st); err != nil {
-			return preparationOwnerSnapshot{}, err
-		}
-		present = true
 	}
 	out := preparationOwnerSnapshot{Present: present, Owner: st.Owner, Attempt: st.Attempts[st.Owner.Number], Waiting: len(st.Waiting),
 		Waiters: append([]preparationCandidate(nil), st.Waiting...)}
@@ -144,19 +153,14 @@ func (s *BasePreparationStore) change(key string, fn func(*basePreparation) erro
 		return err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) // process death also releases the lock
-	var st basePreparation
-	data, err := os.ReadFile(path + ".json")
-	if err == nil {
-		if err := json.Unmarshal(data, &st); err != nil {
-			return err // corrupt or unreadable ownership must fail closed
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+	st, _, err := s.readState(key)
+	if err != nil {
+		return err // corrupt or unreadable ownership must fail closed
 	}
 	if err := fn(&st); err != nil {
 		return err
 	}
-	data, err = json.Marshal(st)
+	data, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
