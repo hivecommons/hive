@@ -14,3 +14,5 @@ data:
   BITRATE: "4500k"
   X264_PRESET: "veryfast"
   RELOAD_EVERY: "30m"
+  # pulse: tracker sounds via a PulseAudio null sink; silent: anullsrc + --mute-audio.
+  STREAM_AUDIO: "pulse"

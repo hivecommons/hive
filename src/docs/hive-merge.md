@@ -328,8 +328,9 @@ carries such a PR either. The prefixes and labels are configurable via
 When the PR is otherwise merge-ready (green checks, approvals satisfied) the
 stage tracker parks it at **090 Ready for human merge** with the chip
 *human merge* and the reason *breaking change — owner merges*; the owner
-merges it with **Approve & merge as maintainer** (the existing gated
-operator path) or on GitHub. Hive posts one comment, through the writeback
+merges it with **Merge now as maintainer** (the existing gated operator
+path; **Approve and let hive merge** is greyed, since the lanes never
+merge a breaking change) or on GitHub. Hive posts one comment, through the writeback
 gate, saying it will wait for a human. The rule exists because a ⚠️-titled
 PR was auto-merged by the trusted-author lane while its owner was still
 deciding whether to ship it.

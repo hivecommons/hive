@@ -144,7 +144,11 @@
   --ham-repo-tint-3: var(--green);
   --ham-repo-tint-4: var(--indigo);
   --ham-repo-tint-5: var(--orange);
-  /* Long-content modal scroll region (.modal-scroll) and its mobile sheet. */
+  /* Long-content modal scroll region (.modal-scroll) and its mobile sheet.
+     --modal-scroll-fade is re-declared in the light block below: a var()
+     inside a custom property resolves where that property is declared, so
+     this :root value is fixed to the dark --panel-strong and would otherwise
+     paint a dark band over light-mode panes. */
   --modal-scroll-fade-h: 40px;
   --modal-scroll-fade: color-mix(in srgb, var(--panel-strong) 96%, transparent);
   --modal-scrollbar-w: 6px;
@@ -238,6 +242,8 @@ body.light-mode {
   --bg-soft: var(--surface-2);
   --panel: var(--surface-2);
   --panel-strong: var(--surface-1);
+  /* Scroll-edge fade follows the light panel surface (see :root note). */
+  --modal-scroll-fade: color-mix(in srgb, var(--panel-strong) 96%, transparent);
   --muted: var(--text-muted);
   --line: var(--line-subtle);
   --amber: var(--brand);

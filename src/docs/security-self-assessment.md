@@ -146,7 +146,7 @@ Hive holds no formal certification (SOC 2, ISO 27001, FIPS). It holds the [OpenS
 
 ### Communication channels
 
-* **Internal.** GitHub issues and pull requests on `hivecommons/hive`. Decisions are made in those public threads. Day-to-day discussion happens on the project [Discord](https://hivecommons.dev/discord) and the [hivecommons-dev Google Group](https://groups.google.com/g/hivecommons-dev), which also announces the community meeting.
+* **Internal.** GitHub issues and pull requests on `hivecommons/hive`. Decisions are made in those public threads. Day-to-day discussion happens on the project [Discord](https://hivecommons.dev/discord) and the [hivecommons-dev Google Group](https://groups.google.com/g/hivecommons-dev), which also announces the community meeting. The hosted hive's Activity Monitor is also streamed publicly on [Twitch](https://www.twitch.tv/hivecommons).
 * **Inbound.** Public GitHub issues; private vulnerability reports through GitHub's "Report a vulnerability" form.
 * **Outbound.** GitHub releases and `CHANGELOG.md`.
 

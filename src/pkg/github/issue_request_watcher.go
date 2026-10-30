@@ -1778,7 +1778,7 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body st
 				continue
 			}
 			candidate := strings.TrimSpace(is.GetTitle())
-			if candidate == title {
+			if candidate == title || reviewBacklogTitlesEqual(candidate, title) {
 				return openIssueMatches{subject: is}, nil
 			}
 			// Pages arrive newest-first, so overwriting leaves the oldest
@@ -2126,7 +2126,7 @@ func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name s
 	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repo, &gh.Label{
 		Name:        gh.Ptr(name),
 		Color:       gh.Ptr(color),
-		Description: gh.Ptr(description),
+		Description: gh.Ptr(clampLabelDescription(description)),
 	})
 	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
 		if _, _, getErr := c.client.Issues.GetLabel(ctx, owner, repo, name); getErr == nil {

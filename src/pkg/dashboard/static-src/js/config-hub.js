@@ -145,7 +145,7 @@
         <div class="config-field">
           <label>Help &amp; community links ${settingHelpMark('contributor-relay', '', 'Help & community links', `Shown on /contribute Onboarding, Operations, and in relay terminals at connect. One "Label | URL" per line, max 5. Discord channel URLs only work for existing server members; prefer https://hivecommons.dev/discord for new contributors.`)}</label>
           <textarea rows="4" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="Chat with other contributors | https://hivecommons.dev/discord" data-change-action="setContributeHelpLinksFromText" data-arg-types="v">${esc(helpLinksText)}</textarea>
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Stored as <code>contribute.help_links[].label</code> and <code>contribute.help_links[].url</code>. Empty restores Hive's default contributor docs and issue links.</span>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Stored as <code>contribute.help_links[].label</code> and <code>contribute.help_links[].url</code>. Empty restores Hive's default contributor docs, issue tracker, and Twitch live stream links.</span>
         </div>
 
         ${renderFilterWithMode({
