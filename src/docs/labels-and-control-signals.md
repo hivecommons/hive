@@ -1897,6 +1897,41 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      base tip — is updated from the base when behind, or has its failed
      jobs re-run when current, once per (head, base tip), before the dwell
      escalates it to 085 (hivecommons/hive#14500).
+   **When hive adopts automatically.** One predicate —
+   `automerge.AutoAdoption` — answers both "may the activity monitor offer
+   Adopt / say when hive adopts" and "does this sweep adopt". Whenever the
+   tracker would say `hive adopts it on the next sweep`, that sweep does it;
+   no click is needed (owner rule, 2026-10-29 on hivecommons/hive#15565,
+   #15566, #15609 and #15312: PRs by an offline clanker sat at 072 with
+   "waiting on @author (offline 13m, 1 nudge)" until a person pressed
+   Adopt, while the sweep's own clock ran from a later heartbeat). The hive
+   adopts an `author/clanker` PR on its own when **all** of these hold:
+   - the PR is at 072 with work its author's clanker is not doing: a
+     conflict with the base, changes requested by the review swarm, a
+     failing check — required, or an optional one the merge gate reads
+     (`optional-check-failing:<name>`), DCO / sign-off, a diff the lane
+     cannot read, or a fork the App cannot push to (`fork-not-editable`:
+     hive cannot rebase it, so re-authoring on a hive branch is the only
+     mover; the caption reads *fork not editable by hive*);
+   - the author was nudged on **this** head and the head has not moved
+     since — a clanker that is pushing is never adopted; a new head
+     restarts the nudge and the clock;
+   - the author is unavailable by the clock above: offline for
+     `adoption.after_offline` (15m) counted from the later of the first
+     nudge and the last heartbeat, where a heartbeat after the nudge
+     ("acknowledged") buys **one** window at most — a relay that
+     reconnects every few minutes without pushing no longer resets it;
+     online but silent for `contributor_grace_online` (2h); unregistered
+     for `adoption.after_unregistered` (15m). A `mode=queued` nudge (the
+     task waits server-side) counts as offline, not online;
+   - nothing holds it: no `hold` / `do-not-merge`, not person-authored, and
+     `maintainer_policy` is `adopt` (the default) or the owner answered `ask`.
+   The adoption log line carries `trigger=automatic:<reason>`
+   (`operator-forced` / `operator-requested` for the manual paths); the
+   tracker's 072 pill reads `… — hive adopts it in 3m unless a new head
+   lands` while the clock runs and `… — hive adopts it on the next sweep`
+   once it has. **Adopt now** stays as the override for a clock that has
+   not run out yet.
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
    A PR whose diff trips the contributor lane's diff fences — it touches

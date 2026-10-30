@@ -3204,7 +3204,7 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repoName, &gh.Label{
 		Name:        gh.Ptr(name),
 		Color:       gh.Ptr(color),
-		Description: gh.Ptr(strings.TrimSpace(description)),
+		Description: gh.Ptr(clampLabelDescription(description)),
 	})
 	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
 		return nil

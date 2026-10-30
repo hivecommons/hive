@@ -201,11 +201,14 @@
     }
     // The waiting-on pill for a row with presence but no adoption line (071
     // Needs author, 072 before the first nudge, a human's PR): "waiting on
-    // [person] @zoe" — the glyph says who, the title says the rest.
+    // [person] @zoe" — the glyph says who, the title says the rest. A
+    // person's own PR reads "waiting on @zoe to push": the hive waits for
+    // their commit, it is not asking anyone to close it.
     function stageTrackerPresenceChipText(item) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
-      const text = 'waiting on @' + p.login;
+      const ownPR = item && item.kind === 'pr' && item.author_kind === 'human' && p.kind === 'human' && String(item.author || '').toLowerCase() === String(p.login).toLowerCase();
+      const text = 'waiting on @' + p.login + (ownPR ? ' to push' : '');
       // Guarded: the test harnesses load helpers by name.
       return typeof stageTrackerReworkSuffix === 'function' ? stageTrackerReworkSuffix(text, item) : text;
     }
