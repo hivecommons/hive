@@ -111,15 +111,20 @@ func (c *Client) GetPRMergeState(ctx context.Context, repo string, number int) (
 
 // CommitByHive reports whether the commit at sha is the hive's own work:
 // its committer resolves to the App bot (by login or noreply address) or to
-// an address in the pane identity domain — the fixer's rebase — or its
-// author resolves by login to the App bot, as on GitHub's update-branch
-// under the App. When GitHub resolves no login for the committer, the
-// email-only match also requires the commit's signature to be verified by
-// GitHub, which binds the signing key to the committer address only
-// (hivecommons/hive#15182); the author is free text GitHub never vouches
-// for, so no email-only author match counts. A head a person pushed
-// after a rebase-then-merge approval is new content the approval never
-// covered, so the follow-through fails closed on it (hivecommons/hive#15104).
+// an address in the pane identity domain, or its author resolves by login
+// to the App bot, as on GitHub's update-branch under the App. When GitHub
+// resolves no login for the committer, the email-only match also requires
+// the commit's signature to be verified by GitHub, which binds the signing
+// key to the committer address only (hivecommons/hive#15182); the author is
+// free text GitHub never vouches for, so no email-only author match counts.
+// The fixer's plain-git rebase of a contributor PR is an unsigned,
+// email-only pane committer (the push broker sets commit.gpgsign=false and
+// the signed reconcile pass only walks App-authored PRs), so it does not
+// count unless the fixer host signs its pushes — the follow-through then
+// settles foreign-head rather than trusting a spoofable address. A head a
+// person pushed after a rebase-then-merge approval is new content the
+// approval never covered, so the follow-through fails closed on it
+// (hivecommons/hive#15104).
 func (c *Client) CommitByHive(ctx context.Context, repo, sha string) (bool, error) {
 	if c == nil || c.client == nil {
 		return false, ErrNoGitHubClient
