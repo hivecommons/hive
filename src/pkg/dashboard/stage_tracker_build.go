@@ -488,6 +488,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
+	resp.BasePreparation = s.stageTrackerPreparation(resp.Items, now)
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
@@ -850,6 +851,10 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 	var hashBuf bytes.Buffer
 	hashResp := resp
 	hashResp.GeneratedAt = time.Time{}
+	hashResp.BasePreparation = slices.Clone(resp.BasePreparation)
+	for i := range hashResp.BasePreparation {
+		hashResp.BasePreparation[i].ObservedAt = time.Time{}
+	}
 	if err := json.NewEncoder(&hashBuf).Encode(hashResp); err != nil {
 		logOverviewEncodeFailure(err)
 		return stageTrackerCache{}, false

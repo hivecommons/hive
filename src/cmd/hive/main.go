@@ -1078,6 +1078,7 @@ func (b *boot) wireBootClosures() {
 			ReviewEvents:            b.reviewEvents,
 			WebhookWake:             b.webhookWakeFunc(),
 			SweepNudge:              b.sweepNudgeFunc(),
+			BasePreparation:         b.basePreparationReader(),
 			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
 			WebhookDelivery:         b.webhookDeliveryFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),

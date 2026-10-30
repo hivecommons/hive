@@ -1,5 +1,23 @@
 # Spoke dashboard
 
+## Base preparation visibility
+
+The Activity Monitor's existing **Merge queue** chip also shows durable base
+preparation tickets for repositories using the current-base gate, even when no
+ready merge train exists. Its popover distinguishes the recorded owner from FIFO
+waiting tickets and shows their admitted head, current snapshot head, ticket age,
+and the existing pipeline caption when those heads match. Matching PR rows gain
+**Preparing base** or **Waiting for preparation behind #N** annotations; their
+underlying CI / Review stages do not change.
+
+These are persisted lifecycle observations, not proof of green exact-head CI,
+review approval, a ready train seat, or GitHub native queue membership. Changed
+heads, held/draft/expired tickets, absent PRs, and unreadable/missing preparation
+state are explicitly unverified or inactive. An owner may legitimately have a
+different head after a refresh; this read-only view does not certify that change.
+The existing tracker cache and refresh paths update this view; opening it never
+admits, expires, or promotes work.
+
 The spoke dashboard is the operator UI served from
 `src/pkg/dashboard/static/index.html`. That file is **generated**: edit the
 per-area sources under `src/pkg/dashboard/static-src/` and run `make

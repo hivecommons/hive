@@ -77,7 +77,7 @@
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
       if (celebrate) fresh.forEach(k => { _stageTrackerCelebratePending[k] = true; });
       if (typeof stageTrackerMergedSync === 'function') stageTrackerMergedSync(d, fresh, Date.now());
-      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now());
+      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now(), d && d.base_preparation);
       if (typeof stageTrackerClosedToast === 'function') closed.forEach((k, i) => stageTrackerClosedToast(k, closedItems[i]));
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
@@ -984,4 +984,3 @@
     // (items only ever list open work and the audit side list is pr_merged
     // only); when a recently_closed list lands, mark those issue keys true
     // in stageTrackerMergeState and they will zap through the same path.
-
