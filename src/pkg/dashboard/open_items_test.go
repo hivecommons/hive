@@ -306,7 +306,7 @@ const breakdown = issuesN + ' issues + ' + prsN + ' PRs on their own row';
 assert.strictEqual(counts.header, tracker.items.length + ' rows (' + breakdown + ') · 2 need attention');
 assert.strictEqual(counts.badge, tracker.items.length, 'activity-monitor pill is the row count of the default view');
 assert.strictEqual(counts.badge, tile.issues.forge + tile.prs.forge, 'no PR shares an issue row here, so rows = the tile total');
-assert.strictEqual(counts.badgeTitle, tracker.items.length + ' rows open: ' + breakdown + ' · 3 need attention', 'attention moves to the pill tooltip; the row make-up is named');
+assert.strictEqual(counts.badgeTitle, tracker.items.length + ' rows (' + breakdown + ')' + ' · 3 need attention', 'attention moves to the pill tooltip; the row make-up is named');
 assert.strictEqual(counts.note, '', 'nothing to footnote when rows = items');
 // A PR drawn on its issue's row shrinks the row count; the pill follows the
 // rows and the gap to the item total is a footnote, never a second total.

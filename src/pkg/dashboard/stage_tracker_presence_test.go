@@ -271,10 +271,10 @@ const ask = { kind: 'pr', repo: 'hivecommons/hive', number: 14524, stage: 72, au
   decision_needed: { question: '@hanthor maintains this repository and has been offline for 26h; adopt the PR?', asked_by: 'the hive', since: iso(NOW - 26 * HOUR), blocker: 'maintainer_policy is ask', options: [{ action: 'decide:adopt', label: 'Adopt (hive takes over)', enabled: true }] },
   presence: { login: 'hanthor', state: 'offline', kind: 'clanker', since: iso(NOW - 26 * HOUR), last_seen: iso(NOW - 26 * HOUR), next: 'wait' } };
 
-assert.strictEqual(stageTrackerPresenceTip(online, NOW), "Waiting on @Danathar's hive (clanker · online, last seen 2 min ago) — hive is waiting for them");
-assert.match(stageTrackerPresenceTip(offline, NOW), /^Waiting on @hanthor's hive \(clanker · offline 26h\) — hive will adopt at \S+ .*\(in 38m\)$/);
+assert.strictEqual(stageTrackerPresenceTip(online, NOW), "Waiting on @Danathar's clanker (online, last seen 2 min ago) — hive is waiting for them");
+assert.match(stageTrackerPresenceTip(offline, NOW), /^Waiting on @hanthor's clanker \(offline 26h\) — hive will adopt at \S+ .*\(in 38m\)$/);
 assert.strictEqual(stageTrackerPresenceTip(human, NOW), 'Waiting on @zoe (human) — waiting for a human reply');
-assert.strictEqual(stageTrackerPresenceTip(ask, NOW), "Waiting on @hanthor's hive (clanker · offline 26h) — hive is waiting for them", 'held adoption promises no adopt-at');
+assert.strictEqual(stageTrackerPresenceTip(ask, NOW), "Waiting on @hanthor's clanker (offline 26h) — hive is waiting for them", 'held adoption promises no adopt-at');
 
 // Kind glyph + state class + aria per state; role=img so it reads out.
 for (const [item, state, kind, word] of [[online, 'online', 'clanker', 'clanker online'], [offline, 'offline', 'clanker', 'clanker offline'], [human, 'unknown', 'human', 'human']]) {
@@ -289,15 +289,15 @@ assert.ok(!stageTrackerPresenceDotHtml(human, NOW).includes(STAGE_TRACKER_ICONS.
 // Inside the adoption pill, before the @login; the presence line joins the title and aria-label.
 const chip = stageTrackerAdoptionChipHtml(offline);
 assert.ok(/>waiting on <span class="ham-presence ham-presence-offline ham-presence-clanker"[^>]*><svg [^>]*><\/svg><i class="ham-presence-dot"><\/i><\/span>@hanthor<\/span>$/.test(chip.replace(/<svg ([^>]*)>[\s\S]*?<\/svg>/, '<svg $1></svg>')), chip);
-assert.ok(chip.includes("title=\"waiting on @hanthor (offline 26h, 2 nudges) · Waiting on @hanthor&#39;s hive (clanker · offline 26h)"), chip);
-assert.ok(chip.includes("aria-label=\"Adoption — waiting on @hanthor (offline 26h, 2 nudges) · Waiting on @hanthor&#39;s hive (clanker"), chip);
+assert.ok(chip.includes("title=\"waiting on @hanthor (offline 26h, 2 nudges) · Waiting on @hanthor&#39;s clanker (offline 26h)"), chip);
+assert.ok(chip.includes("aria-label=\"Adoption — waiting on @hanthor (offline 26h, 2 nudges) · Waiting on @hanthor&#39;s clanker ("), chip);
 assert.strictEqual(stageTrackerPresenceChipHtml(offline), '', 'one pill, not two');
 // The "adopt?" trigger carries the dot in front of its word.
 const trig = stageTrackerAdoptionChipHtml(ask);
 assert.ok(/<button [^>]*ham-decision-trigger[^>]*><span class="ham-presence ham-presence-offline ham-presence-clanker"[^>]*>[\s\S]*<\/span>adopt\?<\/button>$/.test(trig), trig);
 // No adoption line (071, a human): the muted waiting pill carries it.
 const w = stageTrackerPresenceChipHtml(online);
-assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s hive \(clanker · online, last seen 2 min ago\) — hive is waiting for them" aria-label="Waiting on @Danathar&#39;s hive \(clanker[^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<i class="ham-presence-dot"><\/i><\/span>@Danathar<\/span>$/.test(w), w);
+assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s clanker \(online, last seen 2 min ago\) — hive is waiting for them" aria-label="Waiting on @Danathar&#39;s clanker \([^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<i class="ham-presence-dot"><\/i><\/span>@Danathar<\/span>$/.test(w), w);
 // A human: the person glyph and the handle, nothing else — no dot, no "(human · no clanker)" qualifier.
 const hw = stageTrackerPresenceChipHtml(human);
 assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*>[\s\S]*<\/svg><\/span>@zoe<\/span>$/.test(hw), hw);
@@ -305,7 +305,7 @@ assert.ok(!hw.includes('no clanker') && !hw.includes('ham-presence-dot'), hw);
 assert.strictEqual(stageTrackerPresenceChipHtml({ kind: 'pr', stage: 71 }), '');
 // The Needs-human popover names the presence under the question.
 const pop = stageTrackerDecisionPopHtml(ask, [], NOW, '');
-assert.ok(/<p class="ham-decision-presence"><span class="ham-presence ham-presence-offline ham-presence-clanker"[^>]*>[\s\S]*?<\/span>Waiting on @hanthor&#39;s hive \(clanker · offline 26h\) — hive is waiting for them<\/p>/.test(pop), pop);
+assert.ok(/<p class="ham-decision-presence"><span class="ham-presence ham-presence-offline ham-presence-clanker"[^>]*>[\s\S]*?<\/span>Waiting on @hanthor&#39;s clanker \(offline 26h\) — hive is waiting for them<\/p>/.test(pop), pop);
 assert.ok(!stageTrackerDecisionPopHtml(Object.assign({}, ask, { presence: null }), [], NOW, '').includes('ham-decision-presence'));
 // Sub-rows and the popover's nested-PR lookup carry the field.
 `,

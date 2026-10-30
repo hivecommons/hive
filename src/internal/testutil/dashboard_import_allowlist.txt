@@ -47,6 +47,7 @@ github.com/hivecommons/hive/pkg/hubbackup
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge
+github.com/hivecommons/hive/pkg/modelfamily
 github.com/hivecommons/hive/pkg/notify
 github.com/hivecommons/hive/pkg/nous
 github.com/hivecommons/hive/pkg/planning

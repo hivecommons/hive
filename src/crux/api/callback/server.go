@@ -95,7 +95,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathEffects+"/{id}/end", s.capability(CapabilityEffects, s.handleEndEffect))
 	mux.HandleFunc("POST "+PathAgentMint, s.capability(CapabilityAgentMint, s.handleAgentMint))
 	mux.HandleFunc("GET "+PathBobCredential, s.capability(CapabilityBob, s.handleBobCredential))
-	return s.authenticate(mux)
+	return s.instrument(s.authenticate(mux))
 }
 
 // authenticate is the fail-closed gate, the same rule as crux/serve: no
@@ -156,6 +156,9 @@ func (s *Server) configured(capability string) bool {
 
 func (s *Server) capability(name string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if rec := recorderOf(w); rec != nil {
+			rec.capability = name
+		}
 		if !s.configured(name) {
 			s.writeError(w, r, http.StatusNotFound, CodeNotConfigured, fmt.Sprintf("this hive has no %s capability", name))
 			return
@@ -458,6 +461,9 @@ func (s *Server) writeNoContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
+	if rec := recorderOf(w); rec != nil {
+		rec.code = code
+	}
 	w.Header().Set("Content-Type", ContentTypeJSON)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(api.Error{Error: msg, Code: code})

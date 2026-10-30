@@ -102,3 +102,53 @@ func TestIssueStageFactsCarryBlocker(t *testing.T) {
 		t.Fatalf("derived = %+v", d)
 	}
 }
+
+// Ordinary GitHub closes must clear the same ledger used by capabilitiesStatus.
+func TestWebhookClosedIssueClearsBlocker(t *testing.T) {
+	for _, tt := range []struct {
+		name, event, action, state, repo string
+		pr, wantBlocked                  bool
+	}{
+		{"closed", "issues", "closed", "closed", "org/repo", false, false},
+		{"closed comment", "issue_comment", "created", "closed", "org/repo", false, false},
+		{"edited closed comment", "issue_comment", "edited", "closed", "org/repo", false, false},
+		{"closed label event", "issues", "labeled", "closed", "ORG/REPO", false, false},
+		{"open issue", "issues", "labeled", "open", "org/repo", false, true},
+		{"reopened issue", "issues", "reopened", "open", "org/repo", false, true},
+		{"unknown repository", "issues", "closed", "closed", "other/repo", false, true},
+		{"PR comment", "issue_comment", "created", "closed", "org/repo", true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			l := swapSharedLedger(t)
+			c, _ := setupWebhookCacheTest(t)
+			l.Observe("org/repo", 7, workflowsReport, time.Now())
+			l.Observe("org/repo", 8, workflowsReport, time.Now())
+			l.Observe("repo", 7, workflowsReport, time.Now())
+			pr := ""
+			if tt.pr {
+				pr = `,"pull_request":{"url":"x"}`
+			}
+			payload := `{"action":` + jsonString(tt.action) + `,"issue":{"number":7,"state":` + jsonString(tt.state) + pr + `},"comment":{"body":` + jsonString(workflowsReport) + `},"repository":{"full_name":` + jsonString(tt.repo) + `}}`
+			res, err := c.HandleWebhookEvent(tt.event, []byte(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, blocked := l.Blocking("org/repo", 7); blocked != tt.wantBlocked {
+				t.Fatalf("blocked = %v, want %v", blocked, tt.wantBlocked)
+			}
+			if _, blocked := l.Blocking("repo", 7); blocked != tt.wantBlocked {
+				t.Fatalf("short-name blocked = %v, want %v", blocked, tt.wantBlocked)
+			}
+			wantCount := 1
+			if tt.wantBlocked {
+				wantCount += 2
+			}
+			if caps := l.Capabilities(); caps.BlockedItems != wantCount || caps.ByPermission["workflows"] != wantCount {
+				t.Fatalf("capabilities = %+v, want %d blocked items", caps, wantCount)
+			}
+			if !tt.wantBlocked && res.BlockerKind != "" {
+				t.Fatalf("closed issue recorded blocker %q", res.BlockerKind)
+			}
+		})
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Activity-monitor row decisions (hivecommons/hive#13479 follow-up). The
@@ -65,7 +66,11 @@ const (
 	repoItemDecisionDirection       = "direction"
 	repoItemDecisionCloseSuperseded = "close-superseded"
 	repoItemDecisionCloseWontFix    = "close-wontfix"
-	repoItemDecisionAdopt           = "adopt"
+	// close-read closes an advisory issue (triage/advisory, a dedupe
+	// checklist) as completed once a maintainer has read it
+	// (hivecommons/hive#15381): the row's "Close (read)" action.
+	repoItemDecisionCloseRead = "close-read"
+	repoItemDecisionAdopt     = "adopt"
 	// Merge-gate answers on a PR parked at stage/090-ready-for-human-merge
 	// (hivecommons/hive#15078). merge-now merges through the hive's App at
 	// once, attributed to the operator; queue-merge records the operator's
@@ -97,6 +102,7 @@ const (
 	adoptRequestLabelDesc       = "Owner-delegate request: adopt now in supersede mode"
 
 	issueStateReasonNotPlanned = "not_planned"
+	issueStateReasonCompleted  = "completed"
 )
 
 // repoItemDecisionChangeRequests is the store a PR direction is recorded in:
@@ -274,6 +280,10 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 		out.Action = rowActionClosed
 		out.Outcome = "Closed as won't fix (not planned)."
 		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
+	case repoItemDecisionCloseRead:
+		out.Action = rowActionClosed
+		out.Outcome = "Closed as read (advisory acknowledged)."
+		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
 	case repoItemDecisionAdopt:
 		out.Action = rowActionAdopted
 		out.Outcome = "Adoption queued: `" + label + "` applied."
@@ -292,6 +302,33 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
 	}
 	return out
+}
+
+// repoWritesPaused reports whether repoFull is operator-paused, with the
+// pause's provenance in words: the write-back gate's view when the gate is
+// installed, else the config's own record.
+func (s *Server) repoWritesPaused(repoFull string) (string, bool) {
+	if g := s.writebackGateRef(); g != nil {
+		if info, paused := g.RepoPaused(repoFull); paused {
+			return writeback.RepoPausedDetail(repoFull, info), true
+		}
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		return "", false
+	}
+	rp, paused := s.deps.Config.RepoPauseFor(repoFull)
+	if !paused {
+		return "", false
+	}
+	return writeback.RepoPausedDetail(repoFull, writeback.RepoPauseInfo{By: rp.By, Reason: rp.Reason}), true
+}
+
+// repoItemCloseRefusedResult is the row result for a close the hive would
+// not write: Outcome is the one line the toast and the badge show.
+func repoItemCloseRefusedResult(repoFull string, number int, itemType, detail string) *RowActionResult {
+	return &RowActionResult{Action: rowActionRefused, Target: rowActionTarget(repoFull, itemType, number),
+		Outcome: "Close refused: repo paused — " + detail + ".",
+		Next:    "Resume the repository to let the dashboard close it, or close it on GitHub yourself."}
 }
 
 func renderRepoItemDecisionCloseComment(verb, user, comment, supersededBy string) string {
@@ -385,9 +422,17 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "decision", event.Decision), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "unparked", Label: ghpkg.HumanAckLabel,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, "", ghpkg.HumanAckLabel, nil)})
-	case repoItemDecisionCloseSuperseded, repoItemDecisionCloseWontFix:
+	case repoItemDecisionCloseSuperseded, repoItemDecisionCloseWontFix, repoItemDecisionCloseRead:
 		verb := "won't fix"
+		stateReason := issueStateReasonNotPlanned
 		supersededBy := ""
+		if decision == repoItemDecisionCloseRead {
+			if itemType != "issue" {
+				jsonError(w, "close-read applies to issues", http.StatusBadRequest)
+				return
+			}
+			verb, stateReason = "read (advisory acknowledged)", issueStateReasonCompleted
+		}
 		if decision == repoItemDecisionCloseSuperseded {
 			verb = "superseded"
 			ref, err := parseRepoItemSupersededBy(body.SupersededBy, repoFull)
@@ -400,6 +445,14 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			supersededBy = ref
+		}
+		// A paused repo takes no hive writes, operator-initiated or not
+		// (hivecommons/hive#15436): a 200 with a refused result, so the
+		// row's toast and history badge say why instead of "HTTP 409".
+		if detail, paused := s.repoWritesPaused(repoFull); paused {
+			jsonStatusResponse(w, http.StatusOK, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: rowActionRefused,
+				Result: repoItemCloseRefusedResult(repoFull, number, itemType, detail)})
+			return
 		}
 		if err := gh.CreateIssueComment(ctx, repoFull, number, renderRepoItemDecisionCloseComment(verb, user, comment, supersededBy)); err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
@@ -416,7 +469,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 			err := gh.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{
 				OverrideReason:          "closed as " + verb + " by @" + user + " from the Hive dashboard",
 				SuppressOverrideComment: true,
-				StateReason:             issueStateReasonNotPlanned,
+				StateReason:             stateReason,
 				// A recorded human decision may close a tracking issue;
 				// only the automated paths are refused.
 				AllowTrackingIssue: true,
@@ -478,7 +531,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, close-read, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
 	}
 }
 
@@ -578,7 +631,7 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 // renderRepoItemDecisionMergeComment is the attributed note left on the PR
 // before the hive's App merges it for the operator.
 func renderRepoItemDecisionMergeComment(user, comment string) string {
-	body := fmt.Sprintf("Merged as maintainer by @%s from the Hive dashboard: the merge gate parked this pull request for a human because its author is not a trusted merger on this repository.", strings.TrimSpace(user))
+	body := fmt.Sprintf("Merged as maintainer by @%s from the Hive dashboard: the merge queue parked this pull request for a human because its author is not a trusted merger on this repository.", strings.TrimSpace(user))
 	if c := strings.TrimSpace(comment); c != "" {
 		body += "\n\n> " + strings.ReplaceAll(c, "\n", "\n> ")
 	}
@@ -739,7 +792,7 @@ func approveNeedsRebaseResult(out *RowActionResult, number int, ms ghpkg.PRMerge
 		out.Next = "Resolve the conflict on the branch yourself, or adopt it into a fresh branch / close it as superseded from the row menu."
 		return
 	}
-	out.Next = "The merge gate skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:"
+	out.Next = "The merge queue skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:"
 	opt := decisionOption(decisionActionMergeNow, rebaseMergeFollowThroughLabel, true, "")
 	opt.Consequence = rebaseMergeFollowThroughConsequence(number, ms.BaseRef)
 	out.Options = []StageTrackerDecisionOption{opt}

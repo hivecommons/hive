@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -77,6 +78,8 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			l := swapSharedLedger(t)
+			l.Observe("o/r", 7, workflowsReport, time.Now())
 			var closed bool
 			var comments []string
 			var labels []string
@@ -136,6 +139,9 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 			}
 			if closed != tt.wantClosed {
 				t.Fatalf("closed = %v, want %v", closed, tt.wantClosed)
+			}
+			if _, blocked := l.Blocking("o/r", 7); blocked == tt.wantClosed {
+				t.Fatalf("blocked = %v after close, want %v", blocked, !tt.wantClosed)
 			}
 			if tt.wantComment == "" {
 				if len(comments) != 0 {

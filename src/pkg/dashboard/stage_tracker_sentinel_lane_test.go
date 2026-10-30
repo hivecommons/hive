@@ -30,6 +30,8 @@ func stageTrackerSentinelJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSentinelTip"),
 		jsFunc(t, html, "stageTrackerSentinelInLane"),
 		jsFunc(t, html, "stageTrackerSentinelAsSuffix"),
+		jsFunc(t, html, "stageTrackerReturnedAuthor"),
+		jsFunc(t, html, "stageTrackerToolingSuffix"),
 		jsFunc(t, html, "stageTrackerReturnedWord"),
 		jsFunc(t, html, "stageTrackerDirectionCarrier"),
 		jsFunc(t, html, "stageTrackerSentinelChipHtml"),
@@ -44,6 +46,8 @@ func stageTrackerManualMergeJS(t *testing.T, html string) string {
 	return strings.Join([]string{
 		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_MANUAL_MERGE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_BREAKING_CHANGE_CODE"),
+		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MERGE_REASON_WORD"),
 		jsFunc(t, html, "stageTrackerHumanMergeReasonWord"),
 		jsFunc(t, html, "stageTrackerManualMergeWord"),
@@ -379,31 +383,46 @@ assert.ok(generic.includes('Sentinel flagged security-relevant changes: ' + esc(
 // 071/072 + sentinel (hivecommons/hive#15159): the chevron keeps the
 // routing word — the human already acted — with the alert as a suffix,
 // never "needs human"; the chip is folded into the word.
-assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, 'Returned to contributor'), "Returned to @thatguywob's hive");
+assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, 'Returned to contributor'), "Returned to @thatguywob's clanker");
+assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'bee', author_kind: 'hive' }, 'Returned to contributor'), "Returned to @bee's hive");
+// An issue row drawn through its one covering PR names the PR's author,
+// not the issue's (hive's hive: #15133 was filed by hivecommons-hive[bot];
+// its PR #15307 is @thatguywob's clanker's).
+const viaPR = { stage: 72, kind: 'issue', via_pr: true, number: 15133, author: 'hivecommons-hive[bot]', author_kind: 'hive', linked_prs: [{ number: 15307, author: 'thatguywob', author_kind: 'clanker', stage: 72 }] };
+assert.strictEqual(stageTrackerReturnedWord(viaPR, 'Returned to contributor'), "Returned to @thatguywob's clanker");
+assert.strictEqual(stageTrackerReturnedWord(Object.assign({}, viaPR, { stage: 71 }), 'Needs author'), 'Needs @thatguywob');
+// A PR drawn under another issue is not this row's; only the issue's own
+// author is left to name.
+assert.strictEqual(stageTrackerReturnedWord(Object.assign({}, viaPR, { linked_prs: [Object.assign({}, viaPR.linked_prs[0], { drawn_under: 15100 })] }), 'Returned to contributor'), "Returned to @hivecommons-hive[bot]'s hive");
+// A row the sweep marked superseded says so instead of "Returned to":
+// nothing is owed by the author; a maintainer closes it (#15303 / #15304).
+assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker', superseded: { reason: 'superseded', closer_pr: 15304, closer_repo: 'hive' } }, 'Returned to contributor'), 'Superseded by #15304 · decide');
+assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker', superseded: { closer_pr: 15304 } }, flagged), 'x'), 'Superseded by #15304 · decide · sentinel');
+assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker', superseded: true }, 'Returned to contributor'), "Returned to @thatguywob's clanker", 'a bare nested flag names no closer');
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'sam', author_kind: 'human' }, 'Returned to contributor'), 'Returned to @sam');
 assert.strictEqual(stageTrackerReturnedWord({ stage: 71, kind: 'pr', author: 'sam' }, 'Needs author'), 'Needs @sam');
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr' }, 'Returned to contributor'), 'Returned to contributor', 'no author → stage word');
-assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, flagged), 'x'), "Returned to @thatguywob's hive · sentinel");
+assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, flagged), 'x'), "Returned to @thatguywob's clanker · sentinel");
 assert.ok(stageTrackerSentinelAsSuffix(P('o/r', 1, 72, flagged)) && stageTrackerSentinelAsSuffix(P('o/r', 1, 71, flagged)));
 assert.ok(!stageTrackerSentinelAsSuffix(P('o/r', 1, 85, flagged)) && !stageTrackerSentinelAsSuffix(I('o/r', 1, 72, flagged)));
 const returned = stageTrackerRowHtml(P('o/r', 15159, 72, Object.assign({ author: 'thatguywob', author_kind: 'clanker' }, flagged)), stages, ctx);
 const retLit = /<li class="ham-seg active detoured ham-sentinel"([^>]*)>([\s\S]*?)<\/li>/.exec(returned);
 assert.ok(retLit, 'the lit 072 chevron is tinted: ' + returned);
-assert.ok(retLit[2].includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s hive · sentinel</span>"), 'routing word with sentinel suffix: ' + retLit[2]);
+assert.ok(retLit[2].includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s clanker · sentinel</span>"), 'routing word with sentinel suffix: ' + retLit[2]);
 assert.ok(!returned.includes('needs human') && !returned.includes('Needs human'), 'no needs-human wording at 072: ' + returned);
-assert.ok(retLit[1].includes("aria-label=\"Returned to @thatguywob&#39;s hive · sentinel — " + TIP + '"'), 'aria names the routing: ' + retLit[1]);
+assert.ok(retLit[1].includes("aria-label=\"Returned to @thatguywob&#39;s clanker · sentinel — " + TIP + '"'), 'aria names the routing: ' + retLit[1]);
 assert.ok(retLit[1].includes(' — ' + TIP), 'the tooltip carries the reason: ' + retLit[1]);
 assert.ok(!returned.includes('ham-badge-sentinel'), 'no chip when the word carries the suffix');
 const needsAuthor = stageTrackerRowHtml(P('o/r', 15160, 71, Object.assign({ author: 'sam', author_kind: 'human' }, flagged)), stages, ctx);
 assert.ok(needsAuthor.includes('<span class="ham-detour">Needs @sam · sentinel</span>') && !needsAuthor.includes('needs human'), needsAuthor);
 const returnedClean = stageTrackerRowHtml(P('o/r', 15161, 72, { author: 'thatguywob', author_kind: 'clanker' }), stages, ctx);
-assert.ok(returnedClean.includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s hive</span>") && !returnedClean.includes('ham-sentinel') && !returnedClean.includes('entinel'), returnedClean);
+assert.ok(returnedClean.includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s clanker</span>") && !returnedClean.includes('ham-sentinel') && !returnedClean.includes('entinel'), returnedClean);
 // 085 still says it in full.
 assert.ok(stageTrackerRowHtml(P('o/r', 15162, 85, flagged), stages, ctx).includes('<span class="ham-detour">Sentinel alert · needs human</span>'));
-// Give direction on a clanker PR is carried to the contributor's hive, not
-// to the hive's own fixer.
-assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }]), "@thatguywob's hive");
-assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: '@a', author_kind: 'clanker' }, { kind: 'pr', author: 'b', author_kind: 'clanker' }]), "the contributor's hive");
+// Give direction on a clanker PR is carried to the contributor's clanker,
+// not to the hive's own fixer.
+assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }]), "@thatguywob's clanker");
+assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: '@a', author_kind: 'clanker' }, { kind: 'pr', author: 'b', author_kind: 'clanker' }]), "the contributor's clanker");
 assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: 'x', author_kind: 'clanker' }, { kind: 'pr', author: 'hive[bot]', author_kind: 'hive' }]), 'the author agent');
 assert.strictEqual(stageTrackerDirectionCarrier([]), 'the author agent');
 
@@ -449,6 +468,11 @@ const whyPlain = stageTrackerRowHtml(P('o/r', 402, 90, { human_merge_reason: 'un
 assert.ok(whyPlain.includes('<span class="ham-detour">Ready for human merge · untrusted author</span>') && whyPlain.includes('title="Ready for human merge · untrusted author — No lane can vouch for the author'), 'plain 090 word carries the reason: ' + whyPlain);
 const whyNested = stageTrackerRowHtml(I('o/r', 400, 90, { linked_prs: [{ number: 401, stage: 90, title: 'Shard', manual_merge: true, human_approver: 'clubanderson', human_merge_reason: 'workflow-files', human_merge_reason_text: whyTip }] }), stages, ctx);
 assert.ok(whyNested.includes('Awaiting human merge · workflow files · approved by @clubanderson'), 'nested 090 PR carries the reason: ' + whyNested);
+// The breaking-change rule (hivecommons/hive#15442): the stage's own word
+// leads and the chip says "human merge"; an approval changes nothing.
+assert.strictEqual(stageTrackerManualMergeWord({ manual_merge: true, human_merge_reason: 'breaking-change' }), 'Ready for human merge · human merge');
+const breaking = stageTrackerRowHtml(P('o/r', 403, 90, { manual_merge: true, human_merge_reason: 'breaking-change', human_merge_reason_text: 'Breaking change — owner merges' }), stages, ctx);
+assert.ok(breaking.includes('<span class="ham-detour">Ready for human merge · human merge</span>') && !breaking.includes('Awaiting human merge'), 'breaking-change 090 word: ' + breaking);
 
 // Decide… preface: one line per flagged PR, nothing for clean ones.
 assert.strictEqual(stageTrackerSentinelPreface([P('o/r', 109, 85, flagged), P('o/r', 104, 85)]), '⚠ o/r#109 — ' + TIP);

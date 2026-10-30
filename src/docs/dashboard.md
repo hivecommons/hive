@@ -1,7 +1,9 @@
 # Spoke dashboard
 
 The spoke dashboard is the operator UI served from
-`src/pkg/dashboard/static/index.html`. For the behavior behind the labels the repository cards show or mutate, see [Hive Labels and Control Signals](labels-and-control-signals.md). Its FAQ panel (`#faq-section` /
+`src/pkg/dashboard/static/index.html`. That file is **generated**: edit the
+per-area sources under `src/pkg/dashboard/static-src/` and run `make
+dashboard-gen` (see [Dashboard source layout](dashboard-source-layout.md)). For the behavior behind the labels the repository cards show or mutate, see [Hive Labels and Control Signals](labels-and-control-signals.md). Its FAQ panel (`#faq-section` /
 `#faq-panel`) is intentionally static HTML: it is not ACMM-gated, does not
 fetch data, and is visible to confused L1/L2 users before they understand the
 rest of the UI. Its only script is a client-side filter box (`faqFilter`) that
@@ -48,7 +50,7 @@ On the v5 line the standalone Platform section is not part of the default dashbo
 
 The light dashboard topbar keeps high-signal operational state only: project name, fleet controls, health, auth, and a compact ACMM autonomy chip such as `L5 · Semi-Autonomous`. The chip is display-only and navigates to the ACMM Eval section; changing levels remains in the existing ACMM dialog/sidebar controls.
 
-Build/version details live in the bottom-left sidebar chip. The collapsed chip shows the short SHA, release channel, and an orange `↑` marker only when an upgrade is available. Open the chip for the full commit link, channel/tracking state, compare/release-notes links, last upgrade status when reported, copy-version, and the manual upgrade action. On small screens the sidebar is reachable through the hamburger drawer, so the version menu remains available without returning the long version strip to the topbar.
+Build/version details live in the bottom-left sidebar chip. The collapsed chip shows the short SHA, release channel, and an orange `↑` marker only when an upgrade is available. Open the chip for the full commit link, channel/tracking state, compare/release-notes links, last upgrade status when reported, copy-version, and the manual upgrade action. On small screens the sidebar is reachable through the hamburger drawer, so the version menu remains available without returning the long version strip to the topbar. On the narrowest phones (≤360px wide) the topbar also drops the 🐛 feedback and ⚙ Settings chips so the row never overflows; both stay reachable from the account (avatar) menu, and feedback from the drawer as well.
 
 ## Übersicht widget
 

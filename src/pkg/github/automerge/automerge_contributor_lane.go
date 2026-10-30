@@ -173,7 +173,20 @@ const (
 // being observed and must not pin memory forever.
 const contributorSoakPruneAfter = 7 * 24 * time.Hour
 
-const contributorAutoPromotionMarkerPrefix = "<!-- hive:contributor-auto-promoted"
+// contributorAutoPromotionMarkerPrefix opens the one author-wide
+// trust-promotion announcement: `<!-- hive:trust-promoted login=X merged=N
+// scope=S repos=R -->`. contributorAutoPromotionLegacyMarkerPrefix is the
+// per-PR marker posted before hivecommons/hive#15443; both count as "already
+// announced on this PR".
+const (
+	contributorAutoPromotionMarkerPrefix       = "<!-- hive:trust-promoted"
+	contributorAutoPromotionLegacyMarkerPrefix = "<!-- hive:contributor-auto-promoted"
+)
+
+// contributorHistoryReasonDemoted is the contributorMergedHistory.Reason
+// for revert or sentinel evidence in the author's merges — the one outcome
+// that withdraws an earlier promotion.
+const contributorHistoryReasonDemoted = "revert-or-sentinel"
 
 // ContributorLanePolicy is the live auto_merge.contributor_lane.* policy.
 type ContributorLanePolicy struct {
@@ -432,6 +445,11 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				stage(c.mergeTrainSkip(train, number), false, nil)
@@ -452,7 +470,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			result.Candidates++
 			event, reason, err := c.trySweepContributorLanePR(ctx, displayRepo, owner, repoName, number, policy)
 			if err == nil {
-				c.noteMergeTrainOutcome(owner, repoName, number, pr.GetHead().GetSHA(), reason)
+				c.noteMergeTrainOutcome(stageLaneContributor, owner, repoName, number, pr.GetHead().GetSHA(), reason)
 			}
 			if err != nil {
 				c.warn("contributor-lane automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason, "error", err)
@@ -509,6 +527,9 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 	// marker or registry tier admits a FIRST_TIME_CONTRIBUTOR, and only
 	// admitContributor can tell. See trySweepContributorLanePR.
 	labels := labelNames(pr.Labels)
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return reason
+	}
 	// trusted=false so the sentinel label blocks outright: a contributor PR
 	// gets the label, not the trusted-author courtesy comment.
 	if blocked := c.labelBlockReason(labels, false); blocked != "" {
@@ -655,10 +676,13 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 			return contributorClaimMatch{Reason: "contributor-lane:auto-promote-history"}, promoteErr
 		}
 		if history.Clean {
-			if commentErr := c.commentContributorAutoPromotion(ctx, owner, repo, pr.GetNumber(), author, history); commentErr != nil {
-				c.warn("contributor-lane auto-promotion audit comment failed", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "author", author, "error", commentErr)
-			}
+			c.announceContributorAutoPromotion(ctx, owner, repo, pr.GetNumber(), author, history)
 			return contributorClaimMatch{AutoPromoted: history.Checked, AutoPromotedHiveWide: history.HiveWide, AutoPromotedRepos: history.repoBreakdown(), ObservedTier: "trusted"}, nil
+		}
+		if history.Reason == contributorHistoryReasonDemoted {
+			// Revert or sentinel evidence withdraws the promotion; regaining
+			// it later is announced once more.
+			c.stageStoreOrShared().ClearTrustPromotion(author)
 		}
 		if history.Reason != "" {
 			c.debug("contributor-lane auto-promotion skipped", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "author", author, "reason", history.Reason, "clean_merged", history.Checked, "scope", history.scopeName(), "repos", history.repoBreakdown())
@@ -787,7 +811,7 @@ func (c *Engine) contributorCleanMergedHistory(ctx context.Context, owner, repo,
 		history.Checked += clean
 		history.Repos = append(history.Repos, contributorRepoMerges{Repo: ref.Repo, Clean: clean})
 		if blocked {
-			history.Reason = "revert-or-sentinel"
+			history.Reason = contributorHistoryReasonDemoted
 			return true, nil
 		}
 		if history.Checked >= need {
@@ -1012,22 +1036,56 @@ func contributorAutoPromotionWhere(hiveWide bool) string {
 	return "in this repository"
 }
 
+// announceContributorAutoPromotion posts the one author-wide promotion
+// comment. Promotion is a property of the author in this hive, not of the
+// PR (hivecommons/hive#15443: two open PRs by one author each got the
+// comment six seconds apart), so the stage store's per-author record is
+// claimed first — concurrent PRs by the author in the same sweep and PRs
+// after a restart post nothing — and released again only when the post
+// fails. The store is saved at once so a restart before the stage pass's
+// own save does not re-announce.
+func (c *Engine) announceContributorAutoPromotion(ctx context.Context, owner, repo string, number int, author string, history contributorMergedHistory) {
+	store := c.stageStoreOrShared()
+	if !store.ClaimTrustPromotionAnnouncement(author) {
+		return
+	}
+	if err := c.commentContributorAutoPromotion(ctx, owner, repo, number, author, history); err != nil {
+		store.ReleaseTrustPromotionAnnouncement(author)
+		c.warn("contributor-lane auto-promotion audit comment failed", "repo", owner+"/"+repo, "pr", number, "author", author, "error", err)
+		return
+	}
+	if err := store.Save(); err != nil {
+		c.warn("contributor-lane auto-promotion: persisting announcement failed", "author", author, "error", err)
+	}
+}
+
+// contributorAutoPromotionAnnounced reports whether body is this hive's
+// promotion announcement for login, in the current or the pre-#15443 form.
+func contributorAutoPromotionAnnounced(body, login string) bool {
+	return strings.HasPrefix(body, contributorAutoPromotionMarkerPrefix+" login="+login+" ") ||
+		strings.HasPrefix(body, contributorAutoPromotionLegacyMarkerPrefix+" author="+login+" ")
+}
+
+// commentContributorAutoPromotion posts the author-wide announcement on
+// the PR that earned it. The PR's own comments are read first — one call,
+// on the announcing path only — so a store rebuilt from scratch does not
+// repeat an announcement already on this PR.
 func (c *Engine) commentContributorAutoPromotion(ctx context.Context, owner, repo string, number int, author string, history contributorMergedHistory) error {
 	if c == nil || c.gh == nil || number <= 0 {
 		return nil
 	}
+	login := strings.TrimPrefix(author, "@")
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
 		return err
 	}
 	for _, comment := range comments {
-		if comment != nil && strings.HasPrefix(comment.GetBody(), contributorAutoPromotionMarkerPrefix) {
+		if comment != nil && contributorAutoPromotionAnnounced(comment.GetBody(), login) {
 			return nil
 		}
 	}
-	login := strings.TrimPrefix(author, "@")
-	body := fmt.Sprintf("%s author=%s merged=%d scope=%s repos=%s -->\n@%s is auto-promoted for contributor-lane merging on this PR: the last %d merged PRs by this author %s have no revert or sentinel-alert evidence. CI, reviewer verdict, diff fences, soak, holds and branch protection still apply.",
-		contributorAutoPromotionMarkerPrefix, login, history.Checked, history.scopeName(), history.repoBreakdown(), login, history.Checked, contributorAutoPromotionWhere(history.HiveWide))
+	body := fmt.Sprintf("%s login=%s merged=%d scope=%s repos=%s -->\n@%s is now trusted for contributor-lane merging in this hive (last %d merged PRs: no reverts or sentinel alerts). Applies to their open and future PRs here; CI, review verdicts, diff fences, soak and branch protection still apply.",
+		contributorAutoPromotionMarkerPrefix, login, history.Checked, history.scopeName(), history.repoBreakdown(), login, history.Checked)
 	_, _, err = c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	return err
 }
@@ -1425,7 +1483,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 
 	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, eval.pr, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
-	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
+	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
@@ -1434,7 +1492,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
-		if requiredChecksExpectedMergeError(err) {
+		if c.requiredChecksExpected(attempt, err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(eval.pr))
 		}
 		if reason := c.workflowFenceMergeUnauthorized(ctx, displayRepo, owner, repo, eval, err); reason != "" {

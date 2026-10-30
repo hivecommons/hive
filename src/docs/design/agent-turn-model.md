@@ -275,18 +275,18 @@ apply.
 
 ## 3. What a restart actually does to a turn
 
-`Restart` (`src/crux/agent/manager_restart.go:572`) does not resume anything. In order:
+`Restart` (`src/crux/agent/manager_restart.go:434`) does not resume anything. In order:
 
 1. `C-c` into the pane and cancel the launch context
-   (`src/crux/agent/manager_restart.go:696-701`).
+   (`src/crux/agent/manager_restart.go:574-579`).
 2. Archive the scrollback *before* it is destroyed —
    `tearDownTurnLocked(agent, "restart")`
-   (`src/crux/agent/manager_restart.go:707`), with the comment that `kill-session`
+   (`src/crux/agent/manager_restart.go:585`), with the comment that `kill-session`
    destroys the only record of the previous run
-   (`src/crux/agent/manager_restart.go:703-706`).
+   (`src/crux/agent/manager_restart.go:581-584`).
 3. Reap the CLI process and any UID-owned helpers
-   (`src/crux/agent/manager_restart.go:724-734`).
-4. `tmux kill-session` (`src/crux/agent/manager_restart.go:736`).
+   (`src/crux/agent/manager_restart.go:602-611`).
+4. `tmux kill-session` (`src/crux/agent/manager_restart.go:614`).
 
 The replacement CLI starts with **no prompt at all** in the default case.
 `buildBootstrapPrompt` (`src/crux/agent/manager_env.go:19`) unconditionally returns `""`
@@ -297,9 +297,9 @@ placeholders to the agent (`src/crux/agent/manager_env.go:20-25`).
 
 So a restarted agent sits idle at its input prompt until the shared governor
 ticker (§1.4) next finds it due. Only the explicit override paths supply text
-directly: `RestartWithBootstrap` (`src/crux/agent/manager_restart.go:419`) sets
+directly: `RestartWithBootstrap` (`src/crux/agent/manager_restart.go:286`) sets
 `BootstrapOverride`, and `RestartThenSendKick`
-(`src/crux/agent/manager_restart.go:505`) is documented as restarting "with a clean
+(`src/crux/agent/manager_restart.go:383`) is documented as restarting "with a clean
 slate". Whichever path runs, delivery is gated on the new pane reaching its
 input marker (`deliverStartupKick`, `src/crux/agent/manager_kick.go:514`).
 

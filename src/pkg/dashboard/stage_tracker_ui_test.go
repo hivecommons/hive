@@ -20,6 +20,16 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`.ham-select {`,
 		`.ham-repo-filter {`,
 		`id="activity-monitor-sidebar-badge"`,
+		// Waiting-on-you surfacing (hivecommons/hive#15638): second sidebar
+		// badge, topbar pill, toolbar chip and the filter key they share.
+		`id="activity-monitor-waiting-badge" class="badge-count oc-nav-count oc-nav-count--waiting" data-zero`,
+		`id="oc-waiting-on-you" data-action="showWaitingOnYou"`,
+		`id="activity-monitor-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle"`,
+		`if (f.waitingOnYou && !item.waiting_on_you) return false;`,
+		`function stageTrackerRenderWaiting(d, nowMs)`,
+		`function stageTrackerWaitingToast(w, nowMs)`,
+		`if (typeof window.hiveKioskMode === 'function' && window.hiveKioskMode()) return;`,
+		`const STAGE_TRACKER_WAITING_FILTER_PARAM = 'waiting-on-you';`,
 		`'activity-monitor-section': { title: '📍 Hive activity monitor'`,
 		`'activity-monitor-section': { heading: 'Hive activity monitor'`,
 		`'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'`,
@@ -140,6 +150,14 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerStageActor"),
 		jsFunc(t, html, "stageTrackerActorKind"),
 		jsFunc(t, html, "stageTrackerActorTip"),
+		jsConstLine(t, html, "STAGE_TRACKER_HIVE_PREFIXES"),
+		jsConstLine(t, html, "STAGE_TRACKER_CLAIMANT_SOURCE"),
+		jsFunc(t, html, "stageTrackerShortHive"),
+		jsFunc(t, html, "stageTrackerClaimant"),
+		jsConstLine(t, html, "STAGE_TRACKER_CLAIMANT_ICON"),
+		jsFunc(t, html, "stageTrackerClaimantIconKind"),
+		jsFunc(t, html, "stageTrackerClaimantShort"),
+		jsFunc(t, html, "stageTrackerClaimantLine"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_STATIC"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_ACTIVE"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_HUMAN"),
@@ -148,6 +166,9 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_HUMAN_MODS"),
 		jsFunc(t, html, "stageTrackerMotion"),
 		jsFunc(t, html, "stageTrackerHeaderHtml"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_PATH"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_TITLE"),
+		jsFunc(t, html, "stageTrackerTrainIconHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
 		jsFunc(t, html, "stageTrackerStripItems"),
@@ -166,6 +187,13 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),
+		jsFunc(t, html, "stageTrackerPRPillsHtml"),
+		jsFunc(t, html, "stageTrackerAgoText"),
+		jsConstBlock(t, html, "STAGE_TRACKER_LINEAGE_REASON_TIP"),
+		jsFunc(t, html, "stageTrackerLineageText"),
+		jsFunc(t, html, "stageTrackerSupersededOriginalClause"),
+		jsFunc(t, html, "stageTrackerLineageTip"),
+		jsFunc(t, html, "stageTrackerLineageChipHtml"),
 		jsFunc(t, html, "stageTrackerLinkedPRItem"),
 		jsFunc(t, html, "stageTrackerLinkedPROpen"),
 		jsFunc(t, html, "stageTrackerNestedOpenPRs"),
@@ -174,6 +202,9 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLinkedTip"),
 		jsConstLine(t, html, "STAGE_TRACKER_LINKED_GLYPH"),
 		jsFunc(t, html, "stageTrackerLinkedDrawnHere"),
+		jsFunc(t, html, "stageTrackerLinkedSuperseder"),
+		jsFunc(t, html, "stageTrackerLinkedSupersededGone"),
+		jsFunc(t, html, "stageTrackerLinkedSupersededTip"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
 		stageTrackerTierJS(t, html),
 		jsFunc(t, html, "stageTrackerSortKey"),
@@ -218,7 +249,7 @@ const stages = [
   { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 71, label: 'Needs author', short: 'Needs author', branch_from: 50 },
   { number: 72, label: 'Returned to contributor', short: 'Returned to contributor', branch_from: 50 },
   { number: 74, label: 'Adopted by hive', short: 'Adopted by hive', branch_from: 50 },
-  { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' },
+  { number: 80, label: 'Awaiting merge admission', short: 'Merge queue' },
   { number: 85, label: 'Needs human decision', short: 'Needs human decision', branch_from: 80 }, { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
   { number: 95, label: 'Pre-merge soak', short: 'Soaking', description: 'Lane admitted; the pre-merge soak window is running before the merge is attempted' },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
@@ -268,7 +299,7 @@ assert.deepStrictEqual(segStates(row), [D, D, 'active', T, T, T, 'todo cap'], 'a
 assert.ok(row.includes('aria-current="step"') && subs(row).length === 0);
 assert.ok(row.includes('Fix &lt;login&gt;'), 'title escaped');
 assert.strictEqual(prCol(row).length, 0, 'issue without a PR has an empty PR column');
-assert.ok(tooltip(row).includes('(author/human'), 'author kind stays in the tooltip');
+assert.ok(tooltip(row).includes('(person'), 'author kind stays in the tooltip, in plain words');
 assert.ok(row.includes('<span class="ham-since">30m</span>'), row);
 // The age and the chip belong to the strip they describe, not to a title line
 // that may wrap: the since text closes the strip row (an empty spacer keeps
@@ -471,8 +502,8 @@ assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COL
 // PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{number:50,slug:'review-pending'},{number:60,slug:'reviewed'},{number:72,slug:'returned-to-contributor',from:60}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
-// hivecommons/hive#15159: the chevron names the routing — the contributor's hive, for a clanker's PR.
-assert.ok(row.includes('<span class="ham-detour">Returned to @karibhou&#39;s hive</span>'), row);
+// hivecommons/hive#15159: the chevron names the routing — the contributor's clanker, for a clanker's PR.
+assert.ok(row.includes('<span class="ham-detour">Returned to @karibhou&#39;s clanker</span>'), row);
 // Invariant: a PR never occupies the issue slot. A PR with no linked issue
 // puts the muted "no linked issue" placeholder on the left and names itself
 // — author icon, #N, title — in the PR column, where a covering PR sits on
@@ -627,14 +658,14 @@ assert.strictEqual(titles(row, 'Fix sort'), 1);
 // body still says Fixes #N): the issue slot keeps "#N title" as a link,
 // struck through under a "closed" chip, so the pairing reads at a glance.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', title: 'Usage on --help', url: 'https://x/13409' }] }, stages, ctx);
-assert.strictEqual(lead(row), '#13409 Usage on --help closed', lead(row));
+assert.strictEqual(lead(row), '#13409 Usage on --help closed · this PR unmerged', lead(row));
 assert.ok(/<div class="ham-head-main ham-issue-closed">/.test(row) && /<a class="ham-ref" href="https:\/\/x\/13409"[^>]*>#13409<\/a>/.test(row), 'closed issue stays a link in a struck-through slot: ' + row);
-assert.ok(row.includes('<span class="ham-title" title="Usage on --help">Usage on --help</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), 'title then closed chip: ' + row);
+assert.ok(/<span class="ham-title" title="Usage on --help">Usage on --help<\/span> <span class="ham-badge ham-issue-closed-chip" title="Issue #13409 is closed, but this PR is still open and unmerged[^"]*">closed · this PR unmerged<\/span>/.test(row), 'title then closed chip naming the unmerged PR: ' + row);
 assert.ok(!row.includes('ham-no-issue-t') && !/<a class="ham-ref"[^>]*title=/.test(row) && prCol(row).length === 1 && prCol(row)[0].includes('#111'), row);
 // The same with no title resolvable: a muted "(closed issue)" placeholder, never a blank.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', url: 'https://x/13409' }] }, stages, ctx);
-assert.strictEqual(lead(row), '#13409 (closed issue) closed', lead(row));
-assert.ok(row.includes('<span class="ham-title ham-no-issue-t">(closed issue)</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), row);
+assert.strictEqual(lead(row), '#13409 (closed issue) closed · this PR unmerged', lead(row));
+assert.ok(/<span class="ham-title ham-no-issue-t">\(closed issue\)<\/span> <span class="ham-badge ham-issue-closed-chip" title="[^"]*">closed · this PR unmerged<\/span>/.test(row), row);
 // hivecommons/hive#15232: a PR whose closing link names a closed issue
 // (closed_issue set by the server, hivecommons/hive#14655) still puts the
 // ISSUE in the left slot — struck through under its chip — and itself in the
@@ -650,14 +681,16 @@ assert.ok(/<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="h
 assert.ok(!row.includes('ham-head-pr-anchor') && !row.includes('closes <s>'), 'the PR no longer takes the issue slot: ' + row);
 assert.ok(prCol(row).length === 1 && prCol(row)[0].includes('#15191') && prCol(row)[0].includes('Let hive decide'), 'PR sits in the PR column: ' + prCol(row));
 assert.ok(!row.includes('ham-closed-not-planned'), 'completed close: no moot chip');
-// Closer unknown: a plain "closed" chip; a not-planned close adds the moot chip.
+// Closer unknown: the chip says the issue closed while this PR is unmerged
+// (never a bare "closed" that reads as closed-by-this-PR); a not-planned
+// close adds the moot chip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 15191, kind: 'pr', title: 'Let hive decide', stage: 90,
   linked_issues: [{ number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' }],
   closed_issue: { number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' } }, stages, ctx);
-assert.strictEqual(lead(row), '#15173 Sweep closed issue closed (not planned)', lead(row));
-assert.ok(row.includes('<span class="ham-badge ham-issue-closed-chip">closed</span> <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned"'), row);
-// A closer equal to the row's own PR is not a duplicate: plain chip.
-assert.strictEqual(stageTrackerClosedChipHtml({ repo: 'acme/console', number: 500 }, { number: 496, closed_by: 500, title: 'T' }), '<span class="ham-badge ham-issue-closed-chip">closed</span>');
+assert.strictEqual(lead(row), '#15173 Sweep closed · this PR unmerged issue closed (not planned)', lead(row));
+assert.ok(/<span class="ham-badge ham-issue-closed-chip" title="[^"]*">closed · this PR unmerged<\/span> <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned"/.test(row), row);
+// A closer equal to the row's own PR is not a duplicate: the unmerged chip.
+assert.ok(/^<span class="ham-badge ham-issue-closed-chip" title="Issue #496 is closed, but this PR is still open and unmerged[^"]*">closed · this PR unmerged<\/span>$/.test(stageTrackerClosedChipHtml({ repo: 'acme/console', number: 500 }, { number: 496, closed_by: 500, title: 'T' })));
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ number: 500, linked_issues: [{ number: 496, state: 'closed', title: 'C', url: 'u', closed_by: 501 }] }), { number: 496, title: 'C', url: 'u', closed: true, placeholder: '', closed_by: 501 }, 'closed_by rides the slot');
 assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', 'https://ghe.example/acme/console/pull/500'), 'https://ghe.example/acme/console/pull/501', 'closer URL follows the sibling host');
 assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', ''), 'https://github.com/acme/console/pull/501');
@@ -702,6 +735,38 @@ assert.ok(/^ data-ham-kind="pr" data-ham-stage="70" data-ham-sub-key="acme\/cons
 assert.ok(prCol(sr[1])[0].includes('ham-author-clanker') && prCol(sr[1])[0].includes('#103'));
 assert.deepStrictEqual(segStates(sr[1]), [B, B, B, 'active', T, T, 'todo cap'], 'a PR at 030 lights PR in progress on its own sub-row');
 assert.ok(!row.slice(0, row.indexOf('<div class="ham-sub"')).includes('ham-pr-ref'), 'the issue title line itself lists no PRs');
+// One-line sub-row header: connector, author icon + #N + title, lineage chip
+// and base pill are direct siblings inside the single flex-row PR cell — no
+// block wrapper or <br> between them — and the title carries its full text
+// as hover for the ellipsis.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Three PRs', stage: 40, linked_prs: [
+  { number: 15343, title: 'docs: remove duplicate README run routes', author_kind: 'hive', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted', from_number: 15226, from_author: 'x', from_author_kind: 'clanker' } },
+  { number: 15344, title: 'other', stage: 30 },
+] }, stages, ctx);
+sr = subs(row);
+{
+  const head = sr[0].slice(0, sr[0].indexOf('aria-label="Pipeline progress"'));
+  const cell = (head.match(/<li class="ham-seg ham-head-pr">([\s\S]*?)<\/li>/) || [])[1] || '';
+  assert.ok(cell, 'sub-row header has one PR cell: ' + head);
+  assert.ok(!/<br|<div|<p\b/.test(cell), 'no block-level element inside the PR cell: ' + cell);
+  const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"'), cell.lastIndexOf('<span class="ham-badge">v5</span>')];
+  assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, PR link, lineage chip, base pill in that order as siblings: ' + cell);
+  assert.ok(cell.indexOf('<span class="ham-badge">v5</span>') > cell.indexOf('</a>', cell.indexOf('<a class="ham-pr-ref"')), 'the base pill is a sibling after the PR link, not inside it: ' + cell);
+  assert.ok(/<a class="ham-pr-ref"[^>]*title="docs: remove duplicate README run routes · /.test(cell), 'the PR link hover starts with the full title: ' + cell);
+  assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<li class="ham-seg cap">'), 'the lineage chip rides the PR cell, not the chip cap: ' + head);
+  assert.strictEqual((head.match(/ham-lineage/g) || []).length, 1, 'the lineage chip is drawn once');
+}
+// The same order on an issue row with a single covering PR: lineage chip
+// before the base pill, both after the PR link.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'One PR', stage: 40, linked_prs: [{ number: 15343, title: 'T', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted', from_number: 15226 } }] }, stages, ctx);
+{
+  const cell = prCell(row);
+  assert.ok(cell.indexOf('<a class="ham-pr-ref"') < cell.indexOf('ham-lineage') && cell.indexOf('ham-lineage') < cell.indexOf('<span class="ham-badge">v5</span>'), 'PR link, lineage, base pill: ' + cell);
+}
+// An incomplete lineage has no chip and must not add an extra separator.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Empty lineage', stage: 40, linked_prs: [{ number: 15343, title: 'T', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted' } }] }, stages, ctx);
+assert.match(prCell(row), /<\/a> <span class="ham-badge">v5<\/span>/, 'empty lineage leaves one separator before the base pill');
+assert.ok(!prCell(row).includes('ham-lineage'), 'empty lineage renders no chip');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', stage: 30 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'kick running, no PR yet: the issue lights PR in progress and draws the steps ahead');
 assert.strictEqual(subs(row).length, 0, 'no PR yet');
@@ -726,7 +791,11 @@ assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 72 }, stages).anchor
 
 // Header: names once, aligned with the chevrons, plus the since column.
 const head = stageTrackerHeaderHtml(stages);
-assert.deepStrictEqual(Array.from(head.matchAll(/<span class="ham-seg-t">([^<]*)<\/span>/g)).map(m => m[1]), ['Open', 'Actionable', 'Claimed', 'PR in progress', 'CI / Review', 'Merge gate']);
+assert.deepStrictEqual(Array.from(head.matchAll(/<span class="ham-seg-t">(?:<svg[\s\S]*?<\/svg>)?([^<]*)<\/span>/g)).map(m => m[1]), ['Open', 'Actionable', 'Claimed', 'PR in progress', 'CI / Review', 'Merge queue']);
+// The Merge queue column wears the train icon (hover "Merge queue"), the
+// same railcar as the train header chip and the 080 chevron (#15395).
+assert.ok(head.includes('<span class="ham-seg-t">' + stageTrackerTrainIconHtml('ham-ico ham-train-icon ham-col-ico') + 'Merge queue</span>'), head);
+assert.strictEqual((head.match(/<title>Merge queue<\/title>/g) || []).length, 1);
 assert.ok(head.includes('<span class="ham-since">since</span>'));
 
 // Unknown / zero stage lights "Open".
@@ -826,12 +895,12 @@ assert.ok(!/<li class="ham-seg active" data-motion=[^>]*title="Claimed"/.test(st
 row = stageTrackerRowHtml(g[3], stages, ctx);
 expectTitles(row.split('<div class="ham-sub"')[0], ['a.ham-ref', 'span.ham-title'], 'two-PR issue line');
 for (const s of subs(row)) expectTitles(s, ['a.ham-pr-ref', 'li.ham-seg'], 'sub-row');
-assert.ok(/<a class="ham-pr-ref"[^>]*title="First PR · Back with the contributor[^"]*@bo \(author\/clanker\)[^"]*"/.test(subs(row)[1]), 'sub-row PR link: PR title, then the PR tooltip: ' + subs(row)[1]);
+assert.ok(/<a class="ham-pr-ref"[^>]*title="First PR · Back with the contributor[^"]*@bo \(agent\)[^"]*"/.test(subs(row)[1]), 'sub-row PR link: PR title, then the PR tooltip: ' + subs(row)[1]);
 // Standalone PR: the PR link (its title, then the row tooltip) and the active
 // chevron; the placeholder issue slot carries none.
 row = stageTrackerRowHtml(g[6], stages, ctx);
 expectTitles(row, ['a.ham-pr-ref', 'li.ham-seg'], 'standalone PR');
-assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Not yet admitted to auto merge[^"]*@cy \(author\/human\)/.test(row), 'PR link: title, then the row tooltip: ' + row);
+assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Not yet admitted to auto merge[^"]*@cy \(person\)/.test(row), 'PR link: title, then the row tooltip: ' + row);
 assert.ok(row.includes('aria-label="human · @cy"') && !row.includes('<title>'), 'author icon label is aria-only: ' + row);
 // Since cells are untouched: plain text, no title.
 assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/ham-since[^>]*title=/.test(golden), 'since cells unchanged');
@@ -885,6 +954,9 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerAnchor"),
 		jsFunc(t, html, "stageTrackerLinkedDrawnHere"),
+		jsFunc(t, html, "stageTrackerLinkedSuperseder"),
+		jsFunc(t, html, "stageTrackerLinkedSupersededGone"),
+		jsFunc(t, html, "stageTrackerLinkedSupersededTip"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
 		stageTrackerTierJS(t, html),
 		jsFunc(t, html, "stageTrackerSortKey"),
@@ -1021,15 +1093,15 @@ let c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })),
 assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)');
 assert.strictEqual(c.header, '120 of 150 rows · 7 need attention');
 assert.strictEqual(c.badge, 150, 'the pill is the default view\'s row count, filters notwithstanding');
-assert.strictEqual(c.badgeTitle, '150 rows open · 7 need attention');
+assert.strictEqual(c.badgeTitle, '150 rows · 7 need attention');
 // Owner: rows are canonical. Open-item totals only footnote PRs that share
 // their issue's row; they never become a second total or change the pill.
 c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7, { issues: 100, prs: 52 }, 9);
-assert.strictEqual(c.header, '120 of 150 rows (100 issues + 50 PRs on their own row) · 7 need attention', 'header spells out how the default view\'s rows are made');
+assert.strictEqual(c.header, "120 of 150 rows (100 issues + 50 PRs on their own row) · 7 need attention · 2 PRs shown on their issue's row", 'header spells out how the default view\'s rows are made');
 assert.strictEqual(c.badge, 150);
 assert.strictEqual(c.note, "2 PRs shown on their issue's row");
 assert.strictEqual(c.breakdown, '100 issues + 50 PRs on their own row');
-assert.strictEqual(c.badgeTitle, "150 rows open: 100 issues + 50 PRs on their own row · 9 need attention · 2 PRs shown on their issue's row", 'pill tooltip counts attention over every item, names the row make-up and footnotes shared rows');
+assert.strictEqual(c.badgeTitle, "150 rows (100 issues + 50 PRs on their own row) · 9 need attention · 2 PRs shown on their issue's row", 'pill tooltip counts attention over every item, names the row make-up and footnotes shared rows');
 assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)', 'the showing line never prints an items total');
 c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7, { issues: 100, prs: 50 }, 9);
 assert.strictEqual(c.note, '', 'rows = items → no footnote');
@@ -1037,14 +1109,18 @@ assert.strictEqual(c.breakdown, '100 issues + 50 PRs on their own row');
 // Owner (2026-10-29): Overview 33/13 beside activity monitor 37 — rows are
 // 33 issues + 4 PRs that have no listed issue; 9 PRs sit on their issue's row.
 c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 37), F({ size: 50 })), 37, 3, { issues: 33, prs: 13 }, 3);
-assert.strictEqual(c.header, '37 rows (33 issues + 4 PRs on their own row) · 3 need attention');
-assert.strictEqual(c.badgeTitle, "37 rows open: 33 issues + 4 PRs on their own row · 3 need attention · 9 PRs shown on their issue's row");
+assert.strictEqual(c.header, "37 rows (33 issues + 4 PRs on their own row) · 3 need attention · 9 PRs shown on their issue's row");
+assert.strictEqual(c.badgeTitle, "37 rows (33 issues + 4 PRs on their own row) · 3 need attention · 9 PRs shown on their issue's row");
 assert.deepStrictEqual(stageTrackerRowBreakdown(37, { issues: 33, prs: 13 }), { known: true, rows: 37, issues: 33, prs: 13, standalonePRs: 4, shared: 9 });
 assert.deepStrictEqual(stageTrackerRowBreakdown(34, { issues: 33, prs: 1 }), { known: true, rows: 34, issues: 33, prs: 1, standalonePRs: 1, shared: 0 });
 assert.strictEqual(stageTrackerCountsText(stageTrackerPage(many.slice(0, 34), F({ size: 50 })), 34, 0, { issues: 33, prs: 1 }).breakdown, '33 issues + 1 PR on its own row', 'singular PR');
 assert.strictEqual(stageTrackerRowBreakdown(40, { issues: 33, prs: 5 }).standalonePRs, 5, 'standalone PRs never exceed open PRs');
 assert.strictEqual(stageTrackerRowBreakdown(10, null).known, false);
 assert.strictEqual(stageTrackerCountsText(stageTrackerPage(many.slice(0, 10), F({ size: 50 })), 10, 0).breakdown, '', 'no totals → no breakdown, header unchanged');
+c = stageTrackerCountsText({ total: 1, from: 1, to: 1 }, 1, 0, { issues: 0, prs: 1 });
+assert.strictEqual(c.header, '1 row (0 issues + 1 PR on its own row) · nothing needs attention');
+c = stageTrackerCountsText({ total: 0, from: 0, to: 0 }, 0, 0, { issues: 0, prs: 0 });
+assert.strictEqual(c.badgeTitle, '0 rows (0 issues + 0 PRs on their own row) · nothing needs attention');
 c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 1), F()), 1, 1);
 assert.strictEqual(c.showing, 'showing 1–1 of 1');
 assert.strictEqual(c.header, '1 row · 1 needs attention');

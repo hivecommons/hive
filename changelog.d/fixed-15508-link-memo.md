@@ -1,0 +1,1 @@
+- Cache the dashboard tracker’s unfiltered issue closer once per issue and exclude the carrying PR per row, preserving correct sibling links without extra lookups. This defensively preserves correct links if merged PR rows are included; current open-only tracker behavior is unchanged ([#15495](https://github.com/hivecommons/hive/issues/15495)).

@@ -1112,7 +1112,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 		}
 	}
 
-	return ClaimScan{Claims: claims, History: history}, firstErr
+	return ClaimScan{Claims: claims, History: history, StartedAt: now}, firstErr
 }
 
 func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr *gh.PullRequest) string {
@@ -1648,6 +1648,22 @@ func OpenIssuesOf(result *ActionableResult) OpenIssueSet {
 // set — is what starts the settledClaimRetention countdown, not the merge.
 // Unsettled claims ignore the set; their lifetime is the scan's and the TTL's.
 func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet) {
+	l.reconcileOpen(live, authoritative, open, time.Time{})
+}
+
+// ReconcileScan is ReconcileOpen for a complete scan: it additionally carries
+// forward every unsettled claim recorded at or after scan.StartedAt that the
+// scan did not re-list (hivecommons/hive#15559). The webhook path records a
+// PR's claims the moment it opens; a scan whose listing began before that
+// moment never saw the PR, so an authoritative map replacement that dropped
+// the claim re-offered the issue while its PR was open — the hive then opened
+// a second PR for it. The next scan lists the PR itself and confirms or drops
+// the carried claim, so the carry-forward is bounded by one scan interval.
+func (l *ClaimLedger) ReconcileScan(scan ClaimScan, authoritative bool, open OpenIssueSet) {
+	l.reconcileOpen(scan.Claims, authoritative, open, scan.StartedAt)
+}
+
+func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet, listedAt time.Time) {
 	if l == nil {
 		return
 	}
@@ -1663,6 +1679,17 @@ func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open 
 				continue
 			}
 			l.insertLocked(l.anchorFirstObservedLocked(prev, c))
+		}
+		if !listedAt.IsZero() {
+			// A claim recorded after the listing began is newer evidence than
+			// the listing; insertLocked's rank rule still lets a stronger
+			// live claim for the same issue win.
+			for _, c := range prev {
+				if c.Settled() || c.ObservedAt.Before(listedAt) {
+					continue
+				}
+				l.insertLocked(c)
+			}
 		}
 		// Settled claims are carried forward (#7871, #8003). A verdict-
 		// recovered claim describes a settling PR (or commit) that never
@@ -2068,6 +2095,35 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 	return suppressed
 }
 
+// logPRClaimLinkError keeps expected GitHub backoff out of repeated-error
+// self-reports, while retaining warnings for defects and permission failures.
+// It reports whether the caller should defer all remaining link work this sweep.
+func logPRClaimLinkError(logger *slog.Logger, message, repo string, issue, pr int, err error) bool {
+	limited := isRateLimitErr(err)
+	if logger != nil {
+		if limited {
+			logger.Info("PR claim links deferred by GitHub rate limit; will retry next sweep", "repo", repo, "issue", issue, "pr", pr, "error", err)
+		} else {
+			logger.Warn(message, "repo", repo, "issue", issue, "pr", pr, "error", err)
+		}
+	}
+	return limited
+}
+
+// logPRClaimLabelError treats GitHub backoff as expected while preserving
+// warnings for permission failures and other reconciliation errors.
+func logPRClaimLabelError(logger *slog.Logger, message string, err error, args ...any) {
+	if logger == nil {
+		return
+	}
+	args = append(args, "error", err)
+	if isRateLimitErr(err) {
+		logger.Info(message, args...)
+	} else {
+		logger.Warn(message, args...)
+	}
+}
+
 // SyncIssuePRClaimLabels mirrors verified PR-claim state onto GitHub labels and
 // the in-memory issue payload. It is best-effort: label failures must not hide
 // actionable issues or fail the enumeration tick.
@@ -2075,6 +2131,10 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 	if result == nil || ledger == nil {
 		return
 	}
+	// A primary or secondary limit applies to the whole client, not just one
+	// PR. Keep annotating claims and reconciling labels, but defer further link
+	// lookups/writes until the next sweep instead of repeating a known refusal.
+	linksRateLimited := false
 	for i := range result.Issues.Items {
 		issue := &result.Issues.Items[i]
 		originalLabels := append([]string(nil), issue.Labels...)
@@ -2086,7 +2146,7 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			continue
 		}
 		coveredWanted := ok && claim.PRNumber > 0 && !claim.MergedPR
-		if coveredWanted && (claim.PRRepo == "" || strings.EqualFold(claim.PRRepo, issue.Repo)) {
+		if !linksRateLimited && coveredWanted && (claim.PRRepo == "" || strings.EqualFold(claim.PRRepo, issue.Repo)) {
 			// Every claim that earns the covered-by-PR label also gets its
 			// Development-sidebar link (hivecommons/hive#11888), whether the
 			// PR was opened by the hive-open-pr relay or outside it, and
@@ -2114,25 +2174,28 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 					PRAuthor:       claim.PRAuthor,
 					ExternalAuthor: claim.ExternalAuthor,
 					Reference:      true,
-				}); err != nil && logger != nil {
-					logger.Warn("retrofitting reference-only Hive PR body for issue-list link failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+				}); err != nil {
+					linksRateLimited = logPRClaimLinkError(logger, "retrofitting reference-only Hive PR body for issue-list link failed; will retry next sweep", issue.Repo, issue.Number, claim.PRNumber, err)
 				} else if res.EditedBody {
 					if logger != nil {
 						logger.Info("retrofitted reference-only Hive PR body with closing keyword so GitHub shows the issue-list link", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base)
 					}
 					continue
 				}
-				if res, err := client.RetractHiveClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
-					logger.Warn("retracting hive closing link on reference-only PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
-				} else if res.Retracted && logger != nil {
-					logger.Info("retracted hive closing link: PR only references the issue, so merging it must not close the issue", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
-				} else if res.Skipped == "not-hive-linked" && logger != nil {
-					logger.Warn("reference-only PR carries a closing link the hive did not make; leaving it in place", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
-				} else if logger != nil {
-					logger.Debug("not linking issue to reference-only PR; a closing link would auto-close the issue on merge", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber)
+				// Do not follow a rate-limited lookup with a retraction lookup.
+				if !linksRateLimited {
+					if res, err := client.RetractHiveClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil {
+						linksRateLimited = logPRClaimLinkError(logger, "retracting hive closing link on reference-only PR failed; will retry next sweep", issue.Repo, issue.Number, claim.PRNumber, err)
+					} else if res.Retracted && logger != nil {
+						logger.Info("retracted hive closing link: PR only references the issue, so merging it must not close the issue", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+					} else if res.Skipped == "not-hive-linked" && logger != nil {
+						logger.Warn("reference-only PR carries a closing link the hive did not make; leaving it in place", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+					} else if logger != nil {
+						logger.Debug("not linking issue to reference-only PR; a closing link would auto-close the issue on merge", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber)
+					}
 				}
-			} else if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
-				logger.Warn("linking issue to covering PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+			} else if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil {
+				linksRateLimited = logPRClaimLinkError(logger, "linking issue to covering PR failed; will retry next sweep", issue.Repo, issue.Number, claim.PRNumber, err)
 			} else if res.Linked && logger != nil {
 				logger.Info("linked issue to covering PR so the issue list shows it", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base, "closing_claim", claim.Closing)
 			}
@@ -2140,7 +2203,7 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		verifiedOpen := issueHasLabel(originalLabels, VerifiedOpenLabel)
 		if verifiedOpen {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, VerifiedOpenLabel, "6a737d", "Hive verified that a likely/already-done claim did not finish this issue; keep open for more work"); err != nil && logger != nil {
-				logger.Warn("ensuring verified-open label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "ensuring verified-open label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 		}
 		mergedWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen
@@ -2163,28 +2226,28 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 				continue
 			}
 			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, name, observedState(issue.UpdatedAt)); err != nil && logger != nil {
-				logger.Warn("removing retired covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
+				logPRClaimLabelError(logger, "removing retired covered-by-pr label failed", err, "repo", issue.Repo, "issue", issue.Number, "label", name)
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, name)
 		}
 		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && logger != nil {
-				logger.Warn("ensuring partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "ensuring partially-addressed label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{PartiallyAddressedLabel}); err != nil && logger != nil {
-				logger.Warn("adding partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "adding partially-addressed label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 		}
 		if likelyWanted {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, LikelyDoneLabelColor, LikelyDoneLabelDescription); err != nil && logger != nil {
-				logger.Warn("ensuring likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "ensuring likely-done label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
 				// Already carried; re-adding every tick only spends a write.
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{LikelyDoneLabel}); err != nil && logger != nil {
-				logger.Warn("adding likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "adding likely-done label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 		} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
 			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, LikelyDoneLabel); err != nil && logger != nil {
-				logger.Warn("removing likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "removing likely-done label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
 		}
@@ -2199,7 +2262,7 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 				prRepo = issue.Repo
 			}
 			if err := client.StageFacts().Uncovered(ctx, client.IssueStageRef(issue.Repo, issue.Number), client.PRStageRef(prRepo, claim.PRNumber)); err != nil && logger != nil {
-				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "removing covered-by-pr label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
@@ -2234,7 +2297,7 @@ func ApplyDuplicatePRGuard(
 			"cached_claims", ledger.Len(),
 		)
 	}
-	ledger.ReconcileOpen(scan.Claims, authoritative, OpenIssuesOf(result))
+	ledger.ReconcileScan(scan, authoritative, OpenIssuesOf(result))
 	// Churn history accumulates from whatever the scan DID return, partial or
 	// not (#7995): a record is an observation that a pull request existed in a
 	// state, which a later failure cannot falsify.

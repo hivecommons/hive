@@ -7,6 +7,11 @@ This page says what that feature is, what Hive does in the same space, and
 where each does something the other does not. It is a comparison, not a
 ranking. The two tools answer different questions.
 
+**Terms:** ACMM = AI Codebase Maturity Model, Hive's autonomy levels.
+PR = pull request; CI = continuous integration (automated checks).
+**Crux** is Hive's agent runtime. A **shadow gate** records what it would
+block without blocking; an enforcing gate acts on that decision.
+
 ## What Copilot assisted permissions is
 
 Source: the GitHub changelog entry of 2026-10-26,
@@ -39,8 +44,25 @@ show a prompt. It does not know about pull requests, merges, or repositories.
 Hive runs fleets of agents against repositories without a person at the
 keyboard. Its controls are about what reaches GitHub, not about prompts.
 
+At a glance:
+
+- The ACMM level sets how much work may be delegated, from observation to
+  eligible unattended merges at L6.
+- Network and credential controls restrict agent writes outside the model.
+- CI, holds, branch rules and configured review gates decide whether a
+  particular PR can merge. Pausing an agent is not a universal merge stop.
+
+Use the [comparison table](#comparison) for the short version. Maintainers can
+expand the mechanism/evidence layer below; it preserves implementation details
+and the limits of the observations.
+
+<details>
+<summary>Hive mechanisms and observed evidence (technical reference)</summary>
+
 - **Trust levels (ACMM L1-L6).** The level decides which agents run and in
-  which policy mode. Advisory agents write nothing to GitHub. Measured agents
+  which policy mode. Ordinary advisory agents write nothing to GitHub; the
+  reviewer has a separate comment/review-only `converse` capability from L2.
+  Measured agents
   may open issues. Hold-gated agents may open PRs, and every PR carries a
   `hold` label a human must remove. Full agents may merge on green CI. L1 and
   L2 are advisory, L3 and L4 add issues and hold-gated PRs, L5 opens PRs under
@@ -66,18 +88,24 @@ keyboard. Its controls are about what reaches GitHub, not about prompts.
   makes a same-head approval required at L6. See [review swarm](review-swarm.md)
   and [running at level 6](running-at-level-6.md).
 - **Hold and approval.** Below L6 every agent PR gets `hold`; a human removes
-  it. `needs-human` parks a PR for a person. At L6 a `reject` or
-  `changes_requested` verdict still needs a fix or a human merge. See
+  it. `needs-human` is a triage signal, not a universal merge stop. At L6 a
+  `reject` or `changes_requested` verdict needs a fix, a trusted human's
+  exact-head GitHub Approve override of the enforcing sweep gate, or a direct
+  human merge. Other merge requirements remain. See
   [labels and control signals](labels-and-control-signals.md).
 - **Shadow gates.** `governor.review_gate.mode: shadow` (the default) and
   `intent.shadow` evaluate a gate and record what it would have held, and never
-  block. The record is in each evidence bundle under `shadow`. The study that
+  block **by virtue of the shadow setting**. `review.require_approval: true`
+  still forces review enforcement; a shadow setting cannot weaken it.
+  The record is in each evidence bundle under `shadow`. The study that
   would turn those records into an accuracy figure is planned and not yet
   running ([ablation plan](research/ablation-plan-2026-10.md)). Enforcement from
   a shadow result is a config switch, not a separate feature.
 - **Evidence.** Every mediated merge gets an evidence card; outcomes are
   published with n and 95% intervals. See [evidence](evidence.md) and
   [benchmarks](benchmarks/README.md).
+
+</details>
 
 ## Comparison
 

@@ -2,6 +2,7 @@ package intent
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -451,12 +452,12 @@ func globMatch(pattern, path string) bool {
 	if ok, _ := filepath.Match(pattern, path); ok {
 		return true
 	}
-	if strings.HasPrefix(pattern, "**/*") {
-		return strings.HasSuffix(path, strings.TrimPrefix(pattern, "**/*"))
+	if rest, ok := strings.CutPrefix(pattern, "**/*"); ok && !strings.ContainsAny(rest, "*?[\\") {
+		return strings.HasSuffix(path, rest)
 	}
 	if strings.HasPrefix(pattern, "**/") {
 		trimmed := strings.TrimPrefix(pattern, "**/")
-		if ok, _ := filepath.Match(trimmed, path); ok {
+		if matchAnyDepth(trimmed, path) {
 			return true
 		}
 		return globMatch(trimmed, path)
@@ -467,9 +468,28 @@ func globMatch(pattern, path string) bool {
 	}
 	if strings.Contains(pattern, "**/") {
 		parts := strings.SplitN(pattern, "**/", 2)
-		return strings.HasPrefix(path, parts[0]) && strings.Contains(path, strings.TrimPrefix(parts[1], "/"))
+		rest, ok := strings.CutPrefix(path, parts[0])
+		if !ok {
+			return false
+		}
+		return strings.Contains(path, strings.TrimPrefix(parts[1], "/")) || globMatch("**/"+parts[1], rest)
 	}
 	return false
+}
+
+// matchAnyDepth reports whether pattern matches path or any suffix of path
+// that begins after a '/', so "*luks*" matches a basename at any depth.
+func matchAnyDepth(pattern, p string) bool {
+	for {
+		if ok, _ := path.Match(pattern, p); ok {
+			return true
+		}
+		i := strings.IndexByte(p, '/')
+		if i < 0 {
+			return false
+		}
+		p = p[i+1:]
+	}
 }
 
 func allBeads(stores map[string]*beads.Store) []*beads.Bead {

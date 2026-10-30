@@ -1,0 +1,1 @@
+- Clarify that Overview counts open issues and PRs while the Hive activity monitor counts rows, showing how many PRs stand alone or share an issue row.

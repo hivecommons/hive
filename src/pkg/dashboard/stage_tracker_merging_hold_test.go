@@ -70,12 +70,12 @@ func TestStageTrackerMergeAttemptInPayload(t *testing.T) {
 // into the gate narration.
 func TestStageTrackerMergeGateAttemptOverlay(t *testing.T) {
 	now := time.Date(2026, 10, 28, 21, 31, 0, 0, time.UTC)
-	if mg := stageTrackerMergeGateAttempt(nil, github.MergeAttempt{}, false); mg != nil {
+	if mg := stageTrackerMergeGateAttempt(nil, github.MergeAttempt{}, false, "", stagelabels.None, stagelabels.Record{}, false); mg != nil {
 		t.Errorf("no attempt, no gate: %+v", mg)
 	}
 	live := github.MergeAttempt{Repo: "a/b", Number: 1, StartedAt: now, Path: github.PRAuditPathRelay}
 	soak := now.Add(time.Minute)
-	mg := stageTrackerMergeGateAttempt(&StageTrackerMergeGate{State: MergeGateStateSoaking, SoakUntil: &soak, SoakRemainingSeconds: 60, NextSweepAt: &soak}, live, true)
+	mg := stageTrackerMergeGateAttempt(&StageTrackerMergeGate{State: MergeGateStateSoaking, SoakUntil: &soak, SoakRemainingSeconds: 60, NextSweepAt: &soak}, live, true, "", stagelabels.PreMergeSoak, stagelabels.Record{}, false)
 	if mg.State != MergeGateStateMerging || mg.MergingSince == nil || mg.SoakUntil != nil || mg.SoakRemainingSeconds != 0 || mg.NextSweepAt != nil || mg.MergePath != github.PRAuditPathRelay {
 		t.Errorf("live attempt over soaking: %+v", mg)
 	}
@@ -86,10 +86,10 @@ func TestStageTrackerMergeGateAttemptOverlay(t *testing.T) {
 	if st := stageTrackerMergeAttemptStage(stagelabels.ReadyForHumanMerge, failed, true); st != stagelabels.ReadyForHumanMerge {
 		t.Errorf("failed attempt must keep the stage, got %v", st)
 	}
-	if mg = stageTrackerMergeGateAttempt(nil, failed, true); mg == nil || mg.State != MergeGateStateMergeFailed || mg.MergeFailed != "422 boom" || mg.MergeFailedAt == nil {
+	if mg = stageTrackerMergeGateAttempt(nil, failed, true, "", stagelabels.None, stagelabels.Record{}, false); mg == nil || mg.State != MergeGateStateMergeFailed || mg.MergeFailed != "422 boom" || mg.MergeFailedAt == nil {
 		t.Errorf("failed attempt off the gate: %+v", mg)
 	}
-	for _, c := range []struct{ path, want string }{{github.PRAuditPathDashboard, "dashboard"}, {github.PRAuditPathRelay, "relay"}, {github.PRAuditPathForge, "forge"}, {github.PRAuditPathSweep, "automerge sweep"}, {"", "automerge sweep"}} {
+	for _, c := range []struct{ path, want string }{{github.PRAuditPathDashboard, "dashboard"}, {github.PRAuditPathRelay, "relay"}, {github.PRAuditPathForge, "forge"}, {github.PRAuditPathSweep, "automerge lane"}, {"", "automerge lane"}} {
 		if got := stageTrackerMergingCaption(github.MergeAttempt{Path: c.path}); !strings.Contains(got, c.want) {
 			t.Errorf("caption for %q = %q, want %q", c.path, got, c.want)
 		}
@@ -295,9 +295,9 @@ assert.strictEqual(info.detail, '', 'legacy 100 record: word alone');
 info = stageTrackerMergeGateInfoFor(Object.assign(item({ state: 'merge-failed', merge_failed: 'merging PR o/r#1 (abc): 405 Pull Request is not mergeable\nmore', merge_failed_at: new Date(now - 9000).toISOString(), merge_path: 'relay' }), { stage: 90 }), now);
 assert.strictEqual(info.state, 'merge-failed');
 assert.strictEqual(info.word, 'Merge failed');
-assert.strictEqual(info.detail, '405 Pull Request is not mergeable', 'first line, prefix stripped');
+assert.strictEqual(info.detail, 'branch protection', 'kind words, never the raw error');
 assert.strictEqual(info.cue, 'waiting');
-assert.ok(info.tip.includes('hive-merge relay') && info.tip.includes('GitHub refused'), info.tip);
+assert.ok(info.tip.includes('hive-merge relay') && info.tip.includes('GitHub refused — branch protection blocks it') && info.tip.includes('Details: merging PR o/r#1 (abc): 405 Pull Request is not mergeable'), info.tip);
 assert.strictEqual(stageTrackerMergeFailedShort(''), 'GitHub refused the merge');
 assert.ok(stageTrackerMergeFailedShort('x'.repeat(80)).endsWith('…'));
 assert.strictEqual(stageTrackerMergeFailedShort('x'.repeat(80)).length, STAGE_TRACKER_MERGE_FAILED_SHORT_MAX);

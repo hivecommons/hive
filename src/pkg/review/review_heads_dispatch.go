@@ -219,9 +219,9 @@ func (p *DispatchPlan) dispatchDecision(pr PullRequest, agg Aggregate, bases []A
 		ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 		WritingGuideSection:   opts.WritingGuideSection,
 	})
-	p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: base.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspectives[0], Perspectives: perspectives, Decision: true, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: base.Backend, ReviewModel: base.Model})
+	p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: base.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspectives[0], Perspectives: perspectives, Decision: true, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: base.Backend, ReviewModel: base.Model})
 	for _, persp := range perspectives {
-		p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: persp, Agent: base.Name, Decision: true, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(base.Model), Dispatched: now})
+		p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: persp, Agent: base.Name, Decision: true, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(base.Model), Dispatched: now})
 	}
 	return availableSlots - 1
 }

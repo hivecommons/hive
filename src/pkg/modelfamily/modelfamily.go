@@ -38,6 +38,38 @@ func Normalize(value string) string {
 	return v
 }
 
+// Canonical folds the spellings one model arrives under into a single id so
+// per-model statistics aggregate: Normalize, then drop a provider prefix
+// ("openai-codex/gpt-6.1-sol" → "gpt-6.1-sol", "anthropic/claude-opus-5" →
+// "claude-opus-5"), a ":variant" suffix ("gpt-5.6-sol:high" → "gpt-5.6-sol")
+// and a dash between two digits ("claude-opus-5-5" → "claude-opus-5.5").
+// Unknown stays Unknown.
+func Canonical(model string) string {
+	m := Normalize(model)
+	if m == Unknown {
+		return Unknown
+	}
+	if i := strings.LastIndex(m, "/"); i >= 0 {
+		m = m[i+1:]
+	}
+	if i := strings.Index(m, ":"); i >= 0 {
+		m = m[:i]
+	}
+	b := []byte(m)
+	for i := 1; i+1 < len(b); i++ {
+		if b[i] == '-' && isDigit(b[i-1]) && isDigit(b[i+1]) {
+			b[i] = '.'
+		}
+	}
+	m = strings.TrimSpace(string(b))
+	if m == "" {
+		return Unknown
+	}
+	return m
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
 // Family is the normalized vendor prefix before the first dash: claude, gpt,
 // gemini, grok, ... Unknown stays Unknown.
 func Family(model string) string {

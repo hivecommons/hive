@@ -27,7 +27,7 @@ func TestFleetRunFigureIsInVisibleGovernorGrid(t *testing.T) {
 	if !strings.Contains(html[grid:grid+end], "${fleetRunStatHtml()}") {
 		t.Fatal("fleetRunStatHtml() is not rendered inside the Governor gov-grid")
 	}
-	if !strings.Contains(html, `id="gov-fleet-run"`) || !strings.Contains(html, `class="gov-stat" title="RUNNING`) {
+	if !strings.Contains(html, `id="gov-fleet-run"`) || !strings.Contains(html, `class="gov-stat fleet-run-stat" data-fleet-cost-host title="RUNNING`) {
 		t.Fatal("fleet run gov-stat markup missing")
 	}
 }

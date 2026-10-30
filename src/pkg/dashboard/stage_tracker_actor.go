@@ -197,11 +197,9 @@ func stageTrackerStageActor(it StageTrackerItem, workers map[string]stageTracker
 		}
 		return set(StageActorHuman, "", "a human decision is owed")
 	case stagelabels.ReadyForHumanMerge:
-		why := "ready for a maintainer's merge; the hive never merges this itself"
-		if it.HumanMergeReasonText != "" {
-			why = strings.TrimSpace(it.HumanMergeReasonText)
-		}
-		return set(StageActorHuman, it.HumanApprover, why)
+		// The chevron and the popover already carry HumanMergeReasonText;
+		// the next-move line says only who moves (hivecommons/hive#15394).
+		return set(StageActorHuman, it.HumanApprover, "a maintainer merges it")
 	case stagelabels.PreMergeSoak:
 		return set(StageActorHive, "", "automerge lane — the pre-merge soak window is running")
 	case stagelabels.MergeQueue:

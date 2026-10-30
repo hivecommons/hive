@@ -9,6 +9,22 @@ trust boundaries are, who might attack, which controls answer each attack,
 and what remains open. The control-by-control reference is
 [security-model.md](security-model.md).
 
+**Terms for this reference:** a **trust boundary** is where data or authority
+moves between components with different permissions. **Egress** is outgoing
+traffic. A **UID** is a Unix user ID; **MITM** means man-in-the-middle, here
+Hive's request-inspecting proxy. **SSRF** (server-side request forgery) makes a
+server contact an unintended destination. **XSS** (cross-site scripting) runs
+attacker code in a page's browser context. **CSP** (Content Security Policy)
+limits which page resources and scripts may run. Residual risk means what
+remains possible even with the listed controls.
+
+This is a threat-reference map, not a setup checklist. A **deterministic**
+check follows fixed rules rather than asking a model. A **confused deputy**
+misuses authority on another actor's behalf. **Exfiltration** is data leaving
+without permission. A **setuid** program runs with its file owner's authority.
+**Fail open** continues when a check fails; **fail closed** blocks instead.
+Read each control's exceptions and the residual risks, not just its name.
+
 ## Assets
 
 * **GitHub authority.** The GitHub App private key, per-agent installation

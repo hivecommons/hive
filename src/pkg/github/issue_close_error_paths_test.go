@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -132,6 +133,8 @@ func TestCloseIssueOverrideCommentFailureAbortsClose(t *testing.T) {
 }
 
 func TestCloseIssueEditFailure(t *testing.T) {
+	l := swapSharedLedger(t)
+	l.Observe("o/r", 7, workflowsReport, time.Now())
 	issue := closeGateIssue("hive-app[bot]", "Bot", "Bug: bot finding", "automated", []string{"bug"})
 	srv := closeGateMux(t, issue, emptyCommentList, failHandler, failHandler)
 	defer srv.Close()
@@ -140,6 +143,9 @@ func TestCloseIssueEditFailure(t *testing.T) {
 	err := c.CloseIssue(context.Background(), "r", 7, IssueCloseOptions{})
 	if err == nil || !strings.Contains(err.Error(), "closing issue") {
 		t.Fatalf("err = %v, want close-edit failure", err)
+	}
+	if _, blocked := l.Blocking("o/r", 7); !blocked {
+		t.Fatal("failed close cleared the blocker")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Merge train (hivecommons/hive#15117).
@@ -64,6 +66,24 @@ type RebaseRequest struct {
 	MaxAttempts int
 	// Lane is the sweep lane that owns the PR (prstage.StageLane*).
 	Lane string
+	// RequestedBy names the requester the episode is opened for: "" (the
+	// merge train) or AdoptionRebaseRequester for the hive's conflicting
+	// copy of an adopted PR (hivecommons/hive#15307).
+	RequestedBy string
+}
+
+// AdoptionRebaseRequester is RebaseRequest.RequestedBy for a rebase the
+// adoption lane asks of the fixer on the hive's own copy branch.
+const AdoptionRebaseRequester = "adoption"
+
+// RebaseEpisode is what Options.RebaseEpisode reports for a PR with an
+// open conflict episode: how many attempts the fixer has used of the
+// guard, and whether the guard is exhausted.
+type RebaseEpisode struct {
+	Attempt     int
+	MaxAttempts int
+	Exhausted   bool
+	RequestedBy string
 }
 
 // RebaseResolver enqueues a rebase-resolve task for a conflicting PR.
@@ -74,6 +94,16 @@ type RebaseRequest struct {
 // once per PR head.
 type RebaseResolver interface {
 	RequestRebase(ctx context.Context, req RebaseRequest) error
+}
+
+// HotspotRecorder is the merge-hotspot advisor's intake (pkg/hotspot.Store
+// satisfies it through cmd/hive). RecordPRFiles is called once per train
+// candidate per sweep with the files the planner already fetched;
+// RecordConflict once per sibling rebase the train requests, with the
+// files that sibling shares with the front.
+type HotspotRecorder interface {
+	RecordPRFiles(repo string, number int, files []string, openedAt time.Time)
+	RecordConflict(repo string, number int, files []string)
 }
 
 // RebaseResolverFunc adapts a function to RebaseResolver.
@@ -108,7 +138,8 @@ type mergeTrainMember struct {
 	// (red required check, terminal hold, permanent merge refusal): it
 	// does not front a train, and a group whose best member is blocked
 	// imposes no ordering at all (fail-open), so nobody waits behind a PR
-	// that is not moving.
+	// that is not moving. A head the lane leaves to a person's merge
+	// (mergeTrainHumanMergeReason) is not even a member.
 	Blocked bool
 }
 
@@ -288,6 +319,9 @@ type mergeTrainPlan struct {
 	lane, displayRepo, owner, repo string
 	groups                         []mergeTrainGroup
 	byNumber                       map[int]*mergeTrainGroup
+	// duplicates are the PRs held out of every train this pass because
+	// another open PR fixes the same issue (one PR per issue).
+	duplicates map[int]mergeTrainDuplicateHold
 }
 
 // group returns the train number rides in, if any.
@@ -340,12 +374,21 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
 		return plan
 	}
+	prs = c.planDuplicateHolds(plan, lane, owner, repo, displayRepo, prs, prefilter)
 	perBase := map[string][]*gh.PullRequest{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
 			continue
 		}
 		if !mergeTrainCandidate(prefilter(pr)) {
+			continue
+		}
+		if why := c.mergeTrainUnderRepair(owner, repo, pr); why != "" {
+			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), why)
+			continue
+		}
+		if c.mergeTrainHeadHumanMerge(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()) {
+			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), "human-merge")
 			continue
 		}
 		base := pr.GetBase().GetRef()
@@ -362,6 +405,9 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 				c.warn("merge train: could not list PR files; left out of the train", "repo", displayRepo, "pr", pr.GetNumber(), "error", err)
 				continue
 			}
+			if c.hotspotRecorder != nil {
+				c.hotspotRecorder.RecordPRFiles(owner+"/"+repo, pr.GetNumber(), files, pr.GetCreatedAt().Time)
+			}
 			members = append(members, mergeTrainMember{
 				Number:         pr.GetNumber(),
 				Base:           base,
@@ -371,7 +417,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 				CreatedAt:      pr.GetCreatedAt().Time,
 				MergeableState: pr.GetMergeableState(),
 				Fork:           c.isForkPR(pr),
-				Blocked:        c.mergeTrainHeadBlocked(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
+				Blocked:        c.mergeTrainHeadBlocked(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
 			})
 		}
 	}
@@ -406,6 +452,13 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 			m.HeadSHA = live.GetHead().GetSHA()
 		}
 	}
+	for i := range members {
+		m := &members[i]
+		if m.Number > 0 && c.mergeTrainConflictOutsider(owner, repo, m.Base, *m) {
+			c.mergeTrainSkipLogged(owner, repo, displayRepo, m.Number, m.HeadSHA, "conflicting")
+			m.Number = 0
+		}
+	}
 	plan.groups = groupMergeTrains(members)
 	for i := range plan.groups {
 		g := &plan.groups[i]
@@ -415,6 +468,64 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 		c.logMergeTrainTransition(displayRepo, lane, *g)
 	}
 	return plan
+}
+
+// mergeTrainUnderRepairStages are the stages whose PR is somebody's to
+// repair before it may ride a train: 070 fixing (the hive's own fixer),
+// 071 needs-author, 072 returned-to-contributor and 085 needs-decision.
+var mergeTrainUnderRepairStages = []stagelabels.Stage{stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor, stagelabels.NeedsDecision}
+
+// mergeTrainUnderRepair names the repair stage a PR wears (its label, or
+// the stage store's record), or "" when it may ride a train. Such a PR
+// never takes a slot: hive's own #15307 (conflicting, returned) was
+// counted "4 of 6" and drew the train's stall comments
+// (hivecommons/hive#15395), and #15405 led a train's header as "1st"
+// while a maintainer's changes-requested had it at 070 fixing.
+func (c *Engine) mergeTrainUnderRepair(owner, repo string, pr *gh.PullRequest) string {
+	if pr == nil {
+		return ""
+	}
+	labels := labelNames(pr.Labels)
+	for _, st := range mergeTrainUnderRepairStages {
+		want := st.Label()
+		for _, l := range labels {
+			if strings.EqualFold(strings.TrimSpace(l), want) {
+				return st.Slug()
+			}
+		}
+	}
+	if store := c.stageStoreOrShared(); store != nil {
+		if rec, ok := store.Get(stagelabels.Key(owner+"/"+repo, pr.GetNumber())); ok && slices.Contains(mergeTrainUnderRepairStages, rec.Stage) {
+			return rec.Stage.Slug()
+		}
+	}
+	return ""
+}
+
+// mergeTrainConflictOutsider reports a conflicting member the train must
+// not carry: a PR GitHub says is dirty is admitted only while the train
+// itself is repairing it — a rebase attempt is on record for it behind
+// this base's last merged front and the loop guard is not spent. A PR
+// that arrived conflicting on its own is the author's to fix, and it
+// neither takes a place in the queue nor counts toward the queue's size.
+func (c *Engine) mergeTrainConflictOutsider(owner, repo, base string, m mergeTrainMember) bool {
+	if !mergeTrainDirty(m.MergeableState) {
+		return false
+	}
+	behind := c.mergeTrainLastFront(owner, repo, base)
+	if behind <= 0 || c.rebaseResolver == nil {
+		return true
+	}
+	attempts := c.mergeTrainAttempts(owner, repo, m.Number, behind)
+	return attempts <= 0 || attempts >= c.mergeTrainPolicyNow().MaxRebaseAttempts
+}
+
+// mergeTrainSkipLogged logs one INFO line per head for a PR kept out of
+// every train.
+func (c *Engine) mergeTrainSkipLogged(owner, repo, displayRepo string, number int, headSHA, why string) {
+	if c.markTerminalHoldLogged(owner, repo, number, headSHA, "merge-train-skip:"+why) {
+		c.info("merge train: PR left out of every train", "repo", displayRepo, "pr", number, "why", why)
+	}
 }
 
 // mergeTrainFiles lists a PR's changed paths, cached by head SHA.
@@ -652,12 +763,38 @@ func (c *Engine) mergeTrainRequestSiblingRebase(ctx context.Context, plan *merge
 		return
 	}
 	attempt := c.bumpMergeTrainAttempts(plan.owner, plan.repo, n, front)
+	if c.hotspotRecorder != nil {
+		c.hotspotRecorder.RecordConflict(plan.owner+"/"+plan.repo, n, mergeTrainSharedFiles(g, n))
+	}
 	req := RebaseRequest{Repo: plan.owner + "/" + plan.repo, Number: n, Base: g.Base, Head: live.GetHead().GetRef(), HeadSHA: live.GetHead().GetSHA(), Front: front, Attempt: attempt, MaxAttempts: policy.MaxRebaseAttempts, Lane: plan.lane}
 	if err := c.rebaseResolver.RequestRebase(ctx, req); err != nil {
 		c.warn("merge train: rebase request failed on sibling", "repo", plan.displayRepo, "pr", n, "front", front, "attempt", attempt, "error", err)
 		return
 	}
 	c.info("merge train: rebase requested for sibling after the front merged", "repo", plan.displayRepo, "pr", n, "front", front, "attempt", attempt, "max_attempts", policy.MaxRebaseAttempts)
+}
+
+// mergeTrainSharedFiles returns the overlap files the member itself
+// touches — the paths a conflict on it can be blamed on.
+func mergeTrainSharedFiles(g *mergeTrainGroup, number int) []string {
+	if g == nil {
+		return nil
+	}
+	m, ok := g.members[number]
+	if !ok {
+		return g.OverlapFiles
+	}
+	mine := make(map[string]bool, len(m.Files))
+	for _, f := range m.Files {
+		mine[f] = true
+	}
+	var out []string
+	for _, f := range g.OverlapFiles {
+		if mine[f] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // mergeTrainSkip is the per-cycle sibling skip: recorded on the stage
@@ -677,7 +814,16 @@ type mergeTrainState struct {
 	mergeTrainAttemptCount map[string]int
 	mergeTrainMerged       map[string]int
 	mergeTrainLogged       map[string]string
-	mergeTrainBlocked      map[string]string
+	// mergeTrainVerdicts remembers, per lane and PR, the last head whose
+	// verdict keeps it from fronting (or riding) a train.
+	mergeTrainVerdicts map[string]mergeTrainVerdict
+}
+
+// mergeTrainVerdict is the remembered lane verdict for one head: Blocked
+// heads never front; HumanMerge heads are not train members at all.
+type mergeTrainVerdict struct {
+	sha        string
+	humanMerge bool
 }
 
 // mergeTrainBlockingReason reports whether a lane's verdict means the head
@@ -685,39 +831,76 @@ type mergeTrainState struct {
 // train's own rebase step repairs it.
 func mergeTrainBlockingReason(reason string) bool {
 	switch reason {
-	case "not-mergeable", autoMergeReasonForkNotEditable, autoMergeReasonClosedSuperseded:
+	case "not-mergeable", autoMergeReasonForkNotEditable, autoMergeReasonClosedSuperseded, autoMergeReasonClosedEmptyDiff:
 		return true
 	}
 	return isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) || classifyCIReason(reason) == ciReasonRed
 }
 
-// noteMergeTrainOutcome remembers, per head, whether the lane's verdict
-// blocks it from fronting a train; a non-blocking verdict clears the mark.
-func (c *Engine) noteMergeTrainOutcome(owner, repo string, number int, sha, reason string) {
+// mergeTrainHumanMergeReason reports whether a lane's verdict means a
+// person, not the hive, merges this PR: the author is below the trust the
+// lane needs (untrusted-author-role, contributor-lane:no-linked-issue, …),
+// the title/label human-merge rule, a human-merge path, a merge GitHub
+// refused for a person's review, and the other prstage.HumanMergeReason*
+// codes. Such a PR is never a train member: hive's #15425 (untrusted
+// author, parked at 090) fronted a train of three and the two PRs behind
+// it waited on a merge that was never going to happen. Every code but the
+// catch-all HumanMergeReasonPolicy counts — the catch-all is what any
+// ordinary skip (soaking, CI pending) maps to.
+func mergeTrainHumanMergeReason(reason string) bool {
+	code := prstage.HumanMergeReason(reason)
+	return code != "" && code != prstage.HumanMergeReasonPolicy
+}
+
+func mergeTrainVerdictKey(lane, owner, repo string, number int) string {
+	return lane + "|" + owner + "/" + repo + "#" + strconv.Itoa(number)
+}
+
+// noteMergeTrainOutcome remembers, per lane and head, whether the lane's
+// verdict blocks it from fronting a train or excludes it altogether; any
+// other verdict clears the mark. Keyed by lane so the trusted-author lane's
+// "untrusted-author-role" for a PR the contributor lane admits never
+// touches the contributor lane's train.
+func (c *Engine) noteMergeTrainOutcome(lane, owner, repo string, number int, sha, reason string) {
 	if c == nil || number <= 0 {
 		return
 	}
-	key := owner + "/" + repo + "#" + strconv.Itoa(number)
+	key := mergeTrainVerdictKey(lane, owner, repo, number)
+	human := mergeTrainHumanMergeReason(reason)
 	c.mergeTrainMu.Lock()
 	defer c.mergeTrainMu.Unlock()
-	if !mergeTrainBlockingReason(reason) || strings.TrimSpace(sha) == "" {
-		delete(c.mergeTrainBlocked, key)
+	if (!human && !mergeTrainBlockingReason(reason)) || strings.TrimSpace(sha) == "" {
+		delete(c.mergeTrainVerdicts, key)
 		return
 	}
-	if c.mergeTrainBlocked == nil {
-		c.mergeTrainBlocked = map[string]string{}
+	if c.mergeTrainVerdicts == nil {
+		c.mergeTrainVerdicts = map[string]mergeTrainVerdict{}
 	}
-	c.mergeTrainBlocked[key] = sha
+	c.mergeTrainVerdicts[key] = mergeTrainVerdict{sha: sha, humanMerge: human}
 }
 
-// mergeTrainHeadBlocked reports whether this exact head was last seen blocked.
-func (c *Engine) mergeTrainHeadBlocked(owner, repo string, number int, sha string) bool {
+func (c *Engine) mergeTrainVerdictFor(lane, owner, repo string, number int, sha string) (mergeTrainVerdict, bool) {
 	if c == nil || sha == "" {
-		return false
+		return mergeTrainVerdict{}, false
 	}
 	c.mergeTrainMu.Lock()
 	defer c.mergeTrainMu.Unlock()
-	return c.mergeTrainBlocked[owner+"/"+repo+"#"+strconv.Itoa(number)] == sha
+	v, ok := c.mergeTrainVerdicts[mergeTrainVerdictKey(lane, owner, repo, number)]
+	return v, ok && v.sha == sha
+}
+
+// mergeTrainHeadBlocked reports whether this exact head was last seen by
+// the lane unable to merge on its own: it does not front a train.
+func (c *Engine) mergeTrainHeadBlocked(lane, owner, repo string, number int, sha string) bool {
+	_, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha)
+	return ok
+}
+
+// mergeTrainHeadHumanMerge reports whether this exact head was last seen
+// by the lane as a person's merge: it rides no train at all.
+func (c *Engine) mergeTrainHeadHumanMerge(lane, owner, repo string, number int, sha string) bool {
+	v, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha)
+	return ok && v.humanMerge
 }
 
 // String renders a request for logs.

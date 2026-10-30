@@ -1,0 +1,1 @@
+- Activity Monitor: while a row action is in flight the lit chevron shows one readable progress caption ("Queuing for merge…") on an opaque plate instead of a faint label over the stripes next to the old stage word (hivecommons/hive#15412).

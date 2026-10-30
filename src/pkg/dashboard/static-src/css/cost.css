@@ -1,0 +1,212 @@
+    /* Token usage panel — glass panel (hub recipe via tokens) */
+    .token-panel {
+      background: var(--surface-1);
+      border: var(--line-width) solid var(--line-subtle);
+      border-radius: var(--r-lg); padding: var(--sp-6);
+      box-shadow: var(--shadow-card);
+    }
+    .token-title { font-size: var(--fs-lg); font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: var(--sp-4); }
+    .token-title .lookback { font-size: 0.7rem; color: var(--muted); font-weight: 400; }
+    .token-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--metric-tile-min), 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+    .token-stat { background: var(--surface-2); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); display: grid; gap: var(--sp-3); padding: var(--sp-5); text-align: left; }
+    .token-stat .tval { font-size: var(--fs-xl); font-weight: var(--fw-bold); }
+    .token-stat .tlabel { font-size: var(--fs-xs); color: var(--muted); }
+    .token-models { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: 10px; }
+    /* .token-model-chip — pill recipe (purple, mono; size step in the recipe block) */
+    .token-model-chip { --component-status: var(--acmm-level-5); --pill-c: var(--acmm-level-5); font-family: var(--font-mono); }
+    .token-model-chip .mname { color: var(--purple); font-weight: 600; }
+    .token-model-chip .mcount { color: var(--muted); margin-left: var(--sp-3); }
+    .token-sessions { font-size: 0.7rem; color: var(--muted); }
+    .token-sessions summary { cursor: pointer; font-weight: 600; color: var(--text); margin-bottom: var(--sp-2); }
+    .token-session-row { font-family: var(--font-mono); display: flex; gap: var(--sp-4); padding: var(--sp-1) var(--sp-0); align-items: baseline; }
+    .token-session-row .sid { color: var(--cyan); font-family: var(--font-mono); min-width: 90px; }
+    .token-session-row .sagent { font-weight: 600; min-width: 70px; font-size: 0.65rem; }
+    /* Agent colors injected dynamically from status payload via injectAgentStyles() */
+    .token-session-row .sagent.a-unknown { color: var(--muted); font-style: italic; }
+    .token-session-row .smodel { color: var(--purple); min-width: 120px; }
+    .token-session-row .stokens { color: var(--text); font-weight: 600; min-width: 80px; text-align: right; }
+    .token-session-row .smsgs { color: var(--muted); min-width: 50px; }
+    .token-session-row .sproj { color: var(--muted); font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Cost panel — mirrors token-panel styling */
+    .cost-panel { background: var(--surface-1); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); padding: var(--sp-6); box-shadow: var(--shadow-card); }
+    .cost-title { font-size: var(--fs-lg); font-weight: 700; margin-bottom: var(--sp-2); display: flex; align-items: center; gap: var(--sp-4); }
+    /* Collapsible cost panel — reuses the .section-chevron / max-height idiom (#1533). */
+    .cost-title.cost-toggle { cursor: pointer; user-select: none; width: 100%; }
+    .cost-title.cost-toggle:hover { opacity: 0.85; }
+    .cost-chevron {
+      display: inline-block; font-size: 0.7em; transition: transform 200ms ease;
+      color: var(--muted); flex-shrink: 0;
+    }
+    .cost-chevron.collapsed { transform: rotate(-90deg); }
+    /* Compact total shown only while collapsed, so the header still carries the headline number. */
+    .cost-collapsed-total { display: none; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); margin-left: auto; }
+    .cost-panel.collapsed .cost-collapsed-total { display: inline; }
+    .cost-body {
+      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
+      max-height: 8000px; opacity: 1;
+    }
+    .cost-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
+    /* Collapsible cost subsections (usage by sandbox / cost per session) — same chevron + max-height idiom. */
+    .cost-subtable-title.cost-sub-toggle { cursor: pointer; user-select: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+    .cost-subtable-title.cost-sub-toggle:hover { opacity: 0.85; }
+    .cost-sub-body {
+      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
+      max-height: 8000px; opacity: 1;
+    }
+    .cost-sub-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
+    .cost-subtitle { font-size: 0.7rem; color: var(--muted); margin-bottom: var(--sp-5); }
+    .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--metric-tile-min), 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+    .cost-stat { background: var(--surface-2); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); display: grid; gap: var(--sp-3); padding: var(--sp-5); text-align: left; }
+    .cost-stat .cval { font-size: var(--fs-xl); font-weight: var(--fw-bold); }
+    .cost-stat .clabel { font-size: var(--fs-xs); color: var(--muted); }
+    .cost-badge { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: var(--r); margin-left: var(--sp-3); vertical-align: middle; }
+    .cost-badge.est { background: rgba(255, 196, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 196, 0, 0.4); }
+    .cost-help { display: inline-flex; align-items: center; justify-content: center; width: 1.1em; height: 1.1em; margin-left: var(--sp-2); border-radius: var(--r-pill); border: var(--line-width) solid var(--muted); color: var(--muted); font-size: var(--fs-xs); font-weight: 700; vertical-align: middle; cursor: help; }
+    .cost-badge.actual { background: rgba(0, 200, 120, 0.15); color: var(--green); border: 1px solid rgba(0, 200, 120, 0.4); }
+    .cost-gateways { display: flex; flex-direction: column; gap: var(--sp-4); margin-bottom: 14px; }
+    .cost-gateway { border: 1px solid var(--border); border-radius: 8px; padding: var(--sp-4) var(--sp-5); }
+    .cost-gateway .cgname { font-weight: 700; }
+    .cost-gateway .cgkind { color: var(--muted); font-size: 0.65rem; margin-left: var(--sp-3); text-transform: uppercase; }
+    .cost-gateway .cgspend { font-family: var(--font-mono); font-weight: 700; }
+    .cost-gateway .cgerr { color: var(--muted); font-size: var(--fs-xs); font-style: italic; }
+    .cost-gateway .cgmeter { height: 5px; border-radius: 3px; background: rgba(128,128,128,0.2); overflow: hidden; margin-top: 5px; }
+    .cost-gateway .cgmeter > span { display: block; height: 100%; background: var(--green); }
+    .cost-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    .cost-table th { text-align: left; color: var(--muted); font-weight: 600; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
+    .cost-table th.cost-sortable { cursor: pointer; user-select: none; }
+    .cost-table th.cost-sortable:hover { color: var(--text); }
+    .cost-sort-ind { display: inline-block; margin-left: var(--sp-2); font-size: var(--fs-2xs); color: var(--accent); }
+    .cost-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
+    .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
+    .cost-table .ccenter { text-align: center; }
+    .cost-table th.cright { text-align: right; }
+    .cost-disclaimer.cost-sub-disclaimer { margin: var(--sp-2) var(--sp-0) var(--sp-4); }
+    .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
+    .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
+    .cost-table td.ctime { color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
+    .cost-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+    .cost-window-tag { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: normal; }
+    .cost-session-active { color: var(--green); font-weight: 600; }
+    .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
+    .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    .cost-recording-notice { border: var(--line-width) solid var(--status-warn); border-radius: var(--r-lg); color: var(--status-warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.4; margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); }
+    .cost-recording-notice a { color: inherit; text-decoration: underline; }
+    .cost-recording-incomplete { color: var(--status-warn); font-weight: var(--fw-bold); }
+
+    /* Cost spend-over-time: range pills + bucketed bar chart */
+    .cost-trend { margin: 6px 0 14px; }
+    .cost-trend-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+    .cost-range { display: inline-flex; flex-wrap: wrap; min-width: 0; max-width: 100%; gap: var(--sp-1); background: rgba(128,128,128,0.12); border-radius: 7px; padding: var(--sp-1); }
+    .cost-custom-range { display: inline-flex; flex-wrap: wrap; min-width: 0; max-width: 100%; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: 0.7rem; }
+    .cost-custom-range input { min-width: 0; max-width: 100%; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font-size: 0.7rem; padding: var(--sp-1) var(--sp-3); font-family: var(--font-ui); }
+    .agent-spend-chip { display: inline-block; margin-left: var(--sp-3); padding: var(--sp-0) var(--sp-3); border: 1px solid var(--line); border-radius: 8px; font-size: 0.66rem; font-weight: 600; color: var(--muted); vertical-align: middle; }
+    .cell-spark { vertical-align: middle; margin-left: var(--sp-3); opacity: 0.75; }
+    .cagents-badge { display: inline-block; min-width: 18px; padding: var(--sp-0) var(--sp-3); border-radius: 9px; background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--text); font-weight: 600; font-size: 0.72rem; cursor: default; }
+    .cagents-zero { color: var(--muted); cursor: default; }
+    .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
+    .cost-range button:hover { color: var(--text); }
+    .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+    /* −/+ stepper beside the range pills: same pill look, count + unit between */
+    .cost-range-step { display: inline-flex; align-items: center; gap: var(--sp-0); background: color-mix(in srgb, var(--muted) 14%, transparent); border-radius: var(--radius); padding: var(--sp-1); }
+    .cost-range-step button { border: none; background: none; color: var(--muted); font-size: var(--fs-sm); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--radius-sm); cursor: pointer; font-family: var(--font-mono); }
+    .cost-range-step button:hover:not(:disabled) { color: var(--text); background: var(--panel); }
+    .cost-range-step button:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+    .cost-range-step button:disabled { opacity: 0.35; cursor: default; }
+    .cost-range-step-val { min-width: 3.2em; text-align: center; color: var(--text); font-size: var(--fs-xs); font-weight: 600; font-family: var(--font-mono); }
+    .cost-history-start { font-style: italic; }
+    .cost-trend-total { font-size: 0.66rem; color: var(--muted); font-family: var(--font-mono); }
+    .cost-trend-total b { color: var(--text); font-size: 0.78rem; }
+    .cost-bars { display: flex; align-items: flex-end; gap: var(--sp-1); height: 52px; padding-top: var(--sp-2); }
+    .cost-bar { flex: 1 1 0; min-width: 2px; background: var(--green); border-radius: 2px 2px 0 0; opacity: 0.8; transition: opacity 0.1s; align-self: flex-end; }
+    .cost-bar:hover { opacity: 1; }
+    .cost-bar.zero { background: rgba(128,128,128,0.25); }
+    /* No history at all for this bucket (before the first snapshot/rollup): a
+       dim hatch so it cannot be mistaken for a recorded $0. */
+    .cost-bar.nodata { height: 100%; opacity: 0.35; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 45%, transparent) 0 2px, transparent 2px 5px); }
+    .cost-bars-wrap { position: relative; }
+    /* Centered over the flat bars when a covered window really did spend $0, so
+       empty axes never read as a failed render. */
+    .cost-bars-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: var(--fs-2xs); color: var(--muted); font-style: italic; pointer-events: none; }
+    .cost-bars-axis { display: flex; justify-content: space-between; font-size: var(--fs-2xs); color: var(--muted); font-family: var(--font-mono); margin-top: 3px; }
+    .cost-trend-empty { font-size: 0.66rem; color: var(--muted); font-style: italic; padding: var(--sp-4) var(--sp-0); }
+
+    /* Token burn rate chart */
+    .burn-chart-wrap { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
+    .burn-chart-title { font-size: 0.7rem; color: var(--muted); margin-bottom: var(--sp-2); }
+    .burn-context { display: flex; justify-content: space-between; margin-top: var(--sp-3); font-size: 0.7rem; font-family: var(--font-mono); }
+    .burn-context .bc-stat { display: flex; flex-direction: column; align-items: center; }
+    .burn-context .bc-val { font-weight: 700; font-size: 0.85rem; }
+    .burn-context .bc-label { color: var(--muted); font-size: var(--fs-2xs); }
+    .burn-area-wrap { margin: var(--sp-2) var(--sp-0) var(--sp-5); }
+    .burn-area-title { font-size: 0.7rem; color: var(--muted); margin-bottom: var(--sp-2); }
+
+    /* Cadence advisor */
+    .advisor-section { margin: var(--sp-5) var(--sp-0); padding: var(--sp-5); background: color-mix(in srgb, var(--blue) 5%, transparent); border: 1px solid color-mix(in srgb, var(--blue) 15%, transparent); border-radius: var(--r); }
+    .advisor-title { font-size: 0.85rem; font-weight: 700; margin-bottom: var(--sp-3); }
+    .advisor-total { font-size: 0.8rem; margin-bottom: 10px; }
+    .advisor-bars { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+    .advisor-bar-row { display: flex; align-items: center; gap: var(--sp-4); font-size: 0.72rem; }
+    .advisor-agent { min-width: 70px; color: var(--text); font-weight: 600; }
+    .advisor-bar-track { flex: 1; height: 10px; background: var(--panel-strong); border-radius: var(--r-sm); overflow: hidden; }
+    .advisor-bar-fill { height: 100%; border-radius: var(--r-sm); transition: width 0.5s ease; }
+    .advisor-pct { min-width: 30px; text-align: right; color: var(--muted); }
+    .advisor-burn { min-width: 80px; text-align: right; color: var(--muted); font-size: 0.65rem; }
+    /* Paused/off agents project zero — greyed row, note instead of a bar. */
+    .advisor-row-inactive { opacity: 0.55; }
+    .advisor-row-inactive .advisor-agent { color: var(--muted); font-weight: 400; }
+    .advisor-inactive-note { flex: 1; color: var(--muted); font-style: italic; font-size: 0.65rem; }
+    /* Actual window burn of agents the projection excludes (on-demand/paused/off). */
+    .advisor-excluded-burn { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); }
+    .advisor-tips { margin-top: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2); }
+    .advisor-tip { font-size: 0.72rem; color: var(--text); padding: var(--sp-2) var(--sp-4); background: color-mix(in srgb, var(--yellow) 8%, transparent); border-left: 2px solid var(--yellow); border-radius: 0 4px 4px 0; }
+    /* Agent names inside tips: bold text color only — the tip's yellow
+       tint/border carries the accent (banner-contrast principle); a second
+       hue (cyan-on-yellow) fought the tint in both modes. */
+    .advisor-tip b { color: var(--text); }
+
+    /* Budget bar */
+    .budget-bar { margin: var(--sp-4) var(--sp-0); }
+    .budget-bar-label { font-size: 0.72rem; color: var(--muted); margin-bottom: 3px; display: flex; justify-content: space-between; }
+    .budget-bar-track { height: 8px; background: var(--panel-strong); border-radius: var(--r-sm); overflow: hidden; }
+    .budget-bar-fill { height: 100%; border-radius: var(--r-sm); transition: width 0.5s ease; }
+    .budget-bar-fill.safe { background: var(--green); }
+    .budget-bar-fill.warning { background: var(--yellow); }
+    .budget-bar-fill.danger { background: var(--red); }
+
+    /* Model chip on agent cards */
+    .pin-toggle { cursor: pointer; background: none; border: none; font-size: 0.7rem; padding: var(--sp-0) var(--sp-1); opacity: 0.6; transition: opacity 0.2s; }
+    .pin-toggle:hover { opacity: 1; }
+    /* .model-chip — pill recipe; tiers pick --pill-c (mono for model ids) */
+    .model-chip { font-family: var(--font-mono); }
+    .model-chip.free { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
+    .model-chip.paid { --component-status: var(--status-warn); --pill-c: var(--status-warn); }
+    .model-chip.haiku { --component-status: var(--status-info); --pill-c: var(--status-info); }
+    .model-chip.sonnet { --component-status: var(--status-warn); --pill-c: var(--status-warn); }
+    .model-chip.opus { --component-status: var(--status-error); --pill-c: var(--status-error); }
+    /* Non-Claude model tiers (brand colors stay literal) */
+    .model-chip.gpt { --component-status: var(--vendor-openai); --pill-c: var(--vendor-openai); }
+    .model-chip.gemini { --component-status: var(--vendor-google); --pill-c: var(--vendor-google); }
+    .model-chip.deepseek { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
+    .model-chip.unknown { --component-status: var(--status-neutral); --pill-c: var(--status-neutral); }
+
+    /* Health dots (reused inside ci-maintainer indicators) */
+    .health-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+    .health-dot.ok { background: var(--green); }
+    .health-dot.fail { background: var(--red); }
+    .health-dot.unknown { background: var(--muted); }
+    .health-ci { font-weight: 700; font-size: 0.7rem; }
+    .health-ci.good { color: var(--green); }
+    .health-ci.warn { color: var(--yellow); }
+    .quality-stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-5); }
+    .quality-stat-title { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: var(--sp-4); font-weight: 600; }
+    .quality-stat-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--sp-4); padding-block: var(--sp-1); font-size: var(--fs-sm); }
+    .quality-stat-empty { color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+    .quality-stat-value { font-weight: 600; }
+    .quality-stat-value.ok { color: var(--green); }
+    .quality-stat-value.fail { color: var(--red); }
+    .quality-stat-value.skip, .quality-stat-value.unknown { color: var(--muted); }
+
+    .health-ci.bad { color: var(--red); }
+

@@ -1,0 +1,63 @@
+[
+  {
+    "id": "trust-followup",
+    "kind": "ring",
+    "title": "A response to review",
+    "label": "Pull requests revised, then approved",
+    "numerator": 369,
+    "denominator": 563,
+    "note": "Of 563 pull requests sent back for changes, 369 had an updated version approved. The other 194 had no later approval recorded. Approval does not prove the code is right.",
+    "sources": [
+      {
+        "label": "Data",
+        "url": "https://github.com/hivecommons/hive/blob/6c7cb37b9ef20830d23795ee248e552705c3acc1/src/docs/benchmarks/outcomes-2026-10.json"
+      },
+      {
+        "label": "How it was counted",
+        "url": "https://github.com/hivecommons/hive/blob/6c7cb37b9ef20830d23795ee248e552705c3acc1/src/docs/benchmarks/outcomes-2026-10.md#what-the-readme-shows-and-leaves-out"
+      }
+    ]
+  },
+  {
+    "id": "productivity-authors",
+    "kind": "bars",
+    "title": "People and agents moving work forward",
+    "axisLabel": "Reviewed pull requests merged",
+    "unit": "pull requests",
+    "series": [
+      { "label": "Agent-authored", "value": 857 },
+      { "label": "Human-authored", "value": 528 },
+      { "label": "Bot-authored", "value": 70 }
+    ],
+    "note": "October 27, 2026: 1,455 merged pull requests with a Hive review, from one Hive. These counts do not measure time saved or productivity gained.",
+    "sources": [
+      {
+        "label": "Data",
+        "url": "https://github.com/hivecommons/hive/blob/6c7cb37b9ef20830d23795ee248e552705c3acc1/src/docs/benchmarks/outcomes-2026-10.json"
+      },
+      {
+        "label": "How it was counted",
+        "url": "https://github.com/hivecommons/hive/blob/6c7cb37b9ef20830d23795ee248e552705c3acc1/src/docs/benchmarks/outcomes-2026-10.md#scale"
+      }
+    ]
+  },
+  {
+    "id": "governance-input-attacks",
+    "kind": "ring",
+    "title": "Test the boundary",
+    "label": "Attack text kept from the agent",
+    "numerator": 61,
+    "denominator": 63,
+    "note": "Hive's own test, October 23, 2026. Two of 63 attack inputs got through. This small test does not show how well Hive stops real attacks.",
+    "sources": [
+      {
+        "label": "Test and misses",
+        "url": "https://github.com/hivecommons/hive/blob/6c7cb37b9ef20830d23795ee248e552705c3acc1/src/docs/ioscan-red-team.md#results"
+      },
+      {
+        "label": "Data",
+        "url": "https://github.com/hivecommons/hive/blob/6c7cb37b9ef20830d23795ee248e552705c3acc1/src/docs/benchmarks/red-team-2026-10.json"
+      }
+    ]
+  }
+]

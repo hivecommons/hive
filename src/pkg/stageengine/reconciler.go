@@ -158,6 +158,12 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 
 	out, err := r.opts.Writer.Apply(ctx, f.Ref, f.Labels, d.Desired())
 	tr.Outcome = out
+	if err == nil {
+		// The gate's refusal is a fact about the record: readers that
+		// compare the record with the item's labels must know the labels
+		// never carried the stage.
+		r.opts.Store.NoteLabelsSuppressed(key, out.Suppressed)
+	}
 	r.opts.Metrics.WriterWrite(f.Ref.Kind, OpAdd, len(out.Added))
 	r.opts.Metrics.WriterWrite(f.Ref.Kind, OpRemove, len(out.Removed))
 	if out.Healed {

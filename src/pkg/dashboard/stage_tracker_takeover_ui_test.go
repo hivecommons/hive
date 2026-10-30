@@ -243,7 +243,9 @@ func TestStageTrackerTakeoverConfirmsAndPopover(t *testing.T) {
   opts = stageTrackerDecisionOptions(askedIssue, ctx);
   assert.strictEqual(opts.find(o => o.id === 'decide:adopt-now').enabled, true, JSON.stringify(opts));
   const pop = stageTrackerDecisionPopHtml(asked, stageTrackerDecisionOptions(asked, ctx), Date.now(), '');
-  assert.ok(pop.indexOf('data-ham-act="decide:adopt-now"') >= 0 && pop.indexOf('data-ham-act="decide:reroute"') >= 0, pop);
+  // One primary action (Let hive decide) and "More ⋯" for adopt / reroute via the row menu.
+  assert.ok(pop.indexOf('data-ham-act="decide:delegate"') >= 0 && pop.indexOf('data-ham-more="1"') >= 0, pop);
+  assert.ok(pop.indexOf('data-ham-act="decide:adopt-now"') < 0 && pop.indexOf('data-ham-act="decide:reroute"') < 0, pop);
   console.log('takeover confirms ok');
 })().catch(e => { console.error(e); process.exit(1); });
 `)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -69,6 +70,39 @@ type StageTrackerMergeGate struct {
 	// state merge-failed.
 	MergeFailed   string     `json:"merge_failed,omitempty"`
 	MergeFailedAt *time.Time `json:"merge_failed_at,omitempty"`
+	// MergeFailedKind / MergeFailedText / MergeFailedChecks: the refusal
+	// translated (stageTrackerMergeRefusal) — a kind token the SPA maps to
+	// a short chip detail, the plain sentence for the tooltip, and for
+	// checks-pending how many required checks are still expected. The raw
+	// MergeFailed text is for the tooltip's Details line only.
+	MergeFailedKind   string `json:"merge_failed_kind,omitempty"`
+	MergeFailedText   string `json:"merge_failed_text,omitempty"`
+	MergeFailedChecks int    `json:"merge_failed_checks,omitempty"`
+	// PriorHeadMergeFailed* keep a refusal that no longer describes the
+	// row: the merge call was on an earlier head (the PR's head moved, or
+	// the record regressed below 080 to wait on CI again). The chevron
+	// reads the live stage; the hover keeps the refusal as history.
+	PriorHeadMergeFailed     string     `json:"prior_head_merge_failed,omitempty"`
+	PriorHeadMergeFailedKind string     `json:"prior_head_merge_failed_kind,omitempty"`
+	PriorHeadMergeFailedText string     `json:"prior_head_merge_failed_text,omitempty"`
+	PriorHeadMergeFailedAt   *time.Time `json:"prior_head_merge_failed_at,omitempty"`
+	PriorHeadMergeFailedHead string     `json:"prior_head_merge_failed_head,omitempty"`
+	// DuplicateOf / DuplicateIssue: for State "duplicate-of:<n>", the open
+	// PR the merge queue kept for the same issue and that issue
+	// (hivecommons/hive#15395); the row waits for a person or the
+	// delegate to pick one.
+	DuplicateOf    int `json:"duplicate_of,omitempty"`
+	DuplicateIssue int `json:"duplicate_issue,omitempty"`
+}
+
+// MergeGateStateDuplicateOfPrefix opens the gate state of a PR held out of
+// the merge queue because another open PR fixes the same issue:
+// "duplicate-of:15402".
+const MergeGateStateDuplicateOfPrefix = prstage.MergeTrainStateDuplicateOf + ":"
+
+// MergeGateStateDuplicateOf is the gate state for a PR yielding to n.
+func MergeGateStateDuplicateOf(n int) string {
+	return MergeGateStateDuplicateOfPrefix + strconv.Itoa(n)
 }
 
 // stageTrackerMergeGateState maps a stage to its merge-gate state; "" off
@@ -150,12 +184,48 @@ func stageTrackerMergeAttemptStage(stage stagelabels.Stage, a github.MergeAttemp
 	return stage
 }
 
+// stageTrackerMergeAttemptStale reports whether a refused merge attempt
+// no longer describes the PR: it was aimed at a head other than the
+// current one (merge-from-base, new push), or the stage record has since
+// regressed below 080 to wait on CI again (the hive merged base into the
+// branch after GitHub refused the old head). The chevron then reads the
+// live stage and the refusal becomes hover history; chevron and caption
+// never disagree about whether a merge is failing right now.
+func stageTrackerMergeAttemptStale(a github.MergeAttempt, head string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool) bool {
+	if !a.Failed() {
+		return false
+	}
+	if a.Head != "" && head != "" && !strings.EqualFold(a.Head, head) {
+		return true
+	}
+	if !hasRec || stage == stagelabels.None || stage.Number() >= stagelabels.AwaitingMergeAdmission.Number() {
+		return false
+	}
+	if !stageTrackerCIPendingReason(rec.Reason) {
+		return false
+	}
+	return rec.EnteredAt.After(a.EndedAt) || (rec.Regressed() && rec.RegressedAt.After(a.EndedAt))
+}
+
+// stageTrackerCIPendingReason reports whether a stage reason token says
+// the row waits on CI: required-check-pending[:<name>], check-pending,
+// status-pending and the other pending CI states.
+func stageTrackerCIPendingReason(reason string) bool {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if strings.HasPrefix(lower, "required-check-pending") {
+		return true
+	}
+	words, ok := stageTrackerCIStateWords(lower)
+	return ok && words == "CI running"
+}
+
 // stageTrackerMergeGateAttempt folds a merge attempt into the gate
 // narration: a live or just-successful attempt sets merging + since; a
 // refused one sets merge-failed with the reason (even off the gate, so
-// a 090 row whose maintainer merge GitHub refused says so). nil without
-// an attempt.
-func stageTrackerMergeGateAttempt(mg *StageTrackerMergeGate, a github.MergeAttempt, ok bool) *StageTrackerMergeGate {
+// a 090 row whose maintainer merge GitHub refused says so). A refusal on
+// a previous head (stageTrackerMergeAttemptStale) is kept only as
+// PriorHeadMergeFailed* history. nil without an attempt.
+func stageTrackerMergeGateAttempt(mg *StageTrackerMergeGate, a github.MergeAttempt, ok bool, head string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool) *StageTrackerMergeGate {
 	if !ok {
 		return mg
 	}
@@ -169,11 +239,18 @@ func stageTrackerMergeGateAttempt(mg *StageTrackerMergeGate, a github.MergeAttem
 		mg.MergingSince = &since
 		mg.MergePath = a.Path
 		mg.SoakUntil, mg.SoakRemainingSeconds, mg.NextSweepAt = nil, 0, nil
+	case stageTrackerMergeAttemptStale(a, head, stage, rec, hasRec):
+		mg.PriorHeadMergeFailed = a.Error
+		mg.PriorHeadMergeFailedKind, mg.PriorHeadMergeFailedText, _ = stageTrackerMergeRefusal(a.Error)
+		at := a.EndedAt
+		mg.PriorHeadMergeFailedAt = &at
+		mg.PriorHeadMergeFailedHead = a.Head
 	case a.Failed():
 		mg.State = MergeGateStateMergeFailed
 		mg.MergingSince = &since
 		mg.MergePath = a.Path
 		mg.MergeFailed = a.Error
+		mg.MergeFailedKind, mg.MergeFailedText, mg.MergeFailedChecks = stageTrackerMergeRefusal(a.Error)
 		at := a.EndedAt
 		mg.MergeFailedAt = &at
 	}
@@ -199,5 +276,5 @@ func stageTrackerMergingCaption(a github.MergeAttempt) string {
 	case github.PRAuditPathForge:
 		return "Merging now — the forge adapter's merge call is in flight"
 	}
-	return "Merging now — the automerge sweep's merge call is in flight"
+	return "Merging now — the automerge lane's merge call is in flight"
 }

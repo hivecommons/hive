@@ -190,6 +190,7 @@ func TestStageTrackerReworkJS(t *testing.T) {
 		jsConstBlock(t, html, "STAGE_TRACKER_EVENT_MOD_WORDS"),
 		jsFunc(t, html, "stageTrackerStateMap"),
 		jsFunc(t, html, "stageTrackerStageFell"),
+		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsConstLine(t, html, "STAGE_TRACKER_REWORK_EVENT_WORDS"),
 		jsFunc(t, html, "stageTrackerReworkEventText"),
@@ -224,7 +225,7 @@ assert.match(stageTrackerReworkTip(working, NOW), /^@Danathar's clanker picked u
 assert.match(stageTrackerReworkTip(pushed, NOW), /^@Danathar pushed a new head 1 min ago \(.*\) · re-review pending$/);
 // The pill keeps its class, dot and login; title and aria carry the rework line after the presence line.
 const chip = stageTrackerPresenceChipHtml(acked);
-assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s hive \(clanker · online, last seen 2 min ago\) — hive is waiting for them · @Danathar acknowledged · activity on the PR 20 min ago[^"]*" aria-label="Waiting on @Danathar&#39;s hive[^"]*acknowledged[^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<\/span>@Danathar · acknowledged<\/span>$/.test(chip), chip);
+assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s clanker \(online, last seen 2 min ago\) — hive is waiting for them · @Danathar acknowledged · activity on the PR 20 min ago[^"]*" aria-label="Waiting on @Danathar&#39;s clanker[^"]*acknowledged[^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<\/span>@Danathar · acknowledged<\/span>$/.test(chip), chip);
 // Same on the 072 adoption pill.
 const adopt = Object.assign({}, working, { stage: 72, adoption: { author: 'Danathar', due: false, nudges: 1, author_online: true, author_registered: true, policy: 'adopt', text: 'waiting on @Danathar (online, 1 nudge)' } });
 const achip = stageTrackerAdoptionChipHtml(adopt);

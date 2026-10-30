@@ -26,6 +26,9 @@ type PRMergeState struct {
 	MergeableState      string
 	FromFork            bool
 	MaintainerCanModify bool
+	// WorkflowPushPaths names workflow files on either side of a fork rebase.
+	// Maintainer edits alone do not make such an App-token push deliverable.
+	WorkflowPushPaths []string
 	// CIRed is true when a check or status on HeadSHA concluded red.
 	CIRed bool
 	// RedChecks names them.
@@ -51,7 +54,7 @@ func (s PRMergeState) Conflicting() bool {
 
 // PushReachable reports whether the hive's token can push to the head.
 func (s PRMergeState) PushReachable() bool {
-	return !s.FromFork || s.MaintainerCanModify
+	return (!s.FromFork || s.MaintainerCanModify) && len(s.WorkflowPushPaths) == 0
 }
 
 // GetPRMergeState reads the PR fresh (no detail cache: the follow-through
@@ -78,6 +81,24 @@ func (c *Client) GetPRMergeState(ctx context.Context, repo string, number int) (
 	}
 	if head, base := pr.GetHead().GetRepo(), pr.GetBase().GetRepo(); head != nil && base != nil && head.GetFullName() != "" && base.GetFullName() != "" {
 		st.FromFork = !strings.EqualFold(head.GetFullName(), base.GetFullName())
+	}
+	if strings.EqualFold(st.State, "open") && st.FromFork && st.MaintainerCanModify && st.NeedsRebase() {
+		// Match the adoption lane's conservative workflow push fence: a base
+		// installation's grants do not establish workflow push access on a
+		// contributor's fork. Check both the PR and the incoming base changes.
+		for _, pair := range [][2]string{{st.BaseRef, st.HeadSHA}, {st.HeadSHA, st.BaseRef}} {
+			files, err := c.compareFiles(ctx, owner, repoName, pair[0], pair[1])
+			if err != nil {
+				return PRMergeState{}, err
+			}
+			for file := range files {
+				if strings.HasPrefix(file, ".github/workflows/") {
+					st.WorkflowPushPaths = append(st.WorkflowPushPaths, file)
+				}
+			}
+		}
+		slices.Sort(st.WorkflowPushPaths)
+		st.WorkflowPushPaths = slices.Compact(st.WorkflowPushPaths)
 	}
 	if strings.EqualFold(st.State, "open") && st.HeadSHA != "" {
 		if sum, err := SummarizeCommitChecks(ctx, c.client, owner, repoName, st.HeadSHA); err == nil && len(sum.Red) > 0 {
@@ -151,8 +172,10 @@ func (c *Client) compareFiles(ctx context.Context, owner, repo, base, head strin
 			return nil, fmt.Errorf("comparing %s/%s %s...%s: %w", owner, repo, base, head, err)
 		}
 		for _, f := range cmp.Files {
-			if name := f.GetFilename(); name != "" {
-				out[name] = true
+			for _, name := range []string{f.GetFilename(), f.GetPreviousFilename()} {
+				if name != "" {
+					out[name] = true
+				}
 			}
 		}
 		if resp == nil || resp.NextPage == 0 || len(cmp.Files) == 0 {

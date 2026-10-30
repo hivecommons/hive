@@ -9,6 +9,7 @@ import (
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -92,6 +93,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	if client == nil || b.cfg == nil {
 		return
 	}
+	// Use the same live author-kind names as the PR stage reconciler, also
+	// after an App client rebuild or config reload.
+	client.SetAuthorKindLabels(func() authorkind.Names { return b.cfg.Governor.Labels.Author.Names() })
 	client.SetLinearScopeTeams(b.cfg.Governor.WorkSource.Linear.Teams)
 	client.SetHoldLabels(b.githubHoldLabels())
 	// Umbrella issues no automated claim may take and no claim stages
@@ -169,6 +173,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	})
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
+	// The duplicate-fix sweep tells a registered relay's PR from a
+	// person's by the same registry the stage engine uses
+	// (hivecommons/hive#15469).
+	client.SetRelayKnownFunc(contributorRelayKnown)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)
 	// The central stage engine (ADR-0025): built here, once per client, so
 	// both sweeps find the same reconciler (stage_engine.go).

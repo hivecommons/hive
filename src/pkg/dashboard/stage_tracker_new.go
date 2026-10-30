@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 // StageTrackerNewSlug is the pre-stage slug a brand-new open item wears in
@@ -31,6 +32,9 @@ const (
 	StageTrackerGateDone  = "done"
 	StageTrackerGateNext  = "next"
 	StageTrackerGateLater = "later"
+	// StageTrackerGateHumanMerge names the gate a breaking-titled or
+	// needs-owner-merge PR ends on: the owner's merge click.
+	StageTrackerGateHumanMerge = "human-merge"
 )
 
 // StageTrackerGate is one gate ahead of a 000-new item.
@@ -133,7 +137,14 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		n.NextMoverText = "the stage-label pass (→ 050 review pending)"
 		n.Gates = []StageTrackerGate{
 			{Name: "review", State: StageTrackerGateNext, Text: "the stage-label pass places it at 050 review pending"},
-			{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks admit it to the merge gate"},
+			{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks admit it to the merge queue"},
+		}
+		// A ⚠️-titled or needs-owner-merge PR ends at 090, not in the
+		// merge queue: the owner merges it (hivecommons/hive#15442). The
+		// row knows the default rule only; the lanes apply the configured one.
+		if ok, _ := (stageengineprstage.HumanMergeRule{}).RequiresHumanMerge(it.Title, it.Labels); ok {
+			n.Gates[1] = StageTrackerGate{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks park it at 090 Ready for human merge"}
+			n.Gates = append(n.Gates, StageTrackerGate{Name: StageTrackerGateHumanMerge, State: StageTrackerGateLater, Text: stageengineprstage.CauseHumanMergeRequired})
 		}
 	default:
 		n.NextMover = StageTrackerMoverHive
@@ -149,7 +160,9 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		}
 	}
 	n.Text = "New · waiting for " + n.NextMoverText
-	if pass != "" && n.NextMover == StageTrackerMoverHive {
+	if triagePending {
+		n.Text = stageTrackerTriageNeededCaption
+	} else if pass != "" && n.NextMover == StageTrackerMoverHive {
 		n.Text += " (" + pass + ")"
 	} else if pass != "" {
 		n.Text += fmt.Sprintf("; the hive's %s", pass)
@@ -203,6 +216,30 @@ func applyStageTrackerNew(it *StageTrackerItem, n *StageTrackerNew) {
 	if n.Since != nil && it.StageSince == nil {
 		it.StageSince = n.Since
 	}
+	// A reporter-trust hold is "Triage needed" whether or not the awaiting
+	// label has landed yet: the gate decided it, the stage-label pass only
+	// writes it down later. The same modifier the `needs-triage` label
+	// yields drives the Open chevron word, the pill and Accept triage.
+	if n.TriagePending() && !slices.Contains(it.Modifiers, modNeedsTriage) {
+		it.Modifiers = append(it.Modifiers, modNeedsTriage)
+		slices.SortFunc(it.Modifiers, func(a, b string) int {
+			return slices.Index(stageTrackerModifierOrder, a) - slices.Index(stageTrackerModifierOrder, b)
+		})
+	}
+}
+
+// TriagePending reports whether the 000-new row waits on a maintainer's
+// triage: the triage gate is the next one.
+func (n *StageTrackerNew) TriagePending() bool {
+	if n == nil || n.NextMover != StageTrackerMoverMaintainer {
+		return false
+	}
+	for _, g := range n.Gates {
+		if g.Name == "triage" && g.State == StageTrackerGateNext {
+			return true
+		}
+	}
+	return false
 }
 
 // issueFilterConfig is the project's issue filter, or nil without deps.

@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,5 +168,35 @@ func TestContributorLaneVerdictFromArtifactMatchesAbbreviatedHead(t *testing.T) 
 
 	if !got.Configured || !got.Approved || got.Verdict != string(review.VerdictApprove) {
 		t.Fatalf("verdict = %+v, want approved verdict found via the abbreviated head", got)
+	}
+}
+
+// A missing artifact is normal before the first review, but malformed data
+// remains actionable. Both cases must keep the contributor gate closed.
+func TestContributorLaneVerdictArtifactLogging(t *testing.T) {
+	dir := t.TempDir()
+	old, legacy := review.ReviewVerdictsPath, review.LegacyReviewVerdictsPath
+	review.ReviewVerdictsPath = filepath.Join(dir, "verdicts.json")
+	review.LegacyReviewVerdictsPath = filepath.Join(dir, "legacy.json")
+	t.Cleanup(func() { review.ReviewVerdictsPath, review.LegacyReviewVerdictsPath = old, legacy })
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"critic": {Enabled: true, Role: "reviewer"}}}}
+	var logs bytes.Buffer
+	gate := contributorLaneVerdictFunc(cfg, slog.New(slog.NewTextHandler(&logs, nil)))
+	for i := 0; i < 3; i++ {
+		if got := gate("acme/widget", 7, "sha7"); !got.Configured || got.Approved {
+			t.Fatalf("missing artifact: %+v", got)
+		}
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("missing artifact logged: %s", logs.String())
+	}
+	if err := os.WriteFile(review.ReviewVerdictsPath, []byte("invalid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := gate("acme/widget", 7, "sha7"); !got.Configured || got.Approved {
+		t.Fatalf("malformed artifact: %+v", got)
+	}
+	if !strings.Contains(logs.String(), "review-verdicts.json unavailable") {
+		t.Fatalf("malformed artifact not logged: %s", logs.String())
 	}
 }

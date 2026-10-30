@@ -23,6 +23,10 @@ func TestSweepClock(t *testing.T) {
 	if st := c.Snapshot(); st.Running || st.OnPR("acme/console", 1) || !st.NextFloorAt.Equal(t0.Add(5*time.Minute)) {
 		t.Fatalf("armed, idle: %+v", st)
 	}
+	c.armFloorEvery(t0, 10*time.Second)
+	if st := c.Snapshot(); !st.NextFloorAt.Equal(t0.Add(10*time.Second)) || st.FloorEvery != 10*time.Second {
+		t.Fatalf("armed with cadence: %+v", st)
+	}
 
 	targets := SweepTargets{"acme/console": {15042: true}}
 	c.begin("event", targets, t0)

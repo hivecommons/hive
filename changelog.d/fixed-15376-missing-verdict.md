@@ -1,0 +1,1 @@
+- A contributor review gate no longer emits repeated warnings before the first verdict exists; missing verdicts still prevent automatic approval.

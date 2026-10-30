@@ -2,7 +2,20 @@
 
 Status: Accepted
 
+**Current contract:** on the documents covered by this ADR, Content Security
+Policy (CSP) allows inline script elements only by their content hashes and
+blocks inline event-handler attributes (`script-src-attr 'none'`). The
+event-delegation refactor is complete. Read the Decision for the exact policy
+and document/proxy exclusions; the Context records the earlier open work.
+
+**Browser terms:** CSP2/CSP3 are policy versions. A **SPA** is a single-page
+application. An **ETag** is a cache validator for a served document; a **nonce**
+is a per-response random allowance. **XSS** (cross-site scripting) is attacker
+script execution in the page's origin.
+
 ## Context
+
+**Historical context before the refactor.**
 
 The dashboard's Content-Security-Policy carried one blanket `script-src 'self'
 'unsafe-inline'`, on both CSP emitters — the Go spoke server
@@ -29,9 +42,9 @@ CSP hashes and nonces apply to *elements*, never to event-handler attributes
 (`script-src-attr` accepts only `'none'`, `'unsafe-inline'`, or
 `'unsafe-hashes'` plus per-attribute-value hashes — rejected here for the same
 maintainability reasons ADR-0015 rejected it for styles). So the element half
-is closable today and the attribute half is not: it requires an
-event-delegation refactor of the 21k-line SPA, which remains the open scope of
-#3848.
+was closable independently; the attribute half required an event-delegation
+refactor of the then 21k-line SPA. That was the remaining scope of #3848 at
+adoption, and is now completed as described below.
 
 ## Decision
 

@@ -77,8 +77,11 @@ const (
 	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
 	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
+	ClassProxyPlainForwardRefused   = "proxy_plain_forward_refused"
 	ClassInferenceUpstreamError     = "inference_upstream_error"
+	ClassInferenceCallerUnknown     = "inference_caller_unidentified"
 	ClassSHAPollCommitMsgUnavail    = "sha_poll_commit_message_unavailable"
+	ClassKickFreshnessWithheld      = "kick_freshness_withheld"
 	ClassAgentLoginRequired         = "agent_login_required"
 	ClassPRRequestHeadUnpushed      = "pr_request_head_unpushed"
 	ClassIOScanClassifierUnavail    = "ioscan_classifier_unavailable"
@@ -86,6 +89,7 @@ const (
 	ClassLabelProvisioningFailed    = "label_provisioning_failed"
 	ClassAgentCLIRestartLoop        = "agent_cli_restart_loop"
 	ClassTranscriptScanSlow         = "transcript_scan_slow"
+	ClassSharedCIRerunForbidden     = "shared_ci_rerun_forbidden"
 	// A restart or normal stop can invalidate a pending bootstrap without
 	// indicating a restart storm; only repeated interruptions are reportable.
 	ClassStartupKickInterrupted = "startup_kick_interrupted"
@@ -189,14 +193,18 @@ var Classes = map[string]ClassSpec{
 	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
+	ClassProxyPlainForwardRefused:   {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},
+	ClassInferenceCallerUnknown:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference request from unidentified caller refused"}},
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
 	ClassSHAPollCommitMsgUnavail:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
+	ClassKickFreshnessWithheld:      {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"kick withheld: every ref failed the freshness check"}},
 	ClassAgentLoginRequired:         {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected"}},
 	ClassPRRequestHeadUnpushed:      {Component: "github-relay", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"head branch is not on the remote"}},
 	ClassIOScanClassifierUnavail:    {Component: "inference-gateway", Severity: "medium", MinCount: 1, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"ioscan classifier failed closed", "ioscan classifier failed open", "ioscan fail-closed blocked kick", "ioscan fail-closed blocked held-pr coordination kick"}},
 	ClassGitHubFetchTransient:       {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"channel commit date: fetch failed"}},
 	ClassLabelProvisioningFailed:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue stage labels: provisioning failed"}},
 	ClassAgentCLIRestartLoop:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent cli crashed or stuck on consent screen"}},
+	ClassSharedCIRerunForbidden:     {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"shared-ci rerun forbidden"}},
 	ClassTranscriptScanSlow:         {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"transcript activity scan outlived its interval"}},
 }
 

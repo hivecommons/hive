@@ -58,9 +58,23 @@ type supersededCloserTransport interface {
 	CloseSupersededHivePRIfEligible(ctx context.Context, repo string, pr *gh.PullRequest) (hgithub.HiveSupersededClose, error)
 }
 
+// emptyDiffCloserTransport is the optional transport hook that closes a
+// hive-authored PR whose compare against its base lists no files
+// (hgithub.Client.CloseEmptyDiffHivePRIfEligible; hivecommons/hive#15499).
+// The lane calls it when GitHub's GET payload reports changed_files 0 and
+// the stage reconciler calls it before parking the hive's own PR on a
+// person, so no review cycle or decision is spent on nothing to merge.
+type emptyDiffCloserTransport interface {
+	CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string, pr *gh.PullRequest, redundantOf int) (hgithub.HiveEmptyDiffClose, error)
+}
+
 // autoMergeReasonClosedSuperseded is the skip reason of a conflicting
 // self-authored PR the lane closed as superseded.
 const autoMergeReasonClosedSuperseded = "closed-superseded"
+
+// autoMergeReasonClosedEmptyDiff is the skip reason of a self-authored PR
+// the lane closed because its diff against the base is empty.
+const autoMergeReasonClosedEmptyDiff = "closed-empty-diff"
 
 // autoMergeReasonLabelNeedsRebase is labelBlockReason's answer for the
 // needs-rebase label.
@@ -91,9 +105,21 @@ type Options struct {
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
-	// RequireCurrentBase returns the live auto_merge.require_current_base
-	// switch for an owner/repo (hivecommons/hive#13634). nil means off.
+	// HumanMergeRule returns the live auto_merge.human_merge_title_prefixes /
+	// human_merge_labels rule (hivecommons/hive#15442). Every lane and the
+	// merge train skip a PR RequiresHumanMerge. nil means the defaults.
+	HumanMergeRule func() prstage.HumanMergeRule
+	// RequireCurrentBase returns the live current-base gate switch for an
+	// owner/repo (hivecommons/hive#13634; since #15335 resolved from the
+	// hive-wide default plus per-repo overrides via
+	// config.AutoMergeConfig.RequireCurrentBaseFor). nil means off.
 	RequireCurrentBase func(repo string) bool
+	// RequireCurrentBaseStrict reports whether owner/repo is explicitly
+	// listed in auto_merge.require_current_base. A strict repo parks a head
+	// the App cannot update; a repo gated only by the default merges the
+	// green head as tested in that case, with one WARN per PR. nil means no
+	// repo is strict.
+	RequireCurrentBaseStrict func(repo string) bool
 	// MergeForwardTrustedHuman returns the live
 	// auto_merge.merge_forward_trusted_human membership for owner/repo
 	// (hivecommons/hive#13636); nil means off.
@@ -195,6 +221,16 @@ type Options struct {
 	// RebaseResolver receives the train's rebase-resolve requests for a
 	// conflicting PR; nil leaves a dirty front on its conflicting path.
 	RebaseResolver RebaseResolver
+	// RebaseEpisode reads the fixer's rebase-resolve episode for a PR (the
+	// pkg/rebasemerge attempts ledger through cmd/hive): the adoption lane
+	// parks a copy whose episode is exhausted at 085 instead of leaving it
+	// on its fixing stage (hivecommons/hive#15307). nil reads as no episode.
+	RebaseEpisode func(repo string, number int) (RebaseEpisode, bool)
+	// HotspotRecorder receives the merge train's PR file lists and the
+	// conflicts it asks the resolver to repair, so the merge-hotspot
+	// advisor (pkg/hotspot) derives its evidence without polling GitHub
+	// again; nil records nothing.
+	HotspotRecorder HotspotRecorder
 }
 
 // Engine owns the automerge sweep policy state.
@@ -237,8 +273,15 @@ type Engine struct {
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
+	humanMergeRuleMu sync.RWMutex
+	humanMergeRule   func() prstage.HumanMergeRule
+
 	requireCurrentBase       func(repo string) bool
+	requireCurrentBaseStrict func(repo string) bool
 	mergeForwardTrustedHuman func(repo string) bool
+
+	currentBaseFallbackWarnedMu sync.Mutex
+	currentBaseFallbackWarned   map[string]struct{}
 
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
@@ -317,6 +360,8 @@ type Engine struct {
 
 	mergeTrainPolicy func() MergeTrainPolicy
 	rebaseResolver   RebaseResolver
+	rebaseEpisode    func(repo string, number int) (RebaseEpisode, bool)
+	hotspotRecorder  HotspotRecorder
 	mergeTrainState
 }
 
@@ -340,7 +385,9 @@ func New(transport Transport, opts Options) *Engine {
 		reviewGate:                        opts.ReviewGate,
 		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
+		humanMergeRule:                    opts.HumanMergeRule,
 		requireCurrentBase:                opts.RequireCurrentBase,
+		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,
 		mergeForwardTrustedHuman:          opts.MergeForwardTrustedHuman,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
@@ -369,6 +416,8 @@ func New(transport Transport, opts Options) *Engine {
 		sweepTrigger:                      opts.SweepTrigger,
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
 		rebaseResolver:                    opts.RebaseResolver,
+		rebaseEpisode:                     opts.RebaseEpisode,
+		hotspotRecorder:                   opts.HotspotRecorder,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
@@ -1083,6 +1132,13 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneSelf, repo, owner, repoName, pr, reason, merged, err)
 			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[autoMergeReasonMergeTrainDuplicate]++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				repoSkipped++
@@ -1184,7 +1240,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			if event.BranchUpdated || reason == "updated-branch" {
 				result.UpdatedBranches++
 			}
-			c.noteMergeTrainOutcome(owner, repoName, number, pr.GetHead().GetSHA(), reason)
+			c.noteMergeTrainOutcome(stageLaneSelf, owner, repoName, number, pr.GetHead().GetSHA(), reason)
 			if reason != "" {
 				if isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) {
 					if c.markTerminalHoldLogged(owner, repoName, number, pr.GetHead().GetSHA(), reason) {
@@ -1217,7 +1273,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonClosedSuperseded, autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod, autoMergeReasonMergeTrainQueued, autoMergeReasonMergeTrainRebasing}
+			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonClosedSuperseded, autoMergeReasonClosedEmptyDiff, autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod, autoMergeReasonMergeTrainQueued, autoMergeReasonMergeTrainRebasing}
 			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
 				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
 			}
@@ -1312,6 +1368,11 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneTrusted, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				stage(c.mergeTrainSkip(train, number), false, nil)
@@ -1353,7 +1414,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			result.Candidates++
 			event, reason, err := c.trySweepTrustedAuthorPR(ctx, displayRepo, owner, repoName, number, policy)
 			if err == nil {
-				c.noteMergeTrainOutcome(owner, repoName, number, pr.GetHead().GetSHA(), reason)
+				c.noteMergeTrainOutcome(stageLaneTrusted, owner, repoName, number, pr.GetHead().GetSHA(), reason)
 			}
 			if err != nil {
 				c.warn("trusted-author automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason, "error", err)
@@ -1528,7 +1589,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
-		c.sweepClock.armFloor(c.now().Add(interval))
+		c.sweepClock.armFloorEvery(c.now(), interval)
 		// cautionTick is non-zero while the ticker is running at the caution
 		// floor instead of the adaptive interval.
 		var cautionTick time.Duration
@@ -1551,7 +1612,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 				if cautionTick != 0 {
 					tick = cautionTick
 				}
-				c.sweepClock.armFloor(c.now().Add(tick))
+				c.sweepClock.armFloorEvery(c.now(), tick)
 				if gate.skip {
 					continue
 				}
@@ -1561,7 +1622,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
 					t.Reset(next)
-					c.sweepClock.armFloor(c.now().Add(next))
+					c.sweepClock.armFloorEvery(c.now(), next)
 					c.info("self-authored automerge sweep interval adjusted",
 						"previous_interval", interval,
 						"next_interval", next,
@@ -1744,6 +1805,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
 	selfLabels := labelNames(pr.Labels)
+	// The refetched PR is the one that merges: a title or label edited
+	// since listing re-applies the human-merge rule (hivecommons/hive#15442).
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), selfLabels); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
 	blocked := c.labelBlockReason(selfLabels, true)
 	// A conflicting head — GitHub's mergeable_state or the needs-rebase
 	// label a lane already put on it — is asked the superseded question
@@ -1757,6 +1823,22 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			} else if res.Closed {
 				c.info("self-authored sweep: conflicting PR closed as superseded", "repo", displayRepo, "pr", number, "closer", res.CloserPR, "issue", res.Issue, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason)
 				return AutoMergeSweepEvent{}, autoMergeReasonClosedSuperseded, nil
+			}
+		}
+	}
+	// A head GitHub reports as changing no files has nothing to merge: the
+	// change is already on the base. The closer proves it with the compare
+	// and closes the hive's own PR as superseded (hivecommons/hive#15499)
+	// before a review cycle is spent asking a person to.
+	if lane == "self-authored" && hgithub.PRChangedFilesClaimsEmpty(pr) {
+		if closer, ok := c.transport.(emptyDiffCloserTransport); ok {
+			verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA())
+			res, err := closer.CloseEmptyDiffHivePRIfEligible(ctx, owner+"/"+repo, pr, verdict.RedundantOf)
+			if err != nil {
+				c.warn("self-authored sweep: empty-diff check failed", "repo", displayRepo, "pr", number, "error", err)
+			} else if res.Closed {
+				c.info("self-authored sweep: empty-diff PR closed as superseded", "repo", displayRepo, "pr", number, "redundant_of", res.RedundantOf, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason)
+				return AutoMergeSweepEvent{}, autoMergeReasonClosedEmptyDiff, nil
 			}
 		}
 	}
@@ -1939,7 +2021,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 
 	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
-	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
+	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, evaluatedHeadSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
@@ -1948,9 +2030,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
-		if requiredChecksExpectedMergeError(err) {
+		if c.requiredChecksExpected(attempt, err) {
 			if !branchUpdateAllowed {
-				return AutoMergeSweepEvent{}, "check-pending", nil
+				return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
 			}
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", c.isForkPR(pr))
 		}
@@ -2111,6 +2193,9 @@ func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 		return "not-app-authored"
 	}
 	labels := labelNames(pr.Labels)
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return reason
+	}
 	if blocked := c.labelBlockReason(labels, true); blocked != "" {
 		return blocked
 	}
@@ -2130,6 +2215,9 @@ func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
 	labels := labelNames(issue.Labels)
 	if !hasLabel(labels, label) {
 		return "label-removed"
+	}
+	if reason := c.humanMergeRequiredReason(issue.GetTitle(), labels); reason != "" {
+		return reason
 	}
 	if blocked := c.labelBlockReason(labels, false); blocked != "" {
 		return blocked
@@ -2151,6 +2239,9 @@ func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuth
 		return "draft"
 	}
 	labels := labelNames(pr.Labels)
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return reason
+	}
 	if blocked := c.labelBlockReason(labels, true); blocked != "" && !staleNeedsRebaseLabel(blocked, pr) {
 		return blocked
 	}
@@ -2334,7 +2425,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 
 	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
-	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
+	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
@@ -2343,7 +2434,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
-		if requiredChecksExpectedMergeError(err) {
+		if c.requiredChecksExpected(attempt, err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(pr))
 		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
@@ -2558,6 +2649,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if !hasLabel(labels, label) {
 		return AutoMergeSweepEvent{}, "label-removed", nil
 	}
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
 	// Hold labels outrank the merger queue (#5589): a hold applied AFTER a
 	// merger queued the PR — including the hold guard re-applying one because
 	// the branch moved while hold-gated — must stop the sweep, not race it.
@@ -2685,7 +2779,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 
 	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, pr, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
-	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
+	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
@@ -2694,6 +2788,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if c.requiredChecksExpected(attempt, err) {
+			return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
+		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
 		}
@@ -3098,9 +3195,9 @@ func mergeAPIErrorNotApplied(err error) error {
 // executeMergeEffect runs the merge call through the mutation boundary and
 // brackets it with a merge attempt (hivecommons/hive#15245) so the tracker
 // shows "Merging" for the call's duration and a refusal's reason after.
-func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
+func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, head string, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
 	slug := owner + "/" + repo
-	hgithub.BeginMergeAttempt(slug, number, hgithub.PRAuditPathSweep)
+	hgithub.BeginMergeAttemptOnHead(slug, number, hgithub.PRAuditPathSweep, head)
 	out, err := c.executeMergeEffectOnce(ctx, claim, owner, repo, number, merge)
 	switch {
 	case err != nil:

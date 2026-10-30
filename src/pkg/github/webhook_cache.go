@@ -506,9 +506,21 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	aliases := webhookRepoAliases(configured, p.Repository.FullName)
 	sharedWebhookTracker.recordEvent(aliases)
 
+	res.Item = webhookItemHint(event, p)
 	if n, ok := webhookTouchedIssue(event, p); ok {
 		res.TouchedIssues = []int{n}
-		if body, at, ok := webhookIssueCommentBody(event, p); ok {
+		if res.Item.Closed() {
+			// Closed issues no longer contribute to blocked_items. Comments
+			// delivered after closure must not recreate their blocker.
+			l := itemblocker.Shared()
+			l.Clear(configured, n)
+			// Comment webhooks use the configured name; sweep reports use
+			// owner/repo. Clear both when configuration uses a short name.
+			owner, repo := c.splitRepo(configured)
+			if full := owner + "/" + repo; full != configured {
+				l.Clear(full, n)
+			}
+		} else if body, at, ok := webhookIssueCommentBody(event, p); ok {
 			// A needs-human report that names a capability the App lacks
 			// becomes a structured blocker the moment it lands, so the
 			// tracker and "Let hive decide" read it before the next
@@ -518,7 +530,6 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 			}
 		}
 	}
-	res.Item = webhookItemHint(event, p)
 	if reviewRequestWakeEvent(event, p) {
 		c.reviewWake.wake()
 		res.WokeReviewWatcher = true
