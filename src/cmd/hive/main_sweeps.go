@@ -834,6 +834,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
+		opts.HiveSupersedingAutoMerge = func() bool { return cfg.AutoMerge.HiveSuperseding.AutoMergeEnabled() }
 		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 			opts.RequiredChecks = set
 		}
@@ -2651,10 +2652,13 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		MaxPerspectivesPerPR:       cfg.Review.MaxPerspectivesPerPR,
 		Perspectives:               reviewPerspectiveSet(cfg, logger),
 		SelfAuthoredDecisionPolicy: cfg.Review.EffectiveSelfAuthoredDecisionPolicy(),
-		SensitivePaths:             cfg.Security.SensitivePaths,
-		ModelStamps:                reviewModelStamps(logger),
-		ExpectedHeads:              cfg.ExpectedReviewHeads(),
-		MissingHeads:               reviewMissingHeads(),
+		// Owner rule: the hive's superseding copies auto-merge; their
+		// reviewer findings go to the fixer, not to a person.
+		HiveSupersedingAutoMergeOff: !cfg.AutoMerge.HiveSuperseding.AutoMergeEnabled(),
+		SensitivePaths:              cfg.Security.SensitivePaths,
+		ModelStamps:                 reviewModelStamps(logger),
+		ExpectedHeads:               cfg.ExpectedReviewHeads(),
+		MissingHeads:                reviewMissingHeads(),
 	}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {

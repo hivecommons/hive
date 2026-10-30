@@ -884,6 +884,15 @@ func (s *Server) sentinelLabel() string {
 	return s.deps.Config.Sentinel.LabelOrDefault()
 }
 
+// hiveSupersedingAutoMerge is the live hive-superseding auto-merge switch
+// (config.HiveSupersedingAutoMergeConfig; nil config = on).
+func (s *Server) hiveSupersedingAutoMerge() bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return true
+	}
+	return s.deps.Config.AutoMerge.HiveSuperseding.AutoMergeEnabled()
+}
+
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	evalHistoryResponse(w, r, s.historyPayload())
 }

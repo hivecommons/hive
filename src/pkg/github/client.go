@@ -935,6 +935,11 @@ type PullRequest struct {
 	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
+	// Supersedes is the PR this one declares it supersedes ("Supersedes
+	// #N" in the body: the hive's adoption / takeover / re-author copy of
+	// a contributor PR), read from the list payload; 0 when none.
+	// IsHiveSupersedingPR pairs it with AppAuthored.
+	Supersedes int `json:"supersedes,omitempty"`
 	// BaseDiffEmpty is true when the per-PR detail fetch reported zero
 	// changed files, additions and deletions against the base: the PR
 	// carries nothing the base does not already have (an adoption whose
@@ -2279,6 +2284,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			RequestedReviewers: reqLogins,
 			RequestedTeams:     reqTeams,
 			ReferencedIssues:   PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
+			Supersedes:         prSupersedesNumberOrZero(pr.GetBody()),
 		})
 	}
 

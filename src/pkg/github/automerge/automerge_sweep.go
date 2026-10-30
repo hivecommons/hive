@@ -175,6 +175,14 @@ type Options struct {
 	// skip distinctly so operators can tell a sentinel block from an ordinary
 	// hold in tick stats.
 	SentinelLabel func() string
+	// HiveSupersedingAutoMerge is the live auto_merge.hive_superseding.auto_merge
+	// switch (owner rule: the hive's superseding copy of another PR
+	// auto-merges with no operator decision). nil means on.
+	HiveSupersedingAutoMerge func() bool
+	// SentinelAcknowledgedBy returns the person whose approval acknowledged
+	// the sentinel's findings on repo#number@head ("" when none stands),
+	// for the superseder hard-stop; nil reads the review evidence bundle.
+	SentinelAcknowledgedBy func(repo string, number int, head string) string
 	// MinHeadAge is the youngest PR head commit age the sweep may merge when
 	// the required-check set is not config-declared and fully green.
 	MinHeadAge time.Duration
@@ -322,6 +330,8 @@ type Engine struct {
 	contributorSoak                   *ContributorSoakTracker
 	headFirstSeen                     *HeadFirstSeenTracker
 	sentinelLabel                     func() string
+	hiveSupersedingAutoMerge          func() bool
+	sentinelAcknowledgedBy            func(repo string, number int, head string) string
 	minHeadAge                        time.Duration
 	now                               func() time.Time
 	evaluatedHeadsMu                  sync.Mutex
@@ -430,6 +440,8 @@ func New(transport Transport, opts Options) *Engine {
 		contributorSoak:                   opts.ContributorSoak,
 		headFirstSeen:                     opts.HeadFirstSeen,
 		sentinelLabel:                     opts.SentinelLabel,
+		hiveSupersedingAutoMerge:          opts.HiveSupersedingAutoMerge,
+		sentinelAcknowledgedBy:            opts.SentinelAcknowledgedBy,
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
 		stageLabelPolicy:                  opts.StageLabelPolicy,

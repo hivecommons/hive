@@ -2049,18 +2049,19 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// its open-PR set and run on webhook events instead of listing /pulls.
 	forgeOpenPRs := b.forgeStateOpenPRs()
 	autoMergeOpts := automerge.Options{
-		Logger:                  b.logger,
-		MergerAuthorizer:        trustedMergerFunc(b.cfg),
-		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
-		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
-		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
-		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
-		ContributorRegistryTier: contributorRegistryTierFunc(),
-		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
-		StageEngine:             stageEngineOptions(b.cfg, b.logger),
-		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
-		SweepTrigger:            b.sweepTrigger,
+		Logger:                   b.logger,
+		MergerAuthorizer:         trustedMergerFunc(b.cfg),
+		HumanChangeRequests:      review.DefaultHumanChangeRequests(),
+		TrustedAuthorizer:        trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:      trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:    contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict:   contributorLaneVerdictFunc(b.cfg, b.logger),
+		ContributorRegistryTier:  contributorRegistryTierFunc(),
+		StageLabelPolicy:         stageLabelPolicyFunc(b.cfg),
+		StageEngine:              stageEngineOptions(b.cfg, b.logger),
+		SentinelLabel:            func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		HiveSupersedingAutoMerge: func() bool { return b.cfg.AutoMerge.HiveSuperseding.AutoMergeEnabled() },
+		SweepTrigger:             b.sweepTrigger,
 	}
 	if forgeOpenPRs != nil {
 		autoMergeOpts.OpenPRs = forgeOpenPRs

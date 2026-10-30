@@ -163,6 +163,63 @@ type Evidence struct {
 	// ("contributor-lane:workflow-path"); the 090 route for an approved
 	// manual-merge rule records it suffixed with the approver.
 	LaneReason string
+	// HiveSuperseder is true for the hive App's own superseding copy of
+	// another PR ("Supersedes #N") under the owner's rule that such a PR
+	// auto-merges with no operator decision: a reviewer's requires_human
+	// is the fixer's, never 085. HiveSupersederHardStop is the one
+	// exception that does park it (a HiveSupersederHardStop* token, ""
+	// when none): the sentinel's unacknowledged finding, or an emergent
+	// problem with the PR itself.
+	HiveSuperseder         bool
+	HiveSupersederHardStop string
+}
+
+// Hard-stop tokens for a hive-authored superseding PR: the only reasons
+// such a PR parks at 085 (owner refinement: "the only exception would be if
+// this is sentinel or some other emergent problem with the pr"). Recorded
+// as the 085 lane reason under LaneReasonHiveSupersederHardStopPrefix so
+// the tracker pill and the delegated plan can name the reason.
+const (
+	HiveSupersederHardStopSentinel         = "sentinel-unacknowledged"
+	HiveSupersederHardStopHold             = "hold"
+	HiveSupersederHardStopFixExhausted     = "fix-attempts-exhausted"
+	HiveSupersederHardStopCIRed            = "ci-red-after-fixes"
+	HiveSupersederHardStopConflict         = "base-conflict-unresolved"
+	LaneReasonHiveSupersederHardStopPrefix = "hive-superseder-hard-stop:"
+	// LaneReasonHiveSupersederFix is the fixing-stage reason when the
+	// reviewer's requires_human on a hive superseding PR goes to the fixer.
+	LaneReasonHiveSupersederFix = "hive-superseder:fixer"
+	// HiveSupersederAutoMergeCaption is the tracker / plan wording for a
+	// hive superseding PR that is not parked.
+	HiveSupersederAutoMergeCaption = "hive-authored superseding PR — auto-merging once CI/review are clean"
+)
+
+// HiveSupersederHardStopProse renders a hard-stop token for the 085
+// comment and tracker ("" for an unknown token).
+func HiveSupersederHardStopProse(token string) string {
+	switch strings.TrimSpace(token) {
+	case HiveSupersederHardStopSentinel:
+		return "the sentinel has an open finding on this PR that nobody has acknowledged"
+	case HiveSupersederHardStopHold:
+		return "a hold is set on this PR"
+	case HiveSupersederHardStopFixExhausted:
+		return "the fixer used all its attempts on the reviewer's findings"
+	case HiveSupersederHardStopCIRed:
+		return "CI is still red after the fixer's attempts"
+	case HiveSupersederHardStopConflict:
+		return "the head conflicts with the base and the hive could not resolve it"
+	}
+	return ""
+}
+
+// HiveSupersederHardStopReason splits a 085 lane reason into its hard-stop
+// token ("" when the reason is not one).
+func HiveSupersederHardStopReason(reason string) string {
+	token, ok := strings.CutPrefix(strings.TrimSpace(reason), LaneReasonHiveSupersederHardStopPrefix)
+	if !ok {
+		return ""
+	}
+	return token
 }
 
 // HumanApprovedReasonSuffix joins a lane reason to the trusted merger who
@@ -294,6 +351,26 @@ func RouteHuman(e Evidence) Route {
 		// or the lane rule's "needs a human" is answered for it, and the
 		// author acts next (hivecommons/hive#15159). A new head re-asks.
 		note("@"+requester+" requested changes @"+ShortSHA(e.Head), LaneReasonHumanChangesRequested)
+	} else if e.HiveSuperseder {
+		if token := strings.TrimSpace(e.HiveSupersederHardStop); token != "" {
+			// The one exception to the superseder rule: an emergent
+			// problem with the PR itself parks it, and the caption names it.
+			reasons := []string{"hive-authored superseding PR parked: " + HiveSupersederHardStopProse(token)}
+			if e.Verdict == VerdictRequiresHuman {
+				reasons = append(reasons, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
+				if f := strings.TrimSpace(e.DecisionFinding); f != "" {
+					reasons = append(reasons, "the review found: "+f)
+				}
+			}
+			return Route{Stage: NeedsDecision, Reasons: reasons, LaneReason: LaneReasonHiveSupersederHardStopPrefix + token, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: strings.TrimSpace(e.HumanApprover), Hold: e.Hold}
+		}
+		if e.Verdict == VerdictRequiresHuman && strings.TrimSpace(e.HumanApprover) == "" {
+			// Owner rule: the reviewer's finding — security-sensitive
+			// included — is the fixer's to address, not a person's to rule
+			// on. The aggregate routes it as changes_requested; the stage
+			// says so rather than "needs your decision".
+			note(HiveSupersederAutoMergeCaption+": the reviewer's finding @"+ShortSHA(e.Head)+" goes to the fixer", LaneReasonHiveSupersederFix)
+		}
 	}
 	if e.Verdict == VerdictChangesRequested {
 		note("verdict changes_requested @"+ShortSHA(e.Head), LaneReasonChangesRequested)
@@ -378,7 +455,9 @@ func RouteHuman(e Evidence) Route {
 			}
 		}
 	}
-	if e.Sentinel {
+	if e.Sentinel && !(e.HiveSuperseder && strings.TrimSpace(e.HiveSupersederHardStop) == "") {
+		// A hive superseding PR with no hard-stop has an acknowledged
+		// sentinel finding: the person already ruled on it.
 		decide = append(decide, "a sentinel alert is open on this PR")
 	}
 	for _, h := range e.Holds {
