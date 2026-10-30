@@ -14575,10 +14575,17 @@
           var actor = ev.actor
             ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:var(--sp-3)">by ' + esc(ev.actorName || ev.actor) + '</span>'
             : '';
+          /* Onboarding problems (GitHub App not installed / permissions /
+             install pending) get a pointer to the hive's own Getting Started
+             guide — the hive dashboard's 🧭 Guide chip — so a new operator
+             reading this timeline is not left asking for the install URL. */
+          var guideTip = (ev.kind === 'github_app_changed' && !/cleared|completed/i.test(ev.detail || ''))
+            ? '<div class="fs-xs text-muted mt-1">New hive? Open your hive dashboard → 🧭 Guide (top navbar) → step ‘Install the Forge App (GitHub App)’ for the install URL and permissions checklist.</div>'
+            : '';
           return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">' +
             '<div style="flex-shrink:0;width:84px"><span style="display:inline-block;padding:2px 7px;border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;white-space:nowrap;background:' + kind.color + '22;color:' + kind.color + ';border:1px solid ' + kind.color + '55">' + esc(kind.label) + '</span></div>' +
             '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:var(--fs-base);color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + '</div>' +
+              '<div style="font-size:var(--fs-base);color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + guideTip + '</div>' +
               '<div class="fs-xs text-muted mt-1" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
             '</div></div>';
         }).join('');
