@@ -131,13 +131,28 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 		})
 	}
 	in.TrainDuplicateOf, in.TrainDuplicateIssue = delegatedTrainDuplicate(s.stageStoreOrShared(), repo, pr.GetNumber())
+	in.ClaimConflictWith, in.ClaimConflictIssue = delegatedClaimConflict(s.stageStoreOrShared(), repo, pr.GetNumber())
 	return nil
+}
+
+// delegatedClaimConflict reads the stage store for the cross-lane
+// same-issue hold the merge queue recorded on a PR
+// (hivecommons/hive#15810): the other claimant and the shared issue, 0
+// when it is not held.
+func delegatedClaimConflict(store *stagelabels.Store, repo string, number int) (other, issue int) {
+	return delegatedTrainState(store, repo, number, prstage.MergeTrainStateClaimConflict)
 }
 
 // delegatedTrainDuplicate reads the stage store for the one-PR-per-issue
 // hold the merge queue recorded on a PR (hivecommons/hive#15395): the PR
 // it yields to and the shared issue, 0 when it is not held.
 func delegatedTrainDuplicate(store *stagelabels.Store, repo string, number int) (winner, issue int) {
+	return delegatedTrainState(store, repo, number, prstage.MergeTrainStateDuplicateOf)
+}
+
+// delegatedTrainState is the front and position of the merge-train reason
+// recorded on a PR when its state is state, 0,0 otherwise.
+func delegatedTrainState(store *stagelabels.Store, repo string, number int, state string) (int, int) {
 	if store == nil {
 		return 0, 0
 	}
@@ -146,7 +161,7 @@ func delegatedTrainDuplicate(store *stagelabels.Store, repo string, number int) 
 		return 0, 0
 	}
 	mt, ok := prstage.ParseMergeTrain(rec.Reason)
-	if !ok || mt.State != prstage.MergeTrainStateDuplicateOf {
+	if !ok || mt.State != state {
 		return 0, 0
 	}
 	return mt.Front, mt.Position

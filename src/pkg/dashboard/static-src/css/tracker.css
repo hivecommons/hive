@@ -808,6 +808,8 @@
        list with one Preview button each plus a sample row the previews play on. */
     .sts-hint { color: var(--muted); font-size: var(--fs-xs); margin: 0; }
     .sts-row { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); flex-wrap: wrap; }
+    .sts-timing-input { width: 6em; }
+    .sts-timing-unit { color: var(--muted); }
     .sts-motion-list { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
     .sts-motion-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-sm); }
     .sts-motion-item:has(input:checked) { border-color: var(--line-strong); background: var(--panel-strong); color: var(--text); }
