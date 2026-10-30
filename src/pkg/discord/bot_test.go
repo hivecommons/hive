@@ -228,7 +228,7 @@ func TestSendMessage_CorrectURLAndHeaders(t *testing.T) {
 		t.Errorf("Content-Type: got %q, want %q", gotContentType, "application/json")
 	}
 
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.Unmarshal([]byte(gotBody), &payload); err != nil {
 		t.Fatalf("body is not valid JSON: %v – raw: %s", err, gotBody)
 	}
