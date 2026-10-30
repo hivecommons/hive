@@ -175,6 +175,10 @@ type reviewedPRSnapshot struct {
 	// Base is the PR's base branch, for the same-patch test across a head
 	// move (hivecommons/hive#15823).
 	Base string
+	// Supersedes is the PR the body declares this one supersedes (0 when
+	// none): with hive authorship it marks the hive's superseding copy,
+	// whose reviewer findings route to the fixer rather than a person.
+	Supersedes int
 }
 
 // reviewedPRSnapshotFunc returns a memoized lookup of req's PR head SHA and
@@ -208,6 +212,7 @@ func (c *Client) reviewedPRSnapshotFunc(ctx context.Context, req ReviewRequest) 
 			BodyDigest: review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
 			Author:     safeGetLogin(pr.GetUser()),
 			Base:       strings.TrimSpace(pr.GetBase().GetRef()),
+			Supersedes: prSupersedesNumberOrZero(pr.GetBody()),
 		}
 		return snap
 	}
@@ -427,15 +432,23 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 		report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, auth.HeadSHA, prHead)
 	}
 	report.HiveAuthored = auth.HiveAuthored
-	if !report.HiveAuthored && prSnapshot != nil && (report.DecisionRequested || report.Verdict == review.VerdictRequiresHuman) && c.IsHiveAuthorLogin(prSnapshot().Author) {
-		// The App's own PR under a dispatch record that did not carry
-		// authorship (an adoption with no agent attribution, or a record
-		// written before hive_authored existed): the login settles it, so
-		// the aggregate can self-resolve its decision questions and the
-		// stage engine routes it as the hive's (hivecommons/hive#15499).
+	if prSnapshot != nil && (report.DecisionRequested || report.Verdict == review.VerdictRequiresHuman) {
 		// Only a verdict whose routing depends on authorship pays for the
 		// PR fetch; an approve or changes_requested never does.
-		report.HiveAuthored = true
+		snap := prSnapshot()
+		if !report.HiveAuthored && c.IsHiveAuthorLogin(snap.Author) {
+			// The App's own PR under a dispatch record that did not carry
+			// authorship (an adoption with no agent attribution, or a record
+			// written before hive_authored existed): the login settles it, so
+			// the aggregate can self-resolve its decision questions and the
+			// stage engine routes it as the hive's (hivecommons/hive#15499).
+			report.HiveAuthored = true
+		}
+		// The hive's superseding copy of another PR ("Supersedes #N" under
+		// the App's login): its requires_human findings — security-sensitive
+		// included — go to the fixer, never to an operator decision
+		// (owner rule, hivecommons/hive: hive superseder auto-merge).
+		report.HiveSuperseding = report.HiveAuthored && snap.Supersedes > 0 && c.IsHiveAuthorLogin(snap.Author)
 	}
 	// The review head, and whether this is the decision step's reconciled
 	// report, come from the dispatch record this verdict bound to, never the

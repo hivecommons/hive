@@ -17,6 +17,11 @@ import (
 // upgrade was cancelled or superseded — and kicks must not stay withheld.
 const selfUpgradeDrainStaleAfter = 3 * heartbeatSendInterval
 
+// restartAnnounceSettle is how long the SIGTERM hook lets the SSE handler
+// goroutines flush the "upgrading" frame before the next hook runs
+// (#15788). One write on already-open sockets; well inside the grace period.
+const restartAnnounceSettle = 100 * time.Millisecond
+
 // selfUpgradeDrainNow is the drain clock, a seam for tests.
 var selfUpgradeDrainNow = time.Now
 

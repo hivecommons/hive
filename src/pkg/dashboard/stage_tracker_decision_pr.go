@@ -38,6 +38,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// supersedes) after the fixer's two rebase-resolve attempts failed.
 	rebaseFailedTwice := lower == stagelabels.LaneReasonRebaseFailedTwice || (adoptionStalled && adoptionLane == stagelabels.LaneReasonRebaseFailedTwice)
 	reviewerDeferred := lower == stageengine.StageReasonVerdictRequiresHuman || lower == stageengine.StageReasonDecisionRequested
+	hiveSupersederStop := stagelabels.HiveSupersederHardStopReason(base)
 
 	// WHAT it is waiting on: the question, most specific source first. A
 	// reviewer's own question is quoted verbatim — it is the text the
@@ -50,6 +51,12 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Blocker = strings.TrimSpace(it.Unauthorized)
 		delegateOK, delegateWhy = false, decisionWhyNoPermission
 		approveOK, approveWhy = false, decisionWhyApproveNoGrant
+	case hiveSupersederStop != "":
+		// The owner's superseder rule (hive-authored superseding PRs
+		// auto-merge with no decision) was overridden by its one exception
+		// class; the caption names which stop, never "needs your decision".
+		d.AskedBy = decisionAskedByLane
+		d.Question = "The hive's superseding PR would auto-merge (owner rule), but " + stagelabels.HiveSupersederHardStopProse(hiveSupersederStop) + ". Clear that stop and the lane merges it on its next pass, or close it?"
 	case verdict != nil && strings.TrimSpace(verdict.DecisionQuestion) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = strings.TrimSpace(verdict.DecisionQuestion)

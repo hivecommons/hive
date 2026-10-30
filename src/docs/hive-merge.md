@@ -1021,6 +1021,61 @@ recorded trusted decision on a PR's head (the tracker's Approve, or any
 what lifts the gate for that PR; closing the other ends it
 ([#15810](https://github.com/hivecommons/hive/issues/15810)).
 
+### Hive-authored superseding PRs auto-merge
+
+Owner rule (@clubanderson): *"if a pr is superseded by a pr that a hive
+agent creates, it should auto merge"* — *"the only exception would be if
+this is sentinel or some other emergent problem with the pr."*
+
+A **hive superseding PR** is a PR the hive App itself authored
+(`@hivecommons-hive[bot]`) whose body declares `Supersedes #N` — the PR a
+takeover, close-first adoption or re-author lead opens to carry a
+contributor's or bot's change. `github.IsHiveSupersedingPR` /
+`github.HiveSupersedingPR` detect it; `PullRequest.Supersedes` carries the
+number. Twice in one morning such PRs (#15649, #15646) parked at
+`stage/085-needs-decision` on a reviewer's security-sensitive
+`requires_human` and the owner had to click approve for work the hive had
+already decided to carry. Under this rule they do not:
+
+- **Reviewer findings go to the fixer.** On a hive superseding PR the
+  aggregate (`review.hiveSupersedingFixRoute`) turns a `requires_human` —
+  a risk-class decision question, a security-sensitive finding, an
+  unresolved escalation — into `changes_requested` with the reason
+  `hive-authored superseding PR: reviewer requires_human routed to the fixer; auto-merges once CI and review are clean`; the fixer
+  addresses it and the swarm re-reviews, exactly like any other finding.
+  A `reject` is not converted: it is an emergent problem with the PR. The
+  stage engine captions the head *"hive-authored superseding PR —
+  auto-merging once CI/review are clean"* (lane reason
+  `hive-superseder:fixer`) rather than "needs your decision", and the
+  reviewer prompts say so (`hiveSupersedingGuidance`).
+- **Green and clean merges with no decision.** Once CI is green and the
+  review has no open findings the PR follows the hive-authored admission
+  path (`stage/080` → merge). The superseded PR is closed as superseded by
+  the existing writeback (`Superseded by #N`) once it merges, as before.
+- **The only exceptions are the hard stops**, computed in one place
+  (`automerge.hiveSupersederHardStop`) and named in the 085 caption
+  (`hive-superseder-hard-stop:<token>`):
+  - `sentinel-unacknowledged` — the sentinel label is on and nobody has
+    acknowledged its finding (`sentinel_acknowledged` in the review
+    evidence bundle; an acknowledged sentinel, as on #15650, is not a
+    stop);
+  - `hold` — a `hold` / decision-class label or a repo/global hold;
+  - `fix-attempts-exhausted` — the fixer spent its cycle cap on the
+    reviewer's findings; reported as `ci-red-after-fixes` when CI is
+    still red, `base-conflict-unresolved` when the head still conflicts;
+  - `base-conflict-unresolved` — the hive's rebase-resolve episode
+    already failed twice.
+
+  A pending check, a first conflict or an ordinary reviewer finding is
+  never a stop. The tracker row reads *"The hive's superseding PR would
+  auto-merge (owner rule), but <stop>"*, and *Let hive decide* answers
+  recommend-only, naming the stop (`delegatedecision.RuleHiveSuperseder`);
+  without a stop it releases the PR under the same rule.
+
+`auto_merge.hive_superseding.auto_merge: false` turns the rule off and
+restores the previous behaviour (a `requires_human` parks the superseding
+PR at 085 like any hive-authored PR).
+
 ### Empty-diff PRs of the hive's own
 
 A PR of the hive's own (the App's, or an adoption it opened) whose diff

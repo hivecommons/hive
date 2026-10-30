@@ -3270,6 +3270,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.RestartSpoke = true
 		s.logger.Info("heartbeat: delivering spoke restart", "hive_id", payload.HiveID, "reporter", payload.Reporter)
 	}
+	// Intent before the kill (#15788): a hub-managed hive learns here that
+	// its pod is being rolled, so its dashboard shows the upgrade animation
+	// with the target instead of a bare "reconnecting" once the pod dies.
+	resp.UpgradeAnnounce = heartbeatUpgradeAnnounce(heartbeatUpgradeAnnounceInput{
+		HubManaged:             saasHive != nil && !spokeManaged,
+		LatchOpen:              entry.Upgrading,
+		Target:                 entry.UpgradeTarget,
+		Current:                payload.GitHash,
+		SpokeReportedUpgrading: payload.Upgrading,
+		Restart:                resp.RestartSpoke,
+	})
 
 	if ghCfg := s.pendingAppIdentityForHeartbeat(&payload); ghCfg != nil {
 		resp.GitHubAppConfig = ghCfg

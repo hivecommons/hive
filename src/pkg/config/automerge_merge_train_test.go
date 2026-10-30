@@ -26,3 +26,20 @@ func TestMergeTrainAutoMergeConfigDefaults(t *testing.T) {
 		})
 	}
 }
+
+func TestHiveSupersedingAutoMergeEnabledDefaultsOn(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name string
+		cfg  HiveSupersedingAutoMergeConfig
+		want bool
+	}{
+		{"default", HiveSupersedingAutoMergeConfig{}, true},
+		{"explicit on", HiveSupersedingAutoMergeConfig{AutoMerge: &on}, true},
+		{"explicit off", HiveSupersedingAutoMergeConfig{AutoMerge: &off}, false},
+	} {
+		if got := tc.cfg.AutoMergeEnabled(); got != tc.want {
+			t.Fatalf("%s: AutoMergeEnabled = %v want %v", tc.name, got, tc.want)
+		}
+	}
+}

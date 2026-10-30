@@ -72,6 +72,7 @@ js/tracker-row.js
 js/tracker-motion.js
 js/tracker-filter.js
 js/tracker-filter-state.js
+js/nav-count-delta.js
 js/tracker-filter-render.js
 js/tracker-filter-fetch.js
 js/tracker-actions.js

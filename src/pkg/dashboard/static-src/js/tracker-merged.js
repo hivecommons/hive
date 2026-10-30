@@ -205,7 +205,7 @@
       _stageTrackerMergingHoldTimer = 0;
       if (!_stageTracker || typeof _stageTracker !== 'object') return;
       stageTrackerNoteMerges(_stageTracker);
-      renderStageTracker();
+      renderStageTracker(undefined, true);
     }
 
     /* ---- Closed, not merged: a neutral word on the way out (#15808) ----
@@ -984,4 +984,3 @@
     // (items only ever list open work and the audit side list is pr_merged
     // only); when a recently_closed list lands, mark those issue keys true
     // in stageTrackerMergeState and they will zap through the same path.
-

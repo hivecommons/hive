@@ -414,6 +414,10 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	e.Sentinel = hasLabelFold(obs.Labels, sentinel)
 	summary, known := c.headChecks(ctx, tracker, key, obs, now)
 	e.Checks = stagelabels.CheckSummary{Total: summary.Total, Green: summary.Green, Pending: summary.Pending, Red: summary.Red, Known: known}
+	if c.hiveSupersedingPR(obs) {
+		e.HiveSuperseder = true
+		e.HiveSupersederHardStop, _ = hiveSupersederHardStop(e, contributorVerdict, c.sentinelAcknowledgedFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA))
+	}
 	switch summary.DCO {
 	case 1:
 		e.DCO = stagelabels.DCOYes
