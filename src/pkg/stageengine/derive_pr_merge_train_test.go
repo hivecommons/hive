@@ -24,6 +24,9 @@ func TestClassifyStageMergeTrainReasons(t *testing.T) {
 			{"queued-behind", prstage.MergeTrain{State: prstage.MergeTrainStateQueuedBehind, Front: 15074, Position: 3, Size: 4, OverlapFiles: files}.Reason(), stagelabels.AwaitingMergeAdmission, false},
 			{"rebasing", prstage.MergeTrain{State: prstage.MergeTrainStateRebasing, Front: 15074, Position: 2, Size: 4, Attempt: 1, MaxAttempts: 2, OverlapFiles: files}.Reason(), stagelabels.AwaitingMergeAdmission, false},
 			{"exhausted", prstage.MergeTrain{State: prstage.MergeTrainStateRebaseExhausted, Front: 15074, Position: 2, Size: 4, Attempt: 2, MaxAttempts: 2, OverlapFiles: files}.Reason(), stagelabels.NeedsDecision, true},
+			// hivecommons/hive#15810: an undecided same-issue claim across
+			// lanes is a person's call, not a turn in the queue.
+			{"claim-conflict", prstage.MergeTrain{State: prstage.MergeTrainStateClaimConflict, Front: 15793, Position: 15773}.Reason(), stagelabels.NeedsDecision, true},
 		} {
 			v := ClassifyStage(stageObservation{Lane: lane, Reason: tc.reason, HeadSHA: goldenHead, Labels: []string{"needs-rebase"}})
 			if v.Stage != tc.want || v.Rank != stageRankOwned || v.Human != tc.human || v.Terminal {

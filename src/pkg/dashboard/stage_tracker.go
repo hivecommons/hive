@@ -91,6 +91,20 @@ type StageTrackerResponse struct {
 	// the last few merges. Unlike RecentlyMerged it survives a roll, so it
 	// is what the "Merged" chip shows.
 	Merged StageTrackerMergedSummary `json:"merged"`
+	// Settings carries the operator-tunable timings the tracker's settings
+	// modal edits (hivecommons/hive#15813), so every viewer — not only the
+	// owner who may read /api/config/dashboard — sees the live values.
+	Settings StageTrackerSettings `json:"settings"`
+}
+
+// StageTrackerSettings is the live value of the timing knobs the Activity
+// Monitor settings modal edits: dashboard.stage_tracker.toast_info_s,
+// dashboard.stage_tracker.toast_error_s and
+// auto_merge.contributor_lane.soak_minutes.
+type StageTrackerSettings struct {
+	ToastInfoS  int `json:"toast_info_s"`
+	ToastErrorS int `json:"toast_error_s"`
+	SoakMinutes int `json:"soak_minutes"`
 }
 
 // StageTrackerMerged is one recently merged pull request.

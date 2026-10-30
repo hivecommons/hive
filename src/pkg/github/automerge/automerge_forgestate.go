@@ -265,6 +265,9 @@ func (c *Engine) openPullRequests(ctx context.Context, owner, repoName string, t
 	fullRepo := owner + "/" + repoName
 	if c.openPRs == nil {
 		prs, err := c.listOpenPullRequests(ctx, owner, repoName)
+		if err == nil {
+			c.rememberClaimants(fullRepo, prs)
+		}
 		if err != nil || targets == nil {
 			return prs, "", err
 		}
