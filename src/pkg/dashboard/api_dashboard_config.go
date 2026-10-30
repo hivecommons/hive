@@ -3,20 +3,22 @@ package dashboard
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
 
 type dashboardSettingsPayload struct {
-	Port                int                        `json:"port"`
-	AgentPollIntervalS  int                        `json:"agent_poll_interval_s"`
-	ExperimentLab       bool                       `json:"experiment_lab"`
-	StrategyLab         bool                       `json:"strategy_lab"`
-	AuthTokenConfigured bool                       `json:"auth_token_configured"`
-	AuthorizedUsers     []string                   `json:"authorized_users"`
-	AuthorizedUserNames map[string]string          `json:"authorized_user_names"`
-	HubProxied          bool                       `json:"hub_proxied"`
-	IssueBands          dashboardIssueBandsPayload `json:"issue_bands"`
+	Port                int                          `json:"port"`
+	AgentPollIntervalS  int                          `json:"agent_poll_interval_s"`
+	ExperimentLab       bool                         `json:"experiment_lab"`
+	StrategyLab         bool                         `json:"strategy_lab"`
+	AuthTokenConfigured bool                         `json:"auth_token_configured"`
+	AuthorizedUsers     []string                     `json:"authorized_users"`
+	AuthorizedUserNames map[string]string            `json:"authorized_user_names"`
+	HubProxied          bool                         `json:"hub_proxied"`
+	IssueBands          dashboardIssueBandsPayload   `json:"issue_bands"`
+	StageTracker        dashboardStageTrackerPayload `json:"stage_tracker"`
 }
 
 type dashboardIssueBandsPayload struct {
@@ -34,6 +36,8 @@ func dashboardSettingsResponse(cfg *config.Config) dashboardSettingsPayload {
 	for k, v := range d.AuthorizedUserNames {
 		names[k] = v
 	}
+	toastInfo := int(cfg.StageTrackerToastInfo() / time.Second)
+	toastError := int(cfg.StageTrackerToastError() / time.Second)
 	return dashboardSettingsPayload{
 		Port:                d.Port,
 		AgentPollIntervalS:  d.AgentPollIntervalS,
@@ -48,6 +52,7 @@ func dashboardSettingsResponse(cfg *config.Config) dashboardSettingsPayload {
 			DoneLabels:    append([]string{}, d.IssueBands.DoneLabels...),
 			StaleDays:     d.IssueBands.StaleDays,
 		},
+		StageTracker: dashboardStageTrackerPayload{ToastInfoS: &toastInfo, ToastErrorS: &toastError},
 	}
 }
 
@@ -63,15 +68,16 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body struct {
-		Port                *int                        `json:"port"`
-		AgentPollIntervalS  *int                        `json:"agent_poll_interval_s"`
-		ExperimentLab       *bool                       `json:"experiment_lab"`
-		StrategyLab         *bool                       `json:"strategy_lab"`
-		AuthToken           *string                     `json:"auth_token"`
-		AuthorizedUsers     []string                    `json:"authorized_users"`
-		AuthorizedUserNames map[string]string           `json:"authorized_user_names"`
-		HubProxied          *bool                       `json:"hub_proxied"`
-		IssueBands          *dashboardIssueBandsPayload `json:"issue_bands"`
+		Port                *int                          `json:"port"`
+		AgentPollIntervalS  *int                          `json:"agent_poll_interval_s"`
+		ExperimentLab       *bool                         `json:"experiment_lab"`
+		StrategyLab         *bool                         `json:"strategy_lab"`
+		AuthToken           *string                       `json:"auth_token"`
+		AuthorizedUsers     []string                      `json:"authorized_users"`
+		AuthorizedUserNames map[string]string             `json:"authorized_user_names"`
+		HubProxied          *bool                         `json:"hub_proxied"`
+		IssueBands          *dashboardIssueBandsPayload   `json:"issue_bands"`
+		StageTracker        *dashboardStageTrackerPayload `json:"stage_tracker"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -132,6 +138,10 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 		}
 		next.IssueBands.StaleDays = body.IssueBands.StaleDays
 	}
+	if err := applyStageTrackerSettings(&next, body.StageTracker); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	cfg.Dashboard = next
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after dashboard settings update", "error", err)
@@ -139,5 +149,10 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.auditFromRequest(r, "config_dashboard_settings", auditDetail("section", "dashboard"), "")
+	if body.StageTracker != nil {
+		// The tracker payload carries the toast knobs; drop the memoised
+		// body so the next poll sees the new durations.
+		s.invalidateStageTrackerCache()
+	}
 	jsonResponse(w, dashboardSettingsResponse(cfg))
 }
