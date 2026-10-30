@@ -9,6 +9,9 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueshape"
 )
 
 // stateReasonNotPlanned is the GitHub state_reason of an issue closed as
@@ -116,7 +119,9 @@ func (g *GitHubFiler) waitFor(ctx context.Context, d time.Duration) error {
 // makes a store loss, or a save failure after a successful create, re-find
 // the existing fork issue instead of filing a second one (#11579).
 func (g *GitHubFiler) File(ctx context.Context, issue Issue) (int, error) {
-	req := &gh.IssueRequest{Title: gh.Ptr(issue.Title), Body: gh.Ptr(issue.Body)}
+	// RenderIssue already tags the title; this is the raw create, so it is
+	// the last place the `[governor]` tag can be guaranteed.
+	req := &gh.IssueRequest{Title: gh.Ptr(issueshape.AgentIssueTitle(config.OriginSourceGovernor, issue.Title)), Body: gh.Ptr(issue.Body)}
 	if len(issue.Labels) > 0 {
 		labels := append([]string(nil), issue.Labels...)
 		req.Labels = &labels

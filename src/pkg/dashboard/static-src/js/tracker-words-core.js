@@ -433,10 +433,17 @@
        beyond ride one. A PR still at CI / Review whose files overlap
        another open PR's carries `overlap: {behind, with, files, note}`
        instead of `merge_train` — hive's own page once drew "merge train ·
-       2 PRs · 1st: #15637" under two rows that both read CI / Review. The
-       row shows one muted badge, "overlaps #15637", whose hover is the
-       note: "overlaps #15637 (sidebar.html, index.html) — will queue
-       behind it". No rail, no ordinal, no header. */
+       2 PRs · 1st: #15637" under two rows that both read CI / Review, and
+       later "1st: #15741" over a CI / Review row while #15748 and #15755
+       sat green at 080 behind it. The lane merges ready members first,
+       so the row's lead chip stays in its own column and a small
+       secondary train chip says where it joins: "train · joins behind
+       #15748 when green" (hover: "overlaps #15748 (hive-merge.md) —
+       joins the merge train behind it when green"), or, when no member
+       of the train is ready, "train · 1st once green". No rail, no
+       ordinal, no header. */
+    // The secondary chip's lead word.
+    const STAGE_TRACKER_OVERLAP_CHIP_LEAD = 'train · ';
     // Pure: the row's overlap hint, or null when it rides a train or
     // overlaps nothing.
     function stageTrackerOverlap(item) {
@@ -446,15 +453,14 @@
       if (!(Number(o.behind) > 0) && !withPRs.length) return null;
       return o;
     }
-    // Pure: the badge word — "overlaps #15637" (the PR it queues behind,
-    // else the first PR it overlaps, "+1" for the rest).
+    // Pure: the chip's words — "train · joins behind #15748 when green"
+    // (the ready front it joins behind), else "train · 1st once green"
+    // (nobody in the train is ready; this one is provisionally first).
     function stageTrackerOverlapBadgeText(item) {
       const o = stageTrackerOverlap(item);
       if (!o) return '';
-      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
-      const lead = Number(o.behind) > 0 ? Number(o.behind) : withPRs[0];
-      const rest = withPRs.filter(n => n !== lead).length;
-      return 'overlaps #' + lead + (Number(o.behind) > 0 ? '' : (rest > 0 ? ' +' + rest : ''));
+      if (Number(o.behind) > 0) return STAGE_TRACKER_OVERLAP_CHIP_LEAD + 'joins behind #' + Number(o.behind) + ' when green';
+      return STAGE_TRACKER_OVERLAP_CHIP_LEAD + '1st once green';
     }
     // Pure: the hover sentence — the server's note, else built from the
     // parts the same way.
@@ -464,9 +470,9 @@
       if (o.note) return String(o.note);
       const files = (Array.isArray(o.files) ? o.files : []).filter(Boolean);
       const paren = files.length ? ' (' + files.join(', ') + ')' : '';
-      if (Number(o.behind) > 0) return 'overlaps #' + Number(o.behind) + paren + ' — will queue behind it';
+      if (Number(o.behind) > 0) return 'overlaps #' + Number(o.behind) + paren + ' — joins the merge train behind it when green';
       const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
-      return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — merges ahead of ' + (withPRs.length > 1 ? 'them once all are ready' : 'it once both are ready');
+      return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — no member of the train is merge-ready yet; provisionally 1st, merges ahead of ' + (withPRs.length > 1 ? 'them' : 'it') + ' if it is green first';
     }
     // Pure: the muted badge beside the row's chips; '' without a hint.
     function stageTrackerOverlapBadgeHtml(item) {

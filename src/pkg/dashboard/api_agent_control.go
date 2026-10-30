@@ -205,6 +205,7 @@ func (s *Server) claimAgentFieldOwnership(name, model, backend string) {
 	if backend != "" {
 		ac.Backend = backend
 		ac.BackendOwner = config.FieldOwnerOperator
+		s.reconcileLaunchCmdForBackend(name, &ac)
 	}
 	s.deps.Config.Agents[name] = ac
 	_ = s.deps.AgentMgr.UpdateConfig(name, ac)
@@ -223,6 +224,39 @@ func (s *Server) claimAgentFieldOwnership(name, model, backend string) {
 		}
 	}
 	s.ClearSystemAlert("agent-field-save-failed")
+}
+
+// reconcileLaunchCmdForBackend clears ac.LaunchCmd when it launches a
+// different CLI than ac.Backend, so a backend change never persists the
+// contradiction the loader rejects at boot. A launch_cmd that already agrees
+// with the backend is left alone. Returns whether launch_cmd was cleared.
+func (s *Server) reconcileLaunchCmdForBackend(name string, ac *config.AgentConfig) bool {
+	kept, cleared := s.deps.Config.Governor.ReconcileLaunchCmdForBackend(ac.Backend, ac.LaunchCmd)
+	if !cleared {
+		return false
+	}
+	s.logger.Info("launch_cmd cleared on backend switch",
+		"agent", name, "previous_launch_cmd", ac.LaunchCmd, "backend", ac.Backend)
+	ac.LaunchCmd = kept
+	return true
+}
+
+// launchCmdDegradedAlertPrefix prefixes the per-agent banner raised when the
+// loader dropped a base-config launch_cmd (config.DegradeContradictingLaunchCmds).
+const launchCmdDegradedAlertPrefix = "launch-cmd-degraded-"
+
+// surfaceLaunchCmdDegradations raises one dashboard alert per agent whose
+// launch_cmd the loader dropped at boot, so the operator learns the running
+// config is not the config on disk without reading pod logs.
+func (s *Server) surfaceLaunchCmdDegradations() {
+	if s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	for _, d := range s.deps.Config.LaunchCmdDegradations {
+		s.AddSystemAlert(launchCmdDegradedAlertPrefix+d.Agent, "error",
+			fmt.Sprintf("Agent %s: its saved launch_cmd %q contradicts backend %q, so it was dropped at startup and the agent launches on the %s default command. Save the agent once from the dashboard (or clear launch_cmd in its config) to make this permanent.",
+				d.Agent, d.LaunchCmd, d.Backend, d.Backend))
+	}
 }
 
 // claimAgentPauseOwnership marks name's pause/run state operator-owned and

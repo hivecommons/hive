@@ -106,7 +106,7 @@ func (c *Client) findAdvisoryIssueCached(ctx context.Context, owner, repo string
 			continue
 		}
 		issue, _, err := c.client.Issues.Get(ctx, owner, repo, n)
-		if err != nil || issue.IsPullRequest() || issue.GetTitle() != advisoryTitle {
+		if err != nil || issue.IsPullRequest() || !isAdvisoryTitle(issue.GetTitle()) {
 			continue
 		}
 		if issue.GetState() != "open" {
@@ -141,7 +141,7 @@ func (c *Client) confirmAdvisoryIssue(ctx context.Context, store forgeStateReade
 		return 0, errAdvisoryCacheMiss
 	case getErr != nil:
 		return 0, fmt.Errorf("confirming advisory issue #%d: %w", n, getErr)
-	case issue.IsPullRequest() || issue.GetTitle() != advisoryTitle:
+	case issue.IsPullRequest() || !isAdvisoryTitle(issue.GetTitle()):
 		c.rememberAdvisoryIssue(full, 0)
 		return 0, errAdvisoryCacheMiss
 	case issue.GetState() == "open":
