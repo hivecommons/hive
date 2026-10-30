@@ -69,7 +69,7 @@ func (s *Service) registerInceptionCommand() {
 func (s *Service) cmdInception(ctx context.Context, args string) (string, error) {
 	fields := strings.Fields(strings.TrimSpace(args))
 	if len(fields) == 0 {
-		return "❌ Usage: `!inception start <idea>` | `scan <repo-url>` | `state` | `answer <n> <text>` | `facts <json>` | `approve` | `reset`", nil
+		return "❌ Usage: `!inception start <idea>` | `scan <repo-url>` | `state` | `answer <n> <text>` | `skip <n>` | `submit` | `facts <json>` | `approve` | `reset`", nil
 	}
 	sub := strings.ToLower(fields[0])
 	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), fields[0]))
@@ -105,6 +105,16 @@ func (s *Service) cmdInception(ctx context.Context, args string) (string, error)
 			return err.Error(), nil
 		}
 		return s.cmdInceptionAnswer(ctx, rest)
+	case "skip":
+		if err := requireCommandOwner(ctx); err != nil {
+			return err.Error(), nil
+		}
+		return s.cmdInceptionSkip(ctx, rest)
+	case "submit":
+		if err := requireCommandOwner(ctx); err != nil {
+			return err.Error(), nil
+		}
+		return s.cmdInceptionSubmit(ctx)
 	case "facts":
 		if err := requireCommandOwner(ctx); err != nil {
 			return err.Error(), nil
@@ -164,7 +174,8 @@ func (s *Service) cmdInceptionState(ctx context.Context) (string, error) {
 	}
 	if len(state.State.Questions) > 0 {
 		if inceptionAcceptsAnswers(state.State.Phase) {
-			lines = append(lines, formatInceptionQuestions(state.State.Questions, state.State.Answers))
+			answers, skipped := s.mergedInceptionAnswers(state)
+			lines = append(lines, formatInceptionQuestionsWithSkips(state.State.Questions, answers, skipped))
 		} else {
 			lines = append(lines, formatInceptionAnswerSummary(state.State.Questions, state.State.Answers))
 		}
@@ -195,12 +206,161 @@ func (s *Service) cmdInceptionAnswer(ctx context.Context, args string) (string, 
 		return fmt.Sprintf("❌ Question %d is not available.", n), nil
 	}
 	answer := strings.TrimSpace(parts[1])
-	body, _ := json.Marshal(map[string]map[string]string{"answers": map[string]string{state.State.Questions[n-1].ID: answer}})
-	if err := s.dashboardPost(ctx, "/api/inception/answer", body); err != nil {
-		return fmt.Sprintf("❌ Failed to submit answer: %s", inceptionErrorText(err)), nil
+	if !inceptionAcceptsAnswers(state.State.Phase) {
+		return fmt.Sprintf("❌ cannot submit answers in phase %s; remaining questions use their defaults", state.State.Phase), nil
 	}
-	s.markPendingAnsweredForRole(state.State.Questions[n-1].ID)
-	return fmt.Sprintf("✅ Answered question %d.", n), nil
+	key := inceptionRunKey(state)
+	s.mu.Lock()
+	buf := s.inceptionBufferLocked(key)
+	buf.Answers[state.State.Questions[n-1].ID] = answer
+	delete(buf.Skipped, state.State.Questions[n-1].ID)
+	s.mu.Unlock()
+
+	answers, skipped := s.mergedInceptionAnswers(state)
+	if inceptionInterviewDone(state.State.Questions, answers, skipped) {
+		return s.submitInceptionBuffer(ctx, state)
+	}
+	return fmt.Sprintf("✅ Recorded answer %d (%d of %d). Reply `!inception submit` to send them, or keep answering.",
+		n, countInceptionAnswered(state.State.Questions, answers), len(state.State.Questions)), nil
+}
+
+func (s *Service) cmdInceptionSkip(ctx context.Context, args string) (string, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(args))
+	if err != nil || n < 1 {
+		return "❌ Usage: `!inception skip <n>`", nil
+	}
+	state, err := s.fetchInceptionState(ctx)
+	if err != nil {
+		return fmt.Sprintf("❌ Failed to load inception questions: %s", err), nil
+	}
+	if n > len(state.State.Questions) {
+		return fmt.Sprintf("❌ Question %d is not available.", n), nil
+	}
+	if !inceptionAcceptsAnswers(state.State.Phase) {
+		return fmt.Sprintf("❌ cannot skip questions in phase %s", state.State.Phase), nil
+	}
+	id := state.State.Questions[n-1].ID
+	s.mu.Lock()
+	buf := s.inceptionBufferLocked(inceptionRunKey(state))
+	delete(buf.Answers, id)
+	buf.Skipped[id] = true
+	s.mu.Unlock()
+
+	answers, skipped := s.mergedInceptionAnswers(state)
+	if inceptionInterviewDone(state.State.Questions, answers, skipped) {
+		return s.submitInceptionBuffer(ctx, state)
+	}
+	return fmt.Sprintf("⏭️ Skipped question %d; it will use its default. Reply `!inception submit` to send your answers, or keep answering.", n), nil
+}
+
+func (s *Service) cmdInceptionSubmit(ctx context.Context) (string, error) {
+	state, err := s.fetchInceptionState(ctx)
+	if err != nil {
+		return fmt.Sprintf("❌ Failed to load inception questions: %s", err), nil
+	}
+	return s.submitInceptionBuffer(ctx, state)
+}
+
+// submitInceptionBuffer sends every buffered answer in one request, so the
+// engine leaves clarify once, after the operator is done answering.
+func (s *Service) submitInceptionBuffer(ctx context.Context, state *inceptionStateResponse) (string, error) {
+	key := inceptionRunKey(state)
+	s.mu.Lock()
+	var batch map[string]string
+	if buf := s.inceptionBuffers[key]; buf != nil {
+		batch = make(map[string]string, len(buf.Answers))
+		for id, v := range buf.Answers {
+			batch[id] = v
+		}
+	}
+	s.mu.Unlock()
+	if len(batch) == 0 {
+		return "❌ No buffered answers to submit. Use `!inception answer <n> <text>` first.", nil
+	}
+	body, _ := json.Marshal(map[string]map[string]string{"answers": batch})
+	if err := s.dashboardPost(ctx, "/api/inception/answer", body); err != nil {
+		return fmt.Sprintf("❌ Failed to submit answers: %s", inceptionErrorText(err)), nil
+	}
+	s.mu.Lock()
+	delete(s.inceptionBuffers, key)
+	s.mu.Unlock()
+	for id := range batch {
+		s.markPendingAnsweredForRole(id)
+	}
+	answers := make(map[string]string, len(state.State.Answers)+len(batch))
+	for id, v := range state.State.Answers {
+		answers[id] = v
+	}
+	for id, v := range batch {
+		answers[id] = v
+	}
+	reply := fmt.Sprintf("✅ Submitted %d answers.", len(batch))
+	if missing := len(state.State.Questions) - countInceptionAnswered(state.State.Questions, answers); missing > 0 {
+		reply += fmt.Sprintf(" The remaining %d questions use their defaults.", missing)
+	}
+	return reply, nil
+}
+
+type inceptionBuffer struct {
+	Answers map[string]string
+	Skipped map[string]bool
+}
+
+// inceptionRunKey identifies an inception run so buffered answers never leak
+// into a later run.
+func inceptionRunKey(state *inceptionStateResponse) string {
+	return state.State.Mode + "\x00" + state.State.IdeaText + "\x00" + state.State.RepoURL
+}
+
+func (s *Service) inceptionBufferLocked(key string) *inceptionBuffer {
+	if s.inceptionBuffers == nil {
+		s.inceptionBuffers = make(map[string]*inceptionBuffer)
+	}
+	buf := s.inceptionBuffers[key]
+	if buf == nil {
+		buf = &inceptionBuffer{Answers: map[string]string{}, Skipped: map[string]bool{}}
+		s.inceptionBuffers[key] = buf
+	}
+	return buf
+}
+
+// mergedInceptionAnswers overlays the buffered answers on the server's.
+func (s *Service) mergedInceptionAnswers(state *inceptionStateResponse) (map[string]string, map[string]bool) {
+	answers := make(map[string]string, len(state.State.Answers))
+	for id, v := range state.State.Answers {
+		answers[id] = v
+	}
+	skipped := map[string]bool{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if buf := s.inceptionBuffers[inceptionRunKey(state)]; buf != nil {
+		for id, v := range buf.Answers {
+			answers[id] = v
+		}
+		for id := range buf.Skipped {
+			skipped[id] = true
+		}
+	}
+	return answers, skipped
+}
+
+func countInceptionAnswered(questions []inceptionQuestion, answers map[string]string) int {
+	n := 0
+	for _, q := range questions {
+		if strings.TrimSpace(answers[q.ID]) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+func inceptionInterviewDone(questions []inceptionQuestion, answers map[string]string, skipped map[string]bool) bool {
+	for _, q := range questions {
+		if strings.TrimSpace(answers[q.ID]) == "" && !skipped[q.ID] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) cmdInceptionFacts(ctx context.Context, args string) (string, error) {
@@ -368,6 +528,7 @@ func (s *Service) seedPendingInterviews(questions []inceptionQuestion, answers m
 func (s *Service) clearPendingInterviews() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.inceptionBuffers = nil
 	for key := range s.pendingInterviews {
 		if s.backend != nil && key.backend != s.backend.Name() {
 			continue
@@ -460,6 +621,10 @@ func inceptionErrorText(err error) string {
 }
 
 func formatInceptionQuestions(questions []inceptionQuestion, answers map[string]string) string {
+	return formatInceptionQuestionsWithSkips(questions, answers, nil)
+}
+
+func formatInceptionQuestionsWithSkips(questions []inceptionQuestion, answers map[string]string, skipped map[string]bool) string {
 	if len(questions) == 0 {
 		return "No pending inception questions."
 	}
@@ -469,9 +634,11 @@ func formatInceptionQuestions(questions []inceptionQuestion, answers map[string]
 		suffix := ""
 		if strings.TrimSpace(answers[q.ID]) != "" {
 			suffix = " ✅"
+		} else if skipped[q.ID] {
+			suffix = " ⏭️ skipped"
 		}
 		lines = append(lines, fmt.Sprintf("%d. %s%s", i+1, q.Text, suffix))
 	}
-	lines = append(lines, "Reply in plain language to answer the next unanswered question, or use `!inception answer <n> <text>`.")
+	lines = append(lines, "Reply in plain language to answer the next unanswered question, or use `!inception answer <n> <text>`, `!inception skip <n>` and `!inception submit`.")
 	return strings.Join(lines, "\n")
 }

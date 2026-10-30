@@ -124,10 +124,14 @@ engine enters `clarify`, the spine posts the numbered question list; owner
 allowlisted users can answer with ordinary unprefixed replies, which are
 submitted to the next unanswered question. Explicit commands remain available:
 `!inception state`, `!inception answer <n> <text>`,
+`!inception skip <n>`, `!inception submit`,
 `!inception facts <json-array-of-facts>`, `!inception approve`, and
 `!inception reset`. Owner-only actions still go through the existing
 `/api/inception/*` routes and owner gate; the dashboard form remains available
-as a fallback for this release.
+as a fallback for this release. `!inception answer` buffers each answer and
+sends them in one batch once every question is answered or skipped (or on
+`!inception submit`, with unanswered questions using their defaults), because
+the engine leaves `clarify` on the first submission.
 
 Optional wiki-management calls, usable at any point once an inception has
 produced wiki files:
