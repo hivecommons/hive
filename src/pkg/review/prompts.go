@@ -760,10 +760,21 @@ func buildHeadFanOutInstruction(pr PullRequest, perspectives []Perspective, back
 	fmt.Fprintf(&b, "1. Fetch the PR metadata, the full diff of %s#%d and any linked issue or contract ONCE, yourself, as the read instructions above describe.\n", pr.Repo, pr.Number)
 	fmt.Fprintf(&b, "2. Start one sub-agent per perspective, all %d at once, IN PARALLEL, not one after another (Claude Code: the Task tool; Codex and other backends: their sub-agent facility). Give each sub-agent the diff, the PR metadata, the linked issue or contract text, the shared instructions above (scope contract, grounding, finding schema) and ONLY its own section from PERSPECTIVE SECTIONS below. Each sub-agent returns exactly one verdict object for its perspective.\n", len(perspectives))
 	writeFanOutModelPin(&b, backend, model)
+	fmt.Fprintf(&b, "   Grounding budget: the shared %d tool calls cover this whole review, not each sub-agent. Tell each sub-agent it may make at most %d investigation tool calls for its own perspective, so the total across all %d stays within the cap.\n", combinedGroundingBudget(len(perspectives)), fanOutSubAgentBudget(len(perspectives)), len(perspectives))
 	b.WriteString("3. Sub-agents must NOT post anything on the PR, must NOT call hive-review, must NOT read other hive reviews of this head SHA, and must NOT fetch the PR or its diff again: they work from what you passed them. They may read the surrounding code in the checkout to ground a finding.\n")
 	b.WriteString("4. Collect every result, check each object names its own perspective and carries this PR's repo, number, head_sha and body_digest, write them as ONE JSON array to the verdict file, and record it ONCE with the --record-verdict command above. Only you call hive-review.\n")
 	b.WriteString("If sub-agents are unavailable, or one fails or returns no usable verdict, review those perspectives yourself one by one in this session. The array contract is unchanged either way.\n")
 	return b.String()
+}
+
+// fanOutSubAgentBudget splits the combined grounding budget evenly across the
+// per-perspective sub-agents of a fan-out (hivecommons/hive#15435), so the
+// shared "whole review" cap is not read as each sub-agent's own.
+func fanOutSubAgentBudget(n int) int {
+	if n < 1 {
+		n = 1
+	}
+	return max(1, combinedGroundingBudget(n)/n)
 }
 
 // writeFanOutModelPin keeps the head's model guarantee across the fan-out.
