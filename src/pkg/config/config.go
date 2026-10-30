@@ -235,6 +235,11 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+	// LaunchCmdDegradations lists the base-config agents whose launch_cmd the
+	// loader dropped because it contradicted the agent's backend, so the
+	// dashboard can raise a banner for each. Runtime-only; see
+	// DegradeContradictingLaunchCmds.
+	LaunchCmdDegradations []LaunchCmdDegradation `yaml:"-" json:"-"`
 	// ReviewerAutoscaleActive is the reviewer autoscaler's current target
 	// replica count for the autoscaled lane (hivecommons/hive#14685).
 	// Runtime-only: it is never persisted, is carried across config reloads
@@ -5450,6 +5455,11 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 		}
 	}
 
+	// A rejected overlay above "fell back to base config" — which is no help
+	// when the base entry carries the same stale launch_cmd. Drop it here
+	// rather than let validation exit the process.
+	cfg.DegradeContradictingLaunchCmds()
+
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return nil, fmt.Errorf("applying agent spec repo scopes: %w", err)
 	}
@@ -6656,6 +6666,30 @@ func (g GovernorConfig) ValidateLaunchCmdBackend(backend, launchCmd string) erro
 	return nil
 }
 
+// ReconcileLaunchCmdForBackend returns the launch_cmd an agent should keep
+// once its backend is set to backend, and whether that means dropping the
+// one it had. backend is the operator-owned field; launch_cmd is derived from
+// it (the dashboard fills the default per backend when it is empty), so when
+// the two disagree — judged by the same ValidateLaunchCmdBackend gate the
+// loader applies — launch_cmd is the stale half and is cleared. A launch_cmd
+// that already agrees with the new backend, or has no opinion (an unknown
+// wrapper script), is kept untouched.
+//
+// Every path that changes an agent's backend must call this before
+// persisting. The dashboard "switch backend" control did not, and persisted a
+// `backend: codex` next to a `launch_cmd: /usr/bin/bob …`; the running
+// process kept its in-memory state so nothing failed until the next restart,
+// when the loader rejected the config and the hive crash-looped for 18 hours.
+func (g GovernorConfig) ReconcileLaunchCmdForBackend(backend, launchCmd string) (string, bool) {
+	if strings.TrimSpace(launchCmd) == "" {
+		return launchCmd, false
+	}
+	if g.ValidateLaunchCmdBackend(backend, launchCmd) == nil {
+		return launchCmd, false
+	}
+	return "", true
+}
+
 // ClearInvalidInferenceLaunchCmds removes persisted launch_cmd values that
 // launch an inference backend or configured gateway binary. Those backends are
 // model routes; the process must be the claude CLI.
@@ -7015,6 +7049,32 @@ func (c *Config) validateSaveGuard() error {
 	if len(c.Agents) == 0 && len(c.RemovedAgents) == 0 {
 		log.Printf("WARNING: config.Save() blocked — no agents configured and no tombstones, would corrupt hive.yaml")
 		return fmt.Errorf("no agents configured")
+	}
+	// A backend/launch_cmd contradiction written here is a config the loader
+	// will reject on the next boot. Refuse it now, while the caller can still
+	// report the error, instead of persisting a crash-loop.
+	if err := c.ValidateAgentLaunchCmds(); err != nil {
+		log.Printf("WARNING: config.Save() blocked — %v", err)
+		return err
+	}
+	return nil
+}
+
+// ValidateAgentLaunchCmds runs the backend/launch_cmd gate over every agent.
+// It is the write-side twin of the loader's check: the dashboard's
+// persistence paths (Save, SaveAgentFile) call it so a contradiction is
+// refused at save time rather than discovered as a fatal error at boot.
+func (c *Config) ValidateAgentLaunchCmds() error {
+	names := make([]string, 0, len(c.Agents))
+	for name := range c.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		agent := c.Agents[name]
+		if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
+		}
 	}
 	return nil
 }

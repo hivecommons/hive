@@ -28,6 +28,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 		s.logger = slog.Default()
 	}
 	s.deps = deps
+	s.surfaceLaunchCmdDegradations()
 	s.loadSidebarFromDisk()
 	s.mergedLedger()
 	s.registerContributeRoutes()
