@@ -63,4 +63,4 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:315` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:316` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:317` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1633` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1638` |
