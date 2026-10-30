@@ -81,6 +81,17 @@ type StageTrackerResponse struct {
 	// the SPA tell "merged" from "closed" between two polls and play its
 	// opt-in merge sound for the right rows.
 	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
+	// RecentlyClosed lists the pull requests that left Items closed but
+	// not merged within stageTrackerMergedWindow — superseded, withdrawn,
+	// closed by a decision — as the webhook / sweep / audit paths saw them
+	// (stage_tracker_recently_closed.go). With RecentlyMerged it lets the
+	// SPA tell a close from a merge when a row vanishes between two polls
+	// and say so instead of staying silent (hivecommons/hive#15808).
+	RecentlyClosed []StageTrackerClosed `json:"recently_closed,omitempty"`
+	// MergedHoldMS is dashboard.stage_tracker.merged_hold_s in
+	// milliseconds: how long the SPA may keep a vanished row at "Merging ·
+	// merge landed" while it waits for the merged fact.
+	MergedHoldMS int `json:"merged_hold_ms"`
 	// Merged24h is the same list over the last 24 hours, newest first. It
 	// seeded the SPA's former "Merged today" counter; the Merged chip now
 	// reads Merged (the durable ledger) and this stays for older SPAs.
@@ -91,6 +102,20 @@ type StageTrackerResponse struct {
 	// the last few merges. Unlike RecentlyMerged it survives a roll, so it
 	// is what the "Merged" chip shows.
 	Merged StageTrackerMergedSummary `json:"merged"`
+	// Settings carries the operator-tunable timings the tracker's settings
+	// modal edits (hivecommons/hive#15813), so every viewer — not only the
+	// owner who may read /api/config/dashboard — sees the live values.
+	Settings StageTrackerSettings `json:"settings"`
+}
+
+// StageTrackerSettings is the live value of the timing knobs the Activity
+// Monitor settings modal edits: dashboard.stage_tracker.toast_info_s,
+// dashboard.stage_tracker.toast_error_s and
+// auto_merge.contributor_lane.soak_minutes.
+type StageTrackerSettings struct {
+	ToastInfoS  int `json:"toast_info_s"`
+	ToastErrorS int `json:"toast_error_s"`
+	SoakMinutes int `json:"soak_minutes"`
 }
 
 // StageTrackerMerged is one recently merged pull request.
@@ -100,7 +125,14 @@ type StageTrackerMerged struct {
 	MergedAt time.Time `json:"merged_at"`
 }
 
-// stageTrackerMergedWindow bounds RecentlyMerged. It is deliberately much
+// StageTrackerClosed is one recently closed, unmerged pull request.
+type StageTrackerClosed struct {
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	ClosedAt time.Time `json:"closed_at"`
+}
+
+// stageTrackerMergedWindow bounds RecentlyMerged (and RecentlyClosed). It is deliberately much
 // longer than the cache TTL plus the SPA's 30 s poll: a tab that missed a
 // few polls (throttled in the background) still sees the merge it was
 // watching for, and the SPA dedupes per PR so a longer list never replays.
@@ -511,6 +543,11 @@ type StageTrackerItem struct {
 	// in_progress or pushed, with the evidence (hivecommons/hive#15280,
 	// stage_tracker_rework.go).
 	Rework *StageTrackerRework `json:"rework,omitempty"`
+	// Push is, on a PR row in the CI / Review column, the push the hive
+	// waits on or the one that just landed, so the gray pill can say
+	// "waiting on @zoe to push · 38m" or "@zoe pushed abc1234 · 2m"
+	// (hivecommons/hive#15784, stage_tracker_push.go).
+	Push *StageTrackerPush `json:"push,omitempty"`
 	// Takeover is, on a 072 / 071 clanker PR, the operator's Adopt now /
 	// Reroute offer and any pending reroute or forced adoption
 	// (hivecommons/hive#15038, stage_tracker_takeover.go).
@@ -708,6 +745,8 @@ type StageTrackerLinkedPR struct {
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
 	// Rework mirrors the nested PR's own row field (hivecommons/hive#15280).
 	Rework *StageTrackerRework `json:"rework,omitempty"`
+	// Push mirrors the nested PR's own row field (hivecommons/hive#15784).
+	Push *StageTrackerPush `json:"push,omitempty"`
 	// Takeover mirrors the nested PR's own row field (hivecommons/hive#15038).
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 	// Supersedes mirrors the nested PR's own row field.

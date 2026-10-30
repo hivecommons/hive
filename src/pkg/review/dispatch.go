@@ -497,6 +497,9 @@ type DispatchKick struct {
 	// DeltaPreviousHead is set when this kick is a delta re-review against
 	// that head (review.delta_rereview); empty for a full review.
 	DeltaPreviousHead string
+	// Priority is why the PR was placed where it was in this cycle's
+	// dispatch order (ReviewPriority*), for the dispatch log.
+	Priority string
 }
 
 // SkippedReviewModel is a perspective kick the planner withheld because the
@@ -678,6 +681,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	}
 	availableSlots := maxParallel
 	prs, plan.Promoted = promoteStarvedWaits(prs, plan.State.Waits, opts.ProjectOrg)
+	prs = orderByReviewPriority(prs, plan.Promoted, opts.ProjectOrg)
 	for _, pr := range prs {
 		pr.Repo = fullRepoName(pr.Repo, opts.ProjectOrg)
 		if pr.Number <= 0 || pr.Repo == "" {
@@ -904,7 +908,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewModel:           choice.Model,
 				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 			for _, p := range missing {
 				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			}
@@ -974,7 +978,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewModel:           choice.Model,
 				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			availableSlots--
 		}

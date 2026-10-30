@@ -224,7 +224,12 @@ that does not supersede it is the hive's own `require_current_base` refresh:
 a merge commit authored by the App whose parents are the decided head and a
 commit on the base branch, and whose three-dot diff against the base is
 file-for-file (name, status, blob, line counts, patch) identical to the
-decided head's. Before any gate reads the new head — the reviewer-verdict
+decided head's. Up to five such refreshes may stack before any gate reads
+the PR: the carry walks the first-parent chain back from the new head and
+every hop must itself pass the same check, so two App merge-from-base
+commits in a row still carry while a content commit anywhere in the chain
+does not ([#15766](https://github.com/hivecommons/hive/issues/15766)).
+Before any gate reads the new head — the reviewer-verdict
 stage route, the automerge review gate, operator admission and the hold
 guard — the decision is re-recorded on it with `carried_from_head` naming
 the original, and one INFO line `decision carried over base refresh` is
@@ -355,6 +360,98 @@ merge a breaking change) or on GitHub. Hive posts one comment, through the write
 gate, saying it will wait for a human. The rule exists because a ⚠️-titled
 PR was auto-merged by the trusted-author lane while its owner was still
 deciding whether to ship it.
+
+### Final base preparation: one refresh owner, no ready-work blockade
+
+For repositories governed by `auto_merge.require_current_base` (including
+the inherited default), automatic base refreshes share **one preparation
+owner per canonical repository and destination branch**, across App,
+trusted-author and contributor lanes. Repository names are case-insensitive;
+branch names remain case-sensitive. Unrelated destinations progress independently.
+
+A behind head enters final preparation only after its existing CI, review
+and lane admission gates pass, **without first requiring an up-to-date base**.
+The owner refreshes with an expected-head SHA and then waits for CI and review
+on the new head. Pending runner jobs (including queued sign-off checks) are
+pending, not failures. Preparation is outside ready merge-train membership:
+`base-refresh:preparing` and `base-refresh:queued-behind#N` remain at CI / Review,
+never ready-to-merge. Waiting heads may continue development and review.
+The adopted stale-red recovery path can also admit its existing, proven
+base-fixes-failure repair; that admission never authorizes a merge.
+Explicit trusted-human merge-forward repair shares the same owner and
+write-ahead identity. Its conflict-repair allowance lasts only through the
+existing mutation-reconciliation TTL; a failed/conflicting result returns to
+the normal repair path, never a ready seat.
+
+**Ownership serializes refreshes, not ready merges.** A successor that is
+already current-base, CI-green and reviewed passes every normal merge gate
+without waiting for a preparing owner. A behind successor cannot skip testing.
+Train sibling refreshes and client-side follow-up/relay/supersession updates
+defer to preparation on these repositories; opted-out repositories retain
+their previous behavior.
+
+Ownership and first-admission FIFO tickets live in `/data/base-preparation/`,
+with per-destination file locking and atomic durable snapshots. An update
+identity (PR/head/base SHA) is recorded before the request, across lanes,
+concurrent sweeps and restarts. An unchanged unresolved pair waits; after the
+existing mutation-reconciliation TTL it can retry only with an authoritative,
+still-identical head and the API's expected-head guard. Accepted updates must
+complete their normal current-head gates; no approval is transferred.
+Release occurs on merge, closed/missing/retargeted/draft/conflicting/held heads,
+failed checks, rejected review, or lost admission. Expected pending CI/review
+keeps ownership, bounded by the existing review-pending dwell (its default when
+stall detection is disabled), so a genuinely hung owner yields to successors.
+Waiting tickets are removed when their head changes or stops qualifying.
+Admission provenance prevents a different lane's non-admission from revoking
+the owning lane's reservation or FIFO ticket. An old waiting ticket reserves
+order only: its head must qualify afresh in its lane before becoming owner.
+
+Audit logs use `automerge base preparation selected`, `refresh claimed`,
+`waiting` and `released`, with repository, base, PR, head/base SHA where relevant,
+and release/skip reason. `automerge update-branch` and the sweep's
+`updated_branches` count actual successful refresh effects; queued/preparing
+reasons do not consume the branch-update budget. Ready-only train seating and
+reviewer dispatch scheduling are separate policies.
+
+Human pushes, direct merges and external automation can still move a base.
+Such a move is coalesced until the preparation owner qualifies again; it must
+then refresh and re-pass current-head gates if still behind. This scheduler
+cannot stop external writers and does not relax strict current-base checks.
+Deploying the changed hive binary activates the policy; no agent, memory,
+review, CI, hold or authorization setting needs changing.
+
+### Merge train: ready PRs lead
+
+Every lane groups its candidates on one base whose changed files overlap
+into a **merge train** (`auto_merge.merge_train.*`, [#15117](https://github.com/hivecommons/hive/issues/15117))
+and merges one front at a time; the siblings park at stage/080 with lane
+reason `merge-train:queued-behind#<front>:<pos>/<size>:…` and, the moment
+the front merges, are update-branched (`behind`) or handed to the rebase
+resolver (`dirty`) so the next front is evaluated on a current base. Hive's
+own repo also runs the current-base gate (`require_current_base`), which
+holds a behind head until the update lands. On current-base-gated repositories
+the separate preparation owner above refreshes the next admitted head, rather
+than refreshing every waiting sibling when a front merges.
+
+The train's order is **readiness first**. Each pass the lane sorts the
+members by what it last saw of their heads: a head at the merge gate —
+green, approved, soaking or waiting on a sweep — leads; a head the lane has
+not evaluated since it was pushed comes next (so it is evaluated and
+sorted); a head still at CI / Review trails; a blocked head (red required
+check, terminal hold) trails everything and never fronts. Within a tier the
+old tiebreak holds (clean-mergeable first, then oldest, then number). The
+order is recomputed every pass, so a member that turns green moves up and
+one that turns red moves back. The front of a train is therefore always a
+ready member when the train has one; a train whose every member is still
+short of the gate has a *provisional* front, and the Activity Monitor says
+so rather than reading "1st in the merge queue".
+
+This replaced the age-first order after hive's own #15741, still at CI /
+Review, led #15748 and #15755 — both green and queued at 080 — and nothing
+merged until its checks finished. In the Activity Monitor only members at
+080 and beyond ride a train chip in the *Merge queue* column; a member still
+at CI / Review keeps its chevron in its own column with a muted
+"train · joins behind #N when green" note.
 
 ### Trusted-author auto-merge
 
@@ -585,7 +682,10 @@ A PR merges through this tier only when all of the following hold:
   the soak. The skip reason is the stable `contributor-lane:soaking`; the
   soak head, start and window are recorded once on the stage record, so the
   stage tracker computes "N left" from that deadline at request time instead
-  of the hive re-stamping its note every pass.
+  of the hive re-stamping its note every pass. The window is also editable
+  from the Activity Monitor's ⚙ → Toasts & timing ("Pre-merge soak"), which
+  writes `soak_minutes` through `PUT /api/config/auto-merge`; the lane reads
+  the knob on every pass, so a running soak follows the new window.
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
 log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
@@ -871,6 +971,28 @@ the train, an open PR's webhook that covers an issue also releases any
 contributor task already dispatched on it (see
 [operator-reference.md § Open-PR dispatch guard](operator-reference.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner)),
 so the hive does not open the second PR in the first place.
+
+The duplicate pick above sees one lane at a time. When the two PRs sit in
+**different lanes** — the hive's own PR in the self lane and a trusted
+human's PR in the trusted lane both closing one issue, as #15783 and
+#15793 did for #15773 — neither lane's winner rule saw the other and both
+marched toward merge. Every lane therefore also runs a **same-issue claim
+gate** before its trains are grouped: a candidate whose closing issue any
+other open PR of the repository also claims (`Fixes`/`Closes`/`Resolves`;
+a `Refs` line is not a claim; an adoption copy and the original it
+`Supersedes` are one change, not a pair) is held with lane reason
+`merge-train:claim-conflict#<other>:<issue>/0:0/0:` and the log line
+`same-issue claim conflict undecided: #A vs #B` — in every lane, so
+**neither PR is admitted** while the conflict stands. The hive does not
+pick: the stage engine parks the held PR at 085, the tracker chevron reads
+*held · duplicate of #B · needs decision*, the row's options name the
+concrete PRs (*Keep #A — admit it to the merge queue*, *Close #A as
+superseded by #B*), and *Let hive decide* only recommends ("Hold both: #A
+and #B claim issue #N. Keep #B, close #A — or keep #A, close #B"). A
+recorded trusted decision on a PR's head (the tracker's Approve, or any
+`/hive decision` on it — the downstream gates still judge the merge) is
+what lifts the gate for that PR; closing the other ends it
+([#15810](https://github.com/hivecommons/hive/issues/15810)).
 
 ### Empty-diff PRs of the hive's own
 

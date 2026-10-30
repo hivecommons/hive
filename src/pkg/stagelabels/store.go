@@ -58,6 +58,12 @@ type Record struct {
 	// read as a fresh note (hivecommons/hive#15729). Zero on records
 	// written before it existed; NoteChangedAt falls back to EnteredAt.
 	ReasonChangedAt time.Time `json:"reason_changed_at,omitempty"`
+	// UnblockedAt is when the blocked sweep last lifted the item's block
+	// (hivecommons/hive#15779). A blocked issue has no stage, so the lift
+	// leaves a stage-less record carrying only this time until the next
+	// stage-label pass stages the issue; the dashboard ages the row from
+	// StageSinceAt so "since" restarts at the lift, not at issue creation.
+	UnblockedAt time.Time `json:"unblocked_at,omitempty"`
 	// Author is the item's author login, lower-cased, as the lane saw it
 	// (hivecommons/hive#12502). It lets the dashboard answer "which of this
 	// contributor's PRs are returned to them" from the store alone, with no
@@ -324,6 +330,20 @@ type Record struct {
 	// HiveHeldWarned is set once the hive-side alert for an item held by
 	// the hive past its dwell has been logged; activity resets it.
 	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+	// WaitingPushSince is when the current waiting-on-push state began
+	// (hivecommons/hive#15784): entry to 071 / 072, or a head the sweep
+	// evaluated and still routed back to the author. The dashboard ages
+	// the "waiting on @author to push" pill from it. Zero outside those
+	// stages.
+	WaitingPushSince time.Time `json:"waiting_push_since,omitempty"`
+	// LastPushAt / LastPushSha record the last head change seen while the
+	// item sat in the CI / Review column: from the webhook re-read of a
+	// `pull_request` synchronize delivery (NotePush) or, as the fallback,
+	// from the head change the next enumerate observed (NoteActivity). A
+	// new waiting-on-push state clears them; leaving the column clears
+	// them too.
+	LastPushAt  time.Time `json:"last_push_at,omitempty"`
+	LastPushSha string    `json:"last_push_sha,omitempty"`
 	// LabelsSuppressed is set when the write-back gate kept the stage
 	// labels off the item on GitHub (a contributor PR without the opt-in
 	// label): the stage lives in this record only, so a label-less item
@@ -635,8 +655,7 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 	tr := Transition{Prev: prev.Stage, Next: stage}
 	if stage == None {
 		if had {
-			delete(s.items, key)
-			s.dirty = true
+			s.forgetStageLocked(key, prev)
 			tr.Changed = prev.Stage != None
 		}
 		return tr
@@ -651,6 +670,7 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 		next.StallCommented = false
 		next.EntryCommented = false
 		tr.Changed = true
+		next.notePushStageChange(now)
 	} else if ReasonClass(prev.Reason) != ReasonClass(reason) {
 		next.ReasonChangedAt = now
 	}
@@ -731,6 +751,33 @@ func (r Record) NoteChangedAt() time.Time {
 	return r.EnteredAt
 }
 
+// StageSinceAt is when the row's since-time starts: stage entry, or the
+// later block lift when the sweep unblocked the item after it entered the
+// stage (or before any stage was recorded).
+func (r Record) StageSinceAt() time.Time {
+	if r.UnblockedAt.After(r.EnteredAt) {
+		return r.UnblockedAt
+	}
+	return r.EnteredAt
+}
+
+// NoteUnblocked records that the blocked sweep lifted key's block at now.
+// A blocked issue carries no stage record (its stage is None), so a
+// stage-less record is created to hold the time; the next ObserveProgress
+// keeps UnblockedAt while it stages the issue, and a None observation
+// drops the record as usual.
+func (s *Store) NoteUnblocked(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[key]
+	r.UnblockedAt = now
+	if r.LastSeen.IsZero() {
+		r.LastSeen = now
+	}
+	s.items[key] = r
+	s.dirty = true
+}
+
 // NoteActivity folds this cycle's activity inputs into key's record and
 // reports whether anything a person could have done changed since the last
 // observation. The first observation of a record seeds LastActivityAt
@@ -763,6 +810,18 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at
 	}
+	if a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead {
+		// The enumerate fallback for a push no webhook announced
+		// (hivecommons/hive#15784). A head the sweep evaluated and still
+		// routed back to the author starts a fresh waiting-on-push state.
+		switch {
+		case r.Stage.WaitsOnPush():
+			r.WaitingPushSince = at
+			r.LastPushAt, r.LastPushSha = time.Time{}, ""
+		case a.Head != r.LastPushSha:
+			r.LastPushAt, r.LastPushSha = at, a.Head
+		}
+	}
 	if changed {
 		r.HiveHeldWarned = false
 	}
@@ -782,6 +841,66 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	}
 	s.items[key] = r
 	return changed
+}
+
+// notePushStageChange keeps the push-progress fields in step with a stage
+// change (hivecommons/hive#15784): entering 071 / 072 starts a fresh
+// waiting-on-push state (a push before it is history), leaving them keeps
+// the push on record so the row can say "pushed abc1234" while CI and the
+// re-review run, and leaving the CI / Review column drops it all.
+func (r *Record) notePushStageChange(now time.Time) {
+	switch {
+	case r.Stage.WaitsOnPush():
+		r.WaitingPushSince = now
+		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+	case r.Stage.TracksPush():
+		r.WaitingPushSince = time.Time{}
+	default:
+		r.WaitingPushSince = time.Time{}
+		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+	}
+}
+
+// NotePush records that key's head moved to sha at the given instant, as a
+// webhook re-read of a `pull_request` synchronize delivery saw it
+// (hivecommons/hive#15784). It reports whether a push was booked: a head the
+// store already knows (the enumerate's ActivityHead, or the last push) is
+// not one, and nothing is booked for a record whose head was never seen
+// — a first read cannot tell a push from the initial head. A zero or
+// future instant reads as now.
+func (s *Store) NotePush(key, sha string, at time.Time) bool {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || !r.Stage.TracksPush() {
+		return false
+	}
+	known := r.ActivityHead
+	if r.LastPushSha != "" {
+		known = r.LastPushSha
+	}
+	if known == "" || strings.EqualFold(sha, known) {
+		return false
+	}
+	now := s.now()
+	if at.IsZero() || at.After(now) {
+		at = now
+	}
+	r.LastPushAt, r.LastPushSha = at, sha
+	s.items[key] = r
+	s.dirty = true
+	return true
+}
+
+// PushedSinceWaiting reports whether a push landed after the current
+// waiting-on-push state began: the ball is back with the hive even if the
+// sweep has not re-staged the item yet.
+func (r Record) PushedSinceWaiting() bool {
+	return !r.LastPushAt.IsZero() && !r.LastPushAt.Before(r.WaitingPushSince)
 }
 
 // CountOwnComments records that the hive itself posted n comments on key,
@@ -1862,7 +1981,7 @@ func (s *Store) SetCoveringPR(key, prKey string) {
 	s.dirty = true
 }
 
-// Forget drops key (closed/merged item).
+// Forget drops key (closed/merged item), lift record included.
 func (s *Store) Forget(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1870,6 +1989,29 @@ func (s *Store) Forget(key string) {
 		delete(s.items, key)
 		s.dirty = true
 	}
+}
+
+// ForgetStage drops key's stage for an item that is still open but has no
+// stage (a blocked issue, or one outside the hive's buckets). Unlike
+// Forget it keeps the blocked sweep's lift, so the stage-label pass that
+// runs right after an unblock does not reset the row's since-time back to
+// creation (hivecommons/hive#15779).
+func (s *Store) ForgetStage(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.items[key]; ok {
+		s.forgetStageLocked(key, r)
+	}
+}
+
+// forgetStageLocked is ForgetStage with s.mu held and the record in hand.
+func (s *Store) forgetStageLocked(key string, r Record) {
+	if r.UnblockedAt.IsZero() {
+		delete(s.items, key)
+	} else {
+		s.items[key] = Record{UnblockedAt: r.UnblockedAt, LastSeen: s.now()}
+	}
+	s.dirty = true
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped

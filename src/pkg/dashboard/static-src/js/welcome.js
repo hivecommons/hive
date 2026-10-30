@@ -45,6 +45,8 @@
       const topBtn = document.getElementById('welcome-topbar-btn');
       if (topBtn) topBtn.style.display = '';
       // Kiosk displays (#15594) are unattended: nothing can dismiss a dialog.
+      // A pop-out (#15829) is the tracker alone; the welcome tour belongs to the main window.
+      if (window.hivePopoutMode && window.hivePopoutMode()) return;
       if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 

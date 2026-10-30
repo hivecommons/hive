@@ -18,6 +18,8 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -643,11 +645,12 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		in.DiffEmpty = ghpkg.PRChangedFilesClaimsEmpty(pr)
 		state := strings.ToLower(pr.GetMergeableState())
 		in.Conflicting = state == "dirty" || (pr.Mergeable != nil && !pr.GetMergeable())
-		green, err := delegatedHeadCIGreen(ctx, api, owner, repoName, pr, in.Conflicting, state)
+		ci, err := delegatedHeadCI(ctx, api, owner, repoName, pr, state)
 		if err != nil {
 			return in, fmt.Errorf("reading checks for %s#%d: %w", repoFull, number, err)
 		}
-		in.CIGreen = green
+		in.CIGreen, in.CIPending = ci.green, ci.pending
+		s.gatherDelegatedRecordedPark(repoFull, number, pr.GetHead().GetSHA(), &in)
 		if files, _, err := api.PullRequests.ListFiles(ctx, owner, repoName, number, &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}); err == nil && len(files) > 0 {
 			in.LowRiskPaths = true
 			for _, f := range files {
@@ -713,31 +716,107 @@ func (s *Server) delegatedAdoptionGraceElapsed(repoFull string, number int) bool
 	return rec.AdoptionBlocked(rec.NudgeHead) != ""
 }
 
-// delegatedHeadCIGreen decides Input.CIGreen for the PR under decision.
-// mergeable_state alone cannot carry it: GitHub reports "blocked" both for a
-// missing required review and for red required checks, and "unknown" /
-// "behind" / "" say nothing about the head at all. Only "clean" and
-// "has_hooks" assert a green head; "unstable" and a conflict deny it; every
-// other state is settled from the head's combined status and check runs the
-// way gatherDelegatedPRContext settles a competing PR — no red, nothing
-// pending, and at least one green result, so a head whose checks never ran
-// is not read as green either.
-func delegatedHeadCIGreen(ctx context.Context, api *gh.Client, owner, repoName string, pr *gh.PullRequest, conflicting bool, state string) (bool, error) {
-	switch {
-	case conflicting, state == "unstable":
-		return false, nil
-	case state == "clean", state == "has_hooks":
-		return true, nil
+// delegatedHeadCIState is what the head's checks say: green (every
+// gating check passed), pending (some still running, none failed), or
+// neither (a check failed, or none ever reported).
+type delegatedHeadCIState struct {
+	green, pending bool
+}
+
+// delegatedHeadCI decides Input.CIGreen / CIPending for the PR under
+// decision. mergeable_state alone cannot carry it: GitHub reports "blocked"
+// both for a missing required review and for red required checks,
+// "unstable" whenever ANY context is pending or failing — a non-required
+// merge-metadata context like tide included — and "unknown" / "behind" /
+// "" say nothing about the head at all. Only "clean" and "has_hooks"
+// assert a green head; every other state is settled from the head's
+// combined status and check runs (meta contexts excluded, the way
+// gatherDelegatedPRContext settles a competing PR): green is no red,
+// nothing pending and at least one green result; pending is no red with
+// a check still running. hivecommons/hive#15722 read "unstable" as red
+// while every check on the head was green and only tide was pending, and
+// the preview told the operator "CI is red".
+func delegatedHeadCI(ctx context.Context, api *gh.Client, owner, repoName string, pr *gh.PullRequest, state string) (delegatedHeadCIState, error) {
+	if state == "clean" || state == "has_hooks" {
+		return delegatedHeadCIState{green: true}, nil
 	}
 	sha := strings.TrimSpace(pr.GetHead().GetSHA())
 	if sha == "" {
-		return false, nil
+		return delegatedHeadCIState{}, nil
 	}
 	summary, err := ghpkg.SummarizeCommitChecks(ctx, api, owner, repoName, sha)
 	if err != nil {
-		return false, err
+		return delegatedHeadCIState{}, err
 	}
-	return len(summary.Red) == 0 && summary.Pending == 0 && summary.Green > 0, nil
+	if len(summary.Red) > 0 {
+		return delegatedHeadCIState{}, nil
+	}
+	return delegatedHeadCIState{green: summary.Pending == 0 && summary.Green > 0, pending: summary.Pending > 0}, nil
+}
+
+// gatherDelegatedRecordedPark reads what the stage engine recorded about
+// the PR — the reason it parked it, whether the hive adopted it in place,
+// and the reviewer verdict on its head — so the delegate decides on the
+// same facts the 085 entry comment named, not only on the words the
+// tracker row sent along (hivecommons/hive#15722: the row said reviewer
+// requires_human / high-risk, the plan said "CI is red").
+func (s *Server) gatherDelegatedRecordedPark(repoFull string, number int, head string, in *delegatedecision.Input) {
+	head = strings.TrimSpace(head)
+	recorded := ""
+	if rec, ok := s.stageStoreOrShared().Get(stagelabels.Key(repoFull, number)); ok {
+		recorded = strings.TrimSpace(rec.Reason)
+		if recorded != "" && !slices.Contains(in.Reasons, recorded) {
+			in.Reasons = append(in.Reasons, recorded)
+		}
+		in.AdoptedByHive = rec.AdoptionLive(head)
+	}
+	for _, r := range in.Reasons {
+		lower := strings.ToLower(r)
+		if strings.Contains(lower, stageengineprstage.ContributorLaneReasonAdoptedByHive) {
+			in.AdoptedByHive = true
+		}
+		if stagelabels.ReasonClass(lower) == stageengine.StageReasonVerdictRequiresHuman || strings.Contains(lower, "requires_human") {
+			in.ReviewerRequiresHuman = true
+		}
+	}
+	art, err := review.LoadArtifact("")
+	if err != nil {
+		return
+	}
+	lookup := stageTrackerDecisionVerdictLookup(&art)
+	agg, ok := lookup(repoFull, number, head, in.ReviewerRequiresHuman)
+	if !ok {
+		_, short, _ := strings.Cut(repoFull, "/")
+		agg, ok = lookup(short, number, head, in.ReviewerRequiresHuman)
+	}
+	if !ok {
+		return
+	}
+	if agg.RequiresHuman || agg.DecisionRequested {
+		in.ReviewerRequiresHuman = true
+	}
+	if in.Question == "" {
+		in.Question = strings.TrimSpace(agg.DecisionQuestion)
+	}
+	in.ReviewerFinding = strings.TrimSpace(agg.DecisionFinding)
+	in.SecurityFinding = delegatedSecurityFinding(agg)
+}
+
+// delegatedSecurityFinding: the reviewer's finding is the security
+// review's own — that perspective withheld approval, or the finding names
+// a security / credentials question. The reviewer's generic high-risk
+// marker alone is not one: it is a risk-class flag the fixer addresses.
+func delegatedSecurityFinding(agg review.Aggregate) bool {
+	if agg.Perspectives[review.PerspectiveSecurity] == review.VerdictRequiresHuman {
+		return true
+	}
+	lower := strings.ToLower(agg.DecisionFinding)
+	for _, term := range []string{"security", "credential", "secret", "permission", "privilege", "vulnerab", "insecure", "malicious", "supply chain", "supply-chain"} {
+		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+	return false
 }
 
 // delegatedWorkflowPath reports a file under .github/workflows: the adoption
@@ -791,7 +870,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 					notes = append(notes, "parking labels lifted, `"+ghpkg.HumanAckLabel+"` applied")
 					s.noteDelegatedUnpark(repoFull, number)
 				}
-			} else if d.Verdict == delegatedecision.VerdictDirection && in.HiveAuthored {
+			} else if d.Verdict == delegatedecision.VerdictDirection && (in.HiveAuthored || in.AdoptedByHive) {
 				if _, err := client.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, d.Text, repoItemDecisionChangeRequests()); err != nil && !errors.Is(err, ghpkg.ErrPullRequestNotHiveAuthored) {
 					return notes, fmt.Errorf("recording PR direction: %w", err)
 				} else if err == nil {

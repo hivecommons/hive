@@ -208,8 +208,13 @@ type Input struct {
 	// SentinelAlert: the sentinel label is on; SentinelReason says why.
 	SentinelAlert  bool
 	SentinelReason string
-	// CIGreen / Conflicting / DCOMissing describe a PR head.
+	// CIGreen / Conflicting / DCOMissing describe a PR head. CIPending
+	// refines a head that is not green: its checks are still running and
+	// none has failed, so no fix is owed and "CI is red" is not true of it
+	// (hivecommons/hive#15722's preview said so of a green head whose only
+	// pending context was tide).
 	CIGreen     bool
+	CIPending   bool
 	Conflicting bool
 	DCOMissing  bool
 	// Small: a size/XS or size/S PR (also read from the labels).
@@ -237,6 +242,12 @@ type Input struct {
 	// TrainDuplicateIssue is that issue (hivecommons/hive#15395).
 	TrainDuplicateOf    int
 	TrainDuplicateIssue int
+	// ClaimConflictWith is the open PR in another merge lane that claims
+	// the same issue as this one while no decision is recorded, so the
+	// queue admits neither (0 = none); ClaimConflictIssue is that issue
+	// (hivecommons/hive#15810).
+	ClaimConflictWith  int
+	ClaimConflictIssue int
 	// ReporterTrustHold: the park is the reporter-trust gate on the fixing PR.
 	ReporterTrustHold bool
 	// AdoptionStalled: a contributor PR whose adoption parked at 085.
@@ -276,7 +287,25 @@ type Input struct {
 	// Advisory is set for a hive advisory issue (triage/advisory, a dedupe
 	// checklist): not work, the hive's sweep ticks and closes it itself.
 	Advisory *AdvisoryChecklist
+	// AdoptedByHive: the hive adopted this contributor PR in place (stage
+	// 074, contributor-lane:adopted-by-hive) and its fix lane owns the
+	// branch, so a direction is the hive's own fixer's to carry out — not
+	// the contributor's (hivecommons/hive#15722: "send #15722 back to its
+	// author" on a PR the hive had adopted).
+	AdoptedByHive bool
+	// ReviewerRequiresHuman: the recorded park reason is the reviewer
+	// swarm's requires_human on the current head; ReviewerFinding is what
+	// the review found ("the reviewer marked this change high-risk"), and
+	// SecurityFinding says that finding is the security review's — a
+	// policy call no fixer can make for a person.
+	ReviewerRequiresHuman bool
+	ReviewerFinding       string
+	SecurityFinding       bool
 }
+
+// CIRed reports a head that is not green because a check failed (or none
+// ever reported), as opposed to one still waiting on running checks.
+func (in Input) CIRed() bool { return !in.CIGreen && !in.CIPending }
 
 // RuleAdoptNow is the rule name of the grace-elapsed Adopt now decision;
 // the dashboard runs it as a forced adoption (Adopt now), not a queued one.
@@ -639,6 +668,11 @@ func decidePR(in Input) Decision {
 			Actions:   []Action{decisionComment(text), {Kind: ActionApproveReview}},
 		}
 	}
+	// Two open PRs for one issue in different lanes (hivecommons/hive#15810):
+	// the queue holds both and the hive only names the choice.
+	if d, ok := decideClaimConflict(in, ref); ok {
+		return d
+	}
 	// Two open PRs for one issue (hivecommons/hive#15395): the merge
 	// queue already picked the survivor (green first, then earlier); the
 	// held one closes as superseded, the kept one is released.
@@ -651,6 +685,12 @@ func decidePR(in Input) Decision {
 		if d, ok := decideCompeting(in, ref); ok {
 			return d
 		}
+	}
+	// A PR the hive adopted in place is the hive's own to fix: the
+	// reviewer's finding and the head's blockers go to the fixer, never
+	// "back to the author" (hivecommons/hive#15722).
+	if d, ok := decideAdoptedByHive(in, ref); ok {
+		return d
 	}
 	// The contributor-PR ladder (hivecommons/hive#15289): already fixed →
 	// mergeable as-is → rebase-then-merge → return to contributor →
@@ -667,7 +707,7 @@ func decidePR(in Input) Decision {
 			return d
 		}
 	}
-	if !in.HiveAuthored && !in.PersonAuthored() && !in.ContributorOnline && in.WorkflowPath && (in.AdoptionStalled || in.AdoptionGraceElapsed || in.Conflicting || !in.CIGreen || in.DCOMissing) {
+	if !in.HiveAuthored && !in.PersonAuthored() && !in.ContributorOnline && in.WorkflowPath && (in.AdoptionStalled || in.AdoptionGraceElapsed || in.Conflicting || in.CIRed() || in.DCOMissing) {
 		// The adoption engine refuses to publish a contributor's workflow
 		// edits from the App (contributor-lane:workflow-path), so an
 		// adopt-supersede here is decided and never executed
@@ -681,17 +721,7 @@ func decidePR(in Input) Decision {
 		d.Actions = append(d.Actions, Action{Kind: ActionLabelsAdd, Labels: []string{LabelTriageAccepted}})
 		return d
 	}
-	if in.Conflicting || in.DCOMissing || !in.CIGreen {
-		var fix []string
-		if in.Conflicting {
-			fix = append(fix, "rebase onto the base branch")
-		}
-		if in.DCOMissing {
-			fix = append(fix, "add the DCO sign-off")
-		}
-		if !in.CIGreen {
-			fix = append(fix, "make CI green without widening scope")
-		}
+	if fix := fixList(in); len(fix) > 0 {
 		text := strings.Join(fix, ", ") + "; keep the smallest reversible change, then it merges"
 		return Decision{
 			Verdict: VerdictDirection, Rule: "fix-then-merge", Text: text,
@@ -705,9 +735,84 @@ func decidePR(in Input) Decision {
 	return releasePR("default-release", "approve "+ref+": green head, reviewer question answered with the reversible default — proceed as implemented", "no owner rule holds this back; a merge is reversible and keeps work moving")
 }
 
+// RuleAdoptedFixer: the hive adopted the PR in place, so the reviewer's
+// finding and the head's blockers are its own fixer's to address; no person
+// and no contributor is asked. RuleAdoptedSecurityFinding is the one case
+// the fixer cannot settle alone: the security review withheld approval,
+// and that policy call is a person's (hivecommons/hive#15722).
+const (
+	RuleAdoptedFixer           = "adopted-fixer"
+	RuleAdoptedSecurityFinding = "adopted-security-finding"
+)
+
+// decideAdoptedByHive is the adopted-in-place branch of decidePR. The hive
+// owns the branch, so "send it back to its author" is wrong — the hive is
+// the author now. A reviewer requires_human or a head blocker becomes a
+// direction the hive's fixer carries out; a security finding is named in
+// full and left to a person. A green, unquestioned adopted head falls
+// through to the ordinary rules.
+func decideAdoptedByHive(in Input, ref string) (Decision, bool) {
+	if in.Kind != KindPR || !in.AdoptedByHive || in.HiveAuthored || in.PersonAuthored() {
+		return Decision{}, false
+	}
+	finding := strings.TrimSpace(in.ReviewerFinding)
+	if in.ReviewerRequiresHuman && in.SecurityFinding {
+		what := "the security review withheld approval"
+		if finding != "" {
+			what = finding
+		}
+		return recommendOnly(RuleAdoptedSecurityFinding,
+			"the hive adopted "+ref+" and owns its branch, but the reviewer's finding is a security one — "+what+" — and that policy call is a person's, not the fixer's",
+			"read the finding on "+ref+" ("+what+") and reply `/hive decision <instruction>` for the hive's fixer to carry out, or close it"), true
+	}
+	var fix []string
+	if in.ReviewerRequiresHuman {
+		item := "address the reviewer's finding"
+		if finding != "" {
+			item += " (" + finding + ")"
+		}
+		fix = append(fix, item)
+	}
+	fix = append(fix, fixList(in)...)
+	if len(fix) == 0 {
+		return Decision{}, false
+	}
+	text := "hive's fixer: " + strings.Join(fix, ", ") + " on " + ref + "; then it merges"
+	return Decision{
+		Verdict: VerdictDirection, Rule: RuleAdoptedFixer, Text: text,
+		Rationale: "the hive adopted " + ref + " in place and owns its branch, so the reviewer's finding is the hive's own fixer's to address — not the contributor's and not a person's (hivecommons/hive#15722)",
+		Actions:   []Action{decisionComment(text)},
+	}, true
+}
+
 // RuleOnePRPerIssue: the merge queue carries one PR per issue; the one it
 // held as a duplicate closes as superseded by the one it kept.
 const RuleOnePRPerIssue = "one-pr-per-issue"
+
+// RuleSameIssueClaimConflict: two open PRs in different merge lanes claim
+// one issue and nobody has decided which lands; the queue admits neither
+// and the hive names the choice without making it (hivecommons/hive#15810).
+const RuleSameIssueClaimConflict = "same-issue-claim-conflict"
+
+// decideClaimConflict is the recommend-only answer for a PR the merge
+// queue holds on an undecided same-issue claim: the hive's own PR and a
+// trusted human's PR for hivecommons/hive#15773 both marched toward merge
+// because each lane saw only its own. The hive does not pick — it names
+// the two PRs and the two ways out; Approve on one row admits that PR,
+// Close as superseded on the other ends the conflict.
+func decideClaimConflict(in Input, ref string) (Decision, bool) {
+	if in.Kind != KindPR || in.ClaimConflictWith <= 0 {
+		return Decision{}, false
+	}
+	other := fmt.Sprintf("#%d", in.ClaimConflictWith)
+	issue := "the same issue"
+	if in.ClaimConflictIssue > 0 {
+		issue = fmt.Sprintf("issue #%d", in.ClaimConflictIssue)
+	}
+	return recommendOnly(RuleSameIssueClaimConflict,
+		fmt.Sprintf("%s and %s both claim %s from different merge lanes; the merge queue admits neither until one is closed or approved, so two implementations of one fix never both land", ref, other, issue),
+		fmt.Sprintf("keep %s, close %s — or keep %s, close %s; the hive will not pick", other, ref, ref, other)), true
+}
 
 // decideTrainDuplicate resolves a same-issue pair the merge queue split
 // (hivecommons/hive#15395). The queue's pick stands: a green head beats a
@@ -742,7 +847,7 @@ func decideTrainDuplicate(in Input, ref string) (Decision, bool) {
 			continue
 		}
 		held := fmt.Sprintf("#%d", other.Number)
-		if in.Conflicting || !in.CIGreen || in.DCOMissing {
+		if in.Conflicting || in.CIRed() || in.DCOMissing {
 			return recommendOnly(RuleOnePRPerIssue,
 				fmt.Sprintf("the merge queue kept %s over %s%s, but %s is not mergeable now (%s); the queue re-picks on its next pass", ref, held, issue, ref, mergeBlockers(in)),
 				"fix "+ref+" ("+mergeBlockers(in)+"), or decide on "+held+" to let it supersede this one"), true
@@ -799,16 +904,7 @@ func ReturnToAuthor(in Input) (Decision, bool) {
 }
 
 func decideReturnToAuthor(in Input, ref string) (Decision, bool) {
-	var fix []string
-	if in.Conflicting {
-		fix = append(fix, "rebase onto the base branch")
-	}
-	if in.DCOMissing {
-		fix = append(fix, "add the DCO sign-off")
-	}
-	if !in.CIGreen {
-		fix = append(fix, "make CI green without widening scope")
-	}
+	fix := fixList(in)
 	question := strings.TrimSpace(in.Question)
 	if len(fix) == 0 && question == "" {
 		return Decision{}, false

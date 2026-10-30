@@ -306,6 +306,13 @@ var stageMergeQueueReasons = map[string]bool{
 	autoMergeReasonBehindBudgetExhausted: true, autoMergeReasonMergeQueueRequired: true,
 }
 
+// MergeQueueReason reports whether a lane reason means the head is at the
+// merge queue (100): the merge was attempted or is waiting on the queue, a
+// branch update, or a release hold — the head itself is ready.
+func MergeQueueReason(reason string) bool {
+	return stageMergeQueueReasons[reason] || strings.HasPrefix(reason, prstage.AutoMergeReasonNativeQueuePrefix) || strings.HasPrefix(reason, "release-hold")
+}
+
 // stageFixingReasons are reasons an agent (or the author) must fix the head.
 var stageFixingReasons = map[string]bool{
 	"changes-requested": true, autoMergeReasonHumanChangesRequested: true, StageReasonDecisionAnswered: true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
@@ -365,11 +372,21 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if stageHandoffReasons[reason] {
 		return stageVerdict{}
 	}
+	if strings.HasPrefix(reason, "base-refresh:") {
+		// Preparation/queued is not ready-to-merge or a merge train seat.
+		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned, Reason: reason}
+	}
 	if train, ok := prstage.ParseMergeTrain(reason); ok {
 		// The merge train parked this PR behind an overlapping front
 		// (hivecommons/hive#15117): a hive-side wait at the merge gate,
 		// never a human stage — unless the train gave up rebasing it.
 		if train.State == prstage.MergeTrainStateRebaseExhausted {
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+		}
+		if train.State == prstage.MergeTrainStateClaimConflict {
+			// Another lane's open PR claims the same issue and nobody has
+			// decided which lands (hivecommons/hive#15810): a person's
+			// call, so 085 — not a turn in the queue.
 			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 		}
 		if train.State == prstage.MergeTrainStateDuplicateOf {
@@ -495,7 +512,7 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// 095, not 100 — the merge has not been attempted yet.
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.PreMergeSoak, Rank: stageRankOwned}, humanApprovalReason)
 	}
-	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, prstage.AutoMergeReasonNativeQueuePrefix) || strings.HasPrefix(reason, "release-hold") {
+	if MergeQueueReason(reason) {
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if reason == contributorLaneReasonNoVerdict {

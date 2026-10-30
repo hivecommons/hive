@@ -160,6 +160,7 @@
     .ham-issue-closed .ham-closed-not-planned { color: var(--text-faint); font-style: italic; }
     /* Issue slot naming an issue the PR only refers to (`Refs #N`, a `(#N, part 1)` title): a muted "refs" chip tells it from a closing link. */
     .ham-issue-refs-chip { flex: 0 0 auto; margin-left: var(--sp-1); font-style: italic; }
+    .ham-title-tag { flex: 0 0 auto; font-family: var(--font-mono); }
     /* Repo chip before the number: monospace, tinted per repo from the
        --ham-repo-tint-N palette (slot = string hash), muted for the primary
        repo; a button that sets the Repo filter. Owner/repo rides its title. */
@@ -269,6 +270,12 @@
     .ham-badge-overlap { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
     .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
+    /* Push progress on the waiting-on pill (hive PR 15784): the wait's age
+       rides last; past dashboard.stage_tracker.waiting_push_stale_h it takes
+       the muted warning tone. "@zoe pushed abc1234 · 2m" links to the commit. */
+    .ham-push-stale { color: color-mix(in srgb, var(--status-warn) 70%, var(--text-faint)); }
+    .ham-badge-push { text-decoration: none; }
+    .ham-badge-push:hover { color: var(--text-muted); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
        waits on, drawn as the same glyphs the stage chevrons use — a person
        for a human (nothing more: a human has no presence to report) or the
@@ -801,6 +808,8 @@
        list with one Preview button each plus a sample row the previews play on. */
     .sts-hint { color: var(--muted); font-size: var(--fs-xs); margin: 0; }
     .sts-row { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); flex-wrap: wrap; }
+    .sts-timing-input { width: 6em; }
+    .sts-timing-unit { color: var(--muted); }
     .sts-motion-list { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
     .sts-motion-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-sm); }
     .sts-motion-item:has(input:checked) { border-color: var(--line-strong); background: var(--panel-strong); color: var(--text); }

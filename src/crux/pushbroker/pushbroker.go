@@ -448,25 +448,24 @@ func (b *Broker) validate() error {
 	return nil
 }
 
-// changedFiles lists the paths the outgoing commits touch. Every git call
-// uses -z: without it git C-quotes any path containing a non-ASCII byte, a
-// control character, `"` or `\` and wraps it in double quotes, and that
-// leading quote would defeat the prefix match in ProtectedPathViolations
-// (`".github/workflows/d\303\251pl.yml"` is not under `.github/workflows/`).
-// NUL-separated output carries the exact on-disk path instead.
+// changedFiles lists the paths the outgoing commits touch. Every git call uses
+// -z to preserve exact paths: Git's C-quoting of non-ASCII/control bytes, `"` or
+// `\` would hide protected prefixes (e.g. `".github/workflows/d\303\251pl.yml"`
+// does not match `.github/workflows/`). --no-renames lists moves as deletions
+// plus additions, checking both paths even when config enables rename detection.
 func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 	if base := strings.TrimSpace(b.BaseRef); base != "" {
 		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-			out, err := b.git(ctx, "diff", "--name-only", "-z", base+"...HEAD")
+			out, err := b.git(ctx, "diff", "--no-renames", "--name-only", "-z", base+"...HEAD")
 			return splitNUL(out), err
 		}
 	}
 	base := b.remoteRef()
 	if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-		out, err := b.git(ctx, "diff", "--name-only", "-z", base+"...HEAD")
+		out, err := b.git(ctx, "diff", "--no-renames", "--name-only", "-z", base+"...HEAD")
 		return splitNUL(out), err
 	}
-	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "HEAD")
+	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--no-renames", "--name-only", "-r", "-z", "HEAD")
 	return splitNUL(out), err
 }
 

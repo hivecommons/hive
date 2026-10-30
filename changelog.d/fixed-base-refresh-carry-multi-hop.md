@@ -1,0 +1,1 @@
+- The reviewer now carries a person's recorded decision across up to five consecutive hive base refreshes, not just one, so two App merge-from-base commits landing before any gate reads the PR no longer force a re-decision; every hop must still be an App-authored merge of the base that leaves the diff unchanged ([#15766](https://github.com/hivecommons/hive/issues/15766)).

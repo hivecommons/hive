@@ -190,7 +190,11 @@ func TestDelegatedDecisionPRBlockedStateReadsHeadChecks(t *testing.T) {
 		{"blocked by red required checks", "blocked", true, false, delegatedecision.VerdictDirection, "fix-then-merge"},
 		{"blocked with checks never run", "blocked", false, true, delegatedecision.VerdictDirection, "fix-then-merge"},
 		{"unknown state with checks never run", "unknown", false, true, delegatedecision.VerdictDirection, "fix-then-merge"},
-		{"unstable head", "unstable", false, false, delegatedecision.VerdictDirection, "fix-then-merge"},
+		// "unstable" means some context is pending or failing — the
+		// non-required tide included — so the head's own checks decide
+		// (hivecommons/hive#15722: all green, only tide pending, "CI is red").
+		{"unstable head with green checks", "unstable", false, false, delegatedecision.VerdictApprove, "default-release"},
+		{"unstable head with red checks", "unstable", true, false, delegatedecision.VerdictDirection, "fix-then-merge"},
 		{"blocked by missing review only", "blocked", false, false, delegatedecision.VerdictApprove, "default-release"},
 		{"clean head", "clean", false, false, delegatedecision.VerdictApprove, "default-release"},
 	}

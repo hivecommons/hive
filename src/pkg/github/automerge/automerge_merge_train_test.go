@@ -103,6 +103,46 @@ func TestGroupMergeTrains(t *testing.T) {
 				blocked(mtMember(2, "clean", t0.Add(time.Minute), "x.go")),
 			},
 		},
+		{
+			// hivecommons/hive#15741 at CI / Review led #15748 and #15755,
+			// both green at 080, and nothing merged.
+			name: "ready members lead an older one still at CI / Review",
+			members: []mergeTrainMember{
+				readiness(mtMember(15741, "clean", t0, "x.go"), mergeTrainReadinessUnready),
+				readiness(mtMember(15748, "clean", t0.Add(time.Minute), "x.go"), mergeTrainReadinessReady),
+				readiness(mtMember(15755, "clean", t0.Add(2*time.Minute), "x.go"), mergeTrainReadinessReady),
+			},
+			want:    [][]int{{15748, 15755, 15741}},
+			overlap: []string{"x.go"},
+		},
+		{
+			name: "an unevaluated head leads an unready one, ready beats both; readiness outranks mergeable state",
+			members: []mergeTrainMember{
+				readiness(mtMember(1, "clean", t0, "x.go"), mergeTrainReadinessUnready),
+				readiness(mtMember(2, "behind", t0.Add(time.Minute), "x.go"), mergeTrainReadinessReady),
+				mtMember(3, "clean", t0.Add(2*time.Minute), "x.go"),
+			},
+			want:    [][]int{{2, 3, 1}},
+			overlap: []string{"x.go"},
+		},
+		{
+			name: "all unready keeps the age tiebreak (a provisional front)",
+			members: []mergeTrainMember{
+				readiness(mtMember(2, "clean", t0.Add(time.Minute), "x.go"), mergeTrainReadinessUnready),
+				readiness(mtMember(1, "clean", t0, "x.go"), mergeTrainReadinessUnready),
+			},
+			want:    [][]int{{1, 2}},
+			overlap: []string{"x.go"},
+		},
+		{
+			name: "a blocked head trails even a ready-tier sort",
+			members: []mergeTrainMember{
+				blocked(readiness(mtMember(1, "clean", t0, "x.go"), mergeTrainReadinessReady)),
+				readiness(mtMember(2, "clean", t0.Add(time.Minute), "x.go"), mergeTrainReadinessUnready),
+			},
+			want:    [][]int{{2, 1}},
+			overlap: []string{"x.go"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -528,6 +568,78 @@ func TestMergeTrainPolicyOptionLegacySwitch(t *testing.T) {
 func blocked(m mergeTrainMember) mergeTrainMember {
 	m.Blocked = true
 	return m
+}
+
+func readiness(m mergeTrainMember, tier int) mergeTrainMember {
+	m.Readiness = tier
+	return m
+}
+
+// TestMergeTrainReadinessMemory: the lane's verdict on a head sets its
+// readiness tier for the next plan — a soak or merge-queue wait is ready,
+// CI pending or a review wait is unready, a new head forgets — and a PR
+// the lane never evaluated on its normal path reads its tier from the
+// stage store's resolved stage (parked-behind records say nothing).
+func TestMergeTrainReadinessMemory(t *testing.T) {
+	for reason, want := range map[string]int{
+		"":                                     mergeTrainReadinessReady,
+		prstage.ContributorLaneReasonSoaking:   mergeTrainReadinessReady,
+		"behind":                               mergeTrainReadinessReady,
+		"release-hold:v5":                      mergeTrainReadinessReady,
+		"check-pending":                        mergeTrainReadinessUnready,
+		"required-check-pending:build":         mergeTrainReadinessUnready,
+		prstage.ContributorLaneReasonNoVerdict: mergeTrainReadinessUnready,
+		prstage.AutoMergeReasonReviewGatePrefix + prstage.ReviewGateOutcomeAwaiting: mergeTrainReadinessUnready,
+		"not-mergeable":         mergeTrainReadinessUnknown,
+		"untrusted-author-role": mergeTrainReadinessUnknown,
+	} {
+		if got := mergeTrainReadinessOf(reason); got != want {
+			t.Fatalf("mergeTrainReadinessOf(%q) = %d, want %d", reason, got, want)
+		}
+	}
+	t0 := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	c := &Engine{}
+	c.stageStore = stagelabels.NewStore("", func() time.Time { return t0 })
+	if got := c.mergeTrainHeadReadiness("self", "acme", "widget", 7, "sha1"); got != mergeTrainReadinessUnknown {
+		t.Fatalf("never seen = %d, want unknown", got)
+	}
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "check-pending")
+	if got := c.mergeTrainHeadReadiness("self", "acme", "widget", 7, "sha1"); got != mergeTrainReadinessUnready {
+		t.Fatalf("CI pending = %d, want unready", got)
+	}
+	if c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") {
+		t.Fatal("CI pending is unready, not blocked")
+	}
+	// The member turns ready: it moves to the front of the next plan.
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", prstage.ContributorLaneReasonSoaking)
+	if got := c.mergeTrainHeadReadiness("self", "acme", "widget", 7, "sha1"); got != mergeTrainReadinessReady {
+		t.Fatalf("soaking = %d, want ready", got)
+	}
+	if got := c.mergeTrainHeadReadiness("self", "acme", "widget", 7, "sha2"); got != mergeTrainReadinessUnknown {
+		t.Fatalf("new head = %d, want unknown", got)
+	}
+	if got := c.mergeTrainHeadReadiness("trusted", "acme", "widget", 7, "sha1"); got != mergeTrainReadinessUnknown {
+		t.Fatalf("another lane = %d, want unknown", got)
+	}
+	// It goes red: blocked, and no longer a ready front.
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "required-check-failing:build")
+	if !c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") {
+		t.Fatal("red check blocks the head")
+	}
+	// No verdict at this head: the stage store's resolved stage decides.
+	c.stageStore.Observe(stagelabels.Key("acme/widget", 8), stagelabels.ReviewPending, "check-pending")
+	if got := c.mergeTrainHeadReadiness("self", "acme", "widget", 8, "sha8"); got != mergeTrainReadinessUnready {
+		t.Fatalf("050 in the store = %d, want unready", got)
+	}
+	c.stageStore.Observe(stagelabels.Key("acme/widget", 8), stagelabels.AwaitingMergeAdmission, "")
+	if got := c.mergeTrainHeadReadiness("self", "acme", "widget", 8, "sha8"); got != mergeTrainReadinessReady {
+		t.Fatalf("080 in the store = %d, want ready", got)
+	}
+	parked := prstage.MergeTrain{State: prstage.MergeTrainStateQueuedBehind, Front: 7, Position: 2, Size: 2}.Reason()
+	c.stageStore.Observe(stagelabels.Key("acme/widget", 8), stagelabels.AwaitingMergeAdmission, parked)
+	if got := c.mergeTrainHeadReadiness("self", "acme", "widget", 8, "sha8"); got != mergeTrainReadinessUnknown {
+		t.Fatalf("parked behind a front = %d, want unknown", got)
+	}
 }
 
 // TestMergeTrainBlockedHeadMemory: the lane's verdict per head decides
