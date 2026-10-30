@@ -61,7 +61,7 @@ func upgradeHistoryPath(hiveID string) string {
 	return filepath.Join(upgradeHistoryDir, hiveID+".json")
 }
 
-// recent returns a copy of the hive's attempts, oldest first.
+// recent returns a display copy, oldest first, without resolved schedule holds.
 func (u *upgradeHistoryStore) recent(hiveID string) []spoke.UpgradeAttempt {
 	if u == nil {
 		return nil
@@ -72,7 +72,7 @@ func (u *upgradeHistoryStore) recent(hiveID string) []spoke.UpgradeAttempt {
 	if len(src) == 0 {
 		return nil
 	}
-	return append([]spoke.UpgradeAttempt(nil), src...)
+	return spoke.UpgradeHistoryForDisplay(src, time.Time{})
 }
 
 // open returns the hive's currently open attempt, if any.
@@ -173,7 +173,7 @@ func (u *upgradeHistoryStore) end(hiveID, outcome, reason, from, target string, 
 	u.persistLocked(hiveID)
 }
 
-// windowMissed records a daily/weekly window the hub held instead of firing.
+// windowMissed records a daily/weekly window as delayed, not a failed attempt.
 // One row per window: a hold reason that changes while the same window is
 // open updates the row rather than adding another, and an attempt already
 // open for this hive means the window did fire, so nothing is recorded.
@@ -190,6 +190,7 @@ func (u *upgradeHistoryStore) windowMissed(hiveID, from, reason string, at time.
 			return
 		}
 		if last.Trigger == spoke.UpgradeTriggerWindow && sameUpgradeWindow(last.StartedAt, at) {
+			last.Outcome = spoke.UpgradeOutcomeDelayed
 			last.Reason = reason
 			last.EndedAt = at.UTC()
 			u.byID[hiveID] = list
@@ -202,7 +203,7 @@ func (u *upgradeHistoryStore) windowMissed(hiveID, from, reason string, at time.
 		Trigger:   spoke.UpgradeTriggerWindow,
 		StartedAt: at.UTC(),
 		EndedAt:   at.UTC(),
-		Outcome:   spoke.UpgradeOutcomeMissed,
+		Outcome:   spoke.UpgradeOutcomeDelayed,
 		Reason:    reason,
 	})
 	u.byID[hiveID] = trimUpgradeHistory(list, upgradeHistoryMax())
