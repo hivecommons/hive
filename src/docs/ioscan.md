@@ -71,7 +71,7 @@ ioscan:
     enabled: true        # default: on at ACMM L4–L6, off at L1–L3
     fail_mode: closed    # default: follows ioscan.fail_mode (closed at L5–L6)
     model: ""            # empty uses the governor's default model
-    backend: ""          # empty = model endpoint, or the agents' CLI when none; "claude"/"copilot" = tool-less CLI
+    backend: ""          # empty = model endpoint, or the agents' CLI when none; "claude"/"copilot"/"omp" = tool-less CLI
     cli_budget_per_eval: 8   # CLI backend only: calls per scheduler pass (max 64)
     cli_daily_quota: 500     # CLI backend only: calls per UTC day
     warn_threshold: 0.55
@@ -140,7 +140,7 @@ marker and records a fail-closed entry. `classifier.fail_mode` left unset
 follows `ioscan.fail_mode`, so it is `closed` at L5–L6 and `open` below. At
 L5–L6 a hive with no model endpoint configured therefore withholds all
 untrusted text until one is set, or until the owner sets
-`classifier.backend: claude` or `copilot` (see **CLI backend** below),
+`classifier.backend: claude`, `copilot` or `omp` (see **CLI backend** below),
 `classifier.enabled: false` or `classifier.fail_mode: open`. The boot log
 says so in one line, and the dashboard shows a persistent
 `ioscan-classifier-blocked` alert naming those fixes, since every kick that
@@ -150,7 +150,7 @@ clears it. A hive whose
 agents all run on a subscription CLI such as Copilot has no such endpoint;
 with `classifier.backend` left empty, boot then runs the classifier through
 the tool-less CLI most of the hive's agents run on (the most common of
-`claude`/`copilot` across `agents.*.backend`, ties by name), so such a hive
+`claude`/`copilot`/`omp` across `agents.*.backend`, ties by name), so such a hive
 needs no extra setting. The classifier itself is built at boot, so changing
 its backend needs a restart.
 
@@ -164,8 +164,8 @@ rules alone cover them.
 all run on subscription CLIs, can run the classifier through a CLI instead
 with `classifier.backend`. Empty (the default) keeps the HTTP endpoint path
 when an endpoint is resolved and otherwise falls back to the agents' own
-tool-less CLI as described above. The accepted backends are `claude` and
-`copilot`.
+tool-less CLI as described above. The accepted backends are `claude`, `copilot`
+and `omp`.
 
 * **Tool-less guarantee.** The CLI is launched with every built-in tool
   disabled and no MCP server, in an empty temporary working directory, with
@@ -190,6 +190,13 @@ tool-less CLI as described above. The accepted backends are `claude` and
   `-p`, passed as one argv element with no shell involved. The environment
   carries `COPILOT_HOME` and `COPILOT_GITHUB_TOKEN` for copilot's own login
   and never `GH_TOKEN`/`GITHUB_TOKEN`, which copilot would otherwise honour.
+* **omp.** omp is launched as `omp -p --mode text --no-tools --no-lsp
+  --no-extensions --no-skills --no-rules --no-session --no-title --profile
+  hive-ioscan --system-prompt <text> [--model m]`, with the prompt on stdin.
+  The `hive-ioscan` profile is never configured, so no MCP server, hook or
+  context file from the agents' profile loads, and the default system prompt
+  is replaced. The environment adds only `OMP_AUTH_BROKER_URL` and
+  `OMP_AUTH_BROKER_TOKEN` (when set) and never `GH_TOKEN`/`GITHUB_TOKEN`.
 * **Refused backends.** `codex` and `gemini` have no command-line
   flag that removes every tool, so boot refuses them with one log line and
   then behaves as for any classifier that cannot be built: at a closed

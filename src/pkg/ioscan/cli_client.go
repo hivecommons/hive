@@ -76,7 +76,31 @@ var cliToollessArgs = map[string]struct {
 		args: []string{"-p", "--output-format", "text", "--tools", "", "--strict-mcp-config",
 			"--settings", cliClaudeHooksOffSettings},
 	},
+	"omp": {
+		binary: "omp",
+		// --no-tools removes every built-in tool and --no-lsp the LSP tools;
+		// --no-extensions, --no-skills and --no-rules stop discovery of
+		// extensions, skills and rules. --profile runs in a dedicated, empty
+		// settings profile, so MCP servers, hooks and context files configured
+		// for the agents' default profile are not loaded; login comes from the
+		// auth broker (OMP_AUTH_BROKER_*), not from the profile. --no-session
+		// writes no session file and --no-title makes no extra model call.
+		// --system-prompt replaces the default coding-assistant prompt, which
+		// otherwise steers the model away from answering in the classifier's
+		// format. The prompt itself is read from stdin (-p with no text).
+		args: []string{"-p", "--mode", "text", "--no-tools", "--no-lsp", "--no-extensions",
+			"--no-skills", "--no-rules", "--no-session", "--no-title",
+			"--profile", cliOmpProfile, "--system-prompt", cliOmpSystemPrompt},
+	},
 }
+
+// cliOmpProfile is the omp settings profile the classifier runs in. It is
+// never configured, so it carries no MCP servers, hooks or context files.
+const cliOmpProfile = "hive-ioscan"
+
+// cliOmpSystemPrompt replaces omp's coding-assistant system prompt. The
+// classifier's instructions and the text to score arrive in the user message.
+const cliOmpSystemPrompt = "You are a text classifier. Follow the instructions in the user message exactly and reply only in the format it asks for."
 
 // cliClaudeHooksOffSettings is the inline settings JSON passed to claude so
 // no user, project, local or plugin hook runs in the classifier session.
@@ -98,6 +122,8 @@ var cliEnvAllowlist = map[string][]string{
 	"":        {"PATH", "HOME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME"},
 	"claude":  {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"},
 	"copilot": {"COPILOT_HOME", "COPILOT_GITHUB_TOKEN", "COPILOT_GH_HOST", "GH_HOST", "NO_COLOR"},
+	// omp authenticates through the fleet's auth broker.
+	"omp": {"OMP_AUTH_BROKER_URL", "OMP_AUTH_BROKER_TOKEN"},
 }
 
 // SupportsToolless reports whether backend can be launched as a classifier
