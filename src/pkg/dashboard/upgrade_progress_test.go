@@ -54,13 +54,43 @@ func TestBuildUpgradeProgressStates(t *testing.T) {
 			state: spoke.UpgradeStateDone, detail: "upgraded to abc1234 9m ago",
 		},
 		{
-			name: "old outcome ignored, hub history missed window shown",
+			name: "old outcome ignored, legacy hub window shown as delayed",
 			in: upgradeProgressInput{StartedAt: now.Add(-10 * time.Minute),
 				Outcome: &upgradeOutcome{TargetSHA: "abc1234", CompletedAt: now.Add(-48 * time.Hour)},
 				Policy: &spoke.HeartbeatUpgradePolicy{HubManaged: true, NextWindowAt: next, UpgradeHistory: []spoke.UpgradeAttempt{
 					{Trigger: spoke.UpgradeTriggerWindow, Outcome: spoke.UpgradeOutcomeMissed, Reason: "spoke still draining",
 						StartedAt: now.Add(-3 * time.Hour), EndedAt: now.Add(-3 * time.Hour)}}}},
-			state: spoke.UpgradeStateMissed, detail: "missed window 3h0m ago: spoke still draining",
+			state: spoke.UpgradeStateDelayed, detail: "delayed: spoke still draining",
+		},
+		{
+			name: "landed outcome clears stale hub delay before next heartbeat",
+			in: upgradeProgressInput{StartedAt: now.Add(-10 * time.Minute),
+				Outcome: &upgradeOutcome{TargetSHA: "abc1234", CompletedAt: now.Add(-9 * time.Minute)},
+				Policy: &spoke.HeartbeatUpgradePolicy{HubManaged: true, UpgradeHistory: []spoke.UpgradeAttempt{
+					{Trigger: spoke.UpgradeTriggerWindow, Outcome: spoke.UpgradeOutcomeMissed, Reason: "merge debounce",
+						StartedAt: now.Add(-15 * time.Minute), EndedAt: now.Add(-12 * time.Minute)},
+				}}},
+			state: spoke.UpgradeStateDone, detail: "upgraded to abc1234",
+		},
+		{
+			name: "new delay is not hidden by this boot's earlier success",
+			in: upgradeProgressInput{StartedAt: now.Add(-10 * time.Minute),
+				Outcome: &upgradeOutcome{TargetSHA: "abc1234", CompletedAt: now.Add(-9 * time.Minute)},
+				Policy: &spoke.HeartbeatUpgradePolicy{HubManaged: true, UpgradeHistory: []spoke.UpgradeAttempt{
+					{Trigger: spoke.UpgradeTriggerWindow, Outcome: spoke.UpgradeOutcomeDelayed, Reason: "merge debounce",
+						StartedAt: now.Add(-2 * time.Minute), EndedAt: now.Add(-time.Minute)},
+				}}},
+			state: spoke.UpgradeStateDelayed, detail: "merge debounce",
+		},
+		{
+			name: "genuine hub failure remains missed",
+			in: upgradeProgressInput{
+				StartedAt: now.Add(-10 * time.Minute),
+				Outcome:   &upgradeOutcome{TargetSHA: "abc1234", CompletedAt: now.Add(-9 * time.Minute)},
+				Policy: &spoke.HeartbeatUpgradePolicy{HubManaged: true, UpgradeHistory: []spoke.UpgradeAttempt{
+					{Trigger: spoke.UpgradeTriggerScheduled, Outcome: spoke.UpgradeOutcomeMissed, Reason: "ErrImagePull", EndedAt: now.Add(-time.Minute)},
+				}}},
+			state: spoke.UpgradeStateMissed, detail: "ErrImagePull",
 		},
 		{
 			name:  "scheduled with window",

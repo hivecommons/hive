@@ -95,7 +95,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		resp["upgradeProgress"] = progress
 	}
 	if policy != nil && len(policy.UpgradeHistory) > 0 {
-		resp["upgradeHistory"] = policy.UpgradeHistory
+		var upgradedAt time.Time
+		if upgradeOutcomeRec != nil {
+			upgradedAt = upgradeOutcomeRec.CompletedAt
+		}
+		if history := spoke.UpgradeHistoryForDisplay(policy.UpgradeHistory, upgradedAt); len(history) > 0 {
+			resp["upgradeHistory"] = history
+		}
 	}
 
 	if cacheAge > dashboardVersionTipCacheTTL || cached == "" {
