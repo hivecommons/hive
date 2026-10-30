@@ -187,8 +187,12 @@
       if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
       const dup = stageTrackerGateDuplicateOf(state);
       if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
-      const conflict = stageTrackerGateClaimConflictOf(state);
-      if (conflict) return 'Held · duplicate of #' + conflict + ' · needs decision';
+      // Inline prefix read (hivecommons/hive#15810): this function is
+      // lifted alone into node by the Go tests.
+      if (state.indexOf('claim-conflict:') === 0) {
+        const conflict = Number(state.slice('claim-conflict:'.length)) || 0;
+        if (conflict) return 'Held · duplicate of #' + conflict + ' · needs decision';
+      }
       if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
       const plain = state.replace(/[-_]+/g, ' ').trim();
       return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';

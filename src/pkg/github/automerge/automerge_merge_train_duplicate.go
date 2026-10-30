@@ -2,6 +2,7 @@ package automerge
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -209,12 +210,38 @@ func mergeTrainAdoptionPair(a, b *gh.PullRequest) bool {
 	return hgithub.PRSupersedes(a.GetBody(), b.GetNumber()) || hgithub.PRSupersedes(b.GetBody(), a.GetNumber())
 }
 
+// rememberClaimants keeps the full open-PR list the legacy /pulls listing
+// returned for fullRepo this pass, before any event narrowing, so a
+// targeted (webhook-nudged) pass still sees every claimant.
+func (c *Engine) rememberClaimants(fullRepo string, prs []*gh.PullRequest) {
+	if c == nil {
+		return
+	}
+	c.claimantsMu.Lock()
+	defer c.claimantsMu.Unlock()
+	if c.claimants == nil {
+		c.claimants = map[string][]*gh.PullRequest{}
+	}
+	c.claimants[fullRepo] = slices.Clone(prs)
+}
+
 // claimantsForConflicts is the set of open PRs the claim-conflict gate
-// groups: the whole repository when a forge-state snapshot is wired (the
-// lane's list may be narrowed to its event targets), else the lane's list,
-// which a scheduled pass fills with every open PR.
+// groups — the whole repository, never the lane's event-narrowed list:
+// the forge-state snapshot when one is wired, else the full /pulls list
+// the lane's openPullRequests just fetched for this repo (remembered
+// before narrowing to targets); the lane's own list only when neither is
+// available (a bare Engine in tests).
 func (c *Engine) claimantsForConflicts(ctx context.Context, owner, repo string, prs []*gh.PullRequest) []*gh.PullRequest {
-	if c == nil || c.openPRs == nil {
+	if c == nil {
+		return prs
+	}
+	if c.openPRs == nil {
+		c.claimantsMu.Lock()
+		all, ok := c.claimants[owner+"/"+repo]
+		c.claimantsMu.Unlock()
+		if ok && len(all) > 0 {
+			return all
+		}
 		return prs
 	}
 	all, skip, err := c.openPullRequests(ctx, owner, repo, nil)

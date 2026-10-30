@@ -143,3 +143,25 @@ func TestPlanClaimConflictsDecidedOrAdoptionAdmits(t *testing.T) {
 		t.Fatal("same-lane loser held as duplicate")
 	}
 }
+
+// A targeted (webhook-nudged) pass hands the lane only the nudged PR; the
+// gate still groups against the full list the legacy /pulls listing
+// returned for the repo this pass, so a CI-green nudge for the human's PR
+// alone does not slip past the undecided conflict with the hive's.
+func TestPlanClaimConflictsSeesClaimantsOutsideNarrowedList(t *testing.T) {
+	t0 := time.Date(2026, 11, 3, 10, 25, 0, 0, time.UTC)
+	hive, human := claimPR(15783, "hive-app[bot]", "Closes #15773", t0), claimPR(15793, "clubanderson", "Fixes #15773", t0.Add(time.Hour))
+	c := &Engine{}
+	c.rememberClaimants("o/r", []*gh.PullRequest{hive, human})
+	plan := &mergeTrainPlan{lane: stageLaneTrusted}
+	kept := c.planDuplicateHolds(context.Background(), plan, stageLaneTrusted, "o", "r", "o/r", []*gh.PullRequest{human}, func(*gh.PullRequest) string { return "" })
+	if h, held := plan.claimConflictOf(15793); !held || h.Other != 15783 || h.Issue != 15773 || len(kept) != 0 {
+		t.Fatalf("narrowed pass: hold=%+v held=%v kept=%d", h, held, len(kept))
+	}
+	// Another repo's memory does not leak in.
+	plan = &mergeTrainPlan{lane: stageLaneTrusted}
+	c.planDuplicateHolds(context.Background(), plan, stageLaneTrusted, "o", "other", "o/other", []*gh.PullRequest{human}, func(*gh.PullRequest) string { return "" })
+	if plan.claimConflicts != nil {
+		t.Fatalf("other repo held: %+v", plan.claimConflicts)
+	}
+}

@@ -246,6 +246,13 @@ type Engine struct {
 	inactiveQueueMu   sync.Mutex
 	inactiveQueueLast map[string]time.Time
 
+	// claimantsMu / claimants: the full open-PR list the legacy (no
+	// forge-state source) /pulls listing returned per owner/name this
+	// pass, kept before any event narrowing so the same-issue claim gate
+	// sees every claimant (hivecommons/hive#15810).
+	claimantsMu sync.Mutex
+	claimants   map[string][]*gh.PullRequest
+
 	nativeMergeQueuePolicy func() NativeMergeQueuePolicy
 	nativeQueueProbeMu     sync.Mutex
 	nativeQueueProbes      map[string]nativeQueueProbe

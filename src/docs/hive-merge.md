@@ -926,8 +926,9 @@ pick: the stage engine parks the held PR at 085, the tracker chevron reads
 concrete PRs (*Keep #A — admit it to the merge queue*, *Close #A as
 superseded by #B*), and *Let hive decide* only recommends ("Hold both: #A
 and #B claim issue #N. Keep #B, close #A — or keep #A, close #B"). A
-recorded decision on a PR's head (`/hive decision approve`, the tracker's
-Approve) is what lifts the gate for that PR; closing the other ends it
+recorded trusted decision on a PR's head (the tracker's Approve, or any
+`/hive decision` on it — the downstream gates still judge the merge) is
+what lifts the gate for that PR; closing the other ends it
 ([#15810](https://github.com/hivecommons/hive/issues/15810)).
 
 ### Empty-diff PRs of the hive's own
