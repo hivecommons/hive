@@ -83,19 +83,53 @@ func TestUpgradeProgressForStates(t *testing.T) {
 			state: spoke.UpgradeStatePulling, detail: "draining silently",
 		},
 		{
-			name: "open window held by the gate is missed now",
+			name: "open window held by the gate is delayed",
 			in: upgradeProgressInput{Entry: &RegistryEntry{GitHash: "551ffc3"},
 				AutoUpgrade: true, Mode: AutoUpgradeModeDaily, Channel: ReleaseChannelStable,
 				HoldReason: "hub restarted; stuck-upgrade latch recovering", HoldAt: now.Add(-10 * time.Minute)},
-			state: spoke.UpgradeStateMissed, detail: "window held", nextWin: true,
+			state: spoke.UpgradeStateDelayed, detail: "delayed", nextWin: true,
 		},
 		{
-			name: "recent missed window from history",
+			name: "legacy missed window is delayed",
 			in: upgradeProgressInput{Entry: &RegistryEntry{GitHash: "551ffc3"},
 				AutoUpgrade: true, Mode: AutoUpgradeModeDaily, LastFired: now.Format(autoUpgradeDateFormat),
 				History: []spoke.UpgradeAttempt{{Trigger: spoke.UpgradeTriggerWindow, Outcome: spoke.UpgradeOutcomeMissed,
 					Reason: "drain lapsed", StartedAt: now.Add(-2 * time.Hour), EndedAt: now.Add(-2 * time.Hour)}}},
-			state: spoke.UpgradeStateMissed, detail: "missed window 2h0m ago: drain lapsed", nextWin: true,
+			state: spoke.UpgradeStateDelayed, detail: "delayed: drain lapsed", nextWin: true,
+		},
+		{
+			name: "successful upgrade clears a stale live hold and legacy window",
+			in: upgradeProgressInput{Entry: &RegistryEntry{GitHash: "abc1234"},
+				AutoUpgrade: true, Mode: AutoUpgradeModeDaily, HoldReason: "merge debounce", HoldAt: now.Add(-10 * time.Minute),
+				History: []spoke.UpgradeAttempt{
+					{Trigger: spoke.UpgradeTriggerWindow, Outcome: spoke.UpgradeOutcomeMissed, Reason: "merge debounce", EndedAt: now.Add(-10 * time.Minute)},
+					{Target: "abc1234", Outcome: spoke.UpgradeOutcomeDone, EndedAt: now.Add(-5 * time.Minute)},
+				}},
+			state: spoke.UpgradeStateDone, detail: "upgraded to abc1234", nextWin: true,
+		},
+		{
+			name: "new hold after a successful upgrade remains visible",
+			in: upgradeProgressInput{Entry: &RegistryEntry{GitHash: "abc1234"},
+				AutoUpgrade: true, Mode: AutoUpgradeModeDaily, HoldReason: "merge debounce", HoldAt: now.Add(-time.Minute),
+				History: []spoke.UpgradeAttempt{
+					{Target: "abc1234", Outcome: spoke.UpgradeOutcomeDone, EndedAt: now.Add(-5 * time.Minute)},
+				}},
+			state: spoke.UpgradeStateDelayed, detail: "merge debounce", nextWin: true,
+		},
+		{
+			name: "genuine failed attempt is not relabeled",
+			in: upgradeProgressInput{Entry: &RegistryEntry{GitHash: "551ffc3"},
+				History: []spoke.UpgradeAttempt{{Trigger: spoke.UpgradeTriggerScheduled, Outcome: spoke.UpgradeOutcomeMissed,
+					Reason: "ErrImagePull", EndedAt: now.Add(-time.Minute)}}},
+			state: spoke.UpgradeStateMissed, detail: "ErrImagePull",
+		},
+		{
+			name: "stale hold does not mask a later failed attempt",
+			in: upgradeProgressInput{Entry: &RegistryEntry{GitHash: "551ffc3"},
+				AutoUpgrade: true, Mode: AutoUpgradeModeDaily, HoldReason: "merge debounce", HoldAt: now.Add(-10 * time.Minute),
+				History: []spoke.UpgradeAttempt{{Trigger: spoke.UpgradeTriggerScheduled, Outcome: spoke.UpgradeOutcomeMissed,
+					Reason: "ErrImagePull", EndedAt: now.Add(-time.Minute)}}},
+			state: spoke.UpgradeStateMissed, detail: "ErrImagePull", nextWin: true,
 		},
 		{
 			name: "recent done from history",
@@ -161,7 +195,7 @@ func TestUpgradeProgressInFlight(t *testing.T) {
 			t.Fatalf("%s should be in flight", st)
 		}
 	}
-	for _, st := range []string{spoke.UpgradeStateScheduled, spoke.UpgradeStateDone, spoke.UpgradeStateMissed} {
+	for _, st := range []string{spoke.UpgradeStateScheduled, spoke.UpgradeStateDelayed, spoke.UpgradeStateDone, spoke.UpgradeStateMissed} {
 		if (&spoke.UpgradeProgress{State: st}).InFlight() {
 			t.Fatalf("%s should not be in flight", st)
 		}
@@ -190,8 +224,13 @@ func TestHeartbeatUpgradePolicyCarriesWindowAndHistory(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, policy.NextWindowAt); err != nil {
 		t.Fatalf("NextWindowAt not RFC3339: %q", policy.NextWindowAt)
 	}
-	if len(policy.UpgradeHistory) != 1 || policy.UpgradeHistory[0].Reason != "hub restarted" {
+	if len(policy.UpgradeHistory) != 1 || policy.UpgradeHistory[0].Outcome != spoke.UpgradeOutcomeDelayed || policy.UpgradeHistory[0].Reason != "hub restarted" {
 		t.Fatalf("history not delivered on the policy: %+v", policy.UpgradeHistory)
+	}
+	s.upgradeHistory.end("fma", spoke.UpgradeOutcomeDone, "", "551ffc3", "5193426", time.Now())
+	policy = s.heartbeatUpgradePolicy(payload, sh, false, false, "v5", "")
+	if policy == nil || len(policy.UpgradeHistory) != 1 || policy.UpgradeHistory[0].Outcome != spoke.UpgradeOutcomeDone {
+		t.Fatalf("successful upgrade must remove the delay from the policy: %+v", policy)
 	}
 }
 
