@@ -79,6 +79,12 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 	decisionRequested, decisionQuestion := reviewDecisionRequestFromBody(req.Body)
 	decisionRiskHigh := reviewDecisionRiskHighFromBody(req.Body)
 	redundantOf := reviewRedundantOfNumber(req.Body)
+	if redundantOf == 0 && decisionRequested {
+		// A reviewer that wrote "already landed via #N" but forgot the
+		// marker still named the PR; carry it so the hive's own
+		// already-landed close can act (hivecommons/hive#15647).
+		redundantOf = review.AlreadyLandedPR(0, decisionQuestion)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		c.logger.Warn("review-request watcher: could not create report dir",
 			slog.String("dir", dir), slog.String("error", err.Error()))

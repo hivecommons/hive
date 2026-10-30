@@ -37,6 +37,20 @@ func TestDecideHiveEmptyDiffAutoClose(t *testing.T) {
 		{"parked by a person keeps", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.ParkedByPerson = true }), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonPerson},
 		{"below L6 keeps", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.Level = acmmLevelAutonomous - 1 }), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonLevel},
 		{"fresh head keeps", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.HeadAge = EmptyDiffMinHeadAge / 2 }), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonTooFresh},
+		// hivecommons/hive#15647: the reviewer read this head and said it
+		// is already landed; a fresh head is not mid-push, and files that
+		// are all identical on the base tip are no diff.
+		{"reviewer-confirmed fresh head closes", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.HeadAge = 0; f.ReviewerConfirmed = true }), hiveEmptyDiffVerdictClose, SupersessionActionClosedEmptyDiff},
+		{"files identical on base close as already landed", with(func(f *HiveEmptyDiffAutoCloseFacts) {
+			f.DiffFiles = 2
+			f.TreeMatchesBase = true
+			f.ReviewerConfirmed = true
+		}), hiveEmptyDiffVerdictClose, SupersessionActionClosedAlreadyLanded},
+		{"files identical on base but a person's PR is a prompt", with(func(f *HiveEmptyDiffAutoCloseFacts) {
+			f.DiffFiles = 2
+			f.TreeMatchesBase = true
+			f.HiveAuthored = false
+		}), hiveEmptyDiffVerdictHumanNote, hiveEmptyDiffReasonNotHive},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,7 +75,7 @@ func TestPRChangedFilesClaimsEmpty(t *testing.T) {
 }
 
 func TestRenderEmptyDiffCloseCommentCarriesMarkers(t *testing.T) {
-	body := renderEmptyDiffCloseComment(supersessionCloser{Repo: "hivecommons/hive", Number: 15427, URL: "https://github.com/hivecommons/hive/pull/15427"}, "closed: empty diff")
+	body := renderEmptyDiffCloseComment(supersessionCloser{Repo: "hivecommons/hive", Number: 15427, URL: "https://github.com/hivecommons/hive/pull/15427"}, "closed: empty diff", false)
 	for _, want := range []string{supersessionSweepMarker, reviewRedundantOfMarker + " #15427 -->", "[#15427](https://github.com/hivecommons/hive/pull/15427)", "edited in place"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("comment lacks %q:\n%s", want, body)

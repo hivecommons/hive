@@ -324,6 +324,9 @@ func humanizeStageReason(reason string) string {
 	if clause, ok := humanizeCoverReason(r); ok {
 		return clause
 	}
+	if clause, ok := stagelabels.AlreadyLandedCaption(r); ok {
+		return clause
+	}
 	switch lower {
 	case stagelabels.LaneReasonAdoptionChildClosedTwice:
 		return "the hive's copies of this PR were closed without merging twice within an hour"
