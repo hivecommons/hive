@@ -76,8 +76,8 @@ type HiveEmptyDiffAutoCloseFacts struct {
 	// complete file list; DiffFiles is its length.
 	DiffKnown bool
 	DiffFiles int
-	// HeadAge is now minus the PR's last update (or creation when GitHub
-	// reports no update).
+	// HeadAge is now minus the head commit's committer date (the PR's last
+	// update, or creation, when the commit date is unavailable).
 	HeadAge time.Duration
 	// Level is the repo's ACMM level; own-PR closes need L6 like the
 	// superseded rule.
@@ -187,7 +187,7 @@ func (c *Client) CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string
 		HiveAuthored: identity.Matches(safeGetLogin(pr.GetUser())),
 		Held:         c.isHeld(labels) || c.isExempt(labels),
 		KeptOpen:     supersessionHasLabel(pr, SupersessionKeepOpenLabel),
-		HeadAge:      emptyDiffHeadAge(pr, time.Now()),
+		HeadAge:      emptyDiffHeadAge(pr, time.Time{}, time.Now()),
 	}
 	if pr.ChangedFiles != nil && *pr.ChangedFiles > 0 {
 		// The GET payload already shows a diff: no compare needed.
@@ -198,6 +198,7 @@ func (c *Client) CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string
 		out.Verdict, out.Reason = DecideHiveEmptyDiffAutoClose(facts)
 		return out, nil
 	}
+	facts.HeadAge = emptyDiffHeadAge(pr, c.headCommitTime(ctx, owner, name, pr), time.Now())
 	if !facts.DiffKnown {
 		facts.DiffFiles, facts.DiffKnown = c.prDiffAgainstBase(ctx, owner, name, pr)
 	}
@@ -238,8 +239,28 @@ func (c *Client) CloseEmptyDiffHivePRIfEligible(ctx context.Context, repo string
 	return out, nil
 }
 
-func emptyDiffHeadAge(pr *gh.PullRequest, now time.Time) time.Duration {
-	at := pr.GetUpdatedAt().Time
+// headCommitTime is the head commit's committer date, or the zero time when
+// it cannot be read.
+func (c *Client) headCommitTime(ctx context.Context, owner, name string, pr *gh.PullRequest) time.Time {
+	sha := strings.TrimSpace(pr.GetHead().GetSHA())
+	if sha == "" {
+		return time.Time{}
+	}
+	commit, _, err := c.client.Repositories.GetCommit(WithRESTCaller(ctx, "hive:empty_diff_head_age"), owner, name, sha, nil)
+	if err != nil || commit == nil {
+		return time.Time{}
+	}
+	return commit.GetCommit().GetCommitter().GetDate().Time
+}
+
+// emptyDiffHeadAge measures from the head commit's committer date; updated_at
+// is bumped by labels and comments, so it only stands in when the commit date
+// is unavailable.
+func emptyDiffHeadAge(pr *gh.PullRequest, headCommitAt, now time.Time) time.Duration {
+	at := headCommitAt
+	if at.IsZero() {
+		at = pr.GetUpdatedAt().Time
+	}
 	if at.IsZero() {
 		at = pr.GetCreatedAt().Time
 	}

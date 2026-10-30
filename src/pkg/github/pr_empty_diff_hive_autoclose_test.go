@@ -95,3 +95,16 @@ func TestReviewRedundantOfNumber(t *testing.T) {
 		}
 	}
 }
+
+// hivecommons/hive#15603: updated_at is bumped by labels and comments, so a
+// recently touched PR with an old head must still count as old.
+func TestEmptyDiffHeadAgeUsesHeadCommit(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	pr := &gh.PullRequest{UpdatedAt: &gh.Timestamp{Time: now.Add(-time.Minute)}}
+	if got := emptyDiffHeadAge(pr, now.Add(-time.Hour), now); got != time.Hour {
+		t.Fatalf("head age = %v, want 1h from the head commit", got)
+	}
+	if got := emptyDiffHeadAge(pr, time.Time{}, now); got != time.Minute {
+		t.Fatalf("head age = %v, want 1m from updated_at fallback", got)
+	}
+}

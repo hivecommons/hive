@@ -1,0 +1,1 @@
+- Empty-diff autoclose now measures head age from the head commit instead of `updated_at`, which labels and comments bump ([#15603](https://github.com/hivecommons/hive/issues/15603))
