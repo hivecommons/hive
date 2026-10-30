@@ -165,7 +165,7 @@ func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 		Logger:   logger,
 	}
 	opts.BaseSyncEnabled = func(repo string) bool {
-		return cfg != nil && cfg.Review.ContributorPRs.BaseSync
+		return cfg != nil && cfg.Review.ContributorPRs.BaseSync && !cfg.AutoMerge.RequireCurrentBaseFor(repo)
 	}
 	if client != nil {
 		opts.BranchUpdater = client
