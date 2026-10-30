@@ -473,7 +473,7 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	}
 	// The tracker's "Merging" state (hivecommons/hive#15245) spans exactly
 	// the merge call, whichever caller issued it.
-	BeginMergeAttempt(owner+"/"+repo, number, auditPath)
+	BeginMergeAttemptOnHead(owner+"/"+repo, number, auditPath, expectSHA)
 	out, err := effects.Execute(ctx, boundary, claim, merge)
 	if errors.Is(err, effects.ErrNeedsReconciliation) {
 		out, err = c.reconcileMerge(ctx, boundary, claim, owner, repo, number, merge, err)
