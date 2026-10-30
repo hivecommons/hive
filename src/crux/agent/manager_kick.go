@@ -471,7 +471,8 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	agent.ciPollNudgeSent = false
 	agent.AwaitingCI = false
 
-	snippet := message
+	previewBody := kickPreviewBody(message)
+	snippet := previewBody
 	const maxSnippetLen = 120
 	snippet = truncateStr(snippet, maxSnippetLen)
 	record := KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet}
@@ -480,7 +481,7 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	}
 	agent.KickHistory = append(agent.KickHistory, record)
 
-	kickPreview := message
+	kickPreview := previewBody
 	const maxKickPreviewLen = 200
 	if len(kickPreview) > maxKickPreviewLen {
 		kickPreview = truncateStr(kickPreview, maxKickPreviewLen)
@@ -489,6 +490,7 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 		"name", agent.Name,
 		"message_len", len(message),
 		"preview", kickPreview,
+		"canary", previewBody != message,
 		"trigger", trigger,
 	)
 
