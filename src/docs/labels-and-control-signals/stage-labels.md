@@ -923,7 +923,11 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    tracker's 072 pill reads `… — hive adopts it in 3m unless a new head
    lands` while the clock runs and `… — hive adopts it on the next sweep`
    once it has. **Adopt now** stays as the override for a clock that has
-   not run out yet.
+   not run out yet. Under `maintainer_policy: never` the engine has not
+   read the author's repository permission yet at this point — it only
+   does so once due — so the pill cannot promise that outcome for every
+   author; it names the exception instead: `… unless the author maintains
+   this repository` (hivecommons/hive#15692).
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
    A PR whose diff trips the contributor lane's diff fences — it touches
