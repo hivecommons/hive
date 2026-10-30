@@ -150,13 +150,15 @@ metadata, not a fabricated last-member PR event.
   Each current member head must be an ancestor of the synthetic head.
 - Every member must have all eleven original check results on its exact
   head from the expected App. Actions results additionally bind to their
-  actual workflow file, event and head through the Actions API, not merely
-  their check name or a copied commit status. Only technical PR jobs may
+  actual workflow file, event, head, matching check-suite ID and exact job's
+  `check_run_url` through the Actions API. A copied `details_url` or check
+  name is not proof of membership in that workflow. Only technical PR jobs may
   carry their existing path-scoped `skipped` result; the five policy proofs
   require `success`. No missing, neutral, failed or unavailable evidence is
   treated as success. The verifier retains its existing advisory behavior;
   this bridge does not turn its underlying implementation into a strict
-  content validator.
+  content validator. Dependabot runs that same trusted PR-target verifier
+  rather than skipping it; skipped policy evidence is never exempted by actor.
 - Draft/closed/held PRs, changes requested, dismissed approvals and approvals
   on an old head fail closed. Membership and mutable PR/review state are
   re-read before success, and the synthetic ref must still name this group.

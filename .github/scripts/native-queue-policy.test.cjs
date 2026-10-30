@@ -27,7 +27,8 @@ function checks(head, definitions = { ...POLICY_CHECKS, ...BUILD_CHECKS }) {
   return Object.entries(definitions).map(([name, source], index) => ({
     id: 100 + index, name, head_sha: head, status: 'completed', conclusion: 'success',
     app: { id: source ? ACTIONS_APP_ID : DCO_APP_ID },
-    details_url: `https://github.com/acme/widget/actions/runs/${100 + index}/job/1`,
+    check_suite: { id: 10000 + index },
+    details_url: `https://github.com/acme/widget/actions/runs/${1000 + index}/job/1`,
   }));
 }
 
@@ -48,10 +49,12 @@ function fixture(eventName = 'merge_group') {
         listReviews: 'reviews',
       },
       actions: {
+        listJobsForWorkflowRun: 'jobs',
         getWorkflowRun: async ({ run_id: id }) => {
-          const definition = [...Object.entries(POLICY_CHECKS), ...Object.entries(BUILD_CHECKS)][id - 100];
+          const definition = [...Object.entries(POLICY_CHECKS), ...Object.entries(BUILD_CHECKS)][id - 1000];
           const source = definition[1];
           return { data: {
+            id, check_suite_id: id + 9000,
             path: state.badWorkflow || `.github/workflows/${source[0]}`,
             event: source[1][0], head_sha: state.workflowHead,
           } };
@@ -64,6 +67,15 @@ function fixture(eventName = 'merge_group') {
       git: { getRef: async () => ({ data: { object: { sha: state.ref } } }) },
     },
     paginate: async (method, args) => {
+      if (method === 'jobs') {
+        const index = args.run_id - 1000;
+        const [name] = [...Object.entries(POLICY_CHECKS), ...Object.entries(BUILD_CHECKS)][index];
+        return [{
+          id: 100000 + index, run_id: args.run_id, name, head_sha: state.workflowHead,
+          check_run_url: `https://api.github.com/repos/acme/widget/check-runs/${100 + index}`,
+          status: 'completed', conclusion: 'success',
+        }];
+      }
       if (method === 'checks') {
         state.workflowHead = args.ref;
         return clone(state.runs.get(args.ref));
@@ -179,6 +191,50 @@ test('untrusted events and workflow provenance are rejected', async () => {
   const g = fixture();
   g.state.badWorkflow = '.github/workflows/untrusted.yml';
   await assert.rejects(evaluate(g), /Unexpected workflow/);
+});
+
+test('copied expected-run URL/name cannot substitute a foreign check suite or check identity', async () => {
+  for (const change of [
+    { id: 999, check_suite: { id: 99999 } },
+    { id: 999 }, // Even a claimed matching suite cannot replace actual job membership.
+    { check_suite: null },
+  ]) {
+    const f = fixture('pull_request_target');
+    const gate = f.state.runs.get(sha(11)).find(r => r.name === 'gate');
+    Object.assign(gate, change);
+    await assert.rejects(evaluate(f), /suite\/job identity mismatch/);
+  }
+});
+
+test('expected workflow suite alone does not accept a wrong job head, name or conclusion', async () => {
+  for (const change of [
+    { head_sha: sha(99) }, { name: 'another job' }, { conclusion: 'failure' },
+    { run_id: 99999 }, { status: 'in_progress' },
+  ]) {
+    const f = fixture('pull_request_target');
+    const paginate = f.github.paginate;
+    f.github.paginate = async (method, args) => {
+      const results = await paginate(method, args);
+      return method === 'jobs' ? results.map(job => ({ ...job, ...change })) : results;
+    };
+    await assert.rejects(evaluate(f), /suite\/job identity mismatch/);
+  }
+});
+
+test('Dependabot PR-target events require an actual successful verifier, never a skipped proof', async () => {
+  for (const conclusion of ['success', 'skipped', 'failure']) {
+    const f = fixture('pull_request_target');
+    f.context.actor = 'dependabot[bot]';
+    f.context.payload.sender = { login: 'dependabot[bot]', type: 'Bot' };
+    f.context.payload.pull_request.user = clone(f.context.payload.sender);
+    f.state.prs[0].user = clone(f.context.payload.sender);
+    f.state.runs.get(sha(11)).find(r => r.name === 'verify PR contents').conclusion = conclusion;
+    if (conclusion === 'success') {
+      assert.match(await evaluate(f), /five existing policy providers/);
+    } else {
+      await assert.rejects(evaluate(f), /verify PR contents/);
+    }
+  }
 });
 
 test('earlier member failure blocks the whole group', async () => {

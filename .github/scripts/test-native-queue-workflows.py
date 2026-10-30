@@ -60,6 +60,15 @@ class NativeQueueWorkflows(unittest.TestCase):
         manifest = yaml.safe_load((ROOT / ".github/release-lines.yml").read_text())
         self.assertEqual(manifest["pinned"]["native-queue-policy.yml"], ["v6", "-v4"])
 
+    def test_dependabot_runs_the_same_trusted_pr_verifier(self):
+        verifier = workflow("pr-verifier.yml")
+        events = verifier.get("on", verifier.get(True))
+        self.assertIn("opened", events["pull_request_target"]["types"])
+        job = verifier["jobs"]["verify"]
+        self.assertNotIn("if", job)
+        self.assertEqual(job["name"], "verify PR contents")
+        self.assertIn("docker run --rm", job["steps"][-1]["run"])
+
 
 if __name__ == "__main__":
     unittest.main()

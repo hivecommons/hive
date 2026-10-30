@@ -12,6 +12,7 @@ on:
       - '.github/workflows/v2-ci.yml'
       - '.github/workflows/v2-tests.yml'
       - '.github/workflows/go-security-analysis.yml'
+      - '.github/workflows/pr-verifier.yml'
   push:
     branches: [v5, v6]
     paths:
@@ -24,6 +25,7 @@ on:
       - '.github/workflows/v2-ci.yml'
       - '.github/workflows/v2-tests.yml'
       - '.github/workflows/go-security-analysis.yml'
+      - '.github/workflows/pr-verifier.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

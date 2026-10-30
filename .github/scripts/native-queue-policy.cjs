@@ -84,6 +84,7 @@ async function assertEvidence(github, repo, number, head, checks) {
   const runs = await github.paginate(github.rest.checks.listForRef, {
     ...repo, ref: head, per_page: 100, filter: 'latest',
   });
+  const workflows = new Map();
   for (const { run, source } of evidenceForHead(runs, head, checks)) {
     if (!source) continue; // Probot DCO is deliberately not impersonated.
     const url = new URL(run.details_url);
@@ -92,11 +93,29 @@ async function assertEvidence(github, repo, number, head, checks) {
     if (url.hostname !== 'github.com' || !/^[0-9]+$/.test(id)) {
       throw new Error(`Invalid Actions provenance for ${run.name}`);
     }
-    const { data: workflow } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: Number(id) });
+    const runID = Number(id);
+    if (!workflows.has(runID)) {
+      const { data: workflow } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: runID });
+      const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+        ...repo, run_id: runID, per_page: 100, filter: 'latest',
+      });
+      workflows.set(runID, { workflow, jobs });
+    }
+    const { workflow, jobs } = workflows.get(runID);
     const [file, events] = source;
     if (workflow.path !== `.github/workflows/${file}` || !events.includes(workflow.event) ||
-        workflow.head_sha !== head) {
+        workflow.head_sha !== head || workflow.id !== runID) {
       throw new Error(`Unexpected workflow/event/head for ${run.name} on #${number}`);
+    }
+    // details_url is only a locator. The API-owned suite and job identities
+    // must independently bind this exact check run to the expected workflow.
+    const checkURL = `https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/${run.id}`;
+    if (!Number.isSafeInteger(run.check_suite?.id) ||
+        run.check_suite.id !== workflow.check_suite_id ||
+        !jobs.some(job => job.run_id === runID && job.name === run.name &&
+          job.head_sha === head && job.check_run_url === checkURL &&
+          job.status === 'completed' && job.conclusion === run.conclusion)) {
+      throw new Error(`Check suite/job identity mismatch for ${run.name} on #${number}`);
     }
   }
 }
