@@ -1635,6 +1635,12 @@
     // toast says why in plain words and carries the next actions.
     const STAGE_TRACKER_ACTION_NO_EFFECT = 'no-effect';
     const STAGE_TRACKER_RESULT_TOAST_MAX = 5;
+    // An informational result toast ("adopted", "/lgtm posted", a no-op)
+    // closes itself after this long, with the countdown bar and hover /
+    // focus pause every timed toast gets; it still leaves earlier on × or
+    // when the tracker reports the target in a new state. Errors and
+    // toasts carrying next-action buttons wait for the operator instead.
+    const STAGE_TRACKER_RESULT_TOAST_MS = 15000;
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
@@ -1768,9 +1774,10 @@
       return String(text || '').replace(STAGE_TRACKER_RFC3339_RE, m => { const ms = Date.parse(m); return isNaN(ms) ? m : agentNowClockTime(ms, nowMs) + (formatDashboardDate(new Date(ms)) === formatDashboardDate(nowMs) ? ' today' : ''); });
     }
     let _stageTrackerResultToasts = [];
-    // Build and show the persistent result toast; it leaves on × or when
-    // the tracker reports the target in a new state (see
-    // stageTrackerResultToastsSync).
+    // Build and show the result toast; it leaves on ×, when the tracker
+    // reports the target in a new state (see stageTrackerResultToastsSync)
+    // or, for a plain informational result, after
+    // STAGE_TRACKER_RESULT_TOAST_MS (see stageTrackerResultToastTimed).
     function stageTrackerResultToast(result, item, ctx) {
       const text = stageTrackerResultText(result, item, ctx);
       const container = document.getElementById('toast-container');
@@ -1808,10 +1815,17 @@
       }
       if (container) container.appendChild(el);
       makeToastSticky(el);
+      if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));
       const key = stageTrackerTargetKey(result.target) || stageTrackerItemKey(item);
       const entry = { el, key, state: stageTrackerItemState(stageTrackerItemByKey(_stageTracker, key)), result, text };
       if (text.type !== 'error') _stageTrackerResultToasts.push(entry);
       return entry;
+    }
+    // Pure: does a result toast close itself? Errors need acknowledging
+    // and a toast offering next actions is a prompt, so both stay until
+    // the operator answers; everything else is information and times out.
+    function stageTrackerResultToastTimed(text) {
+      return text.type !== 'error' && !(text.options && text.options.length);
     }
     // Pure: has the toast's target left the state it was shown in?
     function stageTrackerResultToastStale(entry, d) {
