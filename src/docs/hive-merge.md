@@ -775,9 +775,22 @@ then), so the issue list and the PR list read the same
 ([#12436](https://github.com/hivecommons/hive/issues/12436)).
 
 An adoption pair is one logical PR everywhere a person might otherwise be
-asked to pick between PRs (hivecommons/hive#15495). When the write-back gate
-keeps the contributor's original open after supersession (`needs-opt-in-label`,
-a fork the hive cannot edit), it sits at 072 "superseded by #N" and the
+asked to pick between PRs (hivecommons/hive#15495). A clanker- or
+hive-authored original closes in the adopting pass by policy
+(`governor.labels.stage.adoption.close_superseded: on_adopt`, the default;
+`on_merge` keeps it open until the copy merges): the write-back gate admits
+the close as `superseded-agent-pr` without the repo opt-in label the
+`contributor_adopt` kind otherwise wants, because the copy carries the same
+commits and sign-off (hivecommons/hive#15526 sat open beside hive's #15574
+as "Adopted → #15574 · superseded" with the gate saying
+`needs-opt-in-label`). A human-authored original still needs that opt-in
+label to close in the adopting pass; without it the gate keeps it open after
+supersession (`needs-opt-in-label`, or a fork the hive cannot edit) and it
+sits at 072 "superseded by #N" until the copy merges. Either way the
+superseded original is **not a row of its own** in the Activity Monitor
+while its copy is listed: the tracker marks it `superseded_by: M` and the
+SPA folds it into the copy's "adopted from @x's #N" chip, whose hover says
+whether #N is closed or still open and closing when the copy merges. The
 issue's caption, open-PR count, parked-PR check and "Let hive decide — all N
 PRs" fan-out all see only the hive's copy: the original's review verdict never
 gates the issue, and the copy's body carries every `Fixes #N` / `Refs #N` line

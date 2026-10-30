@@ -115,6 +115,7 @@ func TestStageTrackerAttentionOrderJS(t *testing.T) {
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerAnchor"),
 		jsFunc(t, html, "stageTrackerLinkedDrawnHere"),
+		jsFunc(t, html, "stageTrackerLinkedFoldedInto"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
 		jsFunc(t, html, "stageTrackerSortKey"),
 		jsFunc(t, html, "stageTrackerRegressionHandled"),

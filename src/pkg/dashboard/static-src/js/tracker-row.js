@@ -943,6 +943,22 @@
       }
       return true;
     }
+    // Pure: the listed, open PR a nested original is folded into — its
+    // superseder (`superseded_by` from the server; `adopted_by` while the
+    // copy is live, for a payload without it) when that copy is itself
+    // listed under the issue and not closed — else 0. A superseded PR is
+    // closed and not listed (owner, hivecommons/hive#15526 under #15511
+    // drew the original as a dimmed second row beside hive's #15574): it
+    // lives only in the copy's "adopted from" chip. A closed original
+    // whose copy is not in the list still draws as one dimmed line.
+    function stageTrackerLinkedFoldedInto(lp, issue) {
+      if (!lp) return 0;
+      const live = lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice' && lp.adopted_by_state !== 'copy-failed';
+      const by = Number(lp.superseded_by) || (live ? Number(lp.adopted_by) || 0 : 0);
+      if (!(by > 0) || by === Number(lp.number)) return 0;
+      const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
+      return linked.some(x => x && Number(x.number) === by && String(x.state || '') !== 'closed' && (Array.isArray(x.modifiers) ? x.modifiers : []).indexOf('merged') < 0) ? by : 0;
+    }
     // Pure: an issue's open nested PRs as row items.
     function stageTrackerNestedOpenPRs(issue) {
       if (!issue || issue.kind === 'pr') return [];
@@ -984,7 +1000,16 @@
       if (l.kind === 'superseded') return 'Hive took this PR over as #' + Number(l.to_number) + '; this original is closed when that merges.';
       const who = l.from_author ? '@' + l.from_author : 'the contributor';
       const tip = STAGE_TRACKER_LINEAGE_REASON_TIP[l.reason] || STAGE_TRACKER_LINEAGE_REASON_TIP['ci-red-contributor-offline'];
-      return tip.split('@AUTHOR').join(who);
+      return tip.split('@AUTHOR').join(who) + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
+    }
+    // Pure: the hover clause that says what became of the superseded
+    // original the chip stands in for — closed, or still open and closing
+    // when the copy merges; '' when the server does not say.
+    function stageTrackerSupersededOriginalClause(number, state) {
+      if (!(number > 0)) return '';
+      if (state === 'closed') return ' #' + number + ' is closed as superseded.';
+      if (state === 'open') return ' #' + number + ' is superseded and still open; it closes when this merges.';
+      return '';
     }
     function stageTrackerLineageChipHtml(item, nowMs) {
       const text = stageTrackerLineageText(item, nowMs);
@@ -1015,7 +1040,7 @@
         const what = af.decided_action === 'let-hive-decide' ? 'you let hive decide' : 'you approved';
         text += ' · ' + what + ' ' + agentNowClockTime(Date.parse(af.decided_at), typeof nowMs === 'number' ? nowMs : Date.now());
       }
-      const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '. #' + af.number + ' is closed as superseded when this merges.';
+      const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '.' + (stageTrackerSupersededOriginalClause(Number(af.number), af.state) || ' #' + af.number + ' is closed as superseded when this merges.');
       return `<a class="ham-badge ham-adopted-from" href="${esc(af.url || '#')}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(text)}</a>`;
     }
     // The row's inline lead action (tracker-actions.js
@@ -1086,7 +1111,7 @@
       return stageTrackerLinkedElsewhere(item).map(lp => `<a class="ham-badge ham-linked-elsewhere" href="${esc(lp.url || '#')}" target="_blank" rel="noopener" title="${esc('PR #' + (Number(lp.number) || 0) + ' covers this issue too; its row is drawn under #' + Number(lp.drawn_under))}">↳ #${Number(lp.number) || 0} · under #${Number(lp.drawn_under)}</a>`).join(' ');
     }
     function stageTrackerLinkedSorted(item, stages) {
-      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedFoldedInto(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y) - stageTrackerAnchor(x.stage, stages, 'pr', x)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
@@ -1267,7 +1292,7 @@
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? (stageTrackerLineageChipHtml(lp, nowMs) || null) : null, lp.base_ref)];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '') || null, lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {

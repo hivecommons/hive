@@ -14986,17 +14986,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const lead = who + ' · ' + chose + ', ' + agentNowClockTime(atMs, nowMs);
       return lead + (d.title ? '\n' + d.title : '');
     }
-    // Pure: an adopted original listed under its issue — closed, or still
-    // open with the hive's copy already in the list — draws as one dimmed
-    // line without a chevron track (hivecommons/hive#15126).
+    // Pure: a closed adopted original listed under its issue draws as one
+    // dimmed line without a chevron track (hivecommons/hive#15126) — only
+    // when its copy is not in the list; with the copy listed the original
+    // is folded into the copy's chip and not drawn at all
+    // (stageTrackerLinkedFoldedInto, hivecommons/hive#15526).
     function stageTrackerLinkedSupersededText(lp, issue) {
       if (!lp) return '';
       const by = Number(lp.superseded_by || lp.adopted_by) || 0;
       if (String(lp.state || '') === 'closed') return 'closed · superseded by #' + by;
-      if (by > 0 && lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice') {
-        const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
-        if (linked.some(x => Number(x.number) === by)) return 'Adopted → #' + by + ' · superseded (hive re-authored with sign-off)';
-      }
       return '';
     }
     function stageTrackerCoveringPR(item) {
@@ -16620,6 +16618,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return true;
     }
+    // Pure: the listed, open PR a nested original is folded into — its
+    // superseder (`superseded_by` from the server; `adopted_by` while the
+    // copy is live, for a payload without it) when that copy is itself
+    // listed under the issue and not closed — else 0. A superseded PR is
+    // closed and not listed (owner, hivecommons/hive#15526 under #15511
+    // drew the original as a dimmed second row beside hive's #15574): it
+    // lives only in the copy's "adopted from" chip. A closed original
+    // whose copy is not in the list still draws as one dimmed line.
+    function stageTrackerLinkedFoldedInto(lp, issue) {
+      if (!lp) return 0;
+      const live = lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice' && lp.adopted_by_state !== 'copy-failed';
+      const by = Number(lp.superseded_by) || (live ? Number(lp.adopted_by) || 0 : 0);
+      if (!(by > 0) || by === Number(lp.number)) return 0;
+      const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
+      return linked.some(x => x && Number(x.number) === by && String(x.state || '') !== 'closed' && (Array.isArray(x.modifiers) ? x.modifiers : []).indexOf('merged') < 0) ? by : 0;
+    }
     // Pure: an issue's open nested PRs as row items.
     function stageTrackerNestedOpenPRs(issue) {
       if (!issue || issue.kind === 'pr') return [];
@@ -16661,7 +16675,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (l.kind === 'superseded') return 'Hive took this PR over as #' + Number(l.to_number) + '; this original is closed when that merges.';
       const who = l.from_author ? '@' + l.from_author : 'the contributor';
       const tip = STAGE_TRACKER_LINEAGE_REASON_TIP[l.reason] || STAGE_TRACKER_LINEAGE_REASON_TIP['ci-red-contributor-offline'];
-      return tip.split('@AUTHOR').join(who);
+      return tip.split('@AUTHOR').join(who) + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
+    }
+    // Pure: the hover clause that says what became of the superseded
+    // original the chip stands in for — closed, or still open and closing
+    // when the copy merges; '' when the server does not say.
+    function stageTrackerSupersededOriginalClause(number, state) {
+      if (!(number > 0)) return '';
+      if (state === 'closed') return ' #' + number + ' is closed as superseded.';
+      if (state === 'open') return ' #' + number + ' is superseded and still open; it closes when this merges.';
+      return '';
     }
     function stageTrackerLineageChipHtml(item, nowMs) {
       const text = stageTrackerLineageText(item, nowMs);
@@ -16692,7 +16715,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const what = af.decided_action === 'let-hive-decide' ? 'you let hive decide' : 'you approved';
         text += ' · ' + what + ' ' + agentNowClockTime(Date.parse(af.decided_at), typeof nowMs === 'number' ? nowMs : Date.now());
       }
-      const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '. #' + af.number + ' is closed as superseded when this merges.';
+      const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '.' + (stageTrackerSupersededOriginalClause(Number(af.number), af.state) || ' #' + af.number + ' is closed as superseded when this merges.');
       return `<a class="ham-badge ham-adopted-from" href="${esc(af.url || '#')}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(text)}</a>`;
     }
     // The row's inline lead action (tracker-actions.js
@@ -16763,7 +16786,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return stageTrackerLinkedElsewhere(item).map(lp => `<a class="ham-badge ham-linked-elsewhere" href="${esc(lp.url || '#')}" target="_blank" rel="noopener" title="${esc('PR #' + (Number(lp.number) || 0) + ' covers this issue too; its row is drawn under #' + Number(lp.drawn_under))}">↳ #${Number(lp.number) || 0} · under #${Number(lp.drawn_under)}</a>`).join(' ');
     }
     function stageTrackerLinkedSorted(item, stages) {
-      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedFoldedInto(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y) - stageTrackerAnchor(x.stage, stages, 'pr', x)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
@@ -16944,7 +16967,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? (stageTrackerLineageChipHtml(lp, nowMs) || null) : null, lp.base_ref)];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '') || null, lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
@@ -17795,10 +17818,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is nested under a listed issue is drawn as that issue's sub-row only.
     function stageTrackerVisible(items, filter, ctx) {
       const f = stageTrackerNormalizeFilter(filter || _stageTrackerFilter);
-      const rows = (items || []).filter(it => stageTrackerMatches(it, f, ctx));
+      const rows = stageTrackerFoldSuperseded((items || []).filter(it => stageTrackerMatches(it, f, ctx)));
       if (f.kind === 'pr') return rows;
       const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
       return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
+    }
+    // Pure: drop every PR row whose `superseded_by` names a PR that is
+    // itself drawn open on this page — as a row or as a listed issue's
+    // open sub-row. A superseded PR is closed and not listed (owner,
+    // hivecommons/hive#15526); the copy's "adopted from" chip is its one
+    // trace. A superseder that is not drawn (filtered out, another page,
+    // closed) leaves the original a row of its own.
+    function stageTrackerFoldSuperseded(rows) {
+      const drawn = new Set();
+      for (const it of rows) {
+        if (!it) continue;
+        if (it.kind === 'pr' && String(it.state || '') !== 'closed') drawn.add(it.repo + '#' + it.number);
+        if (it.kind === 'issue' && Array.isArray(it.linked_prs)) for (const lp of it.linked_prs) if (lp && String(lp.state || '') !== 'closed' && (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') < 0) drawn.add(it.repo + '#' + lp.number);
+      }
+      return rows.filter(it => !(it && it.kind === 'pr' && Number(it.superseded_by) > 0 && Number(it.superseded_by) !== Number(it.number) && drawn.has(it.repo + '#' + Number(it.superseded_by))));
     }
 
     // The canonical tracker count (owner): rows of the default view — every

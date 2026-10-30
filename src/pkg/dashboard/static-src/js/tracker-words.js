@@ -736,17 +736,15 @@
       const lead = who + ' · ' + chose + ', ' + agentNowClockTime(atMs, nowMs);
       return lead + (d.title ? '\n' + d.title : '');
     }
-    // Pure: an adopted original listed under its issue — closed, or still
-    // open with the hive's copy already in the list — draws as one dimmed
-    // line without a chevron track (hivecommons/hive#15126).
+    // Pure: a closed adopted original listed under its issue draws as one
+    // dimmed line without a chevron track (hivecommons/hive#15126) — only
+    // when its copy is not in the list; with the copy listed the original
+    // is folded into the copy's chip and not drawn at all
+    // (stageTrackerLinkedFoldedInto, hivecommons/hive#15526).
     function stageTrackerLinkedSupersededText(lp, issue) {
       if (!lp) return '';
       const by = Number(lp.superseded_by || lp.adopted_by) || 0;
       if (String(lp.state || '') === 'closed') return 'closed · superseded by #' + by;
-      if (by > 0 && lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice') {
-        const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
-        if (linked.some(x => Number(x.number) === by)) return 'Adopted → #' + by + ' · superseded (hive re-authored with sign-off)';
-      }
       return '';
     }
     function stageTrackerCoveringPR(item) {

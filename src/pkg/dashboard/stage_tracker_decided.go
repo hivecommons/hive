@@ -91,7 +91,12 @@ type StageTrackerAdoptedFrom struct {
 	DecidedAt     *time.Time `json:"decided_at,omitempty"`
 	DecidedAction string     `json:"decided_action,omitempty"`
 	Verdict       string     `json:"verdict,omitempty"`
-	Text          string     `json:"text"`
+	// State is the original's state: "open" (still open; closes when the
+	// copy merges) or "closed" (closed as superseded). The chip's hover
+	// says which, since the original is not listed as a row of its own
+	// (hivecommons/hive#15526).
+	State string `json:"state,omitempty"`
+	Text  string `json:"text"`
 }
 
 const (
@@ -354,7 +359,7 @@ func stageTrackerFollowAdoption(issue, orig, copy *StageTrackerItem) {
 // stageTrackerAdoptedFrom builds the copy's adopted_from from the original
 // PR and its recorded decision.
 func stageTrackerAdoptedFrom(orig *StageTrackerItem, now time.Time) *StageTrackerAdoptedFrom {
-	af := &StageTrackerAdoptedFrom{Number: orig.Number, URL: orig.URL, Author: orig.Author}
+	af := &StageTrackerAdoptedFrom{Number: orig.Number, URL: orig.URL, Author: orig.Author, State: lineageFromStateOpen}
 	text := "↳ adopted from #" + strconv.Itoa(orig.Number)
 	if a := orig.LastOperatorAction; a != nil && stageTrackerDecidedVerdict(a) != "" {
 		t := a.At
@@ -398,6 +403,7 @@ func (s *Server) stageTrackerClosedOriginal(issue *StageTrackerItem, prs map[str
 	} else if copy.AdoptedFrom == nil {
 		copy.AdoptedFrom = &StageTrackerAdoptedFrom{Number: issue.LinkedPR, Text: "↳ adopted from #" + strconv.Itoa(issue.LinkedPR)}
 	}
+	copy.AdoptedFrom.State = lineageFromStateClosed
 	stageTrackerFollowAdoption(issue, &StageTrackerItem{Number: issue.LinkedPR}, copy)
 	issue.LinkedPRs = slices.DeleteFunc(issue.LinkedPRs, func(lp StageTrackerLinkedPR) bool { return lp.Number == orig.Number })
 	issue.LinkedPRs = append(issue.LinkedPRs, orig)

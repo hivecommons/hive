@@ -460,6 +460,14 @@ type StageTrackerItem struct {
 	// "copy-failed" — a close-first copy failed and the original was
 	// reopened for a person (hivecommons/hive#15135).
 	AdoptedByState string `json:"adopted_by_state,omitempty"`
+	// SupersededBy is, on an adopted original still open while the hive's
+	// copy is live (AdoptedBy with no failed / closed state), that copy:
+	// the SPA folds such a row into the copy's "adopted from" chip instead
+	// of listing it — a superseded PR is closed and not listed, never a
+	// second row for one logical PR (hivecommons/hive#15526 under #15511
+	// read as two PRs). 0 when the copy is gone and the original is live
+	// work again.
+	SupersededBy int `json:"superseded_by,omitempty"`
 	// Supersedes names the closed original this PR replaced (the hive's
 	// close-first supersession, hivecommons/hive#15135). The original is
 	// closed, unmerged, and never a tracker row; this is the only trace of
@@ -1919,6 +1927,21 @@ func stageTrackerAdoptedByState(rec stagelabels.Record) string {
 	return ""
 }
 
+// stageTrackerSupersededBy is the live copy that supersedes an adopted
+// original, 0 when the adoption was in place or the copy is closed, failed
+// or being replaced (then the original is live work again). A copy still
+// resolving conflicts is live: the pair stays one logical PR.
+func stageTrackerSupersededBy(rec stagelabels.Record) int {
+	if rec.AdoptedBy <= 0 || rec.AdoptMode == stagelabels.AdoptModeInPlace {
+		return 0
+	}
+	switch stageTrackerAdoptedByState(rec) {
+	case "", stageTrackerAdoptedResolving:
+		return rec.AdoptedBy
+	}
+	return 0
+}
+
 // stageTrackerAdoptionLoopCaption is the 085 caption for the loop guard.
 func stageTrackerAdoptionLoopCaption(rec stagelabels.Record) string {
 	return "The hive's copies of this PR (last #" + strconv.Itoa(rec.AdoptedBy) + ") were closed without merging twice within an hour; the hive stopped opening copies and a person must decide"
@@ -2057,6 +2080,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.AdoptedBy = rec.AdoptedBy
 			it.AdoptedByState = stageTrackerAdoptedByState(rec)
+			it.SupersededBy = stageTrackerSupersededBy(rec)
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 			it.AdmittedBy = rec.Admission(it.Head)
 			if total, unsigned, ok := rec.DCOFor(it.Head); ok {
@@ -3148,6 +3172,9 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				lp.Decided, lp.AdoptedFrom = pr.Decided, pr.AdoptedFrom
 				lp.AdoptedBy, lp.AdoptedByState = pr.AdoptedBy, pr.AdoptedByState
+				if lp.SupersededBy == 0 {
+					lp.SupersededBy = pr.SupersededBy
+				}
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
