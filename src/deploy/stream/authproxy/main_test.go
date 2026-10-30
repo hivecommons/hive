@@ -44,6 +44,51 @@ func TestProxyInjectsBearerAndRewritesHost(t *testing.T) {
 	}
 }
 
+func TestReadOnlyForwardsOnlyGetAndHead(t *testing.T) {
+	var upstreamMethods []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamMethods = append(upstreamMethods, r.Method)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	rp, err := newProxy(upstream.URL, "s3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(readOnly(rp))
+	defer front.Close()
+
+	do := func(method string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(method, front.URL+"/api/agents/pause", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp
+	}
+
+	for _, m := range []string{http.MethodGet, http.MethodHead} {
+		if resp := do(m); resp.StatusCode != http.StatusNoContent {
+			t.Errorf("%s status = %d, want 204 (forwarded)", m, resp.StatusCode)
+		}
+	}
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
+		resp := do(m)
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("%s status = %d, want 405 (refused before the token is attached)", m, resp.StatusCode)
+		}
+		if resp.Header.Get("Allow") != "GET, HEAD" {
+			t.Errorf("%s Allow = %q", m, resp.Header.Get("Allow"))
+		}
+	}
+	if len(upstreamMethods) != 2 {
+		t.Errorf("upstream saw %v, want only the GET and HEAD", upstreamMethods)
+	}
+}
+
 func TestProxyRejectsBadTarget(t *testing.T) {
 	for _, target := range []string{"", "hive.example.com", "/relative"} {
 		if _, err := newProxy(target, ""); err == nil {
