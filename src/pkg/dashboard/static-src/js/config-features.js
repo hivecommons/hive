@@ -477,7 +477,7 @@
             <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
           </div>
           <div class="config-field">
-            <label>Native GitHub merge queue ${yamlHint('auto_merge.native_merge_queue')}</label>
+            <label>Native GitHub merge queue ${yamlHint('auto_merge.native_merge_queue')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native GitHub merge queue', `Default off. Hands admitted PRs to GitHub when the base requires a native queue. An empty repository allow-list covers every watched repository once enabled. Current-base checks remain enforced unless skip_current_base_gate is explicitly enabled on a queue base. Configure hive.yaml only after completing the pilot rollout.`)}</label>
             <p class="config-help">Configured: <strong>${am.native_merge_queue && am.native_merge_queue.enabled ? 'enabled' : 'disabled (default)'}</strong>.
               Repositories: ${esc(((am.native_merge_queue || {}).repos || []).join(', ') || 'all watched repositories once enabled')}.
               Queue owns freshness: ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'explicitly opted in' : 'no (default)'}.
