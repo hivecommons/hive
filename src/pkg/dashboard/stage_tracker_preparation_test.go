@@ -121,11 +121,47 @@ func TestStageTrackerPreparationUnknownAndInvalid(t *testing.T) {
 	}
 }
 
+func TestStageTrackerPreparationDecisionClearedRemainsOpen(t *testing.T) {
+	now := time.Date(2026, 10, 30, 21, 17, 28, 0, time.UTC)
+	const approvedHead = "e8e0ecb59825d0e01b7a59491cd66bdcfdb70024"
+	owner := automerge.BasePreparationMember{Number: 15820, HeadSHA: "owner-head", Since: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour)}
+	snapshot := automerge.BasePreparationSnapshot{Enabled: true, Present: true, ObservedAt: now, Owner: &owner}
+	s := &Server{deps: &Dependencies{Config: &config.Config{AutoMerge: config.AutoMergeConfig{RequireCurrentBase: []string{"hivecommons/hive"}}},
+		BasePreparation: func(string, string) (automerge.BasePreparationSnapshot, error) { return snapshot, nil }}}
+	rows := []StageTrackerItem{
+		{Repo: "hivecommons/hive", Kind: "pr", Number: 15820, BaseRef: "v5", Head: owner.HeadSHA, Stage: 50},
+		{Repo: "hivecommons/hive", Kind: "pr", Number: 15882, BaseRef: "v5", Head: approvedHead, Stage: 85, NeedsHuman: true, Modifiers: []string{modNeedsDecision}},
+		{Repo: "hivecommons/hive", Kind: "issue", Number: 15872, Stage: 40},
+	}
+	s.stageTrackerPreparation(rows, now)
+	if rows[1].Preparation != nil {
+		t.Fatal("human decision alone must not invent a preparation ticket")
+	}
+	// The human review clears the decision gate; the scheduler records a
+	// real FIFO ticket on that exact head, not a merge or train admission.
+	rows[1].Stage, rows[1].NeedsHuman, rows[1].Modifiers = 80, false, nil
+	rows[1].Reason = "base-refresh:queued-behind#15820"
+	rows[1].Caption = "Waiting for preparation behind #15820"
+	snapshot.Waiting = []automerge.BasePreparationMember{{Number: 15882, HeadSHA: approvedHead, Since: now, ExpiresAt: now.Add(time.Hour)}}
+	q := s.stageTrackerPreparation(rows, now)
+	p := rows[1].Preparation
+	if len(rows) != 3 || len(q) != 1 || len(q[0].Waiting) != 1 || p == nil || p.Number != 15882 || p.HeadSHA != approvedHead || p.Behind != 15820 || p.State != "current" {
+		t.Fatalf("decision-cleared PR lost its current preparation wait: rows=%+v queue=%+v", rows, q)
+	}
+	if rows[1].Stage != 80 || rows[1].MergeTrain != nil || rows[2].Number != 15872 {
+		t.Fatal("visibility must not change stages, fabricate a train, or drop the open issue")
+	}
+	if issues, prs := stageTrackerOpenCounts(rows); issues != 1 || prs != 2 {
+		t.Fatalf("preparation changed canonical open counts: issues=%d prs=%d", issues, prs)
+	}
+}
+
 func TestStageTrackerPreparationRendering(t *testing.T) {
 	html := indexHTML(t)
 	var js strings.Builder
 	js.WriteString("const assert = require('assert'); function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }\n")
-	for _, name := range []string{"stageTrackerPreparationWord", "stageTrackerPreparationAge", "stageTrackerPreparationChipHtml", "stageTrackerPreparationPopHtml", "stageTrackerQueueTrains", "stageTrackerQueuePopHtml", "stageTrackerQueueSync", "stageTrackerQueueChip"} {
+	js.WriteString(jsConstLine(t, html, "STAGE_TRACKER_TERMINAL") + "\n")
+	for _, name := range []string{"stageTrackerPreparationWord", "stageTrackerPreparationAge", "stageTrackerPreparationChipHtml", "stageTrackerPreparationPopHtml", "stageTrackerQueueTrains", "stageTrackerQueuePopHtml", "stageTrackerQueueSync", "stageTrackerQueueChip", "stageTrackerPRKey", "stageTrackerMergeState", "stageTrackerNewlyMerged"} {
 		js.WriteString(jsFunc(t, html, name) + "\n")
 	}
 	js.WriteString(`
@@ -155,6 +191,13 @@ stageTrackerQueueSync([],now,[{state:'unavailable'}]);
 assert.strictEqual(count.textContent,'0 train PRs · prep unknown');
 stageTrackerQueueSync([],now,[]);
 assert.strictEqual(chip.hidden,true);
+const decision = {repo:'hivecommons/hive',kind:'pr',number:15882,stage:85,head:'e8e0ecb59825d0e01b7a59491cd66bdcfdb70024'};
+const waiting = {...decision,stage:80,preparation:{...waiter,number:15882,head_sha:decision.head,behind:15820}};
+const previous = stageTrackerMergeState({items:[decision]});
+const next = stageTrackerMergeState({items:[waiting]});
+assert.strictEqual(next['hivecommons/hive/pr#15882'],false,'decision cleared is still open, not merged');
+assert.deepStrictEqual(stageTrackerNewlyMerged(previous,next),[],'no merge fact: no toast or bee');
+assert.ok(stageTrackerPreparationChipHtml(waiting).includes('Waiting for preparation behind #15820'));
 `)
 	runStageTrackerRowActionsScript(t, js.String())
 }
