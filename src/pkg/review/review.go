@@ -238,6 +238,14 @@ type Aggregate struct {
 	CloseRecommended  bool    `json:"close_recommended"`
 	DecisionRequested bool    `json:"decision_requested,omitempty"`
 	DecisionQuestion  string  `json:"decision_question,omitempty"`
+	// DecisionFinding names what the review found that makes the decision
+	// question a person's to answer — a duplicate, a finding at or above
+	// the human threshold, a risk-class question (workflow, security, …)
+	// or the reviewer's explicit high-risk marker. A question with no
+	// finding behind it never parks a PR in CI/Review (owner rule, see
+	// contributorDecisionBacking); the text is what the tracker and the
+	// 085 comment print as "the review found".
+	DecisionFinding string `json:"decision_finding,omitempty"`
 	// RedundantOf is the PR a reviewer named as already carrying this
 	// change, carried from the first report that set one.
 	RedundantOf    int                     `json:"redundant_of,omitempty"`
@@ -478,6 +486,41 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	sort.Strings(agg.HumanSummaries)
 
 	if decisionRequested {
+		if finding, backed := decisionQuestionsBacked(reports, threshold); !backed && !agg.HiveAuthored && !strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
+			// Owner rule (hivecommons/hive, 2026-10-29): no human decision
+			// while a PR is in CI/Review unless the review found something.
+			// A contributor-lane question with no finding behind it — no
+			// duplicate, no finding at the human threshold, no risk-class
+			// wording, no high-risk marker — is advisory: the PR keeps
+			// moving and a person meets it at the merge gate, where the
+			// human-merge rule for contributor PRs applies. Twelve of
+			// hive's own PRs sat 3–21h on such questions.
+			if hasChanges {
+				if opts.FixAttempts >= maxFix {
+					agg.Verdict = VerdictRequiresHuman
+					agg.RequiresHuman = true
+					agg.DecisionFinding = fmt.Sprintf("fix cycle cap reached (%d/%d)", opts.FixAttempts, maxFix)
+					agg.Reasons = []string{agg.DecisionFinding}
+					return agg
+				}
+				agg.Verdict = VerdictChangesRequested
+				agg.FixCycle = true
+				markRequiresHumanPerspectivesAsChangesRequested(&agg)
+			} else {
+				agg.Verdict = VerdictApprove
+				agg.MergeEligible = true
+				markRequiresHumanPerspectivesAsApprove(&agg)
+				agg.Reasons = nil
+			}
+			agg.RequiresHuman = false
+			agg.DecisionRequested = false
+			agg.DecisionQuestion = ""
+			agg.Reasons = append(append([]string{}, agg.Reasons...), contributorDecisionAdvisory(decisionQuestions))
+			sortReasons(agg.Reasons)
+			return agg
+		} else if backed {
+			agg.DecisionFinding = finding
+		}
 		if resolveSelfAuthoredDecisionQuestions(reports, opts, decisionQuestions, hasReject || riskEscalation || unresolvedRequiresHuman) {
 			if hasChanges || selfAuthoredHumanWithConcreteRemediation {
 				if opts.FixAttempts >= maxFix {
@@ -634,6 +677,79 @@ func markRequiresHumanPerspectivesAsChangesRequested(a *Aggregate) {
 			a.Perspectives[p] = VerdictChangesRequested
 		}
 	}
+}
+
+// markRequiresHumanPerspectivesAsApprove is the approve counterpart: the
+// relay stamps every perspective of a decision-requested review
+// requires_human, so once the question is resolved as advisory the
+// perspectives read as the approvals they were.
+func markRequiresHumanPerspectivesAsApprove(a *Aggregate) {
+	if a == nil || len(a.Perspectives) == 0 {
+		return
+	}
+	for p, v := range a.Perspectives {
+		if v == VerdictRequiresHuman {
+			a.Perspectives[p] = VerdictApprove
+		}
+	}
+}
+
+// decisionQuestionsBacked reports whether any report's decision question
+// stands on something the review actually found, and names it. The
+// backing, first match wins per report: a redundant-of marker (the answer
+// is a close), the reviewer's explicit high-risk marker, a question whose
+// wording lands in a DecisionRiskClass (workflow, security, permissions,
+// duplicate, …), an in-scope finding at or above the human threshold, or
+// risk-escalation wording in the review text.
+func decisionQuestionsBacked(reports []PerspectiveReport, threshold outputschema.Severity) (string, bool) {
+	for _, r := range reports {
+		if !r.DecisionRequested {
+			continue
+		}
+		if finding := decisionQuestionBacking(r, threshold); finding != "" {
+			return finding, true
+		}
+	}
+	return "", false
+}
+
+// duplicateQuestionPattern is the text form of the `hive-redundant-of`
+// marker: the review found the change already on the base or in another
+// open PR, so the answer is a close — which only a person gives on a
+// contributor's PR.
+var duplicateQuestionPattern = regexp.MustCompile(`(?i)\b(duplicates?|dup|redundant)\b|in favou?r of #\d+|already (landed|merged|fixed|on (the )?base|contains)|byte-identical|strict superset|as (a )?no-op`)
+
+func duplicateQuestionText(question string) bool {
+	return duplicateQuestionPattern.MatchString(strings.TrimSpace(question))
+}
+
+func decisionQuestionBacking(r PerspectiveReport, threshold outputschema.Severity) string {
+	if r.RedundantOf > 0 {
+		return fmt.Sprintf("duplicate: #%d already carries this change", r.RedundantOf)
+	}
+	if duplicateQuestionText(r.DecisionQuestion) {
+		return "duplicate: the review found this change already landed or open elsewhere"
+	}
+	if r.DecisionRiskHigh {
+		return "reviewer marked the question high-risk"
+	}
+	if class, risk := DecisionQuestionRiskClassFor(r.DecisionQuestion, r.PermissionsTighteningOnly); risk {
+		return class + " question"
+	}
+	for _, f := range r.Findings {
+		if InScopeFinding(f) && severityAtLeast(f.Severity, threshold) {
+			return fmt.Sprintf("%s finding %q is %s", r.Perspective, strings.TrimSpace(f.Title), f.Severity)
+		}
+	}
+	if containsRiskEscalationTermFor(r.Summary, r.PermissionsTighteningOnly) {
+		return "risk escalation in the " + string(r.Perspective) + " review"
+	}
+	for _, f := range r.Findings {
+		if containsRiskEscalationTermFor(f.Title, r.PermissionsTighteningOnly) || containsRiskEscalationTermFor(f.Summary, r.PermissionsTighteningOnly) {
+			return fmt.Sprintf("risk escalation in %s finding %q", r.Perspective, strings.TrimSpace(f.Title))
+		}
+	}
+	return ""
 }
 
 // FixCycleCapReached reports whether an aggregate is held because the review
@@ -1025,6 +1141,22 @@ func selfAuthoredDecisionAdvisory(questions []string) string {
 	}
 	sort.Strings(names)
 	return "decision resolved by policy: " + strings.Join(names, ", ") + " — not a risk question; recorded as advisory: " + strings.Join(cleaned, " | ")
+}
+
+// contributorDecisionAdvisory is the audit reason for a contributor-lane
+// decision question the review did not back with a finding.
+func contributorDecisionAdvisory(questions []string) string {
+	var cleaned []string
+	for _, q := range questions {
+		if q = strings.TrimSpace(q); q != "" {
+			cleaned = append(cleaned, q)
+		}
+	}
+	sort.Strings(cleaned)
+	if len(cleaned) == 0 {
+		return "decision question not backed by a finding — the PR keeps moving; a person meets it at the merge gate"
+	}
+	return "decision question not backed by a finding — the PR keeps moving; a person meets it at the merge gate; recorded as advisory: " + strings.Join(cleaned, " | ")
 }
 
 func decisionReason(question string) string {

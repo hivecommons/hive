@@ -58,12 +58,18 @@ func TestAggregateReportsMatrix(t *testing.T) {
 		{name: "changes requested enters fix cycle", reps: append(allApprove()[:1], baseReport(PerspectiveSecurity, VerdictChangesRequested)), want: VerdictChangesRequested, fix: true},
 		{name: "severity threshold requires human", reps: []PerspectiveReport{baseReport(PerspectiveSecurity, VerdictApprove, highFinding)}, want: VerdictRequiresHuman, human: true},
 		{name: "explicit requires human wins", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove), baseReport(PerspectiveSecurity, VerdictRequiresHuman)}, want: VerdictRequiresHuman, human: true},
-		{name: "decision request marker wins", reps: []PerspectiveReport{func() PerspectiveReport {
+		{name: "decision request marker wins when backed by a finding", reps: []PerspectiveReport{func() PerspectiveReport {
+			r := baseReport(PerspectiveCorrectness, VerdictApprove)
+			r.DecisionRequested = true
+			r.DecisionQuestion = "@clubanderson should decide whether this workflow trigger change is acceptable."
+			return r
+		}()}, want: VerdictRequiresHuman, human: true},
+		{name: "unbacked decision request on a contributor PR is advisory", reps: []PerspectiveReport{func() PerspectiveReport {
 			r := baseReport(PerspectiveCorrectness, VerdictApprove)
 			r.DecisionRequested = true
 			r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
 			return r
-		}()}, want: VerdictRequiresHuman, human: true},
+		}()}, want: VerdictApprove, merge: true},
 		{name: "reject recommends close", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictReject)}, want: VerdictReject, close: true},
 		{name: "fix cap requires human", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictChangesRequested)}, opts: AggregateOptions{FixAttempts: DefaultFixCycleCap}, want: VerdictRequiresHuman, human: true},
 		{name: "missing perspectives is incomplete, not a human hold", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictIncomplete},
@@ -82,7 +88,7 @@ func TestAggregateReportsMatrix(t *testing.T) {
 func TestAggregateReportsCarriesDecisionQuestion(t *testing.T) {
 	r := baseReport(PerspectiveCorrectness, VerdictApprove)
 	r.DecisionRequested = true
-	r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+	r.DecisionQuestion = "@clubanderson should decide whether this CODEOWNERS-protected workflow change is acceptable."
 
 	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
 
@@ -688,5 +694,86 @@ func TestAggregateReportsKeepsRedundantOfDecisionOnHiveAuthoredPR(t *testing.T) 
 	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
 	if got.Verdict != VerdictRequiresHuman || !got.DecisionRequested || got.RedundantOf != 15427 || got.MergeEligible {
 		t.Fatalf("aggregate = %+v, want requires_human with redundant_of 15427", got)
+	}
+}
+
+// Owner rule (2026-10-29): no human decision while a contributor PR is in
+// CI/Review unless the review found something. hive's own #15312 (duplicate
+// of #15309), #15410 (workflow pin) and friends sat 3–21h on
+// decision-requested verdicts; the duplicate and trust-surface questions
+// stay a person's, a bare "should this land?" does not.
+func TestAggregateReportsContributorDecisionNeedsBacking(t *testing.T) {
+	ask := func(q string, findings ...outputschema.Finding) PerspectiveReport {
+		r := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman, findings...)
+		r.DecisionRequested = true
+		r.DecisionQuestion = q
+		return r
+	}
+	tests := []struct {
+		name    string
+		rep     PerspectiveReport
+		parked  bool
+		finding string
+	}{
+		{name: "bare product question keeps moving", rep: ask("@clubanderson should decide whether this groundwork lands before its consumer."), parked: false},
+		{name: "duplicate of another PR is a finding", rep: ask("@clubanderson should decide whether #15312 is closed in favour of #15309, which clears the same ledger row."), parked: true, finding: "duplicate"},
+		{name: "already landed is a finding", rep: ask("@clubanderson should confirm #15324 can be closed as a no-op — #15301 already landed this exact fix."), parked: true, finding: "duplicate"},
+		{name: "workflow question is a risk class", rep: ask("@clubanderson should decide whether to accept this workflow-trigger change."), parked: true, finding: "sensitive-paths question"},
+		{name: "redundant-of marker is a finding", rep: func() PerspectiveReport {
+			r := ask("close as superseded?")
+			r.RedundantOf = 15309
+			return r
+		}(), parked: true, finding: "duplicate: #15309"},
+		{name: "high-risk marker is a finding", rep: func() PerspectiveReport {
+			r := ask("should this land?")
+			r.DecisionRiskHigh = true
+			return r
+		}(), parked: true, finding: "high-risk"},
+		{name: "finding at the human threshold is a finding", rep: ask("should this land?", outputschema.Finding{Title: "Clears the wrong ledger key", Severity: outputschema.SeverityHigh, ReviewScope: "in-scope"}), parked: true, finding: `finding "Clears the wrong ledger key" is high`},
+		{name: "finding below the human threshold is not", rep: ask("should this land?", outputschema.Finding{Title: "Get-before-Clear is redundant", Severity: outputschema.SeverityLow, ReviewScope: "in-scope"}), parked: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AggregateReports([]PerspectiveReport{tt.rep}, AggregateOptions{})
+			if tt.parked {
+				if got.Verdict != VerdictRequiresHuman || !got.DecisionRequested || got.DecisionQuestion != tt.rep.DecisionQuestion {
+					t.Fatalf("aggregate = %+v, want decision request kept", got)
+				}
+				if !strings.Contains(got.DecisionFinding, tt.finding) {
+					t.Fatalf("DecisionFinding = %q, want it to name %q", got.DecisionFinding, tt.finding)
+				}
+				return
+			}
+			if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman || got.DecisionRequested || got.DecisionQuestion != "" || got.DecisionFinding != "" {
+				t.Fatalf("aggregate = %+v, want advisory approve", got)
+			}
+			if got.Perspectives[PerspectiveIntentAlignment] != VerdictApprove {
+				t.Fatalf("perspectives = %v, want the forced requires_human read as approve", got.Perspectives)
+			}
+			if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "not backed by a finding") || !strings.Contains(got.Reasons[0], tt.rep.DecisionQuestion) {
+				t.Fatalf("Reasons = %v, want one advisory carrying the question", got.Reasons)
+			}
+		})
+	}
+}
+
+func TestAggregateReportsContributorDecisionEscalatePolicyKeepsQuestion(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.DecisionRequested = true
+	r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{SelfAuthoredDecisionPolicy: "escalate"})
+	if got.Verdict != VerdictRequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want escalate policy to keep every decision question", got)
+	}
+}
+
+func TestAggregateReportsContributorUnbackedDecisionWithChangesRoutesToFixer(t *testing.T) {
+	ask := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman)
+	ask.DecisionRequested = true
+	ask.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+	changes := baseReport(PerspectiveCorrectness, VerdictChangesRequested, outputschema.Finding{Title: "nil deref", Severity: outputschema.SeverityMedium, ReviewScope: "in-scope"})
+	got := AggregateReports([]PerspectiveReport{ask, changes}, AggregateOptions{})
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.DecisionRequested || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want the sibling change request to route to the fixer, question advisory", got)
 	}
 }

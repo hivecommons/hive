@@ -322,6 +322,34 @@ decision marker parks the PR for a person. The reviewer template
 issue/spec and PR body before asking, and to cite the answer
 (`per #<issue>: …`) instead of raising a question the issue already settled.
 
+**Contributor and human-authored PRs: no decision in CI/Review unless the
+review found something.** The owner rule (2026-10-29) is that while a PR
+is in CI/Review the hive runs CI and the review swarm to completion on its
+own; a person is only asked when the review *found* something concrete.
+A decision-requested verdict on a non-hive-authored PR therefore parks at
+`stage/085-needs-decision` only when it is **backed** by one of:
+
+- a duplicate (`<!-- hive-redundant-of: #N -->`, or the question says the
+  change already landed / is byte-identical / is a no-op);
+- the reviewer's `<!-- hive-decision-risk: high -->` marker;
+- a question in one of the risk classes above (trust surface: workflows,
+  CODEOWNERS, permissions, …);
+- an in-scope finding at or above the `requires_human` severity threshold;
+- a risk-escalation term in the summary or findings (sentinel alert,
+  credential, secret, …).
+
+The aggregate then records **what** was found as `decision_finding`, and the
+085 comment and tracker popover print it as `the review found: …` next to
+the reviewer's question. A question with nothing behind it is advisory:
+the aggregate is `approve` (or `changes_requested`, handed to the fixer,
+when a sibling perspective asked for changes), recorded as
+`decision question not backed by a finding — the PR keeps moving; a person meets it at the merge gate; recorded as advisory: <question>`, and the PR keeps moving to the
+merge gate. A contributor- or human-authored PR that needs a person's merge
+click waits there, at `stage/090-ready-for-human-merge` under the
+human-merge rule — a merge-queue state, never an 085 decision raised during
+review. The same `self_authored_decision_policy: escalate` switch restores
+the old park-on-every-marker behavior for these PRs too.
+
 Two decision questions never reach the swarm or a person at all, because
 the hive already owns the answer:
 

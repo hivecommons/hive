@@ -614,6 +614,19 @@ unattended (for example `mrbobbytables`):
 A claim keeps the tier the contributor held when it was taken, so grant the
 tier before the issue is leased.
 
+**No decision during CI/Review.** A contributor PR is not parked at
+`stage/085-needs-decision` on a reviewer decision marker alone. While it is
+in CI/Review the hive runs CI and the review swarm to completion; the
+aggregate honours a `decision_requested` verdict only when the review
+*found* something (duplicate, trust-surface / risk-class question, high-risk
+marker, finding at the human threshold) and records that finding as
+`decision_finding`, which the 085 comment prints as `the review found: …`.
+A question with nothing behind it is advisory and the PR keeps moving; a
+contributor whose tier the lane cannot vouch for then waits at
+`stage/090-ready-for-human-merge` under the human-merge rule — a merge-gate
+state, not a review decision. See
+[review-swarm.md](review-swarm.md) ("Contributor and human-authored PRs: no decision in CI/Review").
+
 ### Issue-author credit at merge time
 
 Every merge the hive performs — the self-authored, trusted-author,
