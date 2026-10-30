@@ -111,7 +111,9 @@
       return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><button type="button" class="oc-nav-drag-handle" draggable="true" data-nav-order-grip="agent" data-agent="${esc(a.name)}" data-stop="1" aria-label="Move ${esc(label)} agent" aria-pressed="false" title="Drag or focus and press Alt+↑/↓ to reorder">⠿</button><span class="oc-agent-dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? statusBadgeHTML('ready', 'S', 'Sandboxed', 'done') : ''}${modeHtml}<span class="oc-nav-actions"><button class="hv-btn btn-secondary" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
     }
 
-    function standbyPauseFactsHtml(gov) {
+    // variant 'stat' renders the tile as a Governor-section .gov-stat; the
+    // default keeps the legacy .oc-gov-strip markup (that strip is hidden).
+    function standbyPauseFactsHtml(gov, variant) {
       const lanes = Array.isArray(gov?.suppressed_lanes) ? gov.suppressed_lanes : [];
       if (lanes.length === 0) return '';
       const depths = gov.lane_queue_depths || {};
@@ -128,6 +130,7 @@
         return `${esc(text)}${btn}`;
       });
       const title = lanes.map(lane => `${lane}: ${depths[lane] || 0} waiting, ${qualified[lane] || 0} qualify, ${suspended[lane] || 0} suspended`).join('; ');
+      if (variant === 'stat') return `<div class="gov-stat" id="gov-standby-tile" title="${esc(title)}"><div class="label">standby</div><div class="val starting">${parts.join('; ')}</div></div>`;
       return `<div class="gov-metric gm-alert" title="${esc(title)}"><span class="gm-label">standby</span><span class="gm-val">${parts.join('; ')}</span></div>`;
     }
 

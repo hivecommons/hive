@@ -687,6 +687,7 @@
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           ${fleetRunStatHtml()}
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
+          ${standbyPauseFactsHtml(gov, 'stat')}
           <div class="gov-stat" title="RUNS BLOCKED ON HUMAN — active long-running runs whose projection says waiting_on=human."><div class="label">blocked on human</div><div class="val">${(Array.isArray(data.runs) ? data.runs : []).filter(r => r && r.waiting_on === 'human').length}</div></div>
           ${(() => {
             // Merge hotspots tile (GET /api/hotspots): files concurrent PRs
