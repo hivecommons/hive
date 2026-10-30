@@ -37,7 +37,11 @@ module.exports = function mlxExtension(pi) {
   // Pi 1.4.0 resolves this through its extension compatibility entrypoint,
   // including in standalone distributions. No global Pi dependency is needed
   // by ClankeR's relay or its test runner.
-  const { openAICompletionsApi } = require('@earendil-works/pi-ai');
+  const { openAICompletionsApi, PI_AI_VERSION } = require('@earendil-works/pi-ai');
+  const [major, minor] = String(PI_AI_VERSION || '').split('.').map(Number);
+  if (typeof openAICompletionsApi !== 'function' || !(major > 1 || (major === 1 && minor >= 4))) {
+    throw new Error('ClankeR MLX requires Pi >=1.4.0 with custom fetch transport support; update your Pi installation');
+  }
   registerMlx(pi, openAICompletionsApi());
 };
 module.exports.localFetch = localFetch;

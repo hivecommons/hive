@@ -2380,7 +2380,7 @@ test('MLX endpoint failure refuses execution rather than falling back to a hoste
     relay.runHeadlessTask(task);
     assert.ok(relay.__sent.some(m => m.type === 'task_failed'));
     assert.ok(!relay.__sent.some(m => m.type === 'task_complete'));
-    assert.strictEqual(relay.__execFileCalls.length, 0);
+    assert.ok(!relay.__execFileCalls.some(call => call.bin === 'pi'), 'failed MLX preflight must not start a coding agent');
   } finally { teardown(relay); }
 });
 

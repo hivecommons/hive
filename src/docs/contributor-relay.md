@@ -221,7 +221,8 @@ so a missing/failed extension cannot silently bypass the transport boundary.
 - The protocol was checked against **MLX-LM v0.32.2**'s
   [server implementation](https://github.com/ml-explore/mlx-lm/blob/v0.32.2/mlx_lm/server.py)
   and Pi's [custom model configuration](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/models.md).
-  The contributor image pins Pi 1.4.0. Other MLX-LM versions must pass the same
+  The contributor image pins Pi 1.4.0; this route requires **Pi 1.4.0+** for its
+  guarded inference transport. Other MLX-LM versions must pass the same
   streaming tool-call/result check; older text-only servers will fail it.
 - MLX-LM runs **natively on the Mac**, outside the Linux relay container.
   The container does not install MLX or access the Apple GPU. Use **Docker
