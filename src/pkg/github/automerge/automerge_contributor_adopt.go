@@ -481,6 +481,9 @@ func mergeCommitRefusalText(obs stageObservation, author string) string {
 	case mergeCommitRefusedRole:
 		fmt.Fprintf(&b, "The hive selects a merge commit for this shape only on a `%s` PR; this one is not, so it will not merge it unattended. ", stagelabels.RoleTrusted.Label())
 		fmt.Fprintf(&b, "**Ask:** every commit already carries a sign-off matching its own author, so a maintainer can merge this PR with a merge commit (`gh pr merge %d --merge`, not squash) and DCO holds without rewriting history; otherwise @%s re-authors the hive's commits under their own sign-off and pushes a new head.", obs.Number, author)
+	case mergeCommitRefusedLabelsSuppressed:
+		fmt.Fprintf(&b, "Every commit already carries a sign-off matching its own author, so the hive elected a merge commit, but the write-back gate keeps the hive's labels off this PR, so `%s` could not be applied and the attribution check still applies the squash rule. ", stagelabels.MergeCommitLabel)
+		fmt.Fprintf(&b, "**Ask:** a maintainer adds `%s` (the check re-runs under the merge rule and the hive merges with a merge commit) or merges by hand with `gh pr merge %d --merge`, not squash; otherwise @%s re-authors the hive's commits under their own sign-off and pushes a new head.", stagelabels.MergeCommitLabel, obs.Number, author)
 	case mergeCommitRefusedHiveOnly:
 		fmt.Fprintf(&b, "Every non-merge commit on the head is the hive's, so there is no contributor authorship for a merge commit to preserve. **Ask:** a maintainer merges with a merge commit (`gh pr merge %d --merge`, not squash), or @%s pushes a head of their own.", obs.Number, author)
 	default:
