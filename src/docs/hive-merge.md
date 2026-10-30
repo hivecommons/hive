@@ -453,6 +453,33 @@ merged until its checks finished. In the Activity Monitor only members at
 at CI / Review keeps its chevron in its own column with a muted
 "train · joins behind #N when green" note.
 
+**Membership is ready-only** ([#15825](https://github.com/hivecommons/hive/issues/15825)).
+The rule: *items that have not passed the review or CI is not green should
+not be (a) ready for merge, (b) in a merge train.* A PR takes a seat only
+while its **current head** is green, has every required perspective
+verdict recorded, is mergeable, not conflicting and not held. A PR that
+shares files with a train but is short of that is a *candidate*: the
+tracker keeps the overlap note, but it holds no position and is never the
+front. A member that regresses — new push (head moved), CI pending or red,
+a verdict owed again, a conflict with the base — is **ejected** on the
+next evaluation (one INFO line `merge train: member ejected pr=N
+why=head-moved|ci-pending|ci-red|verdict-owed|conflicting`), the next
+ready member fronts and merges, and the ejected PR re-enters at the back
+once it is ready again. Its tracker row drops back to the CI / Review
+column (never the *Merge queue* column) with a caption that says what is
+owed ("left the merge train — new push, CI re-running after push") and a
+gray lineage pill ("left merge train · pushed 3m ago"). Among ready
+members the order is the readiness tiers above, then age. The one
+exception is a member the train itself made dirty by merging the front
+ahead of it: it keeps its seat (trailing every clean member) while the
+resolver rebases it, so the rebase keeps its place in line. Its row still
+shows in the CI / Review column while the rebase runs ("Rebasing · attempt
+1/2"): the rebased head has no CI or verdicts yet. The tracker's train
+header counts seated members only — a candidate or an ejected row never
+adds to "merge train · N PRs" — and a seated row always reads its seat
+("Merge train · 2nd of 2 · behind #15771"); "checking now" is said only
+of the PR the sweep is evaluating at that moment.
+
 ### Trusted-author auto-merge
 
 `auto_merge.trusted_authors` is a third, default-off sweep tier for

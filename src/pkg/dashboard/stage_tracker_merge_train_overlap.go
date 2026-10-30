@@ -21,6 +21,9 @@ type StageTrackerOverlap struct {
 	With   []int    `json:"with,omitempty"`
 	Files  []string `json:"files,omitempty"`
 	Note   string   `json:"note"`
+	// Badge overrides the chip's words when set (an admitted candidate
+	// reads "joins behind #N next pass", not "when green").
+	Badge string `json:"badge,omitempty"`
 	// trainID and position remember the planner's slot so the members
 	// that do ride can close ranks (stageTrackerMergeTrainPostPass).
 	trainID  string

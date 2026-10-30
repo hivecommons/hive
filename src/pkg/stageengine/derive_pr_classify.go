@@ -396,6 +396,22 @@ func ClassifyStage(o stageObservation) stageVerdict {
 			// the App's own — as superseded, never "waiting its turn".
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
+		// Items that have not passed the review or CI is not green should
+		// not be (a) ready for merge, (b) in a merge train
+		// (hivecommons/hive#15825): the train seats only heads the lane
+		// found green and reviewed, and a seat never outranks what this
+		// head's own evidence says.
+		if VerdictBlocks(o.Detail) {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: StageVerdictReason(o.Detail)}
+		}
+		if name := o.Detail.RedCheck(o.HeadSHA); name != "" {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+		}
+		if train.State == prstage.MergeTrainStateRebasing {
+			// The hive is rebasing it: the head it pushes has no CI and no
+			// verdicts yet, so it is being fixed (070), not merge-queued.
+			return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned}
+		}
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {

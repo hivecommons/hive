@@ -38,7 +38,7 @@
         const data = await resp.json();
         role = data.role || HIVE_ROLE_DEFAULT;
       } catch (e) { /* API unreachable — treat as read-only */ }
-      if (role === HIVE_ROLE_READ) return;
+      if (role === HIVE_ROLE_READ) { _welcomeRoleIsRead = true; return; }
       _welcomeWriteAccess = true;
       const navItem = document.getElementById('welcome-nav-item');
       if (navItem) navItem.style.display = '';
@@ -50,7 +50,13 @@
       if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 
-    function openWelcomeDialog() {
+    /** Open the Getting Started guide; stepId (a WELCOME_STEPS id such as
+        'github-app') expands and scrolls to that step — the onboarding tips
+        under GitHub App / repo-target errors deep-link here. */
+    function openWelcomeDialog(stepId) {
+      if (typeof stepId !== 'string') stepId = '';
+      if (stepId && WELCOME_STEPS.some(s => s.id === stepId)) _welcomeOpenSteps.add(stepId);
+      else stepId = '';
       // Populate the bee-to-hive banner from the shared helper (idempotent — the
       // ACMM overlay reuses the same markup). Only inject once to avoid
       // restarting the CSS animations on every open.
@@ -79,6 +85,13 @@
       }
       overlay.classList.remove('hidden');
       hiveRememberModalOpen(overlay);
+      if (stepId) {
+        const stepEl = document.getElementById('welcome-step-' + stepId);
+        if (stepEl) {
+          stepEl.classList.add('open');
+          if (typeof stepEl.scrollIntoView === 'function') stepEl.scrollIntoView({ block: 'start', behavior: _prefersReducedMotion() ? 'auto' : 'smooth' });
+        }
+      }
     }
     // Genie-minimize timing. GENIE_MS must match --welcome-genie-ms in CSS;
     // it is the fallback deadline in case transitionend never fires (the
@@ -188,6 +201,30 @@
       if (!_welcomeConfiguredValue(model)) return false;
       return !isAutoModelSentinel(backend, model);
     }
+    const WELCOME_GITHUB_APP_STEP_TEXT = 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.';
+    /** GitHub App step body with the CONCRETE install URL for this hive's
+        forge host (github.com or the configured GitHub Enterprise base URL,
+        via the server's githubAppInstallURL — never a github.com fallback on
+        GHE). Rendered per open so it tracks the live payload. */
+    function welcomeGitHubAppStepBody(data) {
+      var host = (data && data.githubBaseURL) ? String(data.githubBaseURL).replace(/^https?:\/\//, '') : 'github.com';
+      var url = (data && data.githubAppInstallURL) || '';
+      var installed = !!data && data.githubAppRequired !== true && !data.githubAppInstallMissing;
+      var operatorSide = !!data && ghAppIsOperatorSide(data.githubAppState);
+      var line;
+      if (operatorSide) {
+        line = 'Status: waiting on GitHub App credentials from the hub operator — installing the App again will not help. Your part (install + installation ID) is not at fault.';
+      } else if (url) {
+        line = 'Install URL for <strong>' + esc(host) + '</strong>: <a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer"><code>' + esc(url) + '</code></a>'
+          + ' — open it as an org owner, pick the org, grant the requested permissions (Issues &amp; Pull requests: read/write, Contents: read, Metadata: read), then paste the numeric installation ID from the resulting URL into the banner above or wait for the automatic re-check.'
+          + (installed ? ' <span class="text-muted">(already detected as installed ✓)</span>' : '');
+      } else if (host !== 'github.com') {
+        line = 'Install URL for <strong>' + esc(host) + '</strong>: not available — the GitHub App slug for this enterprise host is not configured, so a link cannot be built. Ask your hub operator to set <code>github_app_slug</code> (and <code>github.base_url</code>) for this cluster; the install page is <code>https://' + esc(host) + '/github-apps/&lt;slug&gt;/installations/new</code>.';
+      } else {
+        line = 'Install URL: not available yet — waiting for the next status refresh.';
+      }
+      return WELCOME_GITHUB_APP_STEP_TEXT + '<div class="welcome-install-url">' + line + '</div>';
+    }
     const WELCOME_STEPS = [
       {
         id: 'welcome',
@@ -208,7 +245,7 @@
           if (ghAppIsOperatorSide(data.githubAppState)) return null;
           return data.githubAppRequired !== true;
         },
-        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
+        body: welcomeGitHubAppStepBody,
         autoNote: 'Checks itself once the app is detected on your project.',
         actions: [
           { label: 'Install GitHub App', action: 'welcomeInstallGitHubApp' },
@@ -351,7 +388,7 @@
           + `<span class="welcome-step-title">${n}. ${step.title}</span>`
           + `<span class="welcome-step-chevron">▶</span>`
           + `</div>`
-          + `<div class="welcome-step-body">${step.body}`
+          + `<div class="welcome-step-body">${typeof step.body === 'function' ? step.body(data) : step.body}`
           + (step.autoNote ? `<span class="welcome-auto-note">${step.autoNote}</span>` : '')
           + (step.actions ? `<div class="welcome-step-actions">` + step.actions.map(a => `<button class="hv-btn btn-secondary btn" data-action="${a.action}"${a.actionArg !== undefined ? ` data-arg0="${a.actionArg}"` : ''}${a.actionArgTypes ? ` data-arg-types="${a.actionArgTypes}"` : ''}>${a.label}</button>`).join('') + `</div>` : '')
           + `</div></div>`;
