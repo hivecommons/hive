@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -74,7 +75,7 @@ func TestOperatorAdmissionDerivedFromHumanApproval(t *testing.T) {
 				t.Fatal(err)
 			}
 			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
-			if got := h.e.operatorAdmission("acme", "widget", 7, "aaa"); got != tc.want {
+			if got := h.e.operatorAdmission(context.Background(), "acme", "widget", 7, "aaa"); got != tc.want {
 				t.Fatalf("operatorAdmission = %q, want %q", got, tc.want)
 			}
 			rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
@@ -93,16 +94,16 @@ func TestOperatorAdmissionDerivedFromHumanApproval(t *testing.T) {
 // the adoption refusal is a no-op.
 func TestOperatorAdmissionAbsent(t *testing.T) {
 	var nilEngine *Engine
-	if got := nilEngine.operatorAdmission("acme", "widget", 7, "aaa"); got != "" {
+	if got := nilEngine.operatorAdmission(context.Background(), "acme", "widget", 7, "aaa"); got != "" {
 		t.Fatalf("nil engine admitted %q", got)
 	}
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
 	defer done()
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
-	if got := h.e.operatorAdmission("acme", "widget", 7, "aaa"); got != "" {
+	if got := h.e.operatorAdmission(context.Background(), "acme", "widget", 7, "aaa"); got != "" {
 		t.Fatalf("admitted without approval: %q", got)
 	}
-	if got := h.e.operatorAdmission("acme", "widget", 7, ""); got != "" {
+	if got := h.e.operatorAdmission(context.Background(), "acme", "widget", 7, ""); got != "" {
 		t.Fatalf("empty head admitted: %q", got)
 	}
 }

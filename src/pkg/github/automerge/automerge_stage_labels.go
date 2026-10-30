@@ -31,7 +31,6 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -547,8 +546,11 @@ func (c *Engine) noteStageHumanChangeRequest(owner, repo string, number int, hea
 // and the stage pass must not re-derive 085 from the stale decision-requested
 // verdict in that case — that was the 070↔085 flap on hive#14628
 // (hivecommons/hive#14679). Reads the durable store, so it holds across
-// restarts and across the drain that clears the tracker's details.
-func (c *Engine) foldRecordedDecision(list []stageObservation) {
+// restarts and across the drain that clears the tracker's details. A
+// decision recorded on the previous head is carried onto this one first
+// when the hive's own base refresh is all that moved the head
+// (hivecommons/hive#15649).
+func (c *Engine) foldRecordedDecision(ctx context.Context, list []stageObservation) {
 	if c == nil || c.humanChangeRequests == nil {
 		return
 	}
@@ -557,7 +559,7 @@ func (c *Engine) foldRecordedDecision(list []stageObservation) {
 		if o.HeadSHA == "" {
 			continue
 		}
-		req, ok := review.DecisionAnswerFor(c.humanChangeRequests, o.Owner+"/"+o.Repo, o.Number, o.HeadSHA)
+		req, ok := c.recordedDecisionFor(ctx, o.Owner, o.Repo, o.Number, o.BaseRef, o.HeadSHA)
 		if !ok {
 			continue
 		}
@@ -880,7 +882,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		result.Items++
 		c.foldHumanReturnLabel(ctx, store, list)
-		c.foldRecordedDecision(list)
+		c.foldRecordedDecision(ctx, list)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
 		if verdict.Rank == stageRankNone {

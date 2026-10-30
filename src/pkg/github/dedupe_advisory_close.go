@@ -9,37 +9,46 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // The dedupe agent files one checklist per repository and starts its body with
 // dedupeChecklistMarkerPrefix; line two is the verdict, "Decision required:
-// yes|no" (hivecommons/hive#11864). An advisory-only checklist carries the
-// triage/advisory label instead of needs-decision, and the policy forbids the
-// agent from closing anything, so the close-on-merge backfill closes it here
-// (hivecommons/hive#11871).
+// yes|no" (hivecommons/hive#11864). The policy forbids the agent from closing
+// anything, and the owner should never have to click through a checklist the
+// hive is already working (hivecommons/hive#15754): the close-on-merge
+// backfill ticks each `- [ ] #N …` item as #N closes or merges and closes the
+// checklist as completed once every item is resolved. The checklist is never
+// parked on a person, whatever its verdict line says.
 const (
 	dedupeChecklistMarkerPrefix = "<!-- hive:dedupe-checklist repo="
 	// dedupeAdvisoryCloseMarker tags the hive's closing comment. An open
 	// checklist that already carries it was reopened by a person after the
 	// hive closed it, and is left alone.
 	dedupeAdvisoryCloseMarker = "<!-- hive-dedupe-advisory-close -->"
-	// DedupeAdvisoryMaxAge is how long an advisory-only checklist stays open.
+	// DedupeAdvisoryMaxAge is how long an advisory checklist stays open
+	// while some item it names is still open.
 	DedupeAdvisoryMaxAge = 7 * 24 * time.Hour
 	// dedupeAdvisoryMaxRefs bounds the API reads one checklist may cost per
 	// sweep; a checklist naming more items than this only expires.
 	dedupeAdvisoryMaxRefs = 100
+	// dedupeAdvisoryMaxNamed bounds the items the closing comment lists by
+	// name before it says "and N more".
+	dedupeAdvisoryMaxNamed = 8
 )
 
 var (
 	dedupeChecklistRepoPattern = regexp.MustCompile(`^<!-- hive:dedupe-checklist repo=([\w.-]+/[\w.-]+)\s*-->`)
 	dedupeDecisionPattern      = regexp.MustCompile(`(?i)^decision required:\s*(yes|no)\b`)
 	htmlCommentPattern         = regexp.MustCompile(`(?s)<!--.*?-->`)
+	// dedupeTaskLineOpenPattern is one unticked task line; the sweep
+	// rewrites its box to `[x]` once the item it names is resolved.
+	dedupeTaskLineOpenPattern = regexp.MustCompile(`^(\s*[-*]\s+)\[ \](.*)$`)
+	dedupeTaskLineDonePattern = regexp.MustCompile(`^\s*[-*]\s+\[[xX]\]`)
 )
 
-const (
-	dedupeAdvisoryRefsClosedComment = dedupeAdvisoryCloseMarker + "\nClosing: every item this advisory checklist references is now closed or merged."
-	dedupeAdvisoryExpiredComment    = dedupeAdvisoryCloseMarker + "\nClosing: this advisory dedupe checklist expired after 7 days."
-)
+const dedupeAdvisoryExpiredComment = dedupeAdvisoryCloseMarker + "\nClosing: this advisory dedupe checklist expired after 7 days."
 
 // dedupeChecklistVerdict is the "Decision required" line under the marker.
 type dedupeChecklistVerdict int
@@ -106,21 +115,99 @@ func dedupeChecklistRefs(body, defaultRepo, selfRepo string, self int) []Claimed
 	return out
 }
 
+// dedupeChecklistItem is one task line of a checklist: its line index in
+// the body, whether it is ticked, and the item it is about — the first
+// reference on the line ("- [ ] #15312 — close as superseded by #15646" is
+// about #15312; it is resolved when #15312 closes, whatever #15646 does).
+type dedupeChecklistItem struct {
+	Line int
+	Done bool
+	Ref  ClaimedRef
+}
+
+// dedupeChecklistItems reads the task lines of body. A task line that names
+// nothing is skipped: there is no item whose state could resolve it.
+func dedupeChecklistItems(body, defaultRepo, selfRepo string, self int) []dedupeChecklistItem {
+	var out []dedupeChecklistItem
+	for i, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		done := dedupeTaskLineDonePattern.MatchString(line)
+		if !done && !dedupeTaskLineOpenPattern.MatchString(line) {
+			continue
+		}
+		refs := dedupeChecklistRefs(line, defaultRepo, selfRepo, self)
+		if len(refs) == 0 {
+			continue
+		}
+		out = append(out, dedupeChecklistItem{Line: i, Done: done, Ref: refs[0]})
+	}
+	return out
+}
+
+// dedupeTickItems returns body with the task lines at the given indexes
+// ticked. The body is otherwise untouched, so the write is idempotent.
+func dedupeTickItems(body string, lines []int) string {
+	tick := map[int]bool{}
+	for _, l := range lines {
+		tick[l] = true
+	}
+	parts := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	for i := range parts {
+		if !tick[i] {
+			continue
+		}
+		if m := dedupeTaskLineOpenPattern.FindStringSubmatch(parts[i]); m != nil {
+			parts[i] = m[1] + "[x]" + m[2]
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// dedupeResolvedRef is one resolved item with the word for how it resolved.
+type dedupeResolvedRef struct {
+	Ref  ClaimedRef
+	Word string
+}
+
+// dedupeAdvisoryResolvedComment is the closing note: "All 4 items resolved
+// (#15312 closed, #15646 merged, …) — closing this advisory."
+func dedupeAdvisoryResolvedComment(selfRepo string, resolved []dedupeResolvedRef) string {
+	named := make([]string, 0, len(resolved))
+	for i, r := range resolved {
+		if i == dedupeAdvisoryMaxNamed {
+			named = append(named, fmt.Sprintf("and %d more", len(resolved)-i))
+			break
+		}
+		ref := "#" + strconv.Itoa(r.Ref.Issue)
+		if !strings.EqualFold(r.Ref.Repo, selfRepo) {
+			ref = r.Ref.Repo + ref
+		}
+		named = append(named, ref+" "+r.Word)
+	}
+	noun := "items"
+	if len(resolved) == 1 {
+		noun = "item"
+	}
+	return fmt.Sprintf("%s\nAll %d %s resolved (%s) — closing this advisory.", dedupeAdvisoryCloseMarker, len(resolved), noun, strings.Join(named, ", "))
+}
+
 // sweepDedupeAdvisoryChecklist handles one open issue for the close-on-merge
 // backfill. It reports handled=false for anything that is not an open
-// triage/advisory dedupe checklist, so the backfill's own checks still run.
-// Otherwise it reclassifies a checklist whose verdict turned to "Decision
-// required: yes", or closes it once it is older than DedupeAdvisoryMaxAge or
-// every item it references is closed or merged.
+// hive-authored dedupe checklist, so the backfill's own checks still run.
+// Otherwise it ticks the checklist's resolved items, and closes it once every
+// item is resolved or it is older than DedupeAdvisoryMaxAge.
 func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, issue *gh.Issue, opts CloseOnMergeOptions) (CloseOnMergeResult, bool) {
 	res := CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber()}
-	labels := issueLabelNames(issue.Labels)
-	if !labelPresent(labels, dedupeAdvisoryLabelName) {
-		return res, false
-	}
-	refRepo, verdict, ok := parseDedupeChecklist(issue.GetBody())
+	refRepo, _, ok := parseDedupeChecklist(issue.GetBody())
 	if !ok {
 		return res, false
+	}
+	if login := safeGetLogin(issue.GetUser()); login != "" && !strings.EqualFold(issue.GetUser().GetType(), "Bot") && !c.IsHiveAuthorLogin(login) {
+		// A person who pasted the marker wrote a note, not a hive checklist.
+		return res, false
+	}
+	if opts.AdvisoryAutocloseOff {
+		res.Action, res.Reason = CloseOnMergeSkipped, "dedupe_advisory_autoclose_off"
+		return res, true
 	}
 	if refRepo == "" {
 		refRepo = repo
@@ -129,39 +216,39 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 	owner, repoName := c.splitRepo(repo)
 	fullRepo := owner + "/" + repoName
 	number := issue.GetNumber()
-
-	if verdict == dedupeVerdictYes {
-		return c.reclassifyDedupeChecklist(ctx, repo, owner, repoName, issue, opts), true
-	}
-	if hasIssueParkingLabel(labels) {
-		res.Action, res.Reason = CloseOnMergeSkipped, "dedupe_advisory_parked"
-		return res, true
-	}
+	labels := issueLabelNames(issue.Labels)
+	gateItem := writeback.Item{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: labels, CreatedAt: issue.GetCreatedAt().Time, HiveAuthored: true}
 
 	now := opts.now()
 	expired := !issue.GetCreatedAt().Time.IsZero() && now.Sub(issue.GetCreatedAt().Time) >= DedupeAdvisoryMaxAge
 	comment, reason := dedupeAdvisoryExpiredComment, "dedupe_advisory_expired"
 	if !expired {
-		refs := dedupeChecklistRefs(issue.GetBody(), refRepo, fullRepo, number)
-		if len(refs) == 0 || len(refs) > dedupeAdvisoryMaxRefs {
-			res.Action, res.Reason = CloseOnMergeNoop, "dedupe_advisory_no_refs_to_track"
+		resolved, pending, tick, err := c.dedupeChecklistProgress(ctx, issue.GetBody(), refRepo, fullRepo, number)
+		if err != nil {
+			res.Action, res.Reason = CloseOnMergeNoop, err.reason
+			if err.cause != nil && opts.Logger != nil {
+				opts.Logger.Warn("dedupe advisory sweep: reading referenced item failed", "repo", repo, "issue", number, "ref", err.ref, "error", err.cause)
+			}
 			return res, true
 		}
-		for _, ref := range refs {
-			open, err := c.dedupeRefOpen(ctx, ref)
-			if err != nil {
-				res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
-				if opts.Logger != nil {
-					opts.Logger.Warn("dedupe advisory close: reading referenced item failed", "repo", repo, "issue", number, "ref", fmt.Sprintf("%s#%d", ref.Repo, ref.Issue), "error", err)
+		if len(tick) > 0 {
+			body := dedupeTickItems(issue.GetBody(), tick)
+			if d := c.WritebackAllowed(fullRepo, gateItem, writeback.KindParentIssueEdit, "tick resolved advisory items"); d.Allowed {
+				if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, &gh.IssueRequest{Body: gh.Ptr(body)}); err != nil { // writeback:gated
+					res.Action, res.Reason = CloseOnMergeNoop, "body_edit_failed"
+					if opts.Logger != nil {
+						opts.Logger.Warn("dedupe advisory sweep: ticking resolved items failed", "repo", repo, "issue", number, "error", err)
+					}
+					return res, true
 				}
-				return res, true
-			}
-			if open {
-				res.Action, res.Reason = CloseOnMergeNoop, "dedupe_advisory_refs_open"
-				return res, true
+				res.Ticked = len(tick)
 			}
 		}
-		comment, reason = dedupeAdvisoryRefsClosedComment, "dedupe_advisory_refs_closed"
+		if pending > 0 {
+			res.Action, res.Reason = CloseOnMergeNoop, "dedupe_advisory_refs_open"
+			return res, true
+		}
+		comment, reason = dedupeAdvisoryResolvedComment(fullRepo, resolved), "dedupe_advisory_refs_closed"
 	}
 
 	comments, err := c.listIssueComments(ctx, owner, repoName, number)
@@ -175,11 +262,15 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 			return res, true
 		}
 	}
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(comment)}); err != nil {
+	if d := c.WritebackAllowed(fullRepo, gateItem, writeback.KindIssueClose, "close resolved advisory checklist"); !d.Allowed {
+		res.Action, res.Reason = CloseOnMergeSkipped, "writeback_gated"
+		return res, true
+	}
+	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(comment)}); err != nil { // writeback:gated
 		res.Action, res.Reason = CloseOnMergeNoop, "close_comment_failed"
 		return res, true
 	}
-	if err := c.CloseIssue(ctx, repo, number, IssueCloseOptions{
+	if err := c.CloseIssue(ctx, repo, number, IssueCloseOptions{ // writeback:gated
 		OverrideReason:          "advisory dedupe checklist",
 		SuppressOverrideComment: true,
 		// Not "not_planned": that would read as a maintainer rejecting the
@@ -193,54 +284,64 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 	return res, true
 }
 
-// dedupeRefOpen reports whether a referenced issue or PR is still open; the
-// issues API serves both, and a merged PR reads as closed.
-func (c *Client) dedupeRefOpen(ctx context.Context, ref ClaimedRef) (bool, error) {
+// dedupeProgressError is a read that stopped the sweep: its result reason
+// and, for a failed API read, the item and cause for the log.
+type dedupeProgressError struct {
+	reason string
+	ref    string
+	cause  error
+}
+
+// dedupeChecklistProgress reads the state of every item a checklist names.
+// With task lines, the items are the task lines (an already-ticked line
+// costs no read); without any, every reference in the body is an item, as
+// the older checklists had no task lines. It returns the resolved items,
+// how many are still open, and the task lines to tick.
+func (c *Client) dedupeChecklistProgress(ctx context.Context, body, refRepo, fullRepo string, number int) (resolved []dedupeResolvedRef, pending int, tick []int, perr *dedupeProgressError) {
+	items := dedupeChecklistItems(body, refRepo, fullRepo, number)
+	if len(items) == 0 {
+		for _, ref := range dedupeChecklistRefs(htmlCommentPattern.ReplaceAllString(body, ""), refRepo, fullRepo, number) {
+			items = append(items, dedupeChecklistItem{Line: -1, Ref: ref})
+		}
+	}
+	if len(items) == 0 || len(items) > dedupeAdvisoryMaxRefs {
+		return nil, 0, nil, &dedupeProgressError{reason: "dedupe_advisory_no_refs_to_track"}
+	}
+	for _, it := range items {
+		if it.Done {
+			resolved = append(resolved, dedupeResolvedRef{Ref: it.Ref, Word: "resolved"})
+			continue
+		}
+		open, word, err := c.dedupeRefState(ctx, it.Ref)
+		if err != nil {
+			return nil, 0, nil, &dedupeProgressError{reason: "issue_read_failed", ref: fmt.Sprintf("%s#%d", it.Ref.Repo, it.Ref.Issue), cause: err}
+		}
+		if open {
+			pending++
+			continue
+		}
+		resolved = append(resolved, dedupeResolvedRef{Ref: it.Ref, Word: word})
+		if it.Line >= 0 {
+			tick = append(tick, it.Line)
+		}
+	}
+	return resolved, pending, tick, nil
+}
+
+// dedupeRefState reports whether a referenced issue or PR is still open and,
+// when it is not, the word for how it ended ("merged" for a merged PR,
+// "closed" otherwise). The issues API serves both.
+func (c *Client) dedupeRefState(ctx context.Context, ref ClaimedRef) (open bool, word string, err error) {
 	owner, repoName := c.splitRepo(ref.Repo)
 	item, _, err := c.client.Issues.Get(ctx, owner, repoName, ref.Issue)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	return !strings.EqualFold(item.GetState(), "closed"), nil
-}
-
-// reclassifyDedupeChecklist parks an advisory checklist the dedupe agent
-// rewrote with an action-required row: it swaps triage/advisory for the
-// needs-decision label and posts the "What to reply" notice, which the unpark
-// sweep then keeps current. A label-driven repo gets the label only, as the
-// unpark sweep posts no notice there.
-func (c *Client) reclassifyDedupeChecklist(ctx context.Context, repo, owner, repoName string, issue *gh.Issue, opts CloseOnMergeOptions) CloseOnMergeResult {
-	number := issue.GetNumber()
-	res := CloseOnMergeResult{Repo: repo, Issue: number, Action: CloseOnMergeSkipped, Reason: "dedupe_reclassified_needs_decision"}
-	label := c.needsDecisionLabel()
-	if !labelPresent(issueLabelNames(issue.Labels), label) {
-		if err := c.EnsureIssueLabel(ctx, repo, label, "", ""); err != nil {
-			res.Action, res.Reason = CloseOnMergeNoop, "label_failed"
-			return res
-		}
-		if err := c.AddLabels(ctx, repo, number, []string{label}); err != nil {
-			res.Action, res.Reason = CloseOnMergeNoop, "label_failed"
-			return res
-		}
+	if !strings.EqualFold(item.GetState(), "closed") {
+		return true, "", nil
 	}
-	if opts.LabelDriven == nil || !(opts.LabelDriven(repo) || opts.LabelDriven(owner+"/"+repoName)) {
-		comments, err := c.listIssueComments(ctx, owner, repoName, number)
-		if err != nil {
-			res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
-			return res
-		}
-		if err := c.ensureUnparkNoticeComment(ctx, owner, repoName, number, issue.GetBody(), comments); err != nil {
-			res.Action, res.Reason = CloseOnMergeNoop, "notice_failed"
-			return res
-		}
+	if item.IsPullRequest() && item.GetPullRequestLinks().MergedAt != nil {
+		return false, "merged", nil
 	}
-	// Removed last: until it goes, the next sweep retries the steps above.
-	if err := c.RemoveLabel(ctx, repo, number, dedupeAdvisoryLabelName); err != nil {
-		res.Action, res.Reason = CloseOnMergeNoop, "label_failed"
-		return res
-	}
-	if opts.Logger != nil {
-		opts.Logger.Info("dedupe checklist reclassified as needs-decision", "repo", repo, "issue", number, "label", label)
-	}
-	return res
+	return false, "closed", nil
 }

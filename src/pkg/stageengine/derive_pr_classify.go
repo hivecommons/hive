@@ -290,6 +290,11 @@ var stageNeedsHumanReasons = map[string]bool{
 	// the chosen merge method switched off. The merge is not imminent, and
 	// a person has to act (approve, change the setting, or merge by hand).
 	autoMergeReasonMergeRefusedReview: true, autoMergeReasonMergeRefusedMethod: true,
+	// The native queue's merge method would squash away a mixed-authorship
+	// PR's signed commits: the same decision as a disabled merge method. It
+	// is matched here, before the native-merge-queue prefix keeps the rest
+	// at 100.
+	prstage.AutoMergeReasonNativeQueueMethod: true,
 }
 
 // stageMergeQueueReasons are reasons reached only after every gate passed,
@@ -490,7 +495,7 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// 095, not 100 — the merge has not been attempted yet.
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.PreMergeSoak, Rank: stageRankOwned}, humanApprovalReason)
 	}
-	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
+	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, prstage.AutoMergeReasonNativeQueuePrefix) || strings.HasPrefix(reason, "release-hold") {
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if reason == contributorLaneReasonNoVerdict {
