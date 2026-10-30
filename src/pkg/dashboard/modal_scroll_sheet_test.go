@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -175,5 +176,42 @@ assert.ok(!plainSet.has('modal-sheet'));
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node modal scroll fixture failed: %v\n%s", err, out)
+	}
+}
+
+// TestModalScrollFadeFollowsTheme pins the light-mode fix for the scroll-edge
+// fade: a var() inside a custom property resolves where that property is
+// declared, so the :root --modal-scroll-fade is fixed to the dark
+// --panel-strong. The light block must re-declare it against the light
+// panel surface, and the fade rule must consume the token, not a literal.
+func TestModalScrollFadeFollowsTheme(t *testing.T) {
+	tokens := tokensCSS(t)
+	const decl = "--modal-scroll-fade: color-mix(in srgb, var(--panel-strong) 96%, transparent);"
+	light := strings.Index(tokens, "body.light-mode {")
+	if light < 0 {
+		t.Fatal("tokens.css lacks the light-mode block")
+	}
+	if !strings.Contains(tokens[:light], decl) {
+		t.Error("tokens.css :root block lacks the surface-based --modal-scroll-fade")
+	}
+	if !strings.Contains(tokens[light:], decl) {
+		t.Error("tokens.css light block does not re-declare --modal-scroll-fade; the fade would stay dark in light mode")
+	}
+	for _, v := range strings.Split(tokens, "\n") {
+		// "rgb(" rather than "rgb": the colour space in color-mix(in srgb, …) is not a literal.
+		if strings.Contains(v, "--modal-scroll-fade:") && (strings.Contains(v, "#") || strings.Contains(v, "rgb(") || strings.Contains(v, "rgba(")) {
+			t.Errorf("--modal-scroll-fade must derive from a surface token, found a literal: %s", strings.TrimSpace(v))
+		}
+	}
+	html := indexHTML(t)
+	if !strings.Contains(html, "background: linear-gradient(to bottom, transparent, var(--modal-scroll-fade));") {
+		t.Error(".modal-scroll::after fade does not consume var(--modal-scroll-fade)")
+	}
+	hub, err := os.ReadFile("../hub/static/tokens.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(hub) != tokens {
+		t.Error("pkg/hub/static/tokens.css drifted from pkg/dashboard/static/tokens.css")
 	}
 }

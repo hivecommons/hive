@@ -19,6 +19,13 @@
     .spark-row { display: flex; align-items: center; gap: var(--sp-3); overflow: hidden; }
 
     .contributors-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr)); gap:var(--sp-5); }
+    /* Contributors header pill and card presence dot: "online" is the
+       tracker's presence window (governor.labels.stage.presence_window). */
+    .contrib-status-badge { font-size: 0.7rem; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-pill); margin-left: var(--sp-4); background: var(--line); color: var(--fg); }
+    .contrib-status-badge:empty { display: none; }
+    .contrib-status-badge.is-online { background: var(--status-ok); color: var(--bg); }
+    .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
+    .contrib-status-dot.online { background: var(--status-ok); }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;

@@ -110,24 +110,37 @@ func TestStageTrackerAdoptionNeverSaysSo(t *testing.T) {
 	}
 }
 
-// adopt (default): nothing is held, so the row only reports the wait, the
-// nudges and the presence; no Adopt is offered.
+// adopt (default): nothing is held, so the row reports the wait, the
+// nudges, the presence and — since the engine's own predicate
+// (automerge.AutoAdoption) is what the row reads — that the hive adopts
+// on its next sweep; no Adopt click is asked for.
 func TestStageTrackerAdoptionDefaultReportsWait(t *testing.T) {
 	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
 	s, store, status := adoptionFixture(t, now, "", offlinePresence(now.Add(-3*time.Hour)))
 	a := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption
-	if a == nil || a.Due || a.BlockedBy != "" || a.Action != "" || a.Policy != "adopt" {
+	if a == nil || a.Due || a.BlockedBy != "" || a.Action != "" || a.Policy != "adopt" || !a.AutoDue {
 		t.Fatalf("adoption = %+v", a)
 	}
-	if a.Text != "waiting on @hanthor (offline 3h, 2 nudges)" {
+	if a.Text != "waiting on @hanthor (offline 3h, 2 nudges) — hive adopts it on the next sweep" {
 		t.Fatalf("text = %q", a.Text)
 	}
-	// Online author: no offline span.
+	// Online author: no offline span; 26h past the first nudge is past the
+	// 2h online grace too.
 	s.presenceLookup = func(string) (automerge.ContributorPresence, bool) {
 		return automerge.ContributorPresence{Registered: true, Online: true}, true
 	}
-	if a = trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption; a == nil || a.Text != "waiting on @hanthor (online, 2 nudges)" {
+	if a = trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption; a == nil || a.Text != "waiting on @hanthor (online, 2 nudges) — hive adopts it on the next sweep" {
 		t.Fatalf("online text = %+v", a)
+	}
+	// Nudged 13 minutes ago, offline: the row says when the hive adopts.
+	store2 := stagelabels.NewStore("", func() time.Time { return now })
+	key := stagelabels.Key("hivecommons/hive", 14524)
+	store2.Observe(key, stagelabels.ReturnedToContributor, "conflicting")
+	store2.MarkNudged(key, "feed", 1, false, now.Add(-13*time.Minute))
+	s.stageStore = store2
+	s.presenceLookup = offlinePresence(now.Add(-13 * time.Minute))
+	if a = trackerItem(t, s.buildStageTracker(status, store2, now), "pr", 14524).Adoption; a == nil || a.AutoDue || a.AutoAdoptAt == nil || !a.AutoAdoptAt.Equal(now.Add(2*time.Minute)) || a.Text != "waiting on @hanthor (offline 13m, 1 nudge) — hive adopts it in 2m unless a new head lands" {
+		t.Fatalf("pending text = %+v", a)
 	}
 }
 
@@ -400,5 +413,69 @@ func TestStageTrackerReturnedToHiveCaption(t *testing.T) {
 	}
 	if got := stageTrackerReturnedToHiveCaption("Returned to @x — @x must act", "", nil); got != "Returned to @x — @x must act" {
 		t.Errorf("no author changed the caption: %q", got)
+	}
+}
+
+// hive#15565/#15566/#15609 and #15312: PRs by an offline clanker sat at 072
+// with "waiting on @Karibhou (offline 13m, 1 nudge)" until a person clicked
+// Adopt. The row now says when the hive adopts, offers Adopt now only as an
+// override, and the fork-not-editable row names its blocker.
+func TestStageTrackerAutoAdoptionExampleCaptions(t *testing.T) {
+	now := time.Date(2026, 10, 29, 22, 45, 0, 0, time.UTC)
+	s := newTestServer()
+	store := stagelabels.NewStore("", func() time.Time { return now })
+	s.stageStore = store
+	s.deps = &Dependencies{Config: &config.Config{}}
+	nudged := now.Add(-13 * time.Minute)
+	s.presenceLookup = func(login string) (automerge.ContributorPresence, bool) {
+		// One heartbeat a minute after the nudge: acknowledged, then gone.
+		return automerge.ContributorPresence{Registered: true, Online: false, LastSeen: nudged.Add(time.Minute)}, true
+	}
+	rows := []struct {
+		number int
+		reason string
+		author string
+		want   string
+	}{
+		{15565, "conflicting", "Karibhou", "conflicting"},
+		{15566, "contributor-lane:changes-requested", "Karibhou", "changes requested"},
+		{15609, "optional-check-failing:overlayfs-exec-guard", "Karibhou", "overlayfs-exec-guard"},
+		{15312, "fork-not-editable", "odttlnt", "fork not editable by hive"},
+	}
+	status := minimalPayload()
+	status.HiveID = "hive"
+	var prs []any
+	for _, r := range rows {
+		key := stagelabels.Key("hivecommons/hive", r.number)
+		store.Observe(key, stagelabels.ReturnedToContributor, r.reason)
+		store.MarkNudged(key, "feed", 1, false, nudged)
+		prs = append(prs, FrontendPR{PullRequest: github.PullRequest{Number: r.number, Title: "Change", Author: r.author, HeadSHA: "feed", Labels: []string{"stage/072-returned-to-contributor", "author/clanker", "role/contributor"}}})
+	}
+	status.Repos = []FrontendRepo{{Name: "hive", Full: "hivecommons/hive", OpenPrs: prs}}
+	s.UpdateStatus(status)
+
+	for _, r := range rows {
+		it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", r.number)
+		wantTail := "waiting on @" + r.author + " (offline 12m, 1 nudge) — hive adopts it in 3m unless a new head lands"
+		if !strings.Contains(it.Caption, r.want) || !strings.HasSuffix(it.Caption, wantTail) {
+			t.Fatalf("#%d caption = %q, want %q … %q", r.number, it.Caption, r.want, wantTail)
+		}
+		if strings.Contains(it.Caption, "No stage recorded yet") {
+			t.Fatalf("#%d caption keeps the empty-stage clause: %q", r.number, it.Caption)
+		}
+		if it.Adoption == nil || it.Adoption.AutoDue || it.Adoption.AutoAdoptAt == nil || !it.Adoption.AutoAdoptAt.Equal(nudged.Add(16*time.Minute)) {
+			t.Fatalf("#%d adoption = %+v", r.number, it.Adoption)
+		}
+		if it.Takeover == nil || !it.Takeover.AdoptNow || it.Takeover.GraceElapsed || it.Takeover.AutoAdoptAt == nil {
+			t.Fatalf("#%d takeover = %+v", r.number, it.Takeover)
+		}
+	}
+	// Three minutes on: the sweep's clock has run out; the row says so.
+	later := nudged.Add(16 * time.Minute)
+	for _, r := range rows {
+		it := trackerItem(t, s.buildStageTracker(status, store, later), "pr", r.number)
+		if !strings.HasSuffix(it.Caption, "— hive adopts it on the next sweep") || it.Adoption == nil || !it.Adoption.AutoDue || it.Takeover == nil || !it.Takeover.GraceElapsed {
+			t.Fatalf("#%d at +16m: caption=%q adoption=%+v takeover=%+v", r.number, it.Caption, it.Adoption, it.Takeover)
+		}
 	}
 }

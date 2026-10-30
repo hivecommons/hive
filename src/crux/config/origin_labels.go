@@ -94,10 +94,15 @@ var KnownOriginLanes = []string{
 	"reviewer", "scanner", "sec-check", "strategist", "supervisor", "tester",
 }
 
+// GitHubLabelDescriptionMax is GitHub's cap on a label description; a
+// longer one makes the labels API answer 422 "description is too long".
+const GitHubLabelDescriptionMax = 100
+
 // originSourceDescriptions is the label description per non-lane source.
+// Every entry must fit GitHubLabelDescriptionMax.
 var originSourceDescriptions = map[string]string{
-	OriginSourceSelfReport:  "Filed by Hive from a fleet runtime self-report (provenance only; supersedes hive/selfreport as the origin marker)",
-	OriginSourceGovernor:    "Filed by the Hive governor/automation on its own behalf (provenance only, not a routing or hold signal)",
+	OriginSourceSelfReport:  "Filed by Hive from a fleet runtime self-report (provenance only; supersedes hive/selfreport)",
+	OriginSourceGovernor:    "Filed by the Hive governor/automation on its own behalf (provenance only, not routing or hold)",
 	OriginSourceDashboard:   "Filed by an operator action in the Hive dashboard (provenance only, not a routing or hold signal)",
 	OriginSourceForge:       "Filed through the Hive forge issue seam (provenance only, not a routing or hold signal)",
 	OriginSourceConvergence: "Filed by the Hive convergence finding publisher (provenance only, not a routing or hold signal)",

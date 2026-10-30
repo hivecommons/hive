@@ -806,13 +806,13 @@ func (c *Client) ensureStageLabelFamily(ctx context.Context, repo string) error 
 		cur, ok := existing[strings.ToLower(def.Name)]
 		switch {
 		case !ok:
-			_, _, err := c.client.Issues.CreateLabel(ctx, owner, name, &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(def.Description)})
+			_, _, err := c.client.Issues.CreateLabel(ctx, owner, name, &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(clampLabelDescription(def.Description))})
 			if err != nil && !githubStatusError(err, http.StatusUnprocessableEntity) {
 				c.noteArchivedLabelRefusal(key, err)
 				return err
 			}
 		case !strings.EqualFold(cur.GetColor(), def.Color):
-			if _, _, err := c.client.Issues.EditLabel(ctx, owner, name, cur.GetName(), &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(def.Description)}); err != nil {
+			if _, _, err := c.client.Issues.EditLabel(ctx, owner, name, cur.GetName(), &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(clampLabelDescription(def.Description))}); err != nil {
 				c.noteArchivedLabelRefusal(key, err)
 				return err
 			}

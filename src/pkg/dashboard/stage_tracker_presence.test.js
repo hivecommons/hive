@@ -23,6 +23,8 @@ const src = [
   pick(/function agentNowAgo\(ms\) \{[\s\S]*?\n    \}\n/, 'agentNowAgo'),
   pick(/function stageTrackerAdoptionTip\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionTip'),
   pick(/function stageTrackerAdoptOffered\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptOffered'),
+  pick(/const STAGE_TRACKER_ADOPTION_QUEUED_CHIP = [^\n]*\n/, 'STAGE_TRACKER_ADOPTION_QUEUED_CHIP'),
+  pick(/function stageTrackerAdoptionQueued\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionQueued'),
   pick(/function stageTrackerAdoptionChipText\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionChipText'),
   pick(/function stageTrackerAdoptionChipHtml\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptionChipHtml'),
   pick(/const STAGE_TRACKER_ICONS = \{[\s\S]*?\n    \};\n/, 'STAGE_TRACKER_ICONS'),
@@ -105,10 +107,10 @@ test('human: the person glyph and the handle only — no dot, no "(human · no c
   assert.ok(!dot.includes(api.icons.clanker), 'never the robot head');
   assert.ok(!dot.includes('ham-presence-dot'), 'a human carries no state dot');
   assert.match(dot, /aria-label="@zoe: human — waiting for a human reply"/);
-  assert.strictEqual(api.chipText(human), 'waiting on @zoe');
+  assert.strictEqual(api.chipText(human), 'waiting on @zoe to push', "a person's own PR says what the hive waits for");
   const chip = api.chip(human);
   assert.match(chip, /^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">/);
-  assert.match(flat(chip), /waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*><\/svg><\/span>@zoe<\/span>$/);
+  assert.match(flat(chip), /waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*><\/svg><\/span>@zoe to push<\/span>$/);
   assert.ok(!chip.includes('no clanker'));
   // An unregistered clanker (another hive's PR) is unknown too — robot head + hollow ring — and adoption's clock runs.
   const foreign = { presence: { login: 'bot-x', state: 'unknown', kind: 'clanker', since: iso(NOW - 10 * MIN), next: 'adopt', adopt_at: iso(NOW + 5 * MIN) } };

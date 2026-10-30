@@ -312,7 +312,7 @@ func TestPrefilterTrustedAuthorPR(t *testing.T) {
 		{name: "ok", pr: pr(), want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := engine.prefilterTrustedAuthorPR(tc.pr, policy); got != tc.want {
+			if got := engine.prefilterTrustedAuthorPR("acme", "widget", tc.pr, policy); got != tc.want {
 				t.Fatalf("prefilterTrustedAuthorPR = %q, want %q", got, tc.want)
 			}
 		})
@@ -425,7 +425,7 @@ func TestExecuteMergeEffectReconcilesUnknownOpenPRBeforeRetry(t *testing.T) {
 		Actor:  "automerge",
 		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "self-authored"},
 	}
-	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, func(context.Context) (effects.Result, error) {
+	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, "", func(context.Context) (effects.Result, error) {
 		return effects.Result{Provenance: "merge-sha"}, nil
 	})
 	if err != nil {

@@ -791,10 +791,25 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 				continue
 			}
 			if mergerRole {
-				if err := client.QueuePRAutoMergeWithNote(ctx, repoFull, number, user, marker); err != nil {
+				queued, err := client.QueuePRAutoMergeWithNoteResult(ctx, repoFull, number, user, marker)
+				if err != nil {
 					return notes, fmt.Errorf("approving PR head: %w", err)
 				}
-				notes = append(notes, "Approve review submitted on the head and queued for auto-merge (the engine merges per repo settings)")
+				if queued.ReviewSubmitted {
+					notes = append(notes, "Approve review submitted on the head and queued for auto-merge (the engine merges per repo settings)")
+				} else {
+					// The hive's own PR: no review is possible, so the
+					// operator's approval goes on record the way Approve
+					// records it and the self-authored lane merges on it.
+					if _, err := client.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
+						HumanChangeRequests: repoItemDecisionChangeRequests(),
+						LiftNeedsHuman:      true,
+						SentinelLabel:       s.sentinelLabel(),
+					}); err != nil {
+						return notes, fmt.Errorf("approving PR: %w", err)
+					}
+					notes = append(notes, "approval recorded on the hive's own head and queued for auto-merge (the App cannot review its own pull request; the self-authored lane merges once CI is green)")
+				}
 			} else {
 				if _, err := client.RecordOperatorPullRequestApproval(ctx, repoFull, number, user); err != nil {
 					return notes, fmt.Errorf("approving PR: %w", err)

@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"github.com/hivecommons/hive/pkg/config"
 	"slices"
 	"strings"
 	"time"
@@ -39,10 +38,14 @@ type StageTrackerTakeover struct {
 	// FallbackAt is when a reroute's pickup window lapsed and the hive fell
 	// back to Adopt now.
 	FallbackAt *time.Time `json:"fallback_at,omitempty"`
-	// GraceElapsed is true once the author's offline grace has run out
-	// (adoption is due but something holds it): the delegated "Let hive
-	// decide" picks Adopt now then.
+	// GraceElapsed is true once the engine's own predicate
+	// (automerge.AutoAdoption) says adoption is due at this head: the hive
+	// adopts on its next sweep without a click, and the delegated "Let hive
+	// decide" picks Adopt now. It is also true when adoption is due but
+	// held (maintainer_policy ask / never, a person's admission).
 	GraceElapsed bool `json:"grace_elapsed,omitempty"`
+	// AutoAdoptAt is when the same predicate fires, while its clock runs.
+	AutoAdoptAt *time.Time `json:"auto_adopt_at,omitempty"`
 }
 
 // StageTrackerRerouted is a pending reroute on the row.
@@ -69,6 +72,10 @@ const takeoverAdoptNowDisabledHold = "release the hold first"
 // takeoverAdoptNowDisabledOff is the reason when adoption is off on this hive.
 const takeoverAdoptNowDisabledOff = "adoption is disabled (governor.labels.stage.adoption.enabled)"
 
+// takeoverAdoptNowQueued is the reason once Adopt now was pressed and the
+// sweep has not landed yet: the action is spent, not offered again.
+const takeoverAdoptNowQueued = "adoption already queued"
+
 // stageTrackerRerouteCandidates returns the lookup for the online clankers a
 // reroute may target, excluding the PR's author. Tests inject
 // rerouteCandidates.
@@ -88,7 +95,8 @@ func (s *Server) stageTrackerRerouteCandidates() func(author string) []RerouteCa
 
 // stageTrackerTakeover builds the `takeover` field for a clanker PR row at
 // 072 / 071; nil for other rows and for an adopted head.
-func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(string) (automerge.ContributorPresence, bool), candidates func(string) []RerouteCandidate, adoptionEnabled bool, grace takeoverGrace, now time.Time) *StageTrackerTakeover {
+func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(string) (automerge.ContributorPresence, bool), candidates func(string) []RerouteCandidate, clock stageTrackerAdoptionClock, now time.Time) *StageTrackerTakeover {
+	adoptionEnabled := clock.Enabled
 	if it.Kind != "pr" || it.AuthorKind == authorKindHuman || (it.Stage != trackerNumberReturned && it.Stage != trackerNumberNeedsAuthor) {
 		return nil
 	}
@@ -102,7 +110,11 @@ func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 		}
 	}
 	held := slices.Contains(it.Modifiers, modHold)
+	_, forcedPending := rec.AdoptionForced()
+	forcedPending = forcedPending && hasRec
 	switch {
+	case forcedPending:
+		out.AdoptNowReason = takeoverAdoptNowQueued
 	case !adoptionEnabled:
 		out.AdoptNowReason = takeoverAdoptNowDisabledOff
 	case held:
@@ -161,39 +173,14 @@ func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 			t := rec.RerouteFallbackAt
 			out.FallbackAt = &t
 		}
-		out.GraceElapsed = rec.AdoptionBlocked(it.Head) != "" || (it.Adoption != nil && it.Adoption.Due) || grace.elapsed(it.Adoption, now)
+		v := stageTrackerAutoAdoption(it, rec, hasRec, presence, clock, now)
+		if v.Running {
+			at := v.At
+			out.AutoAdoptAt = &at
+		}
+		out.GraceElapsed = rec.AdoptionBlocked(it.Head) != "" || (it.Adoption != nil && it.Adoption.Due) || v.Due
 	}
 	return out
-}
-
-// takeoverGrace is the configured nudge grace (online / offline) the
-// tracker measures the wait against; zero values mean "unknown".
-type takeoverGrace struct {
-	Online, Offline time.Duration
-}
-
-func (s *Server) takeoverGrace() takeoverGrace {
-	if s == nil || s.deps == nil || s.deps.Config == nil {
-		return takeoverGrace{Online: config.DefaultContributorGraceOnline, Offline: config.DefaultContributorGraceOffline}
-	}
-	stage := s.deps.Config.Governor.Labels.Stage
-	return takeoverGrace{Online: stage.EffectiveContributorGraceOnline(), Offline: stage.EffectiveContributorGraceOffline()}
-}
-
-// elapsed: the nudge grace that applies to the author's presence has run
-// out since the first nudge at this head.
-func (g takeoverGrace) elapsed(a *StageTrackerAdoption, now time.Time) bool {
-	if a == nil || a.Since == nil || a.Since.IsZero() {
-		return false
-	}
-	window := g.Offline
-	if a.AuthorOnline {
-		window = g.Online
-	}
-	if window <= 0 {
-		return false
-	}
-	return now.Sub(*a.Since) >= window
 }
 
 // takeoverDecisionOptions are the popover options the takeover adds to a
@@ -210,10 +197,12 @@ func takeoverDecisionOptions(t *StageTrackerTakeover, held bool) []StageTrackerD
 	if held && rerouteWhy == "" {
 		rerouteWhy = "Release the hold first"
 	}
-	return []StageTrackerDecisionOption{
-		decisionOption(decisionActionAdoptNow, "Adopt now — hive takes it over", t.AdoptNow && !held, adoptWhy),
-		decisionOption(decisionActionReroute, "Reroute to another clanker", t.Reroute && !held, rerouteWhy),
+	out := []StageTrackerDecisionOption{}
+	if t.ForcedBy == "" {
+		// Spent once pressed: the row says "Adopting… (queued)" instead.
+		out = append(out, decisionOption(decisionActionAdoptNow, "Adopt now — hive takes it over", t.AdoptNow && !held, adoptWhy))
 	}
+	return append(out, decisionOption(decisionActionReroute, "Reroute to another clanker", t.Reroute && !held, rerouteWhy))
 }
 
 // stageTrackerTakeoverCaption appends the reroute pill text to the caption.

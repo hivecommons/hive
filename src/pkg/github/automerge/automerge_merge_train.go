@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -382,8 +383,8 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 		if !mergeTrainCandidate(prefilter(pr)) {
 			continue
 		}
-		if c.mergeTrainReturnedToContributor(owner, repo, pr) {
-			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), "returned-to-contributor")
+		if why := c.mergeTrainUnderRepair(owner, repo, pr); why != "" {
+			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), why)
 			continue
 		}
 		if c.mergeTrainHeadHumanMerge(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()) {
@@ -469,27 +470,36 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 	return plan
 }
 
-// mergeTrainReturnedToContributor reports a PR at stage 072
-// returned-to-contributor (its label, or the stage store's record): the
-// fix is the contributor's, so it never rides a train — hive's own #15307
-// (conflicting, returned) was counted "4 of 6" and drew the train's stall
-// comments (hivecommons/hive#15395).
-func (c *Engine) mergeTrainReturnedToContributor(owner, repo string, pr *gh.PullRequest) bool {
+// mergeTrainUnderRepairStages are the stages whose PR is somebody's to
+// repair before it may ride a train: 070 fixing (the hive's own fixer),
+// 071 needs-author, 072 returned-to-contributor and 085 needs-decision.
+var mergeTrainUnderRepairStages = []stagelabels.Stage{stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor, stagelabels.NeedsDecision}
+
+// mergeTrainUnderRepair names the repair stage a PR wears (its label, or
+// the stage store's record), or "" when it may ride a train. Such a PR
+// never takes a slot: hive's own #15307 (conflicting, returned) was
+// counted "4 of 6" and drew the train's stall comments
+// (hivecommons/hive#15395), and #15405 led a train's header as "1st"
+// while a maintainer's changes-requested had it at 070 fixing.
+func (c *Engine) mergeTrainUnderRepair(owner, repo string, pr *gh.PullRequest) string {
 	if pr == nil {
-		return false
+		return ""
 	}
-	want := stagelabels.ReturnedToContributor.Label()
-	for _, l := range labelNames(pr.Labels) {
-		if strings.EqualFold(strings.TrimSpace(l), want) {
-			return true
+	labels := labelNames(pr.Labels)
+	for _, st := range mergeTrainUnderRepairStages {
+		want := st.Label()
+		for _, l := range labels {
+			if strings.EqualFold(strings.TrimSpace(l), want) {
+				return st.Slug()
+			}
 		}
 	}
 	if store := c.stageStoreOrShared(); store != nil {
-		if rec, ok := store.Get(stagelabels.Key(owner+"/"+repo, pr.GetNumber())); ok && rec.Stage == stagelabels.ReturnedToContributor {
-			return true
+		if rec, ok := store.Get(stagelabels.Key(owner+"/"+repo, pr.GetNumber())); ok && slices.Contains(mergeTrainUnderRepairStages, rec.Stage) {
+			return rec.Stage.Slug()
 		}
 	}
-	return false
+	return ""
 }
 
 // mergeTrainConflictOutsider reports a conflicting member the train must

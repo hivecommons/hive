@@ -182,6 +182,7 @@ var (
 const (
 	DefaultReviewBacklogLabel = cruxconfig.DefaultReviewBacklogLabel
 	OriginLabelPrefix         = cruxconfig.OriginLabelPrefix
+	GitHubLabelDescriptionMax = cruxconfig.GitHubLabelDescriptionMax
 	OriginReviewerLabel       = cruxconfig.OriginReviewerLabel
 	LegacyOriginReviewLabel   = cruxconfig.LegacyOriginReviewLabel
 	LegacyReviewBacklogLabel  = cruxconfig.LegacyReviewBacklogLabel

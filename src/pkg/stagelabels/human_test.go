@@ -149,6 +149,11 @@ func TestRouteHumanDecision(t *testing.T) {
 			e.Verdict = VerdictRequiresHuman
 			e.DecisionQuestion = "@clubanderson should decide whether to land this now."
 		}, "reviewer question: @clubanderson should decide whether to land this now."},
+		{"requires_human finding", func(e *Evidence) {
+			e.Verdict = VerdictRequiresHuman
+			e.DecisionQuestion = "close in favour of #15309?"
+			e.DecisionFinding = "duplicate: the review found this change already landed or open elsewhere"
+		}, "the review found: duplicate: the review found this change already landed or open elsewhere"},
 		{"requires_human summary", func(e *Evidence) {
 			e.Verdict = VerdictRequiresHuman
 			e.HumanSummaries = []string{"security requires human: relay owner should confirm before merge"}

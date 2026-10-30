@@ -186,7 +186,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `issues.hard_suppress_reconcile_interval` | `30m`. | Minimum time between hard-suppress reconcile passes. |
 | `issues.rfc_existing_check.enabled` | `false`. | Triage existing-coverage check (#13575): new open issues labelled `rfc`, `enhancement` or `kind/feature` get one comment that lists the existing settings that may already cover the request. Each setting links to Settings with the search set to its key. The comment carries `<!-- hive:rfc-existing-coverage -->` and is never posted twice. The check never labels or closes issues. Tuning keys are `post_when_nothing_found`, `labels`, `max_matches` and `max_age`; see [Triage: does this RFC already exist?](settings.md#triage-does-this-rfc-already-exist). |
 | `runs.triage.prior_art.enabled` | `true`. | Prior-art gate (#13575): before any agent claims a feature / RFC / epic issue, the scheduler searches knowledge beads, the Settings index, merged PRs (12 months), closed issues, docs and code for the issue's key terms. A human-filed issue whose best finding reaches `runs.triage.prior_art.threshold` (default `70`) is parked at `stage/017-possible-existing` with one `<!-- hive:prior-art-gate -->` comment quoting up to `max_findings` (default `5`) findings and the two replies (`/hive decision proceed — <gap>` / `/hive decision exists`); a clanker-filed one is parked the same way and closed `already-exists` after `bot_close_ttl` (default `72h`) with no reply; a hive-filed one is never parked (findings note only). `kinds` (default `feature, rfc, epic, enhancement`) picks the gated kinds; `max_parks_per_cycle` (default `5`) bounds one cycle. See [Prior-art gate](spektacular.md#prior-art-gate). |
-| `contribute.help_links` | Defaults to Hive contributor docs and the Hive issue tracker. | Up to 5 `{label, url}` links shown on `/contribute` Onboarding, Operations, and printed once by relays on connect. URLs must be absolute `http://` or `https://`; labels are plain text and length-capped. Prefer the Hive Commons Discord redirect (`https://hivecommons.dev/discord`) over channel URLs for contributors who may not already be server members. |
+| `contribute.help_links` | Defaults to Hive contributor docs, the Hive issue tracker, and the Twitch live stream. | Up to 5 `{label, url}` links shown on `/contribute` Onboarding, Operations, and printed once by relays on connect. URLs must be absolute `http://` or `https://`; labels are plain text and length-capped. Prefer the Hive Commons Discord redirect (`https://hivecommons.dev/discord`) over channel URLs for contributors who may not already be server members. |
 | `contribute.max_parallel_fixes` | `2`. | Ceiling on how many stage-072 `fix-pr` sub-sessions one contributor's relay may run beside its primary session ([#12436](https://github.com/hivecommons/hive/issues/12436)). The relay advertises its own count (`max_parallel_fixes`, from `HIVE_MAX_PARALLEL_FIXES`); the hub clamps it to this. A relay that advertises no `parallel_sessions` always has capacity 1 (preempt mode). Fixes beyond capacity queue server-side and are served before new work. Settings → Hub → Fix budget. |
 | `contribute.min_focus_window` | `30m`. | Preempt mode only: after a preempted primary task resumes, the hub does not preempt that contributor again until it has run uninterrupted for this long. Settings → Hub → Fix budget. |
 | `variables` | Trusted variable resolver definitions. | Env-only substitution works without this block. |
@@ -478,9 +478,9 @@ verified owner or an authorized user with the `merger` role:
 
 | Decision | What it does | Audit / ledger |
 |---|---|---|
-| `merge-now` — *Approve & merge as maintainer* | Comments on the PR that @you merged it from the dashboard, then merges it at once through the hive's GitHub App (`MergePRVia`, audit path `dashboard`). Refused when the PR is merged or closed, or when you are its author. | `repo_item_decision_merge`; `last_operator_action.action: merge-now`; toast *merged*. |
+| `merge-now` — *Merge now as maintainer* (secondary; *Approve and let hive merge* leads) | Comments on the PR that @you merged it from the dashboard, then merges it at once through the hive's GitHub App (`MergePRVia`, audit path `dashboard`). Refused when the PR is merged or closed, or when you are its author. | `repo_item_decision_merge`; `last_operator_action.action: merge-now`; toast *merged*. |
 | `merge-now` on a PR whose `mergeable_state` is `dirty` or `behind` — *Rebase, then merge as maintainer* | Never a GitHub 405. Records your approval first (/lgtm + /approve naming you), arms a rebase-then-merge follow-through (`/data/rebase-merge-followups.json`), kicks the rebase (update-branch on the hive's own PR when only behind; otherwise the fixer lane, which owns a parked PR with an armed follow-through), and answers `202 rebase-queued`. A 2-minute ticker then reads the PR: `mergeable_state: clean` on the rebased head → merges it with your approval attributed; still `dirty` after 2 h, CI red, or no rebase within the deadline → `failed` with the conflicting files and the options *Adopt into fresh branch* / *Close as superseded* (also left as a note on the PR). Refused on a fork whose author has not allowed maintainer edits (`head-not-pushable`). The approval is bound to the head you read: a new head on a contributor's PR counts as the rebase only when GitHub says the hive committed it (the fixer's rebase or update-branch under the App; a committer matched by the pane identity email domain alone, with no GitHub login resolved, also needs GitHub to report the commit as verified, and the author counts only when GitHub resolves it to the App bot). A head anyone else pushes after your click settles the follow-through as `failed` (`foreign-head`) with nothing merged, a note on the PR, and *Approve the new head & merge* / *Close as superseded* as the ways out. | `repo_item_decision_merge` with `status: rebase-queued`; `last_operator_action.action: merge-now`, outcome `pending` → `applied` / `failed`, `followed[]` steps `approval-recorded`, `rebase-kicked`, `rebased`, `ci-green`, `merged` / `failed`; row `rebase_merge.state`; toast *rebase queued, merge to follow*. |
-| `queue-merge` — *Approve — let hive merge* | Leaves an `APPROVED` review in your name with a note, adds the automerge label, and leaves the merge to the App self-merge sweep, which merges on its next pass once CI is green and the head has soaked. Refused on your own PR. | `repo_item_decision_queue_merge`; `last_operator_action.action: queue-merge`; toast *queued for merge*. |
+| `queue-merge` — *Approve and let hive merge* (lead) | Admits the head (`admitted_by: operator-approval:<you>`), leaves an `APPROVED` review in your name with a note, adds the automerge label, and leaves the merge to the hive's auto-merge sweep, which merges through its own App on the next tick once CI is green and the head has soaked. On an untrusted author's PR that admission is the one thing that lets the trusted-author lane merge it: the lane's `untrusted-author-role` skip yields to the recorded approval for that exact head, and the merge comment names you (*merged by Hive on behalf of @you …*). Refused on your own PR. | `repo_item_decision_queue_merge`; `last_operator_action.action: queue-merge`; toast *approved — hive will merge on the next tick once CI is green*. |
 
 **Approve is the trust override for that head
 ([#15136](https://github.com/hivecommons/hive/issues/15136)).** Before, an
@@ -503,6 +503,40 @@ the engine derives it from the recorded approval and writes it back. An
 explicit **Adopt** / **Re-author** from the dashboard is the person choosing
 re-authoring and is not refused.
 
+**Approve means "approved to proceed", not "merge this exact head whatever
+happens".** The merge-as-is hold applies only while the head *is* mergeable
+as-is. When the lane cannot land the approved head unchanged — the fork is
+not editable by the App and sits behind the base (`fork-not-editable`),
+it conflicts (`conflicting` / `not-mergeable` / `needs-rebase`), or a
+commit lacks `Signed-off-by` (`dco-missing`) — the admission does not
+block adoption: the hive adopts (re-authors the commits on a hive-owned
+branch) and **carries the approval to its copy** (a decision approval
+recorded on the copy's head; the copy's body says *Approval carried over:
+@you approved #N at head …*). Logged as `a person admitted this head but
+the hive cannot merge it as-is; adopting and carrying the approval`. Before
+this, an approved fork PR that fell behind `v5` deadlocked: every cycle
+refused adoption (*not adopted: a maintainer approved this head; the hive
+merges it as-is*) while the merge itself failed on `fork-not-editable`.
+
+**Adopt now always wins over an earlier Approve.** Recording the forced
+adoption clears the `operator-admission` blocker at once, and the adoption
+engine bypasses admission, presence, grace and `maintainer_policy` on its
+next pass. The response is honest about timing: `status: adopted-now` with
+the copy's number when the nudged pass opened it within the handler's wait,
+else `status: adoption-queued` (*Adopting… (queued): the hive opens its copy
+on its next stage pass*). Either way the row is in its acted state the
+moment you click — `adoption.queued_by` / `takeover.forced_by` on the
+payload, chip *adopting… (queued)*, caption *Adopting… (queued by @you …)*,
+no *not adopted* blocker, **Adopt now** gone from the ⋯ menu and the
+popover, no decision popover asking again — until the sweep lands and the
+row reads *Adopted → #N*.
+
+| You | Head mergeable as-is | Head not mergeable as-is (fork not editable + behind, conflicting, DCO missing) |
+|---|---|---|
+| **Approve** | admitted; hive merges it unchanged after checks and soak; no adoption | hive adopts (supersede), approval carried to the copy |
+| **Adopt** / **Re-author** | hive adopts on the next pass (grace and policy still apply to a plain Adopt) | same |
+| **Adopt now** (`force: true`) | hive adopts on the next pass regardless of an earlier Approve, presence, grace, policy; row acted at once | same |
+
 | Decision | What it does | Audit / ledger |
 |---|---|---|
 | `re-author` — *Re-author as hive PR* | Offered as its own lead action on a 090 PR whose head cannot merge as-is — the stage record's commit check counted commits without a `Signed-off-by` (`dco_unsigned` / `dco_total` on the row). The popover and both Approve confirms say so **before** acting (*2 of 3 commits have no Signed-off-by, so a required DCO check refuses the merge*); approving never re-authors by itself. Re-author posts its own note and the `adoption/supersede` request label; the hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR. Disabled with the reason on a person's PR (the hive does not re-author a human's PR — ask them to `git commit -s --amend`). | `repo_item_decision_adopt` with `decision=re-author`; `last_operator_action.action: re-author`; toast *adopted*. |
@@ -513,7 +547,7 @@ decision instead of answering that it cannot merge
 
 | PR head | Hive decides | ✓ hover |
 |---|---|---|
-| review passed (no reviewing / changes-requested / requires-human `review.verdict_labels` label), CI green, mergeable | approve — the same path as *Approve — let hive merge* (needs the `merger` role): admits the head (`admitted_by: operator-approval:<you>`), approves it and adds the automerge label; no adoption, and the sweep merges the PR under its own number after soak | *hive decided: approve · review passed, CI green* |
+| review passed (no reviewing / changes-requested / requires-human `review.verdict_labels` label), CI green, mergeable | approve — the same path as *Approve and let hive merge* (needs the `merger` role): admits the head (`admitted_by: operator-approval:<you>`), approves it and adds the automerge label; no adoption, and the sweep merges the PR under its own number after soak | *hive decided: approve · review passed, CI green* |
 | CI red | adopt in supersede mode | *hive decided: adopt · CI red* |
 | conflicting | adopt in supersede mode to rebase | *hive decided: adopt · conflicting, needs rebase* |
 | review not passed | adopt in supersede mode | *hive decided: adopt · review not passed* |
@@ -791,8 +825,11 @@ Dashboard: Settings → Labels → "When the PR author maintains the
 repository". Whatever the policy and the clocks say, the row's ⋯ menu on a
 072 / 071 clanker PR offers the operator **Adopt now — hive takes it over**
 (decision API `adopt` + `force: true`: supersede adoption on the next nudged
-sweep, bypassing presence, grace and `maintainer_policy`; `hold` still
-stops it; marker `hive:adopted reason=operator-forced by=@login`) and
+sweep, bypassing presence, grace, `maintainer_policy` and an earlier
+Approve's admission; `hold` still stops it; marker `hive:adopted
+reason=operator-forced by=@login`; the row shows *adopting… (queued)* and
+drops the action until the copy opens — see *Adopt now always wins over an
+earlier Approve* above) and
 **Reroute to another clanker** (decision API `reroute` + `to: <login>|any`:
 the follow-up work goes to an online contributor clanker's fix queue as a
 `fix-pr` interrupt — the same mechanism as the 072 nudge — with a

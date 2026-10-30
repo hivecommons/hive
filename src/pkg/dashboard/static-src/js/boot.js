@@ -12,11 +12,15 @@
 // monitor, suppresses the welcome/NPS dialogs and the toast hover-pause, and
 // never writes to localStorage so a rolled SPA can't inherit stale state.
 // The class is set here, before first paint, so the chrome never flashes.
+// Tracker sounds are on by default in kiosk mode (the streamer captures them
+// through a PulseAudio null sink); `&sound=off` keeps the display silent.
 (function(){
-  var kiosk=false;
-  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; } catch(e) {}
+  var kiosk=false, sound=true;
+  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
   window.HIVE_KIOSK=kiosk;
+  window.HIVE_KIOSK_SOUND=kiosk&&sound;
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };
   if(kiosk){
     document.body.classList.add('kiosk-mode');
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
@@ -26,6 +30,9 @@
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
   if(m==='classic')m='dark';
+  // A kiosk (#15594) is a broadcast surface with no operator to flip the
+  // toggle; it always renders dark unless the URL says otherwise.
+  if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
   document.body.style.opacity='0';
