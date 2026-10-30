@@ -266,6 +266,7 @@
     /* "supersedes N": the closed original a live PR replaced (hive PR 15135 follow-up). Muted — a trace, not a call to act. */
     .ham-badge-supersedes { color: var(--text-faint); border-color: var(--line-subtle); text-decoration: none; }
     .ham-badge-supersedes:hover { color: var(--text-muted); }
+    .ham-badge-overlap { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
     .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
