@@ -135,6 +135,32 @@ func TestConfirmDeliveredRollsBackFailedKicks(t *testing.T) {
 	}
 }
 
+// A persist made while the kick pass is still delivering must keep the pending
+// rows of a planned kick that has not been confirmed yet: it may already have
+// reached its agent, and its verdict binds to those rows (hivecommons/hive#15559).
+func TestConfirmDeliveredInProgressKeepsKicksStillDelivering(t *testing.T) {
+	first := DispatchKick{Kind: "review", Agent: "r1", Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness}
+	decision := DispatchKick{Kind: "review", Agent: "base", Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveSecurity, Perspectives: []Perspective{PerspectiveSecurity, PerspectiveStyle}, Decision: true}
+	state := DispatchState{Pending: []PendingReview{
+		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness, Agent: "r1"},
+		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveSecurity, Agent: "base", Decision: true},
+		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveStyle, Agent: "base", Decision: true},
+	}}
+
+	got := ConfirmDeliveredInProgress(state, []DispatchKick{first})
+	if len(got.Pending) != 3 {
+		t.Fatalf("in-progress persist dropped pending rows of a kick still delivering: %+v", got.Pending)
+	}
+	if len(got.Recent) != 1 || got.Recent[0].Agent != "r1" {
+		t.Fatalf("in-progress persist did not record the delivered kick: %+v", got.Recent)
+	}
+
+	final := ConfirmDelivered(got, []DispatchKick{first, decision}, []DispatchKick{first})
+	if len(final.Pending) != 1 || final.Pending[0].Agent != "r1" {
+		t.Fatalf("end-of-pass persist kept rows of an undelivered kick: %+v", final.Pending)
+	}
+}
+
 func TestBuildFixPromptAndCapExhaustion(t *testing.T) {
 	finding := PerspectiveFinding{Perspective: PerspectiveCorrectness, Finding: outputschema.Finding{Title: "nil panic", Severity: outputschema.SeverityMedium, Summary: "guard nil input"}}
 	agg := Aggregate{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Verdict: VerdictChangesRequested, Findings: []PerspectiveFinding{finding}}
