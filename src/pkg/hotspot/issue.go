@@ -7,21 +7,29 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueshape"
 )
 
 // Labels applied to every modularize issue. Both exist on hivecommons/hive;
 // the writer's label-ensure step creates them elsewhere.
 var Labels = []string{"agent/ci-maintainer", "kind/cleanup"}
 
-// Title is the issue title for a hotspot.
+// Title is the issue title for a hotspot. The governor's hotspot advisor
+// files it, so it carries the `[governor]` tag every hive-filed issue title
+// starts with; the agent/ci-maintainer label says who works it.
 func Title(h Hotspot, units int) string {
+	var title string
 	switch h.Recommendation {
 	case RecommendSplitSource:
-		return fmt.Sprintf("refactor: %s is a merge hotspot — split its source %s into %d units", h.File, strings.TrimSuffix(h.GeneratedFrom, "/"), units)
+		title = fmt.Sprintf("refactor: %s is a merge hotspot — split its source %s into %d units", h.File, strings.TrimSuffix(h.GeneratedFrom, "/"), units)
 	case RecommendSplitDoc:
-		return fmt.Sprintf("refactor: %s is a merge hotspot — split into %d sections", h.File, units)
+		title = fmt.Sprintf("refactor: %s is a merge hotspot — split into %d sections", h.File, units)
+	default:
+		title = fmt.Sprintf("refactor: %s is a merge hotspot — split into %d units", h.File, units)
 	}
-	return fmt.Sprintf("refactor: %s is a merge hotspot — split into %d units", h.File, units)
+	return issueshape.TitleFor(config.OriginSourceGovernor, title)
 }
 
 // Body renders the issue body: plain-language summary (≤ 300 words),

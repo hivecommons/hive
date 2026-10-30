@@ -265,7 +265,7 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 		t.Fatalf("created = %d, want 2 (daily cap) below-line items", len(sink.created))
 	}
 	first := sink.created[0]
-	if first.Repo != "o/r" || first.Title != "Review backlog (correctness): unused variable" || strings.Join(first.Labels, ",") != "nit,blocked" {
+	if first.Repo != "o/r" || first.Title != "[reviewer] Review backlog (correctness): unused variable" || strings.Join(first.Labels, ",") != "nit,blocked" {
 		t.Fatalf("first item = %+v", first)
 	}
 	for _, want := range []string{
@@ -735,7 +735,7 @@ func TestReviewBacklogFoldedTwinKeepsFullFinding(t *testing.T) {
 		"**Additional finding (folded in — same finding area and category).**",
 		"it is a correctness finding at the same symbol or lines of `pkg/a.go`",
 		"PR #5 (https://github.com/o/r/pull/5)",
-		"### Review backlog (correctness): unused variable",
+		"### [reviewer] Review backlog (correctness): unused variable",
 		"- [ ] unused variable (`pkg/a.go:7`)",
 		"Perspective: correctness",
 		"Severity: medium (P2)",
@@ -752,7 +752,7 @@ func TestReviewBacklogFoldedTwinKeepsFullFinding(t *testing.T) {
 	if strings.Contains(got.comment, "Linked again") {
 		t.Errorf("folded comment still uses the bare link line:\n%s", got.comment)
 	}
-	if len(comments[5]) != 1 || !strings.Contains(comments[5][0], "- ENG-1 (folded into an existing issue) — Review backlog (correctness): unused variable (https://tracker.test/ENG-1)") {
+	if len(comments[5]) != 1 || !strings.Contains(comments[5][0], "- ENG-1 (folded into an existing issue) — [reviewer] Review backlog (correctness): unused variable (https://tracker.test/ENG-1)") {
 		t.Fatalf("PR 5 summary comments = %q, want one line saying ENG-1 was folded", comments[5])
 	}
 

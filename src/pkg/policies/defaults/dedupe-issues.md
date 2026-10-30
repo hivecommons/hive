@@ -241,7 +241,7 @@ to decide what to close and what to merge, so it is parked:
 
 ```bash
 gh issue create --repo <owner/repo> --needs-decision \
-  --title "triage: duplicate and overlapping open issues/PRs to consolidate" \
+  --title "[dedupe] triage: duplicate and overlapping open issues/PRs to consolidate" \
   --body-file /tmp/<unique>.md
 ```
 
@@ -254,7 +254,7 @@ so it is **not** parked: no `--needs-decision`, no "What to reply" notice, no
 
 ```bash
 gh issue create --repo <owner/repo> --label triage/advisory \
-  --title "triage: duplicate and overlapping open issues/PRs to consolidate" \
+  --title "[dedupe] triage: duplicate and overlapping open issues/PRs to consolidate" \
   --body-file /tmp/<unique>.md
 ```
 

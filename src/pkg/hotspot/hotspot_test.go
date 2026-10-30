@@ -360,7 +360,7 @@ func TestBodyGolden(t *testing.T) {
 	if !strings.Contains(gb, "**generated**") || strings.Contains(gb, "## Split proposal") {
 		t.Errorf("generated body wrong:\n%s", gb)
 	}
-	if got := Title(gen, 4); got != "refactor: pkg/dashboard/static/index.html is a merge hotspot — split its source pkg/dashboard/static-src into 4 units" {
+	if got := Title(gen, 4); got != "[governor] refactor: pkg/dashboard/static/index.html is a merge hotspot — split its source pkg/dashboard/static-src into 4 units" {
 		t.Errorf("generated title=%q", got)
 	}
 }
