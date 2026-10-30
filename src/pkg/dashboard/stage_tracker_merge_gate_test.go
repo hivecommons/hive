@@ -158,13 +158,13 @@ func TestStageTrackerMergeGateNode(t *testing.T) {
 		}
 	}
 	// The legend lives on the help page the (?) mark links to.
-	docs, err := os.ReadFile(filepath.Join("..", "..", "docs", "dashboard-sections.md"))
+	docs, err := os.ReadFile(filepath.Join("..", "..", "docs", "dashboard-sections", "activity-monitor.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"**Merge queue pills — legend**", "Awaiting merge gate", "Ready for auto merge", "**Soaking**", "**Merging**", "next pass in"} {
 		if !strings.Contains(string(docs), want) {
-			t.Errorf("docs/dashboard-sections.md missing merge-gate legend %q", want)
+			t.Errorf("docs/dashboard-sections/activity-monitor.md missing merge-gate legend %q", want)
 		}
 	}
 	runStageTrackerRowActionsScript(t, "function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }\n"+
