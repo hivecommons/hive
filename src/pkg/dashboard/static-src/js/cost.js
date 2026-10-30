@@ -27,6 +27,16 @@
       const frac = n < 100 ? 2 : 0;
       return '$' + formatNumber(n, 'en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
     }
+    // fmtUSDWhole rounds to the nearest dollar, comma-grouped, never cents:
+    // "$1,010", "$10", "$0". Anything that would round to $0 but is non-zero
+    // shows "<$1" so a small, real spend is not mistaken for none. Used by
+    // the Governor RUNNING tile's today / week / month windows (#15614);
+    // the cost panel keeps the precise fmtUSD.
+    function fmtUSDWhole(n) {
+      if (n == null || isNaN(n)) return '—';
+      if (n > 0 && n < 0.5) return '<$1';
+      return '$' + formatNumber(Math.round(n), 'en-US', { maximumFractionDigits: 0 });
+    }
 
     // Headline wording (#13484): one plainly-named figure. "lineage" and
     // "persisted history" were implementation terms; the card now says what
