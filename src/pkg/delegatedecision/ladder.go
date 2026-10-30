@@ -232,7 +232,7 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		}
 		return out(d, in.OfflineWording()+" and the grace has elapsed; adopted now")
 	}
-	if in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing {
+	if in.AdoptionStalled || in.Conflicting || in.CIRed() || in.DCOMissing {
 		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
 		d := Decision{
 			Verdict: VerdictAdoptSupersede, Rule: RuleContributorOffline, Text: text,
@@ -279,7 +279,10 @@ func mergeBlockers(in Input) string {
 	if in.Conflicting {
 		b = append(b, "conflicting")
 	}
-	if !in.CIGreen {
+	switch {
+	case in.CIPending:
+		b = append(b, "CI still running")
+	case !in.CIGreen:
 		b = append(b, "CI not green")
 	}
 	if in.DCOMissing {
@@ -306,7 +309,7 @@ func fixList(in Input) []string {
 	if in.DCOMissing {
 		fix = append(fix, "add the DCO sign-off")
 	}
-	if !in.CIGreen {
+	if in.CIRed() {
 		fix = append(fix, "make CI green without widening scope")
 	}
 	return fix
