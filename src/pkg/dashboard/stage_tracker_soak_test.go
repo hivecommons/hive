@@ -83,13 +83,17 @@ func TestStageTrackerSoakInPayload(t *testing.T) {
 	s.deps.Config = &config.Config{}
 	s.deps.Config.AutoMerge.ContributorLane.SoakMinutes = 45
 
-	// PR 102 (095) has no NoteSoak yet: the reason fallback with the 45m window.
+	// A 095 record written before NoteSoak existed (the countdown in its
+	// reason, no clock): the reason fallback with the 45m window.
+	store.ClearSoak(stagelabels.Key("acme/console", 102))
+	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking(remaining=7m0s)")
 	pr := trackerItem(t, s.buildStageTracker(s.status, store, now), "pr", 102)
 	if pr.Soak == nil || pr.Soak.WindowSeconds != 45*60 || !pr.Soak.Until.Equal(now.Add(7*time.Minute)) {
 		t.Fatalf("PR 102 soak from reason: %+v", pr.Soak)
 	}
 	// The pass records the soak: the record's clock wins.
 	started := now.Add(-20 * time.Minute)
+	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking")
 	store.NoteSoak(stagelabels.Key("acme/console", 102), "abc1234def", started, 30*time.Minute)
 	resp := s.buildStageTracker(s.status, store, now)
 	pr = trackerItem(t, resp, "pr", 102)
@@ -258,4 +262,76 @@ assert.ok(li.attrs.title.startsWith('Soaking — Head abc1234 sat 30 minutes wit
 assert.deepStrictEqual([stageTrackerSoakLeftText(45000), stageTrackerSoakLeftText(750000), stageTrackerSoakLeftText(3900000), stageTrackerSoakLeftText(0)], ['45s', '12m 30s', '1h 05m', '']);
 console.log('soak clock ok');
 `)
+}
+
+// TestStageTrackerSoakCaptionFromDeadline (hivecommons/hive#15729): the
+// 095 caption counts down from the record's soak deadline at request
+// time — a sweep that re-reads the same reason moves nothing — never says
+// "0s left", and the note's age is the stage entry while soaking and the
+// deadline once the soak is complete. A record written before the
+// deadline existed still reads its `soaking(remaining=…)` reason aged
+// from the sweep that wrote it.
+func TestStageTrackerSoakCaptionFromDeadline(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	entered := now.Add(-40 * time.Minute)
+	rec := stagelabels.Record{Stage: stagelabels.PreMergeSoak, Reason: "contributor-lane:soaking", EnteredAt: entered, ReasonChangedAt: entered, LastSeen: now.Add(-30 * time.Second),
+		SoakHead: "abc", SoakStartedAt: now.Add(-20 * time.Minute), SoakWindowSeconds: 1800}
+	if got := stageTrackerSoakCaption(rec, now); got != "Admitted by the automerge lane; soaking — 10m left" {
+		t.Fatalf("caption = %q", got)
+	}
+	if left := stageTrackerSoakRemaining(rec, now); left != 10*time.Minute {
+		t.Fatalf("remaining = %v", left)
+	}
+	if at := stageTrackerNoteChangedAt(rec, now); !at.Equal(entered) {
+		t.Fatalf("note changed at %v, want stage entry %v", at, entered)
+	}
+	// A later sweep re-reads the reason: LastSeen moves, nothing else does.
+	later := rec
+	later.LastSeen = now
+	if a, b := stageTrackerNoteChangedAt(rec, now), stageTrackerNoteChangedAt(later, now); !a.Equal(b) {
+		t.Fatalf("a re-read moved the note's age: %v → %v", a, b)
+	}
+	if got := stageTrackerSoakCaption(later, now.Add(time.Minute)); got != "Admitted by the automerge lane; soaking — 9m left" {
+		t.Fatalf("a minute later: %q", got)
+	}
+	// At and past the deadline: never "0s left"; the note changed at the deadline.
+	deadline := rec.SoakStartedAt.Add(30 * time.Minute)
+	for _, at := range []time.Time{deadline, deadline.Add(90 * time.Second)} {
+		if got := stageTrackerSoakCaption(rec, at); got != "Admitted by the automerge lane; soak complete — merges on the next pass" {
+			t.Fatalf("at %v: %q", at, got)
+		}
+		if left := stageTrackerSoakRemaining(rec, at); left != 0 {
+			t.Fatalf("at %v: remaining = %v", at, left)
+		}
+		if got := stageTrackerNoteChangedAt(rec, at); !got.Equal(deadline) {
+			t.Fatalf("at %v: note changed at %v, want the deadline %v", at, got, deadline)
+		}
+	}
+	// A new reason class at the same stage dates the note from then.
+	held := rec
+	held.Reason, held.ReasonChangedAt = "release-hold", now.Add(-time.Minute)
+	if at := stageTrackerNoteChangedAt(held, now); !at.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("note changed at %v", at)
+	}
+	// No clock yet (the pass that admitted the head has not written one):
+	// the generic caption stands.
+	bare := stagelabels.Record{Stage: stagelabels.PreMergeSoak, Reason: "contributor-lane:soaking", EnteredAt: entered}
+	if got := stageTrackerSoakCaption(bare, now); got != "" {
+		t.Fatalf("no clock: %q", got)
+	}
+	if at := stageTrackerNoteChangedAt(bare, now); !at.Equal(entered) {
+		t.Fatalf("no ReasonChangedAt falls back to EnteredAt: %v", at)
+	}
+	// Legacy record: the remaining in the reason, aged from the sweep.
+	legacy := stagelabels.Record{Stage: stagelabels.PreMergeSoak, Reason: "contributor-lane:soaking(remaining=12m0s)", EnteredAt: entered, LastSeen: now.Add(-5 * time.Minute)}
+	if got := stageTrackerSoakCaption(legacy, now); got != "Admitted by the automerge lane; soaking — 7m left" {
+		t.Fatalf("legacy caption = %q", got)
+	}
+	if got := stageTrackerSoakCaption(legacy, now.Add(8*time.Minute)); got != "Admitted by the automerge lane; soak complete — merges on the next pass" {
+		t.Fatalf("legacy past deadline = %q", got)
+	}
+	// A note never dates from the future.
+	if at := stageTrackerNoteChangedAt(stagelabels.Record{Stage: stagelabels.Reviewed, EnteredAt: now.Add(time.Hour)}, now); !at.Equal(now) {
+		t.Fatalf("future entry clamped: %v", at)
+	}
 }

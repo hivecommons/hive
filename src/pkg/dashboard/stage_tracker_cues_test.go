@@ -31,6 +31,9 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsFunc(t, html, "stageTrackerEventsNext"),
+		jsFunc(t, html, "stageTrackerEventShownAt"),
+		jsFunc(t, html, "stageTrackerSameNote"),
+		jsFunc(t, html, "stageTrackerNewEvent"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
 		jsFunc(t, html, "stageTrackerEventHtml"),
 		jsFunc(t, html, "stageTrackerLocalMidnight"),
@@ -207,6 +210,34 @@ assert.strictEqual(events['hivecommons/hive/pr#14947'].text, 'moved to Needs dec
 assert.deepStrictEqual(stageTrackerEventsNext({}, null, next, stages, now), {}, 'the first payload never writes a line for everything');
 events = stageTrackerEventsNext(events, next, next, stages, now + STAGE_TRACKER_EVENT_MS + 1);
 assert.deepStrictEqual(events, {}, 'lines expire');
+// A soaking row (hivecommons/hive#15729): the caption counts down each
+// poll but note_changed_at stands still, so the line is one note — its
+// words refresh in place, its age counts from the server's stamp and the
+// line neither re-opens nor is re-written when it has expired.
+const soakStages = [{ number: 80, label: 'Merge gate' }, { number: 95, label: 'Pre-merge soak' }];
+const soakAt = new Date(now - 120000).toISOString();
+const soakRow = (caption, noteAt) => ({ repo: 'hivecommons/hive', kind: 'pr', number: 15730, stage: 95, caption, note_changed_at: noteAt });
+const gate = stageTrackerStateMap([Object.assign(soakRow('Awaiting merge admission', new Date(now - 600000).toISOString()), { stage: 80 })]);
+const soak10 = stageTrackerStateMap([soakRow('Admitted by the automerge lane; soaking — 10m left', soakAt)]);
+const soak9 = stageTrackerStateMap([soakRow('Admitted by the automerge lane; soaking — 9m left', soakAt)]);
+const soakKey = 'hivecommons/hive/pr#15730';
+let soakEv = stageTrackerEventsNext({}, gate, soak10, soakStages, now);
+assert.strictEqual(soakEv[soakKey].text, 'moved to Pre-merge soak');
+assert.strictEqual(soakEv[soakKey].at, now - 120000, 'the age counts from when the note changed on the server');
+assert.strictEqual(soakEv[soakKey].openAt, now, 'but the 30 s open window starts when this tab first shows it');
+soakEv = stageTrackerEventsNext(soakEv, soak10, soak9, soakStages, now + 60000);
+assert.strictEqual(soakEv[soakKey].text, 'Admitted by the automerge lane; soaking — 9m left', 'the words move in place');
+assert.strictEqual(soakEv[soakKey].at, now - 120000, 'the age does not reset');
+assert.strictEqual(soakEv[soakKey].openAt, now, 'the line does not re-open');
+assert.deepStrictEqual(stageTrackerEventsNext({}, soak10, soak9, soakStages, now + STAGE_TRACKER_EVENT_MS * 2), {}, 'an expired line is not re-written by the countdown');
+const soakDone = stageTrackerStateMap([soakRow('Admitted by the automerge lane; soak complete — merges on the next pass', new Date(now + 480000).toISOString())]);
+soakEv = stageTrackerEventsNext(soakEv, soak9, soakDone, soakStages, now + 500000);
+assert.strictEqual(soakEv[soakKey].text, 'Admitted by the automerge lane; soak complete — merges on the next pass', 'a new note_changed_at is a new note');
+assert.strictEqual(soakEv[soakKey].at, now + 480000);
+const legacy9 = stageTrackerStateMap([soakRow('soaking — 9m left', '')]);
+const legacy8 = stageTrackerStateMap([soakRow('soaking — 8m left', '')]);
+assert.strictEqual(stageTrackerEventsNext({}, legacy9, legacy8, soakStages, now)[soakKey].at, now, 'without the stamp (an older payload) a caption change is a new line as before');
+assert.strictEqual(stageTrackerNewEvent('x', new Date(now + 5000).toISOString(), now).at, now, 'a stamp in the future is clamped to now');
 _stageTrackerEvents = {};
 stageTrackerNoteOwnerEvent('k', 'approved', now);
 let line = stageTrackerEventHtml('k', { events: _stageTrackerEvents, nowMs: now });
@@ -329,6 +360,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "hamBannerDismiss"),
 		jsFunc(t, html, "hamBannerShowRow"),
 		jsFunc(t, html, "stageTrackerEventLineInject"),
+		jsFunc(t, html, "stageTrackerEventShownAt"),
 		jsFunc(t, html, "stageTrackerEventHtml"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
 		jsFunc(t, html, "stageTrackerCueAgeSync"),
@@ -399,7 +431,7 @@ let renders = 0; function renderStageTracker() { renders++; }
 const srcs = new Map(); function stageTrackerRowSrcOf(node) { return srcs.get(node); }
 let _stageTrackerEvents = {};
 const STAGE_TRACKER_TERMINAL = 110;
-var _stageTrackerPRHost = {}; var _stageTrackerPRTitle = {}; var _stageTrackerMergeState = null, _stageTrackerZapped = {}, _stageTrackerMerged = { server: null, local: {} }, _stageTrackerMergedShown = 0, _stageTrackerCelebrating = {}, _stageTrackerCelebratePending = {}, _stageTrackerFlights = 0, _stageTrackerReleaseTimer = 0;
+var _stageTrackerPRHost = {}; var _stageTrackerPRTitle = {}; var _stageTrackerMergeState = null, _stageTrackerZapped = {}, _stageTrackerMerged = { server: null, local: {} }, _stageTrackerMergedShown = 0, _stageTrackerCelebrating = {}, _stageTrackerCelebratePending = {}, _stageTrackerMergedHeld = {}, _stageTrackerFlights = 0, _stageTrackerReleaseTimer = 0;
 let settingsClosed = 0; function closeStageTrackerSettings() { settingsClosed++; }
 const odoText = e => e.getAttribute('data-odo-value');
 const flights = () => body.children.filter(c => c.classList.contains('cue-flight'));
@@ -819,6 +851,117 @@ stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 6, 
 tick(0); assert.strictEqual(odoText(n), '9132', 'held while the glyph fades');
 flights()[0]._ev.animationend();
 assert.strictEqual(odoText(n), '9133'); assert.strictEqual(rolling(n).length, 0, 'reduced motion: set, not rolled');
+console.log('ok');
+`)
+}
+
+// TestStageTrackerOdometerWaitsForMergingHoldNode (owner: "the odometer
+// still updates before the bee animation lands on it"): the merge gate's
+// hold (#15245) masks a landed merge as still open for the banner's
+// lifetime, and the poll that brought it also brings the server's raised
+// ledger total. The drum used to roll on that poll — the hold kept the
+// bee grounded while nothing kept the number — so the landing, a full
+// hold later, found nothing left to roll. The chip now holds the masked
+// merges back like flights to come: the number waits through the hold,
+// through the flight, and rolls once on the landing. Runs the real hold
+// functions (the other celebration tests stub them off).
+func TestStageTrackerOdometerWaitsForMergingHoldNode(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		"_stageTrackerMergedHeld = {};",
+		"masked.held.forEach(k => { _stageTrackerMergedHeld[k] = true; });",
+		"stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending, _stageTrackerMergedHeld)",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	holdOn := strings.Join([]string{
+		jsConstLine(t, html, "STAGE_TRACKER_MERGING_HOLD_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_QUEUE"),
+		"var _stageTrackerMergingHold = {}; var _stageTrackerPRItems = {}; var _stageTrackerMergingHoldTimer = 0; var _stageTracker = null;",
+		jsFunc(t, html, "stageTrackerPRItemsOf"),
+		jsFunc(t, html, "stageTrackerMergingHoldLive"),
+		jsFunc(t, html, "stageTrackerMergingHoldNext"),
+		jsFunc(t, html, "stageTrackerMergingHoldMask"),
+		jsFunc(t, html, "stageTrackerMergingHoldSchedule"),
+		jsFunc(t, html, "stageTrackerMergingHoldRelease"),
+	}, "\n")
+	js := strings.Replace(stageTrackerCelebrateJS(t, html), stageTrackerMergingHoldOffJS, holdOn, 1)
+	if js == stageTrackerCelebrateJS(t, html) {
+		t.Fatal("the hold stub was not swapped for the real functions")
+	}
+	runStageTrackerRowActionsScript(t, js+stageTrackerCelebrateFixture+`
+const rolling = e => e.children[0].children.filter(c => c.classList.contains('ham-odo-roll'));
+const iso = ms => new Date(ms).toISOString();
+const rec = (...nums) => nums.map(x => ({ repo: 'o/r', number: x, title: 'fix ' + x, merged_at: iso(clock), merged_by: 'hive', lane: 'hive' }));
+const srv = (all, today, recent) => ({ all_time: all, today, total_7d: today, total_30d: today, recent, tz: 'UTC', day_start: iso(stageTrackerLocalMidnight(clock)) });
+const pr = (num, stage, mg) => Object.assign({ repo: 'o/r', kind: 'pr', number: num, stage, title: 'fix ' + num }, mg ? { merge_gate: mg } : {});
+// The poll handler: remember the payload (the hold's release re-reads it) and note it.
+const poll = d => { _stageTracker = d; stageTrackerNoteMerges(d); };
+panel.appendChild(row('o/r/pr#1'));
+poll({ items: [pr(1, 90)], merged: srv(40, 2, rec(31, 30)) });
+assert.strictEqual(odoText(n), '40', 'hydrated'); assert.strictEqual(odoText(sub), '2 today · 2 this week');
+// The sweep is merging #1: the gate says so.
+tick(5000);
+const T = clock;
+poll({ items: [pr(1, 95, { state: 'merging', merging_since: iso(T) })], merged: srv(40, 2, rec(31, 30)) });
+assert.strictEqual(odoText(n), '40');
+// Next poll: #1 landed — the items dropped it, the ledger counts it (41),
+// recently_merged settles it. The hold masks the merge for the banner's
+// lifetime, so no bee launches yet; the number must wait with it.
+tick(5000);
+poll({ items: [], recently_merged: [{ repo: 'o/r', number: 1, merged_at: iso(clock) }], merged: srv(41, 3, rec(1, 31, 30)) });
+tick(0);
+assert.strictEqual(flights().length, 0, 'the hold keeps the bee grounded');
+assert.strictEqual(odoText(n), '40', 'the total waits for the bee (it used to roll here, a full hold early)'); assert.strictEqual(rolling(n).length, 0);
+assert.strictEqual(odoText(sub), '2 today · 2 this week', 'so does the day line');
+assert.ok(!chip.classList.contains('cue-tick'), 'no pop');
+assert.deepStrictEqual(zaps, []);
+// A further poll inside the hold with the same numbers: still waiting.
+tick(10000);
+poll({ items: [], recently_merged: [{ repo: 'o/r', number: 1, merged_at: iso(T) }], merged: srv(41, 3, rec(1, 31, 30)) });
+assert.strictEqual(odoText(n), '40', 'a repeat poll does not leak the number either');
+// The hold ends: the merge is re-read as fresh, the bee launches, the number still waits.
+tick(T + STAGE_TRACKER_MERGING_HOLD_MS - clock + 60);
+tick(0);
+assert.strictEqual(flights().length, 1, 'the bee launches when the hold ends');
+assert.strictEqual(odoText(n), '40', 'held under the flight'); assert.strictEqual(rolling(n).length, 0);
+// The bee lands: one roll, to the server's number.
+flights()[0]._ev.animationend();
+assert.strictEqual(flights().length, 0);
+assert.strictEqual(odoText(n), '41', 'the landing rolls it'); assert.strictEqual(rolling(n).length, 1, 'rolled, not set');
+assert.strictEqual(odoText(sub), '3 today · 3 this week');
+assert.ok(chip.classList.contains('cue-tick'), 'pop with the roll'); assert.deepStrictEqual(zaps, [1], 'zap with the roll');
+assert.ok(chip.title.startsWith('Merged: 41 all time'), chip.title);
+tick(STAGE_TRACKER_ODOMETER_MS + 100);
+// Steady afterwards: the same ledger does not move it again.
+poll({ items: [], merged: srv(41, 3, rec(1, 31, 30)) });
+assert.strictEqual(odoText(n), '41'); assert.strictEqual(rolling(n).length, 0);
+// Two merges in quick succession, each through its own hold: nothing is lost — the display ends on the server's value.
+zaps.length = 0; chip.classList.remove('cue-tick');
+panel.appendChild(row('o/r/pr#2')); panel.appendChild(row('o/r/pr#3'));
+poll({ items: [pr(2, 90), pr(3, 90)], merged: srv(41, 3, rec(1, 31, 30)) });
+tick(1000); const T2 = clock;
+poll({ items: [pr(2, 95, { state: 'merging', merging_since: iso(T2) }), pr(3, 90)], merged: srv(41, 3, rec(1, 31, 30)) });
+tick(3000); const T3 = clock;
+poll({ items: [pr(3, 95, { state: 'merging', merging_since: iso(T3) })], recently_merged: [{ repo: 'o/r', number: 2 }], merged: srv(42, 4, rec(2, 1, 31, 30)) });
+assert.strictEqual(odoText(n), '41', '#2 held');
+tick(3000);
+poll({ items: [], recently_merged: [{ repo: 'o/r', number: 2 }, { repo: 'o/r', number: 3 }], merged: srv(43, 5, rec(3, 2, 1, 31, 30)) });
+assert.strictEqual(odoText(n), '41', '#2 and #3 held');
+// #2's hold ends first: its bee flies and lands; the number still waits for #3, whose hold is live.
+tick(T2 + STAGE_TRACKER_MERGING_HOLD_MS - clock + 60); tick(0);
+assert.strictEqual(flights().length, 1, '#2 flies');
+flights()[0]._ev.animationend();
+assert.strictEqual(odoText(n), '41', 'still held: #3 is masked (its bee is to come), and a landing never leaves a merge uncounted');
+// #3's hold ends: its bee flies and lands; the display reaches the server's value.
+tick(T3 + STAGE_TRACKER_MERGING_HOLD_MS - clock + 60); tick(0);
+assert.strictEqual(flights().length, 1, '#3 flies');
+assert.strictEqual(odoText(n), '41', 'held under its flight');
+flights()[0]._ev.animationend();
+assert.strictEqual(odoText(n), '43', 'final displayed value == server value');
+assert.strictEqual(odoText(sub), '5 today · 5 this week');
 console.log('ok');
 `)
 }

@@ -130,6 +130,10 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 	// The ladder's own outcome line names the facts (hivecommons/hive#15289).
 	ladderOutcome, hasLadderOutcome := delegatedLadderOutcome(in, d)
 	switch {
+	case d.Verdict == delegatedecision.VerdictRefused && d.Rule == delegatedecision.RuleAdvisoryInProgress:
+		out.Action = rowActionRefused
+		out.Outcome = "Kept open: " + strings.TrimSuffix(d.Rationale, ".") + "."
+		out.Next = "Nothing was written; the hive ticks items as they close and closes the advisory itself. Close now from the row if you want it gone sooner."
 	case d.Verdict == delegatedecision.VerdictRefused:
 		out.Action = rowActionRefused
 		out.Outcome = "Refused: " + strings.TrimSuffix(d.Rationale, ".") + "."
@@ -153,6 +157,10 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		out.Action = rowActionClosed
 		out.Outcome = "Declined for now" + ruleTag + ": " + strings.TrimSuffix(strings.TrimSpace(d.Text), ".") + "."
 		out.Next = "Closed as not planned; re-propose it with the incident or recurrence it would prevent."
+	case d.Verdict == delegatedecision.VerdictClose:
+		out.Action = rowActionClosed
+		out.Outcome = "Advisory closed" + ruleTag + ": " + strings.TrimSuffix(strings.TrimSpace(d.Text), ".") + "."
+		out.Next = "Closed as completed; the row leaves the tracker on its next refresh."
 	case d.Verdict == delegatedecision.VerdictOperatorAction:
 		out.Action = rowActionRecommended
 		out.Outcome = "Operator action" + ruleTag + ": " + strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(d.Text), "."), "operator action — ") + "."

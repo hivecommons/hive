@@ -268,6 +268,7 @@ func TestAgentEnvPairs_NonInference_NoProxyLoopback(t *testing.T) {
 		Config: config.AgentConfig{Backend: "claude", Model: "sonnet"},
 	}
 
+	t.Setenv("OMP_AUTH_BROKER_URL", "")
 	count := 0
 	for _, p := range m.agentEnvPairs(ap) {
 		if p.Key == "NO_PROXY" {

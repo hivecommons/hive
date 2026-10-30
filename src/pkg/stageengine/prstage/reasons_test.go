@@ -20,6 +20,7 @@ func TestHumanMergeReason(t *testing.T) {
 		AutoMergeReasonMergeRefusedReview:                                   HumanMergeReasonBranchProtection,
 		AutoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting:         HumanMergeReasonBranchProtection,
 		AutoMergeReasonMergeRefusedMethod:                                   HumanMergeReasonMergeMethod,
+		AutoMergeReasonNativeQueueMethod:                                    HumanMergeReasonMergeMethod,
 		"repo-auto-merge-disabled":                                          HumanMergeReasonAutoMergeOff,
 		"untrusted-author-role":                                             HumanMergeReasonUntrustedAuthor,
 		ContributorLaneReasonClaimTier:                                      HumanMergeReasonUntrustedAuthor,

@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,23 @@ import (
 	"github.com/hivecommons/hive/crux/gitidentity"
 	"github.com/hivecommons/hive/crux/jev"
 )
+
+// agentNoProxy returns the NO_PROXY value handed to agents: loopback plus the
+// host of OMP_AUTH_BROKER_URL, and only that host. An unset, unparsable or
+// host-less URL adds nothing, so every other private address stays behind the
+// proxy's destination guard.
+func agentNoProxy() string {
+	const loopback = "127.0.0.1,localhost,::1"
+	u, err := url.Parse(strings.TrimSpace(os.Getenv("OMP_AUTH_BROKER_URL")))
+	if err != nil {
+		return loopback
+	}
+	host := u.Hostname()
+	if host == "" || strings.ContainsAny(host, ", \t") {
+		return loopback
+	}
+	return loopback + "," + host
+}
 
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
 	// No boot prompt — the governor's first eval cycle (10s after startup)
@@ -253,7 +271,10 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	vars = append(vars, agentEnvPair{"HTTP_PROXY", proxyURL, false})
 	// Loopback must never traverse the hive proxy for any backend: an agent
 	// polling a local dev server would otherwise get proxy-side dial errors (#14076).
-	vars = append(vars, agentEnvPair{"NO_PROXY", "127.0.0.1,localhost,::1", false})
+	// The credential broker (OMP_AUTH_BROKER_URL) usually sits on a private
+	// address the proxy's plain-forward guard refuses, so its host bypasses
+	// the proxy too (#15432).
+	vars = append(vars, agentEnvPair{"NO_PROXY", agentNoProxy(), false})
 	vars = append(vars, agentEnvPair{"HIVE_PROXY_AGENT", agent.Name, false})
 	vars = append(vars, agentEnvPair{"GIT_TERMINAL_PROMPT", "0", false})
 	vars = append(vars, agentEnvPair{"NODE_EXTRA_CA_CERTS", proxyCACertPath, false})

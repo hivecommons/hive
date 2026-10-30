@@ -51,6 +51,13 @@ type Record struct {
 	StallCommented bool `json:"stall_commented,omitempty"`
 	// Reason is the lane/CI/verdict reason behind the current stage.
 	Reason string `json:"reason,omitempty"`
+	// ReasonChangedAt is when Reason last changed meaning: stage entry, or
+	// a pass that observed a different reason class (ReasonClass) at the
+	// same stage. The dashboard ages the row's hive note from it rather
+	// than from LastSeen, so a pass that re-reads the same reason does not
+	// read as a fresh note (hivecommons/hive#15729). Zero on records
+	// written before it existed; NoteChangedAt falls back to EnteredAt.
+	ReasonChangedAt time.Time `json:"reason_changed_at,omitempty"`
 	// Author is the item's author login, lower-cased, as the lane saw it
 	// (hivecommons/hive#12502). It lets the dashboard answer "which of this
 	// contributor's PRs are returned to them" from the store alone, with no
@@ -317,6 +324,20 @@ type Record struct {
 	// HiveHeldWarned is set once the hive-side alert for an item held by
 	// the hive past its dwell has been logged; activity resets it.
 	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+	// WaitingPushSince is when the current waiting-on-push state began
+	// (hivecommons/hive#15784): entry to 071 / 072, or a head the sweep
+	// evaluated and still routed back to the author. The dashboard ages
+	// the "waiting on @author to push" pill from it. Zero outside those
+	// stages.
+	WaitingPushSince time.Time `json:"waiting_push_since,omitempty"`
+	// LastPushAt / LastPushSha record the last head change seen while the
+	// item sat in the CI / Review column: from the webhook re-read of a
+	// `pull_request` synchronize delivery (NotePush) or, as the fallback,
+	// from the head change the next enumerate observed (NoteActivity). A
+	// new waiting-on-push state clears them; leaving the column clears
+	// them too.
+	LastPushAt  time.Time `json:"last_push_at,omitempty"`
+	LastPushSha string    `json:"last_push_sha,omitempty"`
 	// LabelsSuppressed is set when the write-back gate kept the stage
 	// labels off the item on GitHub (a contributor PR without the opt-in
 	// label): the stage lives in this record only, so a label-less item
@@ -487,6 +508,10 @@ type Store struct {
 	now   func() time.Time
 	items map[string]Record
 	dirty bool
+	// seenSaved is each record's LastSeen as last written to (or read
+	// from) the file; ObserveProgress dirties the store for a LastSeen-only
+	// move once the saved value is LastSeenPersistEvery old.
+	seenSaved map[string]time.Time
 }
 
 // NewStore returns an empty in-memory store that persists to path ("" =
@@ -495,7 +520,16 @@ func NewStore(path string, now func() time.Time) *Store {
 	if now == nil {
 		now = time.Now
 	}
-	return &Store{path: path, now: now, items: map[string]Record{}}
+	return &Store{path: path, now: now, items: map[string]Record{}, seenSaved: map[string]time.Time{}}
+}
+
+// markSeenSaved notes the LastSeen the file now holds for every record.
+// Caller holds s.mu.
+func (s *Store) markSeenSaved() {
+	s.seenSaved = make(map[string]time.Time, len(s.items))
+	for k, r := range s.items {
+		s.seenSaved[k] = r.LastSeen
+	}
 }
 
 var (
@@ -542,6 +576,7 @@ func (s *Store) Load() error {
 		items = map[string]Record{}
 	}
 	s.items = items
+	s.markSeenSaved()
 	s.dirty = false
 	return nil
 }
@@ -570,8 +605,19 @@ func (s *Store) Save() error {
 	if err := os.Rename(tmp, s.path); err != nil {
 		return err
 	}
+	s.markSeenSaved()
 	s.dirty = false
 	return nil
+}
+
+// Dirty reports whether anything changed since the last Save or Load.
+func (s *Store) Dirty() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dirty
 }
 
 // Get returns the record for key.
@@ -615,9 +661,13 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 	next.LastSeen = now
 	if !had || prev.Stage != stage {
 		next.EnteredAt = now
+		next.ReasonChangedAt = now
 		next.StallCommented = false
 		next.EntryCommented = false
 		tr.Changed = true
+		next.notePushStageChange(now)
+	} else if ReasonClass(prev.Reason) != ReasonClass(reason) {
+		next.ReasonChangedAt = now
 	}
 	switch {
 	case had && prev.Stage != None && !progress && IsRegression(prev.Stage, stage):
@@ -649,18 +699,51 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 	if tr.Changed {
 		next.History = appendHop(prev.History, Hop{From: prev.Stage, Stage: stage, At: now, Reason: reason, Regressed: tr.Regressed})
 	}
-	if !had || tr.Changed || !recordEqual(next, prev) {
+	if !had || tr.Changed || !recordEqual(next, prev) || now.Sub(s.seenSaved[key]) >= LastSeenPersistEvery {
 		s.dirty = true
 	}
 	s.items[key] = next
 	return tr
 }
 
-// recordEqual compares two records field by field; History (a slice) makes
-// Record incomparable with ==, and it only changes when the stage does.
+// LastSeenPersistEvery bounds how stale a record's persisted LastSeen may
+// be when a pass changes nothing else about it. A pass that re-observes
+// the same stage and reason moves LastSeen in memory (the dashboard reads
+// the live store, so "last checked" stays exact) but does not by itself
+// dirty the store (hivecommons/hive#15729: a soaking PR rewrote the file
+// every sweep); once the saved LastSeen is this old the pass writes it so
+// Prune stays roughly right across a restart.
+const LastSeenPersistEvery = 10 * time.Minute
+
+// recordEqual compares two records field by field, ignoring History (a
+// slice that makes Record incomparable with ==, and only changes when the
+// stage does) and LastSeen (which moves on every pass and is persisted on
+// its own schedule, LastSeenPersistEvery).
 func recordEqual(a, b Record) bool {
 	a.History, b.History = nil, nil
+	a.LastSeen, b.LastSeen = time.Time{}, time.Time{}
 	return reflect.DeepEqual(a, b)
+}
+
+// ReasonClass is the part of a reason that names what it means: the token
+// up to any parenthesised detail, so `contributor-lane:soaking(remaining=12m0s)`
+// (the pre-record soak reason) and `contributor-lane:soaking` are one
+// class. Two passes whose reasons share a class did not change the note.
+func ReasonClass(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if i := strings.IndexByte(reason, '('); i >= 0 {
+		reason = reason[:i]
+	}
+	return reason
+}
+
+// NoteChangedAt is when the record's note — its stage and reason class —
+// last changed: ReasonChangedAt when recorded, else EnteredAt.
+func (r Record) NoteChangedAt() time.Time {
+	if !r.ReasonChangedAt.IsZero() {
+		return r.ReasonChangedAt
+	}
+	return r.EnteredAt
 }
 
 // NoteActivity folds this cycle's activity inputs into key's record and
@@ -695,6 +778,18 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at
 	}
+	if a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead {
+		// The enumerate fallback for a push no webhook announced
+		// (hivecommons/hive#15784). A head the sweep evaluated and still
+		// routed back to the author starts a fresh waiting-on-push state.
+		switch {
+		case r.Stage.WaitsOnPush():
+			r.WaitingPushSince = at
+			r.LastPushAt, r.LastPushSha = time.Time{}, ""
+		case a.Head != r.LastPushSha:
+			r.LastPushAt, r.LastPushSha = at, a.Head
+		}
+	}
 	if changed {
 		r.HiveHeldWarned = false
 	}
@@ -709,9 +804,71 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	}
 	r.ActivityDigest = a.Digest
 	r.WaitingOnHive = a.WaitingOnHive
+	if !recordEqual(r, s.items[key]) {
+		s.dirty = true
+	}
+	s.items[key] = r
+	return changed
+}
+
+// notePushStageChange keeps the push-progress fields in step with a stage
+// change (hivecommons/hive#15784): entering 071 / 072 starts a fresh
+// waiting-on-push state (a push before it is history), leaving them keeps
+// the push on record so the row can say "pushed abc1234" while CI and the
+// re-review run, and leaving the CI / Review column drops it all.
+func (r *Record) notePushStageChange(now time.Time) {
+	switch {
+	case r.Stage.WaitsOnPush():
+		r.WaitingPushSince = now
+		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+	case r.Stage.TracksPush():
+		r.WaitingPushSince = time.Time{}
+	default:
+		r.WaitingPushSince = time.Time{}
+		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+	}
+}
+
+// NotePush records that key's head moved to sha at the given instant, as a
+// webhook re-read of a `pull_request` synchronize delivery saw it
+// (hivecommons/hive#15784). It reports whether a push was booked: a head the
+// store already knows (the enumerate's ActivityHead, or the last push) is
+// not one, and nothing is booked for a record whose head was never seen
+// — a first read cannot tell a push from the initial head. A zero or
+// future instant reads as now.
+func (s *Store) NotePush(key, sha string, at time.Time) bool {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || !r.Stage.TracksPush() {
+		return false
+	}
+	known := r.ActivityHead
+	if r.LastPushSha != "" {
+		known = r.LastPushSha
+	}
+	if known == "" || strings.EqualFold(sha, known) {
+		return false
+	}
+	now := s.now()
+	if at.IsZero() || at.After(now) {
+		at = now
+	}
+	r.LastPushAt, r.LastPushSha = at, sha
 	s.items[key] = r
 	s.dirty = true
-	return changed
+	return true
+}
+
+// PushedSinceWaiting reports whether a push landed after the current
+// waiting-on-push state began: the ball is back with the hive even if the
+// sweep has not re-staged the item yet.
+func (r Record) PushedSinceWaiting() bool {
+	return !r.LastPushAt.IsZero() && !r.LastPushAt.Before(r.WaitingPushSince)
 }
 
 // CountOwnComments records that the hive itself posted n comments on key,

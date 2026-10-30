@@ -41,7 +41,7 @@ func (r *RingBuffer) Last(n int) []string {
 	if n > r.count {
 		n = r.count
 	}
-	if n == 0 {
+	if n <= 0 {
 		return nil
 	}
 

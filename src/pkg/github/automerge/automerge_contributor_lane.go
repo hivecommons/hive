@@ -386,12 +386,6 @@ func (p ContributorLanePolicy) excludedLabel(labels []string) string {
 	return ""
 }
 
-// contributorLaneSoakReason renders the soaking skip with the time left so a
-// reader of the log or the dashboard knows when the merge is due.
-func contributorLaneSoakReason(remaining time.Duration) string {
-	return fmt.Sprintf("%s(remaining=%s)", contributorLaneReasonSoaking, remaining.Round(time.Minute))
-}
-
 // SweepContributorLaneAutoMerges merges green, soaked, reviewer-approved PRs
 // that this hive's contributor lane produced. See the file comment for the
 // full gate list.
@@ -443,6 +437,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			}
 			result.Seen++
 			stage := func(reason string, merged bool, err error) {
+				c.reconcileNativeQueueGate(ctx, stageLaneContributor, owner, repoName, pr, reason)
 				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
 			if _, held := train.duplicateOf(number); held {
@@ -660,7 +655,7 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	if headSHA := pr.GetHead().GetSHA(); c.adoptedHeadOwnedByHive(owner, repo, pr.GetNumber(), headSHA) {
 		return contributorClaimMatch{AdoptedHead: headSHA, ObservedTier: c.observedRegistryTier(author)}, nil
 	}
-	if login := c.operatorAdmission(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()); login != "" {
+	if login := c.operatorAdmission(ctx, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()); login != "" {
 		return contributorClaimMatch{OperatorLogin: login, ObservedTier: c.observedRegistryTier(author)}, nil
 	}
 	if tier := c.admittedRegistryTier(author, policy); tier != "" {
@@ -1274,6 +1269,14 @@ type contributorLaneEval struct {
 	// workflowApprover is the trusted merger whose approval released the
 	// workflow-path fence for headSHA ("" when the fence did not trip).
 	workflowApprover string
+	// soakStartedAt / soakRemaining are the soak clock the lane holds
+	// headSHA on when the skip reason is contributorLaneReasonSoaking:
+	// when the head was first seen green and how long is left. The reason
+	// itself carries no countdown (hivecommons/hive#15729: a reason that
+	// changed every pass re-stamped the stage record and the dashboard
+	// read each pass as a fresh hive note); the record keeps the deadline.
+	soakStartedAt time.Time
+	soakRemaining time.Duration
 }
 
 // evaluateContributorLanePR runs every contributor-lane gate except the
@@ -1376,7 +1379,10 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, contributorLaneReasonChangesRequested, nil
 	}
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
-	if mergeableState == "behind" {
+	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in. A
+	// relay evaluation never enqueues, so it keeps the current-base gates.
+	queueSkipsBase := sync.OnceValue(func() bool { return !relay && c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
+	if mergeableState == "behind" && !queueSkipsBase() {
 		if relay {
 			return eval, "behind", nil
 		}
@@ -1442,7 +1448,8 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	firstGreen := c.contributorSoak.observeGreenSince(soakKey, now, greenSince)
 	if soaked := now.Sub(firstGreen); soaked < policy.Soak {
-		return eval, contributorLaneSoakReason(policy.Soak - soaked), nil
+		eval.soakStartedAt, eval.soakRemaining = firstGreen, policy.Soak-soaked
+		return eval, contributorLaneReasonSoaking, nil
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return eval, humanReason, err
@@ -1450,8 +1457,10 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// Current-base gate (hivecommons/hive#13634): only a green, soaked,
 	// approved head is worth an update-branch commit; a relay evaluation
 	// never updates the branch.
-	if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr)); stop {
-		return eval, reason, err
+	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
+		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr)); stop {
+			return eval, reason, err
+		}
 	}
 	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
 		return eval, gateReason, err
@@ -1476,6 +1485,10 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	author, headSHA, claim, verdict, method, mergeClaim := eval.author, eval.headSHA, eval.claim, eval.verdict, eval.method, eval.mergeClaim
 	fullRepo := owner + "/" + repo
+	if reason, err := c.tryNativeQueue(ctx, eval.pr, mergeClaim); reason != "" || err != nil {
+		return AutoMergeSweepEvent{}, reason, err
+	}
+
 	attempt := mergeAttempt{owner: owner, repo: repo, base: eval.pr.GetBase().GetRef(), number: number, head: headSHA, state: eval.pr.GetMergeableState(), method: method}
 	if refused := c.knownMergeRefusal(attempt); refused != "" {
 		return AutoMergeSweepEvent{}, refused, nil

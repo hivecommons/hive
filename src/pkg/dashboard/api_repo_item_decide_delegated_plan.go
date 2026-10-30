@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -192,9 +193,21 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 				"Hive opens its copy of " + ref + ", lets it soak, and merges it.",
 				ref + " is closed as superseded; the author keeps the credit.",
 			}
+	case d.Verdict == delegatedecision.VerdictApprove && in.Kind == delegatedecision.KindIssue:
+		// An issue has no commit to approve and nothing to merge
+		// (hivecommons/hive#15754): approval is the direction, and an
+		// agent picks the issue up.
+		return "Approve the direction of " + ref + " and let the hive pick it up.",
+			[]string{"Hive records approval and removes the needs-decision hold.", "An agent claims " + ref + " on the next cycle."}
 	case d.Verdict == delegatedecision.VerdictApprove:
 		return "Approve " + ref + " as it is and let the merge queue merge it.",
 			[]string{"Hive approves the current commit.", ref + " merges once CI is green and it has soaked."}
+	case d.Verdict == delegatedecision.VerdictClose:
+		return "Close the advisory — its items are tracked by the hive.",
+			[]string{ref + " is closed as completed with a note that its items are resolved."}
+	case d.Rule == delegatedecision.RuleAdvisoryInProgress && in.Advisory != nil:
+		return fmt.Sprintf("Keep open; hive is working %d/%d items.", in.Advisory.Resolved, in.Advisory.Total),
+			[]string{"Nothing is written; the sweep ticks items as they close or merge.", "The advisory closes itself once every item is resolved."}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate && target > 0:
 		return "Close " + ref + " as a duplicate of #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target) + "."}
 	case d.Verdict == delegatedecision.VerdictCloseSuperseded && target > 0:
@@ -253,6 +266,9 @@ func delegatedPlanInstruction(in delegatedecision.Input, d delegatedecision.Deci
 // what decided it, otherwise the head's blockers, otherwise the first
 // clause of the rule's rationale with its issue references removed.
 func delegatedPlanWhy(in delegatedecision.Input, d delegatedecision.Decision) string {
+	if why := delegatedPlanLandedWhy(in, d); why != "" {
+		return why
+	}
 	var parts []string
 	if in.Kind == delegatedecision.KindPR && !in.TrustedAuthor && !in.HiveAuthored && d.Verdict != delegatedecision.VerdictDirection {
 		who := "the author"
@@ -278,6 +294,23 @@ func delegatedPlanWhy(in delegatedecision.Input, d delegatedecision.Decision) st
 		return ""
 	}
 	return strings.ToUpper(why[:1]) + why[1:] + "."
+}
+
+// delegatedPlanLandedWhy is the reason when a merged PR already carries
+// the change (hivecommons/hive#15732): the preview for #15544 said "Close
+// #15544 as superseded by #15545" and then "Author @Karibhou is untrusted
+// and their clanker is offline" — the right action for the wrong reason.
+// The evidence is the empty diff and the merged landing; the author's
+// standing never enters it. Empty for any other decision.
+func delegatedPlanLandedWhy(in delegatedecision.Input, d delegatedecision.Decision) string {
+	if d.Rule != delegatedecision.RuleAlreadyFixed || in.SupersededBy == nil || in.SupersededBy.PR <= 0 {
+		return ""
+	}
+	landed := "the change already landed via #" + strconv.Itoa(in.SupersededBy.PR) + " (merged)"
+	if in.DiffEmpty {
+		return "Diff is empty — " + landed + "."
+	}
+	return strings.ToUpper(landed[:1]) + landed[1:] + "."
 }
 
 // delegatedPlanBlockers names what keeps a head from merging, in plain

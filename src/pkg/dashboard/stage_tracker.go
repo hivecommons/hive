@@ -290,6 +290,12 @@ type StageTrackerItem struct {
 	Reason  string `json:"reason,omitempty"`
 	Caption string `json:"caption"`
 	Actor   string `json:"actor,omitempty"`
+	// NoteChangedAt is when the caption last changed meaning: the stage
+	// entry, a new reason class, or a soak that ran out. A caption whose
+	// text moves while this stands still (a soak countdown) is the same
+	// note; the SPA refreshes the words in place and ages the note from
+	// here, not from the sweep that re-read it (hivecommons/hive#15729).
+	NoteChangedAt *time.Time `json:"note_changed_at,omitempty"`
 	// Modifiers are the health and control markers in effect and drawn as
 	// pills: stalled, regressed, hold, needs-human, needs-decision
 	// (stage/045 on an issue or stage/085 on a PR carried as a park
@@ -342,9 +348,10 @@ type StageTrackerItem struct {
 	RegressedAt     *time.Time `json:"regressed_at,omitempty"`
 	RegressedReason string     `json:"regressed_reason,omitempty"`
 	// SoakRemainingSeconds is, at 095 pre-merge-soak, how much of the lane's
-	// soak window was left as of the last sweep (the lane's
-	// `soaking(remaining=…)` reason aged by the time since it was recorded);
-	// 0 when unknown or not soaking.
+	// soak window is left now (the record's soak deadline; a record written
+	// before the deadline existed falls back to its `soaking(remaining=…)`
+	// reason aged by the time since it was recorded); 0 when unknown or
+	// not soaking.
 	SoakRemainingSeconds int64 `json:"soak_remaining_seconds,omitempty"`
 	// MergeGate narrates a PR's position at the merge gate (060 / 080 /
 	// 095 / 100): state, what holds it, whether hive's merge sweep is on
@@ -504,6 +511,11 @@ type StageTrackerItem struct {
 	// in_progress or pushed, with the evidence (hivecommons/hive#15280,
 	// stage_tracker_rework.go).
 	Rework *StageTrackerRework `json:"rework,omitempty"`
+	// Push is, on a PR row in the CI / Review column, the push the hive
+	// waits on or the one that just landed, so the gray pill can say
+	// "waiting on @zoe to push · 38m" or "@zoe pushed abc1234 · 2m"
+	// (hivecommons/hive#15784, stage_tracker_push.go).
+	Push *StageTrackerPush `json:"push,omitempty"`
 	// Takeover is, on a 072 / 071 clanker PR, the operator's Adopt now /
 	// Reroute offer and any pending reroute or forced adoption
 	// (hivecommons/hive#15038, stage_tracker_takeover.go).
@@ -620,7 +632,10 @@ type StageTrackerLinkedPR struct {
 	Stage      int        `json:"stage,omitempty"`
 	StageSince *time.Time `json:"stage_since,omitempty"`
 	Caption    string     `json:"caption,omitempty"`
-	Modifiers  []string   `json:"modifiers,omitempty"`
+	// NoteChangedAt mirrors the PR row's: when the caption last changed
+	// meaning.
+	NoteChangedAt *time.Time `json:"note_changed_at,omitempty"`
+	Modifiers     []string   `json:"modifiers,omitempty"`
 	// DeferredModifiers mirrors the nested PR's own row field: the
 	// merge-gate pills it is not yet drawing.
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
@@ -698,6 +713,8 @@ type StageTrackerLinkedPR struct {
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
 	// Rework mirrors the nested PR's own row field (hivecommons/hive#15280).
 	Rework *StageTrackerRework `json:"rework,omitempty"`
+	// Push mirrors the nested PR's own row field (hivecommons/hive#15784).
+	Push *StageTrackerPush `json:"push,omitempty"`
 	// Takeover mirrors the nested PR's own row field (hivecommons/hive#15038).
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 	// Supersedes mirrors the nested PR's own row field.

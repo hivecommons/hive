@@ -121,6 +121,19 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQue
 		if len(idx) == 0 {
 			continue
 		}
+		// Riders in planner order; the one seated first among them is the
+		// front the lane merges first, and every member the view left
+		// below the queue joins behind it when green — never ahead of it.
+		sort.Slice(idx, func(a, b int) bool {
+			return items[idx[a]].MergeTrain.Position < items[idx[b]].MergeTrain.Position
+		})
+		ridersFront := items[idx[0]].Number
+		for i := range items {
+			it := &items[i]
+			if it.Kind == "pr" && it.Repo == key.repo && it.MergeTrain == nil && it.Overlap != nil && it.Overlap.trainID == sample.ID {
+				stageTrackerOverlapJoinBehind(it, ridersFront)
+			}
+		}
 		// The queue is the members that ride in this payload — never the
 		// planner's count, which includes PRs the view does not seat
 		// (below 080, under repair, a record another lane overwrote):

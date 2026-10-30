@@ -1112,3 +1112,52 @@ func TestDelegatedProposalNotNowClosesAsNotPlanned(t *testing.T) {
 		t.Fatalf("result = %+v", job.Result)
 	}
 }
+
+// hivecommons/hive#15754: "Let hive decide" on a resolved advisory closes
+// it as completed with a note; on one still being worked it writes nothing
+// and reports the progress.
+func TestDelegatedAdvisoryClosesAsCompletedOrKeepsOpen(t *testing.T) {
+	checklist := "<!-- hive:dedupe-checklist repo=testorg/testrepo -->\nDecision required: yes\n\n- [x] #1 — close as superseded by #4\n- [x] #2 — close as superseded by #5\n"
+	mock := &repoItemDecisionMock{issueLabels: []string{"agent/dedupe", "stage/045-needs-decision"}, issueTitle: "triage: duplicates", issueBody: checklist}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictClose || job.Decision.Rule != delegatedecision.RuleAdvisoryResolved {
+		t.Fatalf("decision = %+v (error %q)", job.Decision, job.Error)
+	}
+	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "/hive decision") || !strings.Contains(mock.comments[0], "Closed as completed") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	closed := false
+	for _, e := range mock.edits {
+		if e["state"] == "closed" && e["state_reason"] == issueStateReasonCompleted {
+			closed = true
+		}
+	}
+	if !closed {
+		t.Fatalf("advisory not closed as completed: edits=%v", mock.edits)
+	}
+	if job.Result == nil || job.Result.Action != rowActionClosed || !strings.Contains(job.Result.Outcome, "Advisory closed") {
+		t.Fatalf("result = %+v", job.Result)
+	}
+
+	mock = &repoItemDecisionMock{issueLabels: []string{"agent/dedupe", "stage/045-needs-decision"}, issueTitle: "triage: duplicates", issueBody: strings.Replace(checklist, "- [x] #2", "- [ ] #2", 1)}
+	srv = newDelegatedServer(t, mock)
+	w = postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job = decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictRefused || job.Decision.Rule != delegatedecision.RuleAdvisoryInProgress {
+		t.Fatalf("decision = %+v (error %q)", job.Decision, job.Error)
+	}
+	if len(mock.comments) != 0 || len(mock.edits) != 0 || len(mock.added) != 0 || len(mock.removed) != 0 {
+		t.Fatalf("an in-progress advisory must not be written: comments=%v edits=%v added=%v removed=%v", mock.comments, mock.edits, mock.added, mock.removed)
+	}
+	if job.Result == nil || !strings.Contains(job.Result.Outcome, "Kept open") || !strings.Contains(job.Result.Outcome, "1/2 resolved") || strings.Contains(job.Result.Next, "Stays at") {
+		t.Fatalf("result = %+v", job.Result)
+	}
+}

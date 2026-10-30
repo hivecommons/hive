@@ -163,7 +163,7 @@ sentinel alert, parked-on-decision), human-merge paths and head-SHA pinning —
 before `hive-merge` merges it. A refusal is terminal for that request (`.denied`),
 names the failing gate in the result the agent sees (for example
 `contributor-lane:claim-tier-untrusted (author tier "untrusted", require_tiers
-merger, trusted)` or `contributor-lane:soaking(remaining=27m)`), and is audited
+merger, trusted)` or `contributor-lane:soaking, 27m0s remaining`), and is audited
 as `merge_request_refused`. An agent cannot use the relay to land a contributor
 PR the lane would not merge; the lane still merges it on its own tick once the
 gates clear. Hive-authored PRs keep the relay's existing checks.
@@ -214,6 +214,32 @@ takes effect without a restart.
   has read the reviewer's objection and decided the head lands as-is. The
   outcome becomes `human-approved` and the merge proceeds.
 - **off**: no evaluation.
+
+**A decision is head-scoped — except across the hive's own base refresh.**
+A recorded operator decision (dashboard Approve, `/hive decision …`, a
+hand-applied return label) names the exact head the person saw; a new head
+is a new tree nobody has decided on, so the record is superseded and the
+reviewer's `decision_requested` question stands again. The one head change
+that does not supersede it is the hive's own `require_current_base` refresh:
+a merge commit authored by the App whose parents are the decided head and a
+commit on the base branch, and whose three-dot diff against the base is
+file-for-file (name, status, blob, line counts, patch) identical to the
+decided head's. Up to five such refreshes may stack before any gate reads
+the PR: the carry walks the first-parent chain back from the new head and
+every hop must itself pass the same check, so two App merge-from-base
+commits in a row still carry while a content commit anywhere in the chain
+does not ([#15766](https://github.com/hivecommons/hive/issues/15766)).
+Before any gate reads the new head — the reviewer-verdict
+stage route, the automerge review gate, operator admission and the hold
+guard — the decision is re-recorded on it with `carried_from_head` naming
+the original, and one INFO line `decision carried over base refresh` is
+logged; the reviewer route then reads `decision_answered=true` instead of
+parking the PR at `stage/085-needs-decision` a second time
+([#15751](https://github.com/hivecommons/hive/issues/15751), seen on #15649). A content push,
+a merge by anyone but the App, a rebase, a refresh whose diff differs, and
+GitHub review approvals (which are never moved between heads) all keep the
+record where it was. The answer for a (PR, head) pair is memoised, so the
+check costs one commit read and two compares per new head.
 
 Each evaluation writes one audit line, action `review_evaluated`, detail
 `lane=<self-merge|trusted-bot|trusted-author> would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`,
@@ -334,6 +360,38 @@ merge a breaking change) or on GitHub. Hive posts one comment, through the write
 gate, saying it will wait for a human. The rule exists because a ⚠️-titled
 PR was auto-merged by the trusted-author lane while its owner was still
 deciding whether to ship it.
+
+### Merge train: ready PRs lead
+
+Every lane groups its candidates on one base whose changed files overlap
+into a **merge train** (`auto_merge.merge_train.*`, [#15117](https://github.com/hivecommons/hive/issues/15117))
+and merges one front at a time; the siblings park at stage/080 with lane
+reason `merge-train:queued-behind#<front>:<pos>/<size>:…` and, the moment
+the front merges, are update-branched (`behind`) or handed to the rebase
+resolver (`dirty`) so the next front is evaluated on a current base. Hive's
+own repo also runs the current-base gate (`require_current_base`), which
+holds a behind head until the update lands; the two cooperate — the train
+refreshes, the gate waits for the refresh.
+
+The train's order is **readiness first**. Each pass the lane sorts the
+members by what it last saw of their heads: a head at the merge gate —
+green, approved, soaking or waiting on a sweep — leads; a head the lane has
+not evaluated since it was pushed comes next (so it is evaluated and
+sorted); a head still at CI / Review trails; a blocked head (red required
+check, terminal hold) trails everything and never fronts. Within a tier the
+old tiebreak holds (clean-mergeable first, then oldest, then number). The
+order is recomputed every pass, so a member that turns green moves up and
+one that turns red moves back. The front of a train is therefore always a
+ready member when the train has one; a train whose every member is still
+short of the gate has a *provisional* front, and the Activity Monitor says
+so rather than reading "1st in the merge queue".
+
+This replaced the age-first order after hive's own #15741, still at CI /
+Review, led #15748 and #15755 — both green and queued at 080 — and nothing
+merged until its checks finished. In the Activity Monitor only members at
+080 and beyond ride a train chip in the *Merge queue* column; a member still
+at CI / Review keeps its chevron in its own column with a muted
+"train · joins behind #N when green" note.
 
 ### Trusted-author auto-merge
 
@@ -561,8 +619,10 @@ A PR merges through this tier only when all of the following hold:
   went green — the latest `completed_at` over its check runs, read once per
   (repo, PR, head) and then pinned in process — so a pod restart or upgrade
   does not restart it; a new push restarts
-  the soak and the skip reason reports the time left
-  (`contributor-lane:soaking(remaining=25m0s)`).
+  the soak. The skip reason is the stable `contributor-lane:soaking`; the
+  soak head, start and window are recorded once on the stage record, so the
+  stage tracker computes "N left" from that deadline at request time instead
+  of the hive re-stamping its note every pass.
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
 log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
@@ -915,6 +975,30 @@ base already has) and closed, and issues the copy would have closed are
 closed with the redundant-of note. Only when the verdict names no PR
 *and* the compare is not empty does the PR fall through to 085 as before
 ([#15647](https://github.com/hivecommons/hive/pull/15647)).
+
+**Already landed, any author.** That entry was the hive's own: #15544, a
+trusted contributor's PR for #15543, was +0/−0 against `v5` because
+#15545 (merged) carried the identical change, and the reviewer's "should
+decide whether #15544 can be closed as a no-op now that #15545 (merged)
+carries this change" still parked it at 085 for nine hours. Whether a
+change is already on the base is a measurement, not a trust call, so the
+already-landed entry now takes any author's PR when the evidence is
+unambiguous: the diff against the current base is empty (no files, or
+every file byte-identical on the base tip) **and** the landing is proven
+— the PR the reviewer named is merged, the issue this PR closes was
+closed by a merged PR, or the compare lists no commits (the head is
+contained in the base). "#N (merged)" in the reviewer's words names the
+landing PR like "via #N" does. The hive comments "already landed via #N
+— closing as superseded; thank you @author", closes the PR through the
+supersession-close write-back gate, and logs
+`already-landed:<author_kind>` (the caption is the same "already landed
+via #N — closing as superseded"). A trusted author is treated exactly
+like anyone else. A PR with a real diff, an empty PR whose landing is not
+proven, a held or `keep-open` PR, or one a person parked keeps the
+reviewer's question as before. The "Let hive decide" preview for such a
+PR gives the evidence as its reason — "diff is empty — the change already
+landed via #N (merged)" — never the author's standing
+([#15732](https://github.com/hivecommons/hive/issues/15732)).
 
 ## Usage
 
