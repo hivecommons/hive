@@ -70,6 +70,9 @@ js/tracker-words.js
 js/tracker-row.js
 js/tracker-motion.js
 js/tracker-filter.js
+js/tracker-filter-state.js
+js/tracker-filter-render.js
+js/tracker-filter-fetch.js
 js/tracker-actions.js
 js/tracker-merged.js
 js/tracker-queue.js
