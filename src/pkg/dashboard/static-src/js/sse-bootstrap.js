@@ -210,6 +210,7 @@
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'visible') sseWatchdogTick(true);
       if (document.visibilityState === 'visible') { agentLogsResumeIfSkipped(); stageTrackerResumeIfSkipped(); }
+      if (typeof stageTrackerNoteVisibility === 'function') stageTrackerNoteVisibility(document.visibilityState !== 'visible');
     });
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];

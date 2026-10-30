@@ -624,6 +624,7 @@
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
+      ctx.noteTuck = stageTrackerNoteTuckSetting();
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
