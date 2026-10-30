@@ -1903,6 +1903,8 @@
     .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
     .ham-queue-train:first-of-type { margin-top: 0; }
     .ham-queue-stalled { color: var(--yellow); }
+    .ham-preparation-list li { grid-template-columns: auto minmax(0, 1fr); }
+    .ham-preparation-list .ham-merged-meta { white-space: normal; overflow-wrap: anywhere; }
     /* Inside a lit chevron the word keeps the chevron's ink: ochre on the
        amber fill was invisible, so a stalled train's chevrons read empty
        (just the ⟳ and the actor glyph). */
@@ -17123,7 +17125,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerChipsHtml(item) {
-      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
+      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
@@ -17457,7 +17459,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerLinkedPRItem(issue, lp) {
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x, issue)) : [];
       return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
-        stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
+        stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null,
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
@@ -17877,7 +17879,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
-          shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
+          shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
@@ -22053,7 +22055,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
       if (celebrate) fresh.forEach(k => { _stageTrackerCelebratePending[k] = true; });
       if (typeof stageTrackerMergedSync === 'function') stageTrackerMergedSync(d, fresh, Date.now());
-      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now());
+      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now(), d && d.base_preparation);
       if (typeof stageTrackerClosedToast === 'function') closed.forEach((k, i) => stageTrackerClosedToast(k, closedItems[i]));
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
@@ -22998,11 +23000,47 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return 'waiting its turn' + (mg.sweep_running ? ' · checking now' : '');
     }
     // Pure: the popover body.
-    function stageTrackerQueuePopHtml(items, nowMs) {
+    function stageTrackerPreparationWord(p) {
+      if (!p) return '';
+      if (p.state === 'inactive') return 'Inactive preparation ticket · ' + (p.detail || 'not currently eligible');
+      if (p.state !== 'current') return (p.role === 'owner' ? 'Recorded preparation owner' : 'Recorded waiting ticket') + ' · ' + (p.detail || 'current state unknown');
+      return p.role === 'owner' ? 'Preparing base' : (Number(p.behind) > 0 ? 'Waiting for preparation behind #' + Number(p.behind) : 'Waiting for preparation; owner not confirmed');
+    }
+    function stageTrackerPreparationAge(p, nowMs) {
+      const since = Date.parse(p && p.since || '');
+      if (!Number.isFinite(since) || since <= 0 || since > nowMs) return 'age unknown';
+      const minutes = Math.floor((nowMs - since) / 60000);
+      return minutes < 1 ? 'less than 1m' : minutes + 'm';
+    }
+    function stageTrackerPreparationChipHtml(item) {
+      const p = item && item.preparation;
+      if (!p || p.state === 'inactive') return '';
+      const word = stageTrackerPreparationWord(p);
+      const label = p.state === 'current' ? word : 'Preparation owner · unverified';
+      return `<span class="ham-badge" title="${esc(word + ' · ticket head ' + p.head_sha + ' · ' + stageTrackerPreparationAge(p, Date.now()) + '. Preparation is not CI, review approval, or a ready merge-train seat.')}">${esc(label)}</span>`;
+    }
+    function stageTrackerPreparationPopHtml(queues, nowMs) {
+      return (Array.isArray(queues) ? queues : []).map(q => {
+        const recorded = (q.owner ? [q.owner] : []).concat(q.waiting || []);
+        const members = recorded.filter(p => p.state !== 'inactive');
+        const inactive = recorded.length - members.length;
+        const heading = `<div class="ham-queue-train">Base preparation · ${esc(q.repo || '')} → ${esc(q.base_ref || 'unknown base')}</div>`;
+        if (q.state !== 'observed') return heading + `<div class="ham-empty">${esc(q.message || 'Preparation unknown')}</div>`;
+        const rows = members.map(p => {
+          const identity = 'Ticket head ' + (p.head_sha || 'unknown') + (p.current_head ? '; snapshot head ' + p.current_head : '');
+          const meta = [stageTrackerPreparationWord(p), stageTrackerPreparationAge(p, nowMs), p.pipeline ? 'Pipeline snapshot: ' + p.pipeline : '', identity].filter(Boolean).join(' · ');
+          return `<li><span class="ham-merged-num">#${Number(p.number) || 0}</span><span class="ham-merged-meta">${esc(meta)}</span></li>`;
+        }).join('');
+        const observed = Date.parse(q.observed_at || '');
+        return heading + (rows ? `<ol class="ham-merged-list ham-queue-list ham-preparation-list">${rows}</ol>` : `<div class="ham-empty">${esc(q.message || 'No currently eligible preparation tickets')}</div>`) + `<div class="ham-merged-pop-foot">Persisted FIFO tickets, not ready train seats or GitHub native queue membership; ticket order is not guaranteed merge order. ${inactive ? esc(String(inactive)) + ' inactive tickets excluded. ' : ''}Owner head changes are unverified here. Read ${esc(Number.isFinite(observed) ? new Date(observed).toISOString() : 'time unknown')}; CI / Review stages remain unchanged.</div>`;
+      }).join('');
+    }
+    function stageTrackerQueuePopHtml(items, nowMs, preparation) {
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       const trains = stageTrackerQueueTrains(items);
+      const prep = typeof stageTrackerPreparationPopHtml === 'function' ? stageTrackerPreparationPopHtml(preparation, nowMs) : '';
       const head = `<div class="ham-merged-pop-head"><span>Merge queue</span><span class="ham-merged-pop-sum">${trains.length ? esc(String(trains.reduce((n, t) => n + t.members.length, 0))) + ' PRs in ' + esc(String(trains.length)) + (trains.length === 1 ? ' train' : ' trains') : 'no train right now'}</span></div>`;
-      if (!trains.length) return head + '<div class="ham-empty">No merge train right now. PRs that touch the same files queue here and merge one at a time, in order.</div>';
+      if (!trains.length) return head + prep + '<div class="ham-empty">No merge train right now. PRs that touch the same files queue here and merge one at a time, in order.</div>';
       const body = trains.map(t => {
         const place = stageTrackerTrainPlace(t.mt);
         const stalled = stageTrackerTrainStalledWord(t.mt);
@@ -23020,23 +23058,30 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return title + `<ol class="ham-merged-list ham-queue-list">${rows}</ol>`;
       }).join('');
       const foot = '<div class="ham-merged-pop-foot">Hive merges one train member at a time, head first; the rest rebase or update and take the next turn. The ETA is an estimate: the head\u2019s remaining soak, one sweep per PR ahead without a clock, and the wait for the next sweep.</div>';
-      return head + body + foot;
+      return head + prep + body + foot;
     }
     var _stageTrackerQueueItems = [];
+    var _stageTrackerPreparationQueues = [];
     function stageTrackerQueueChip() { return document.getElementById('activity-monitor-queue'); }
-    // Pure over the DOM: the chip reads the train count and hides with no
-    // train; an open popover is redrawn.
-    function stageTrackerQueueSync(items, nowMs) {
+    // Hide only when neither trains nor preparation observations exist.
+    function stageTrackerQueueSync(items, nowMs, preparation) {
       _stageTrackerQueueItems = Array.isArray(items) ? items : [];
+      _stageTrackerPreparationQueues = Array.isArray(preparation) ? preparation : [];
       const chip = stageTrackerQueueChip();
       if (!chip) return;
       const trains = stageTrackerQueueTrains(_stageTrackerQueueItems);
       const n = trains.reduce((a, t) => a + t.members.length, 0);
       const stalled = trains.some(t => t.mt && t.mt.stalled);
-      chip.hidden = !trains.length;
+      const prepOwners = _stageTrackerPreparationQueues.filter(q => q.owner && q.owner.state !== 'inactive').length;
+      const prepWaiting = _stageTrackerPreparationQueues.reduce((n, q) => n + (q.waiting || []).filter(p => p.state === 'current').length, 0);
+      const prepUnverified = _stageTrackerPreparationQueues.reduce((n, q) => n + (q.waiting || []).filter(p => p.state === 'unverified').length, 0);
+      const prepSummary = prepOwners + ' owner · ' + prepWaiting + ' waiting' + (prepUnverified ? ' · ' + prepUnverified + ' unverified tickets' : '');
+      const prepUnknown = _stageTrackerPreparationQueues.some(q => q.state !== 'observed');
+      chip.hidden = !trains.length && !_stageTrackerPreparationQueues.length;
       const nEl = chip.querySelector('.ham-queue-n');
-      if (nEl && nEl.textContent !== String(n)) nEl.textContent = String(n);
-      const title = trains.length ? 'Merge queue: ' + n + ' PRs in ' + trains.length + (trains.length === 1 ? ' train' : ' trains') + (stalled ? ' · stalled' : '') : 'Merge queue: empty';
+      const count = _stageTrackerPreparationQueues.length ? n + ' train PRs · ' + (prepUnknown ? 'prep unknown' : prepSummary) : String(n);
+      if (nEl && nEl.textContent !== count) nEl.textContent = count;
+      const title = (trains.length ? 'Merge queue: ' + n + ' PRs in ' + trains.length + (trains.length === 1 ? ' train' : ' trains') + (stalled ? ' · stalled' : '') : 'Merge queue: no ready train') + (_stageTrackerPreparationQueues.length ? ' · base preparation: ' + (prepUnknown ? 'state unknown' : prepSummary + ' (not readiness; excludes inactive tickets)') : '');
       if (chip.title !== title) chip.title = title;
       chip.classList.toggle('ham-queue-stalled', stalled);
       stageTrackerQueuePopDraw(nowMs);
@@ -23044,7 +23089,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerQueuePopDraw(nowMs) {
       const pop = document.getElementById('activity-monitor-queue-pop');
       if (!pop || pop.hidden) return;
-      const html = stageTrackerQueuePopHtml(_stageTrackerQueueItems, nowMs || Date.now());
+      const html = stageTrackerQueuePopHtml(_stageTrackerQueueItems, nowMs || Date.now(), _stageTrackerPreparationQueues);
       if (pop.innerHTML !== html) pop.innerHTML = html;
     }
     function hamQueueToggle(open) {
