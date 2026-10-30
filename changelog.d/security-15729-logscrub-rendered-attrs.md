@@ -1,0 +1,1 @@
+- Redact credentials from logged errors, Stringer values, and resolved LogValuer attributes, including nested groups and bound logger attributes ([#15729](https://github.com/hivecommons/hive/issues/15729)).

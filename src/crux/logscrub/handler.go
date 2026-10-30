@@ -2,6 +2,7 @@ package logscrub
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"regexp"
 )
@@ -56,8 +57,8 @@ func WithMarkers() Option {
 	return func(c *scrubConfig) { c.markers = true }
 }
 
-// Handler wraps a slog.Handler and redacts GitHub token patterns from string
-// attribute values before forwarding to the inner handler.
+// Handler wraps a slog.Handler and redacts credential-shaped substrings from
+// messages and textual attribute values before forwarding to the inner handler.
 type Handler struct {
 	inner slog.Handler
 }
@@ -121,6 +122,15 @@ func ScrubString(s string, opts ...Option) string {
 }
 
 func scrubAttr(a slog.Attr) slog.Attr {
+	// Resolve lazy values here so the inner handler cannot render unsanitized
+	// strings or groups after the scrubbing boundary.
+	a.Value = a.Value.Resolve()
+	if a.Value.Kind() == slog.KindAny {
+		switch v := a.Value.Any().(type) {
+		case error, fmt.Stringer:
+			return slog.String(a.Key, scrub(fmt.Sprint(v)))
+		}
+	}
 	if a.Value.Kind() == slog.KindString {
 		return slog.String(a.Key, scrub(a.Value.String()))
 	}
