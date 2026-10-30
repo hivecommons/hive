@@ -1,0 +1,68 @@
+<div id="hive-dashboard-root" class="hive-dashboard-root">
+  <!-- Dedicated pinned notices slot. It stays outside the dashboard section
+       order list so saved layouts cannot move it below a section. -->
+  <div id="dash-notices">
+    <div id="release-status" class="release-status" hidden></div>
+    <div id="planning-intro" hidden></div>
+  <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">GitHub App Not Installed</div>
+      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
+    </div>
+    <!-- autocomplete=off + name-less: Firefox form history would otherwise
+         offer/refill a stored value and, on Linux, could clear the field on a
+         re-render. Enter also submits (onkeydown) so entry works even if the
+         Set-ID button is obscured (e.g. the ? popover) or its click is flaky in
+         Firefox — matching Safari, where the flow already worked instantly. -->
+    <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      data-keydown-action="submitGitHubInstallationID" data-prevent="1" data-keys="Enter"
+      title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
+      style="width:120px;padding:var(--sp-3) var(--sp-4);margin-right:var(--sp-3);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--text);font-size:0.8rem" />
+    <!-- Where-do-I-find-this hint. Content is injected by
+         renderGitHubAppInstallIdHint() because the GitHub host and org are only
+         known at runtime (a GHE hive must not be told to look at github.com).
+         The button is click/keyboard operable, not hover-only. -->
+    <span class="gh-idhint" id="gh-app-install-id-hint">
+      <button type="button" class="gh-idhint-btn" id="gh-app-install-id-hint-btn"
+        aria-expanded="false" aria-controls="gh-app-install-id-hint-pop"
+        aria-label="Where do I find my Installation ID?"
+        data-action="toggleInstallIdHint" data-arg-types="e">?</button>
+      <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
+    </span>
+    <!-- type=button is explicit: with no type a <button> defaults to
+         type=submit, and if this banner were ever wrapped in a form (or Firefox
+         treated an ancestor as one), the click would trigger an implicit submit
+         that navigates/resets the page and clears the input before the handler
+         ran — a Firefox-vs-Safari difference. type=button removes that path.
+         No inline ghost override: this button SUBMITS the typed ID, so it gets
+         the banner's solid primary recipe (.gh-app-btn). The old transparent
+         style made it read as static text — operators typed the ID and never
+         realized a click was required. -->
+    <button type="button" data-action="submitGitHubInstallationID" class="hv-btn btn-primary gh-app-btn" id="gh-app-set-id-btn">Save Installation ID</button>
+    <button type="button" data-action="recheckGitHubApp" class="hv-btn btn-primary gh-app-btn" id="gh-app-recheck-btn">Re-check</button>
+    <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="hv-btn btn-primary gh-app-btn">Install GitHub App</a>
+  </div>
+  <div id="repo-target-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">Project Target Misconfigured</div>
+      <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
+    </div>
+    <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Projects</button>
+  </div>
+  <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div class="gh-app-body">
+      <div class="gh-app-title">Issues Disabled on a Watched Project</div>
+      <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
+    </div>
+  </div>
+  <div id="hub-banner" style="display:none"></div>
+  <div id="system-alerts-banner" style="display:none"></div>
+  <div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
+  <div class="gh-rate-alert" id="gh-rate-alert"></div>
+  <div id="release-notes-banner" class="hidden"></div>
+  </div>
+<div id="toast-container"></div>

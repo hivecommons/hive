@@ -53,7 +53,7 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, labels []str
 	issueFilter := c.getIssueFilter()
 	author := safeGetLogin(issue.GetUser())
 	sidelined := func(bucket, reason string) WebhookItemPatch {
-		row := repoWorkIssue(repo, issue, labels, bucket, reason)
+		row := c.workIssue(repo, issue, labels, bucket, reason)
 		return WebhookItemPatch{Bucket: WebhookBucketSidelined, WorkIssue: &row}
 	}
 	switch standingMetaIssueKindFor(issue.GetTitle(), author, labels) {
@@ -85,7 +85,7 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, labels []str
 		return sidelined("filtered", trackingFilterReason)
 	}
 	if hasBlockedLabel(labels) {
-		row := repoWorkIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+		row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
 		row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
 		row.RecheckDone = blockedRecheckDone(issue.GetBody())
 		return WebhookItemPatch{Bucket: WebhookBucketSidelined, WorkIssue: &row}
@@ -105,7 +105,7 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, labels []str
 			// reporter_triage bucket) rides along so a brand-new issue
 			// is visible from its `opened` delivery rather than from the
 			// next enumeration (hivecommons/hive#15094).
-			row := repoWorkIssue(repo, issue, labels, workBucketReporterTriage, reporterTriageAwaitingReason)
+			row := c.workIssue(repo, issue, labels, workBucketReporterTriage, reporterTriageAwaitingReason)
 			return WebhookItemPatch{Bucket: WebhookBucketUnknown, WorkIssue: &row}
 		}
 	}

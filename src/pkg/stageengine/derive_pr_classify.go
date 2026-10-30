@@ -30,6 +30,7 @@ const (
 	autoMergeReasonHumanChangesRequested   = prstage.AutoMergeReasonHumanChangesRequested
 	autoMergeReasonHumanMergePath          = prstage.AutoMergeReasonHumanMergePath
 	autoMergeReasonHumanMergePathEvidence  = prstage.AutoMergeReasonHumanMergePathEvidence
+	autoMergeReasonHumanMergeRequired      = prstage.AutoMergeReasonHumanMergeRequired
 	autoMergeReasonIntentEvidence          = prstage.AutoMergeReasonIntentEvidence
 	autoMergeReasonIntentUnauthorized      = prstage.AutoMergeReasonIntentUnauthorized
 	autoMergeReasonMergeQueueRequired      = prstage.AutoMergeReasonMergeQueueRequired
@@ -366,6 +367,13 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		if train.State == prstage.MergeTrainStateRebaseExhausted {
 			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 		}
+		if train.State == prstage.MergeTrainStateDuplicateOf {
+			// Two open PRs fix one issue and the queue kept the other
+			// (hivecommons/hive#15469): this one goes back to its author
+			// — 072 for a relay contributor, 071 for a person, 070 for
+			// the App's own — as superseded, never "waiting its turn".
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {
@@ -394,6 +402,20 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// The App lacks the permission the next step needs; only a person
 		// can take it (hivecommons/hive#14589). The reason keeps the step.
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+	}
+	if reason == autoMergeReasonHumanMergeRequired {
+		// A breaking-change title or a needs-owner-merge label
+		// (hivecommons/hive#15442): no decision is owed, only the owner's
+		// merge click, so the PR parks at 090 with the manual-merge rule
+		// once the head is green. Owned, so the trusted tier cannot drop it
+		// (ResolveStage keeps only owned 090 opinions for trusted authors).
+		if HasLabelFold(o.Labels, "needs-rebase") {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		if v, ok := HumanChangeRequestStage(o); ok {
+			return v
+		}
+		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: stageRankOwned, Human: true}, humanApprovalReason)
 	}
 	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
 		if HasLabelFold(o.Labels, "needs-rebase") {

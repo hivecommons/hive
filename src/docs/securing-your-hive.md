@@ -11,6 +11,10 @@ and [contributor-trust-and-roles.md](contributor-trust-and-roles.md). This
 page explains what the settings mean for a stranger filing an issue against
 your repo tomorrow morning.
 
+**Two terms used below:** a **PR** is a pull request proposing a change.
+**CI** is continuous integration: automated tests and checks run on that change.
+A green check is useful only if it tests the behavior you need to protect.
+
 ## The 60-second version
 
 Three settings decide who can make Hive act, and how far:
@@ -167,7 +171,8 @@ untrusted issues start being held, even at L6.
 **Which levels can open and merge pull requests?** L1–L2: none. L3: only
 `quality`, held. L4: `quality`, `ci-maintainer` and `sec-check`, held. L5:
 every hold-gated agent, all held. L6: every full-mode agent can open and
-merge on green CI, except `outreach`, whose pull requests stay held, and
+merge on green CI, except cross-repo `outreach` (a destination not managed by
+this hive), whose pull requests stay held, and
 `reviewer` and `adjudicator`, which never merge. The per-agent table is the
 [ACMM policy matrix](acmm-policy-matrix.md).
 
@@ -187,8 +192,8 @@ project:
       matched your judgment. There is no calendar rule; the rule is that you
       are not surprised.
 - [ ] Your test suite is strong enough that green CI means safe to ship. L6
-      has no human gate on agent pull requests, so tests are the only
-      backstop.
+      has no mandatory human review by default. Configure the review gate
+      and branch rules deliberately; required tests remain a core backstop.
 - [ ] You chose your reporter-trust posture before enabling L6. An L6 hive
       with reporter trust off merges a stranger's request as soon as CI is
       green.
@@ -196,14 +201,15 @@ project:
       associations you intend.
 - [ ] You know the emergency brake: drop the level, or apply
       `hive-pause/<hive-id>` to one item.
-- [ ] You expect `outreach` pull requests to stay held at every level.
+- [ ] You expect cross-repo `outreach` PRs to stay held at every level.
+      Outreach into a hive-managed repo follows that repo's normal level gates.
 
 ## Glossary
 
 * **hive**: one running instance of Hive: governor, agents, dashboard.
 * **hub / spoke**: a hub registers and manages many spokes; a spoke is one
   hive governing one or a few repositories.
-* **ACMM level**: the six-step autonomy dial (Agentic Code Maturity Model).
+* **ACMM level**: the six-step autonomy dial (AI Codebase Maturity Model).
 * **policy mode**: what one agent may do at a level: advisory (observe),
   measured (file issues), hold-gated (open held pull requests), full (merge).
 * **reporter trust**: the opt-in filter that treats issues differently by

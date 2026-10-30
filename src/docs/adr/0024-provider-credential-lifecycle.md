@@ -4,6 +4,17 @@ Status: Proposed
 
 Authored by the hive project. Reviewer: @hanthor.
 
+**Read this as a proposal, not a setup guide.** The classification vocabulary
+and future pool constraints are proposed agreement. The v5 deliverable described
+below is read-only provider-status reporting, not a refresh service; v5 has no
+credential pool, idle warmer or refresh knob. Present-tense clauses do not
+change this record's **Proposed** status.
+
+**Terms:** a **grant** is the provider's authorization for a consumer.
+A **refresh authority** may renew access; a **pool** would select among
+explicitly shared provider references; a **broker** would mediate their use.
+None of these words implies that Hive can copy rotating credentials safely.
+
 ## Context
 
 RFC [#12611](https://github.com/hivecommons/hive/issues/12611) proposes shared
@@ -88,13 +99,13 @@ There is no refresh knob.
 
 ### Convergence answers (RFC #12611)
 
-1. No existing upstream auth service exists. Each hive runs standalone first,
+1. **Service ownership:** no existing upstream auth service exists. Each hive runs standalone first,
    and the hub aggregates.
-2. Claude can only be refreshed on restart. Every other provider needs an
+2. **Refresh boundary:** Claude can only be refreshed on restart. Every other provider needs an
    independent grant.
-3. The contract is carried by the hub heartbeat's `providers[]` and by
+3. **Status transport:** the contract is carried by the hub heartbeat's `providers[]` and by
    `/api/status`.
-4. Yes. This ADR is that agreement on classification before any
+4. **Classification before automation:** this ADR proposes that agreement before any
    backend-specific keepalive loop is added.
 
 ## Consequences

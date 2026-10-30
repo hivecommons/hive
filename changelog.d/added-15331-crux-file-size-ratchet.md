@@ -1,0 +1,1 @@
+- Hive PRs that touch `src/crux/**` now run crux's Go file-size ratchet (the `crux-file-size-ratchet` check), using the script and baseline fetched from crux `main` at run time. A PR that grows a grandfathered `src/crux` file past its baseline now fails in hive with crux's own `::error::` annotation instead of breaking crux `main` on the next sync. (#15331)

@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -147,5 +149,118 @@ func TestCompactPaneTailRedactsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(tail, "starting") || !strings.Contains(tail, "last line") {
 		t.Fatalf("compactPaneTail dropped non-secret lines: %q", tail)
+	}
+}
+
+func TestRestartStormPauseDiagnosticsCarryWindowSummary(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, slog.Default(), ProjectContext{})
+	now := time.Now()
+	var events []RestartEvent
+	for i := 0; i < restartStormPauseAfter; i++ {
+		events = append(events, RestartEvent{At: now.Add(-time.Duration(i) * time.Minute), Reason: "crashed agent recovery"})
+	}
+	events = append(events, RestartEvent{At: now.Add(-3 * time.Hour), Reason: "too old"})
+	m.SeedRestartTelemetry("scanner", len(events), events, "crashed agent recovery")
+	m.mu.Lock()
+	m.agents["scanner"].LastError = "bare shell prompt"
+	m.mu.Unlock()
+
+	plan := m.planAutomaticRestart("scanner", "crashed agent recovery", "agent CLI crashed or tmux session disappeared", now)
+	if plan.pauseReason == "" {
+		t.Fatalf("plan = %+v, want pause", plan)
+	}
+	want := "restart-storm: agent CLI crashed or tmux session disappeared\n" +
+		"10 restarts in the last 1h0m0s (pause at 10)\n" +
+		"- crashed agent recovery x10\n" +
+		"last error: bare shell prompt"
+	if plan.pauseDiagnostics != want {
+		t.Fatalf("pauseDiagnostics = %q, want %q", plan.pauseDiagnostics, want)
+	}
+}
+
+func TestRestartStormPauseDiagnosticsSkipLastErrorWhenItIsTheCause(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, slog.Default(), ProjectContext{})
+	now := time.Now()
+	var events []RestartEvent
+	for i := 0; i < restartStormPauseAfter; i++ {
+		events = append(events, RestartEvent{At: now.Add(-time.Duration(i) * time.Minute), Reason: "credential refresh"})
+	}
+	m.SeedRestartTelemetry("scanner", len(events), events, "credential refresh")
+	m.mu.Lock()
+	m.agents["scanner"].LastError = "  token expired  "
+	m.mu.Unlock()
+
+	// Callers such as the credential path pass agent.LastError as the detail,
+	// so the pause reason and the last error are the same text.
+	plan := m.planAutomaticRestart("scanner", "credential refresh", m.agents["scanner"].LastError, now)
+	if plan.pauseReason == "" {
+		t.Fatalf("plan = %+v, want pause", plan)
+	}
+	if strings.Contains(plan.pauseDiagnostics, "last error:") {
+		t.Fatalf("pauseDiagnostics = %q, want no duplicated last error line", plan.pauseDiagnostics)
+	}
+	if !strings.HasPrefix(plan.pauseDiagnostics, "restart-storm: token expired\n") {
+		t.Fatalf("pauseDiagnostics = %q, want restart-storm cause first", plan.pauseDiagnostics)
+	}
+}
+
+func TestRestartStormDiagnosticsWithoutAgentIsTheReason(t *testing.T) {
+	const reason = "restart-storm: crashed"
+	if got := restartStormDiagnostics(reason, nil, time.Now()); got != reason {
+		t.Fatalf("restartStormDiagnostics(nil agent) = %q, want %q", got, reason)
+	}
+}
+
+func TestRestartStormDiagnosticsBoundsReasonListAndSkipsUnstampedEvents(t *testing.T) {
+	now := time.Now()
+	agent := &AgentProcess{}
+	// Seven distinct reasons: five are listed, two are folded into the tail.
+	// The first reason repeats so the per-reason count is exercised too.
+	reasons := []string{"r1", "r2", "r3", "r4", "r5", "r6", "r7"}
+	for _, r := range reasons {
+		agent.RestartEvents = append(agent.RestartEvents, RestartEvent{At: now.Add(-time.Minute), Reason: r})
+	}
+	agent.RestartEvents = append(agent.RestartEvents,
+		RestartEvent{At: now.Add(-time.Minute), Reason: "r1"},
+		// Unstamped and out-of-window events contribute neither to the count
+		// nor to the reason list.
+		RestartEvent{Reason: "unstamped"},
+		RestartEvent{At: now.Add(-restartStormWindow - time.Minute), Reason: "too old"},
+	)
+
+	got := restartStormDiagnostics("restart-storm: r1", agent, now)
+	want := "restart-storm: r1\n" +
+		fmt.Sprintf("8 restarts in the last %s (pause at %d)\n", restartStormWindow, restartStormPauseAfter) +
+		"- r1 x2\n- r2 x1\n- r3 x1\n- r4 x1\n- r5 x1\n" +
+		"... and 2 more reasons"
+	if got != want {
+		t.Fatalf("restartStormDiagnostics =\n%q\nwant\n%q", got, want)
+	}
+	for _, absent := range []string{"r6", "r7", "unstamped", "too old", "last error:"} {
+		if strings.Contains(got, absent) {
+			t.Fatalf("diagnostics must not mention %q:\n%s", absent, got)
+		}
+	}
+}
+
+func TestApplyRestartStormPlanFallsBackToPauseReasonForDiagnostics(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, slog.Default(), ProjectContext{})
+	rec := recordConditions(t, m)
+
+	// A plan built without diagnostics (older callers, or a plan whose
+	// pauseDiagnostics was never populated) must still self-report the
+	// pause reason rather than an empty excerpt.
+	plan := restartStormPlan{pauseTrigger: RestartStormTrigger, pauseReason: "restart-storm: crashed"}
+	handled, restarted, err := m.applyRestartStormPlan("scanner", "crashed agent recovery", plan, func() error {
+		t.Fatal("a paused plan must not restart")
+		return nil
+	})
+	if !handled || restarted || err != nil {
+		t.Fatalf("applyRestartStormPlan = handled %v restarted %v err %v, want handled without restart", handled, restarted, err)
+	}
+	got := rec.observations(crux.ClassRestartStorm)
+	want := []conditionObservation{{Class: crux.ClassRestartStorm, Key: "scanner", Message: "restart storm: crashed agent recovery", Diagnostics: "restart-storm: crashed"}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("restart-storm observations = %+v, want %+v", got, want)
 	}
 }

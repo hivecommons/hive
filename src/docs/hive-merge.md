@@ -312,6 +312,28 @@ auto_merge:
     enabled: true   # default; set false to leave such PRs held
 ```
 
+### Breaking-titled or `needs-owner-merge` PRs wait for a human
+
+A PR whose trimmed title starts with `⚠️` (U+26A0, with or without the VS16
+selector — the PR-title convention for a breaking change) or that carries a
+`needs-owner-merge` label is never merged by hive. One shared predicate,
+`automerge.RequiresHumanMerge(pr)`, is evaluated once per PR where each lane
+already computes eligibility (the App self-merge, label-queued, trusted-author
+and contributor prefilters, and the refetch just before a merge), so the merge
+train — which draws its candidates from the same prefilters — never fronts or
+carries such a PR either. The prefixes and labels are configurable via
+`auto_merge.human_merge_title_prefixes` and `auto_merge.human_merge_labels`
+(see the operator reference); an empty list turns that half of the rule off.
+
+When the PR is otherwise merge-ready (green checks, approvals satisfied) the
+stage tracker parks it at **090 Ready for human merge** with the chip
+*human merge* and the reason *breaking change — owner merges*; the owner
+merges it with **Approve & merge as maintainer** (the existing gated
+operator path) or on GitHub. Hive posts one comment, through the writeback
+gate, saying it will wait for a human. The rule exists because a ⚠️-titled
+PR was auto-merged by the trusted-author lane while its owner was still
+deciding whether to ship it.
+
 ### Trusted-author auto-merge
 
 `auto_merge.trusted_authors` is a third, default-off sweep tier for
@@ -466,9 +488,18 @@ A PR merges through this tier only when all of the following hold:
     walked first; only when it is short does one `search/issues` query
     (`is:pr is:merged author:<login> repo:… repo:…`) find which other hive
     repos hold the author's merges, and only those are walked for revert
-    evidence — a revert or sentinel hit in any repository blocks. The sweep
-    posts a `<!-- hive:contributor-auto-promoted author=… merged=N scope=hive
-    repos=hive:4,docs:1 -->` audit comment once per PR and logs
+    evidence — a revert or sentinel hit in any repository blocks. Promotion
+    is a property of the author in the hive, not of a PR, so the sweep
+    announces it **once per (hive, author)**: the first PR that earns it
+    gets a `<!-- hive:trust-promoted login=… merged=N scope=hive
+    repos=hive:4,docs:1 -->` comment ("@login is now trusted for
+    contributor-lane merging in this hive … Applies to their open and
+    future PRs here"), and the author's other open PRs, later PRs and PRs
+    after a restart post nothing — the "announced" fact lives in the stage
+    store (`trust-promoted:<login>`), with the PR's own marker as a
+    fallback when the store was rebuilt. Revert or sentinel evidence that
+    withdraws the promotion forgets the announcement, so regaining it is
+    announced once more (#15443). Every admission still logs
     `contributor-lane admitted reason=contributor-lane:auto-promoted
     merged_prs=5 scope=hive repos=hive:4,docs:1`. `auto_promotion_scope:
     repo` restores the per-repository count.
@@ -615,6 +646,34 @@ report them. If the branch's commits cannot be read at merge time, the hive
 falls back to GitHub's default message rather than risk dropping a sign-off.
 Switch it off with `auto_merge.credit_issue_authors: false` (#14581).
 
+### Issues close only after the merge
+
+The hive never closes an issue for a pull request that has not merged. The
+only PR-driven close path is close-on-merge (`CloseOnMergeLedgerSweep`,
+`close_on_merge.go`), which reads the PR back from the forge and returns
+`pr_not_merged` without touching the issue unless `merged_at` is set (or
+`merged` is true); opening a PR, admitting it to the merge train or the
+pre-merge soak, and a `Fixes #N` in its body change nothing on the issue. On
+GitHub's default branch GitHub itself closes the issue in the same instant
+the PR merges, attributed to whoever pressed merge; on a release line the
+hive's sweep does it on the next pass, with a "Fixed by #N (merged …)"
+comment. Every such close goes through the central `CloseIssue` (which
+refuses tracking issues and honours the reporter-confirmation gate) and is
+counted by the direct-write ratchet, so no other code path can grow a close
+of its own.
+
+The tracker shows the consequence honestly. A follow-up or duplicate PR whose
+body names an issue an *earlier* PR already delivered — `Refs #15422` on
+#15425 after #15426 merged, `extending #15058` on #15431 after #15068 merged —
+sits under the struck-through issue with the chip **closed by #N**, linking
+to the merged PR GitHub records as the closer
+(`closedByPullRequestsReferences`, with the hive's merged ledger as the
+fallback). Only a merged PR is ever named: an open PR with `Fixes #N` is
+listed under the same relation and has closed nothing. When no merged closer
+can be found the chip reads **closed · this PR unmerged**, never a bare
+`closed` that could be read as the issue having been closed before its fix
+merged.
+
 ### Stage labels
 
 Every sweep cycle also writes the hive-owned `stage/NNN-*` label for each PR
@@ -715,6 +774,35 @@ writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same
 ([#12436](https://github.com/hivecommons/hive/issues/12436)).
 
+An adoption pair is one logical PR everywhere a person might otherwise be
+asked to pick between PRs (hivecommons/hive#15495). A clanker- or
+hive-authored original closes in the adopting pass by policy
+(`governor.labels.stage.adoption.close_superseded: on_adopt`, the default;
+`on_merge` keeps it open until the copy merges): the write-back gate admits
+the close as `superseded-agent-pr` without the repo opt-in label the
+`contributor_adopt` kind otherwise wants, because the copy carries the same
+commits and sign-off (hivecommons/hive#15526 sat open beside hive's #15574
+as "Adopted → #15574 · superseded" with the gate saying
+`needs-opt-in-label`). A human-authored original still needs that opt-in
+label to close in the adopting pass; without it the gate keeps it open after
+supersession (`needs-opt-in-label`, or a fork the hive cannot edit) and it
+sits at 072 "superseded by #N" until the copy merges. Either way the
+superseded original draws in the Activity Monitor as one muted,
+chevron-less line under the issue (greyed title, no stage strip) whose
+trailing note reads "superseded · hive adopted → #M" — or "superseded ·
+closed · hive adopted → #M" once it is closed — on a single line (the title
+ellipsizes first); the hover carries the long form ("Hive re-authored this
+PR as #M with the same commits and sign-off. This PR closes as superseded
+when #M merges." / "…is closed as superseded."). The tracker marks it
+`superseded_by: M`; the line stays only while #M is open and listed and
+drops once #M merges or closes. The issue's caption, open-PR count, parked-PR check and "Let hive decide — all N
+PRs" fan-out all see only the hive's copy: the original's review verdict never
+gates the issue, and the copy's body carries every `Fixes #N` / `Refs #N` line
+of the original (an annotated `Refs #N — partial` travels as the bare
+reference, so the copy keeps the issue link). The original counts again only
+when the copy is closed without merging (`adopted_by_state` closed /
+closed-twice / copy-failed).
+
 A clanker PR entering `stage/072-returned-to-contributor` also triggers the
 contributor nudge: the sweep posts one `<!-- hive:contributor-nudge head=…
 -->` comment per head naming the failing checks / review asks (re-nudged
@@ -726,6 +814,61 @@ queued fixes are served before new work ("contributors should clean up their
 mess before taking on new stuff"). Code:
 `src/pkg/github/automerge/automerge_contributor_nudge.go`, `src/pkg/fixqueue`
 and `src/pkg/dashboard/contribute_fixqueue.go`.
+
+One exception: a PR the merge train holds because **another open PR already
+fixes the same issue** (lane reason `merge-train:duplicate-of#<winner>:…`)
+is parked with its author — 072 for a relay contributor, 071 for a person,
+070 for the App's own — as *superseded*, not at the merge gate as "Approved;
+waiting its turn", and the 07x pass neither nudges nor adopts it: there is
+nothing to fix, and adopting it would land the issue twice. Its one notice
+is the duplicate-fix sweep's gated `<!-- hive:duplicate-fix -->` comment;
+the tracker pill reads *Duplicate of #winner · needs a pick*, and *Let hive
+decide* on either row closes it as superseded
+([#15469](https://github.com/hivecommons/hive/issues/15469)). Upstream of
+the train, an open PR's webhook that covers an issue also releases any
+contributor task already dispatched on it (see
+[operator-reference.md § Open-PR dispatch guard](operator-reference.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner)),
+so the hive does not open the second PR in the first place.
+
+### Empty-diff PRs of the hive's own
+
+A PR of the hive's own (the App's, or an adoption it opened) whose diff
+against its base is **empty** — GitHub reports zero changed files, and the
+`base...head` compare agrees — carries nothing the base does not already
+have. This is what an adoption looks like once the original's fix landed
+through another PR. The hive closes it itself, through the writeback gate,
+with the sweep's edited-in-place comment naming the PR that carries the
+change (`<!-- hive-redundant-of: #N -->`, the marker the reviewer's verdict
+set) and the `hive/superseded` label, and raises **no** human decision. The
+same guards as the superseded rule hold: `governor.auto_close_superseded` on,
+ACMM L6, not held / keep-open / draft / parked by a person, and a head at
+least 15 minutes old so a branch mid-push is not read as empty. A *person's*
+empty PR is never closed by the hive; it gets the decision prompt as before.
+Code: `src/pkg/github/pr_empty_diff_hive_autoclose.go`, hooked from the
+self-authored sweep and from the 085 route
+([#15499](https://github.com/hivecommons/hive/pull/15499)).
+
+Three things made #15499 sit a day at 085 instead:
+
+- The adoption's dispatch records carried no `author_agent`, so the relay
+  judged the App's own PR non-hive and its decision question went down the
+  **contributor** lane (`contributor-lane:decision-requested`) to a person.
+  Dispatch records now carry `hive_authored`, and the relay falls back to
+  the PR author's login against the hive identity; an adoption routes
+  through the self lane.
+- Every merge-from-base pushed by the hive's own `update-branch` was a new
+  head with no verdict, so the swarm re-reviewed and re-asked the same
+  question (six heads, ~16 "Decision needed" reviews and 085 comments). A
+  PR with no diff against its base now re-stamps its prior verdict on each
+  head (`review.delta_rereview`); a decision question is identified by its
+  `hive-redundant-of` PR (else its normalised words), and a second ask with
+  the same identity refreshes the standing review in place and posts no
+  second 085 entry comment.
+- The tracker's *Decision needed* popover read the verdict at the current
+  head only, so during a re-review it fell back to "a reviewer handed this
+  PR to a person without a specific question". A row parked on a reviewer
+  decision now quotes the newest decision-requested verdict on any head,
+  shows a *redundant of #N* chip, and leads with **Close as superseded**.
 
 ## Usage
 

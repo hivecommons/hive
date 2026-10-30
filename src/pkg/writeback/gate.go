@@ -27,6 +27,16 @@ type Item struct {
 	// an attributed relay PR, or an issue the hive filed. Own items are
 	// never gated (except per-repo mode off).
 	HiveAuthored bool
+	// AgentAuthored is true when the author is an agent rather than a
+	// person: a contributor's clanker (author/clanker) or another hive.
+	// With SupersededBy it lets the adoption kind close the item by
+	// policy (ReasonSupersededAgentPR).
+	AgentAuthored bool
+	// SupersededBy is the hive's own pull request that carries this item's
+	// commits (the supersede adoption's copy), 0 when none. Set only by a
+	// caller whose policy closes superseded originals on adopt
+	// (governor.labels.stage.adoption.close_superseded: on_adopt).
+	SupersededBy int
 	// Labels is the item's current label set.
 	Labels []string
 	// CreatedAt is the item's creation time; the backfill guard compares it
@@ -65,6 +75,13 @@ const (
 	// quiet on the repo, and the advisory digest edit that kept landing on
 	// a paused torch-spyre showed that "unsolicited only" was not enough.
 	ReasonRepoPaused = "repo-paused"
+	// ReasonSupersededAgentPR allows the adoption kind on an agent-authored
+	// PR the hive has re-authored as its own copy (hivecommons/hive#15526
+	// stayed open at "superseded" for want of an opt-in label): the pair
+	// is one logical PR and the copy carries the author's commits and
+	// sign-off, so the close is the hive's own housekeeping, not an
+	// unsolicited write on a person's work.
+	ReasonSupersededAgentPR = "superseded-agent-pr"
 )
 
 // RepoPauseInfo is the provenance of an operator pause, as config records
@@ -117,6 +134,9 @@ type Status struct {
 	// Banners lists repos that became writable with pre-existing items the
 	// hive left alone (one banner each).
 	Banners []Banner `json:"banners,omitempty"`
+	// Dedupe is the content layer: settings plus last-hour counters of
+	// duplicate, burst and rate-capped suppressions.
+	Dedupe DedupeCounters `json:"dedupe"`
 }
 
 // Banner is the "hive can now write to <repo>; N existing PRs were left
@@ -171,6 +191,8 @@ type Gate struct {
 	repos   map[string]*repoRecord
 	recent  []Suppressed
 	summary map[string]bool
+	// dedupe is the content layer's table (dedupe.go).
+	dedupe *dedupeState
 }
 
 // SuppressedRetention bounds the drill-down list (and the 24h counter).
@@ -182,7 +204,7 @@ const maxRecent = 2000
 // New builds a gate over cfg. path is the JSON file first_seen is persisted
 // to (empty = in-memory only); a missing or unreadable file starts empty.
 func New(cfg Config, deps Deps, path string) *Gate {
-	g := &Gate{cfg: cfg, deps: deps, path: path, repos: map[string]*repoRecord{}, summary: map[string]bool{}}
+	g := &Gate{cfg: cfg, deps: deps, path: path, repos: map[string]*repoRecord{}, summary: map[string]bool{}, dedupe: newDedupeState()}
 	if g.deps.Now == nil {
 		g.deps.Now = time.Now
 	}
@@ -232,6 +254,18 @@ func (g *Gate) load() {
 	if err != nil {
 		return
 	}
+	// Current shape: {"repos": {...}, "dedupe": {...}}. The pre-dedupe
+	// file was the bare repos map; its keys are owner/name so "repos"
+	// cannot collide with one.
+	var file stateFile
+	if err := json.Unmarshal(data, &file); err == nil && file.Repos != nil {
+		g.repos = file.Repos
+		if file.Dedupe != nil {
+			file.Dedupe.init()
+			g.dedupe = file.Dedupe
+		}
+		return
+	}
 	var repos map[string]*repoRecord
 	if err := json.Unmarshal(data, &repos); err != nil || repos == nil {
 		return
@@ -239,11 +273,21 @@ func (g *Gate) load() {
 	g.repos = repos
 }
 
+// stateFile is the on-disk shape of the gate's state.
+type stateFile struct {
+	Repos  map[string]*repoRecord `json:"repos"`
+	Dedupe *dedupeState           `json:"dedupe,omitempty"`
+}
+
 func (g *Gate) saveLocked() {
 	if g.path == "" {
 		return
 	}
-	data, err := json.MarshalIndent(g.repos, "", "  ")
+	file := stateFile{Repos: g.repos}
+	if g.dedupe != nil && !g.dedupe.empty() {
+		file.Dedupe = g.dedupe
+	}
+	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return
 	}
@@ -344,6 +388,11 @@ func (g *Gate) AllowedPreview(repo string, item Item, kind Kind, preview string)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	d := g.decideLocked(repo, item, kind)
+	if d.Allowed {
+		// Content dedupe (dedupe.go) runs only on comment kinds with a
+		// body: Allowed() without preview stays policy-only.
+		d = g.contentCheckLocked(repo, item, kind, preview, d)
+	}
 	if !d.Allowed {
 		g.suppressLocked(repo, item, kind, d, preview)
 	}
@@ -392,6 +441,13 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	p := cfg.Policy(kind)
 	if p.OwnOnly {
 		return Decision{Reason: ReasonOwnOnly, Detail: fmt.Sprintf("%s only ever writes on hive-authored items; #%d is by %s", kind, item.Number, item.Author)}
+	}
+	// An agent's PR the hive re-authored as its own copy: the close is
+	// housekeeping on one logical PR of the hive's, so neither the level
+	// nor the opt-in label applies (an operator's own_only / repo mode /
+	// pause above still do).
+	if kind == KindContributorAdopt && item.AgentAuthored && item.SupersededBy > 0 {
+		return Decision{Allowed: true, Reason: ReasonSupersededAgentPR, Detail: fmt.Sprintf("#%d is agent-authored and the hive's copy #%d carries its commits; close_superseded is on_adopt", item.Number, item.SupersededBy)}
 	}
 	level := 0
 	if g.deps.LevelFor != nil {
@@ -519,6 +575,7 @@ func (g *Gate) suppressLocked(repo string, item Item, kind Kind, d Decision, pre
 }
 
 func (g *Gate) pruneLocked(now time.Time) {
+	g.pruneDedupeLocked(now)
 	cut := now.Add(-SuppressedRetention)
 	i := 0
 	for i < len(g.recent) && g.recent[i].At.Before(cut) {
@@ -598,6 +655,7 @@ func (g *Gate) Snapshot() Status {
 		Suppressed24h: len(g.recent),
 		Repos:         map[string]RepoStatus{},
 		Kinds:         cfg.EffectiveKinds(),
+		Dedupe:        g.dedupeCountersLocked(now),
 	}
 	per := map[string]int{}
 	for _, s := range g.recent {

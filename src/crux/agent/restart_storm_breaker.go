@@ -24,6 +24,9 @@ type restartStormPlan struct {
 	backoff      time.Duration
 	pauseTrigger string
 	pauseReason  string
+	// pauseDiagnostics is the self-report excerpt for a restart-storm pause:
+	// the pause reason plus the window's restart count and recent causes.
+	pauseDiagnostics string
 }
 
 func (m *Manager) restartWithStormBreaker(ctx context.Context, name, reason, detail string) (bool, error) {
@@ -66,7 +69,11 @@ func (m *Manager) applyRestartStormPlan(name, reason string, plan restartStormPl
 		if plan.pauseTrigger == DiskFullTrigger {
 			m.observeCondition(crux.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+plan.pauseReason, "")
 		} else {
-			m.observeCondition(crux.ClassRestartStorm, name, "restart storm: "+reason, plan.pauseReason)
+			diagnostics := plan.pauseDiagnostics
+			if diagnostics == "" {
+				diagnostics = plan.pauseReason
+			}
+			m.observeCondition(crux.ClassRestartStorm, name, "restart storm: "+reason, diagnostics)
 		}
 		return true, false, m.Pause(name, plan.pauseTrigger, plan.pauseReason)
 	case plan.backoff > 0:
@@ -106,9 +113,10 @@ func (m *Manager) planAutomaticRestart(name, reason, detail string, now time.Tim
 	recent := restartEventsSince(agent.RestartEvents, now.Add(-restartStormWindow))
 	if recent >= restartStormPauseAfter {
 		msg := restartStormPauseReason(reason, detail, agent)
+		diagnostics := restartStormDiagnostics(msg, agent, now) // before LastError is overwritten
 		agent.LastError = msg
 		agent.restartStormBackoffUntil = time.Time{}
-		return restartStormPlan{pauseTrigger: RestartStormTrigger, pauseReason: msg}
+		return restartStormPlan{pauseTrigger: RestartStormTrigger, pauseReason: msg, pauseDiagnostics: diagnostics}
 	}
 	if now.Before(agent.restartStormBackoffUntil) {
 		return restartStormPlan{backoff: agent.restartStormBackoffUntil.Sub(now)}
@@ -161,6 +169,52 @@ func restartStormPauseReason(reason, detail string, agent *AgentProcess) string 
 		cause = "automatic restart loop"
 	}
 	return fmt.Sprintf("restart-storm: %s", sanitizeRestartReason(cause))
+}
+
+// restartStormDiagnostics expands a restart-storm pause reason into the
+// self-report excerpt. The reason alone ("agent CLI crashed or tmux session
+// disappeared") says nothing about what the loop looked like, so the report
+// also carries the restart count in the window, the recent restart reasons
+// with their counts, and the agent's last error. Everything is bounded and the
+// reporter scrubs it before storage.
+func restartStormDiagnostics(pauseReason string, agent *AgentProcess, now time.Time) string {
+	if agent == nil {
+		return pauseReason
+	}
+	cutoff := now.Add(-restartStormWindow)
+	counts := map[string]int{}
+	var order []string
+	total := 0
+	for _, ev := range agent.RestartEvents {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		total++
+		r := sanitizeRestartReason(ev.Reason)
+		if counts[r] == 0 {
+			order = append(order, r)
+		}
+		counts[r]++
+	}
+	var b strings.Builder
+	b.WriteString(pauseReason)
+	fmt.Fprintf(&b, "\n%d restarts in the last %s (pause at %d)", total, restartStormWindow, restartStormPauseAfter)
+	const maxReasons = 5
+	for i, r := range order {
+		if i == maxReasons {
+			fmt.Fprintf(&b, "\n... and %d more reasons", len(order)-maxReasons)
+			break
+		}
+		fmt.Fprintf(&b, "\n- %s x%d", r, counts[r])
+	}
+	// The pause reason already carries the sanitized cause, which callers often
+	// derive from LastError itself; compare against that cause so the same text
+	// is not repeated as "last error:".
+	cause := strings.TrimPrefix(pauseReason, "restart-storm: ")
+	if last := strings.TrimSpace(agent.LastError); last != "" && sanitizeRestartReason(last) != cause {
+		fmt.Fprintf(&b, "\nlast error: %s", last)
+	}
+	return b.String()
 }
 
 func diskFullPauseReason(reason, detail string) string {

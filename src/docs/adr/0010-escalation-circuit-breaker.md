@@ -2,6 +2,17 @@
 
 Status: Accepted (retroactive)
 
+**Current authority:** the forge's `needs-human` label, not a local ledger
+entry, determines whether a PR is escalated. The ledger tracks evidence and
+retry budgets; [label authority](#treat-the-forge-label-as-authoritative)
+below gives the exact reset rules.
+
+**Counter terms:** a **head SHA** identifies the latest commit; the **head
+tree** is its file-content snapshot, so an empty commit is not a new fix.
+**Settled CI** has finished checks, not pending ones. A **re-engagement** is a
+delivered retry prompt. A human-authored **control PR** supplies independent
+evidence when deciding whether failures are shared across the repository.
+
 ## Context
 
 Hive agents can repair their own failing PRs, but an unbounded retry loop can
@@ -12,6 +23,8 @@ failure in shard logs ([escalation package](../../pkg/escalation/escalation.go))
 
 ## Decision
 
+### Count distinct failures
+
 Track red PRs in a persistent ledger keyed by `repo#number`. Each sweep records
 distinct failing head SHAs, retains the last CI excerpt, clears history when a
 PR goes green, and marks escalation once the threshold is crossed. The default
@@ -19,6 +32,8 @@ threshold is three distinct red SHAs. When escalation fires, Hive posts a commen
 headed "Fix loop escalated — human attention needed", includes failing checks
 and raw failure evidence when available, and applies the `needs-human` label so
 future fix dispatch skips the PR.
+
+### Bound retries on an unchanged head
 
 For unchanged red heads, track staleness separately and cap re-engagements at
 `MaxReEngagements` (six) per current SHA. A branch that moves resets the
@@ -35,6 +50,8 @@ cadence window. The staleness clock starts when CI SETTLES — a head red on one
 check while others are still running is not yet stuck. The escalation comment
 quotes the number of kicks actually delivered.
 
+### Exclude independently confirmed shared failures
+
 Shared CI breakage is not a fix attempt. A check is shared only when it fails
 on every conclusive open PR in the repository and the evidence includes an
 independent human-authored control. A green PR disproves a repository-wide
@@ -47,6 +64,8 @@ does not consume one. An escalation is un-parked automatically —
 `needs-human` removed, ledger reset, one comment saying why — when the head
 goes green or when the shared breakage it escalated over clears.
 
+### Hand off after one reviewer pass
+
 A PR escalating for the SECOND time — after the reviewer lane ([#5480]) already
 repaired or de-escalated it once — gets a structured hand-off note instead of
 the generic body. The ledger stamps the head SHA the reviewer left on the branch
@@ -58,6 +77,8 @@ the note, nothing distinguished that terminal hand-off from a first escalation
 except the label set.
 
 [#5480]: https://github.com/hivecommons/hive/issues/5480
+
+### Treat the forge label as authoritative
 
 The `needs-human` label on the forge, not the ledger, is the authoritative
 record that a PR has been escalated. The ledger is a cache of it: a PR that

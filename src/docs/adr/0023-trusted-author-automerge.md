@@ -2,6 +2,11 @@
 
 Status: Accepted
 
+**Terms:** Prow is repository automation; **Tide** is its merge controller.
+**Same-head** means approval/check evidence matches the exact commit being
+merged. **SHA pinning** checks that commit ID again before merging.
+**Metadata contexts** report workflow bookkeeping, not evidence that tests ran.
+
 ## Context
 
 Hive already has two auto-merge routes. The queued route requires a distinct
@@ -13,17 +18,29 @@ own green PR in GitHub, but Hive would not do it unless a second person added
 
 ## Decision
 
-Add an opt-in `auto_merge.trusted_authors` tier. A PR is eligible only when the
-operator enabled the tier, the PR author holds the configured
-`authorized_users` role (`merger` by default, or `owner`), and GitHub reports
-repo write/maintain/admin permission unless the operator explicitly disables
-that API check. GitHub permission errors fail closed. Fork PRs still require a
-positive permission check so non-member forks never merge through this path.
+Add an opt-in `auto_merge.trusted_authors` tier.
 
-The tier reuses the self-authored sweep's merge mechanics: required CI green,
-mergeable state, no hold/exempt/excluded labels, no outstanding
-`CHANGES_REQUESTED` review, expected-head-SHA pinning immediately before merge,
-and the same merge method selection as `hive-merge`. If the base branch's
+**Author admission requires all of:**
+
+- the operator enabled the tier;
+- the PR author holds the configured `authorized_users` role (`merger` by
+  default, or `owner`);
+- GitHub reports repo write/maintain/admin permission, unless the operator
+  explicitly disables that API check. Permission errors fail closed.
+
+Fork PRs still require a positive permission check, so non-member forks never
+merge through this path.
+
+**Merge checks remain separate from admission:**
+
+- required CI green and a mergeable state;
+- no hold/exempt/excluded labels and no outstanding `CHANGES_REQUESTED` review;
+- expected-head-SHA pinning immediately before merge;
+- the same merge method selection as `hive-merge`;
+- the enforcing swarm-review gate, when configured, as described in
+  [Running at Level 6](../running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).
+
+If the base branch's
 required-check set is unknown or empty/unprotected, metadata contexts such as
 Prow `tide` and probot `DCO` are not treated as CI evidence or blockers; Hive
 still requires at least one real successful check-run on the head SHA before

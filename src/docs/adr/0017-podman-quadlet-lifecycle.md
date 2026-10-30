@@ -2,6 +2,16 @@
 
 Status: Accepted
 
+**Takeaway for operators:** use Quadlet `.container`/`.pod` units for persistent
+Podman deployments, not `podman compose` or `.kube` replay. Follow the
+[Quadlet operator guide](../podman-standalone-quadlet.md); this record preserves
+the investigated alternatives, version requirements and limits of the evidence.
+
+**Terms:** a **spike** is a bounded technical investigation. **Quadlet**
+generates systemd service units from Podman container/pod declarations.
+**systemd** manages their lifecycle; **rootless** runs under an ordinary
+user's service manager, while **rootful** runs under the system manager.
+
 ## Context
 
 Standalone Hive under Podman (#4188) needs one persistent lifecycle mechanism

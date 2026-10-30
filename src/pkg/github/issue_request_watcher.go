@@ -553,6 +553,23 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		body = withParentMarker(body, req.Parent)
 	}
 	if kind == "issue" {
+		// An empty dedupe checklist is not an issue (hivecommons/hive#15381):
+		// a pass that found nothing to act on goes to the hive's own log,
+		// not to the maintainers' queue. Terminal, like a prior-art refusal.
+		if f, isChecklist := ParseDedupeChecklistFindings(body); isChecklist && !f.Actionable() {
+			refusal := "not filed: dedupe checklist has no actionable findings (" + f.Summary() + "); merge-order reminders, cross-links and checked-not-duplicates are notes, not work — report them in your kick output instead"
+			c.recordWriteAudit(AuditActionAgentIssueEmptyAdvisoryRefused, meta,
+				WriteTarget{Repo: req.Repo}, "findings", f.Summary())
+			if c.priorArtFilingRecord != nil {
+				c.priorArtFilingRecord("dedupe pass found nothing to act on: "+strings.TrimSpace(req.Title), f.Summary(), req.Agent, req.Repo)
+			}
+			c.logger.Info("issue-request watcher: refused empty dedupe advisory",
+				slog.String("repo", req.Repo), slog.String("agent", req.Agent), slog.String("findings", f.Summary()))
+			c.writeIssueResult(path, IssueResponse{OK: false, Error: refusal, At: nowFn().UTC().Format(time.RFC3339)})
+			_ = os.Remove(path)
+			c.issueClearRetry(path)
+			return
+		}
 		// Prior-art filing verdict (hivecommons/hive#13879). A refusal is
 		// terminal: retrying the same request cannot change the match.
 		var refusal string

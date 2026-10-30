@@ -1,0 +1,1 @@
+- Kiosk mode (`?kiosk=1`) always renders the dark theme unless `&theme=light` is given, so a fresh headless streamer profile no longer broadcasts light mode.

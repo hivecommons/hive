@@ -1,0 +1,81 @@
+<div id="gh-auth-banner" class="gh-auth-banner" style="display:none">
+  <span id="gh-auth-msg">GitHub login required for advisory posting</span>
+  <button class="hv-btn btn-primary gh-auth-btn" id="gh-auth-btn" data-action="startGHLogin">Sign in with GitHub</button>
+</div>
+<div id="gh-auth-modal-overlay" class="gh-auth-overlay" style="display:none">
+  <div class="gh-auth-modal">
+    <h3>Sign in with GitHub</h3>
+    <p>Enter this code on GitHub to authorize Hive:</p>
+    <div style="position:relative;display:inline-block">
+      <div class="device-code" id="gh-device-code">--------</div>
+      <button class="hv-btn btn-primary btn-sm" id="gh-copy-btn" data-action="copyDeviceCode">Copy</button>
+    </div>
+    <a id="gh-verify-link" class="gh-verify-link" href="https://github.com/login/device" target="_blank" rel="noopener">Open GitHub →</a>
+    <div class="gh-poll-status" id="gh-poll-status">Waiting for authorization...</div>
+    <button class="hv-btn btn-secondary gh-cancel" data-action="cancelGHLogin">Cancel</button>
+  </div>
+</div>
+<div id="gh-setup-overlay" class="gh-auth-overlay" style="display:none">
+  <div class="gh-setup-modal">
+    <h3>GitHub App Setup Required</h3>
+    <p>Hive needs a GitHub App to authenticate. Choose an option:</p>
+    <div id="setup-option-public" class="setup-option" data-action="showSetupDetails" data-arg0="public">
+      <h4>Use the public Hive App (quickest)</h4>
+      <p>Dashboard login only. Agents can read repos but cannot create issues, PRs, or merge.</p>
+    </div>
+    <div class="setup-option" data-action="showSetupDetails" data-arg0="custom">
+      <h4>Create your own GitHub App (recommended for full ACMM)</h4>
+      <p>Full agent capabilities: issues, PRs, auto-merge. Required for ACMM levels 3-6.</p>
+    </div>
+    <div id="setup-details-public" style="display:none">
+      <div class="setup-steps">
+        <strong>Quick setup:</strong>
+        <ol>
+          <li>Open <code>hive.yaml</code> on the host (mounted at <code>/etc/hive/hive.yaml</code> inside the container)</li>
+          <li>Add to the <code>github:</code> section:<br><code>oauth_client_id: Ov23ligE2p0gjXg6xAUf</code></li>
+          <li>Restart the container: <code>docker compose restart hive</code></li>
+          <li>Click "Sign in with GitHub" again</li>
+        </ol>
+      </div>
+    </div>
+    <div id="setup-details-custom" style="display:none">
+      <div class="setup-steps">
+        <strong>Create a GitHub App:</strong>
+        <ol>
+          <li>Go to <a class="text-success" id="setup-custom-apps-link" href="https://github.com/settings/apps/new" target="_blank" rel="noopener">github.com/settings/apps/new</a> (or your org's Settings &rarr; Developer settings &rarr; GitHub Apps)</li>
+          <li>Set the app name (e.g. <code>my-hive</code>)</li>
+          <li>Homepage URL: any URL (e.g. <code>https://github.com/hivecommons/hive</code>)</li>
+          <li>Uncheck "Webhook &rarr; Active" (not needed)</li>
+          <li>Under "Device Flow", check <strong>Enable Device Flow</strong></li>
+          <li>Set the permissions below, then click "Create GitHub App"</li>
+          <li>On the app page, note the <strong>App ID</strong> and <strong>Client ID</strong></li>
+          <li>Generate a private key (.pem file) and save it to <code>./secrets/gh-app-key.pem</code></li>
+          <li>Install the app on your org/repos. If the app's <strong>Setup URL</strong> is set to this hive's <code>/gh-setup</code> URL, finishing the install in the same browser configures the Installation ID automatically; otherwise note the <strong>Installation ID</strong> from the URL after install.</li>
+          <li>Update <code>hive.yaml</code>:</li>
+        </ol>
+        <pre style="background:var(--panel-strong);color:var(--text);padding:var(--sp-5);border-radius:var(--r);font-size:var(--fs-sm);overflow-x:auto">github:
+  app_id: &lt;your-app-id&gt;
+  installation_id: &lt;your-installation-id&gt;
+  key_file: /secrets/gh-app-key.pem
+  oauth_client_id: &lt;your-client-id&gt;</pre>
+        <p class="mt-4">Restart the container after updating.</p>
+      </div>
+      <div class="setup-perms">
+        <h5>Required Permissions (Repository)</h5>
+        <ul>
+          <li><strong>Contents</strong>: Read &amp; write (clone, push branches)</li>
+          <li><strong>Issues</strong>: Read &amp; write (create/close issues)</li>
+          <li><strong>Pull requests</strong>: Read &amp; write (create/merge PRs)</li>
+          <li><strong>Metadata</strong>: Read-only (required by GitHub)</li>
+          <li><strong>Checks</strong>: Read-only (monitor CI status)</li>
+          <li><strong>Actions</strong>: Read-only (monitor workflow runs)</li>
+        </ul>
+        <h5>Required Permissions (Organization)</h5>
+        <ul>
+          <li><strong>Members</strong>: Read-only (identify contributors)</li>
+        </ul>
+      </div>
+    </div>
+    <button class="hv-btn btn-secondary gh-cancel" data-action="gh0">Close</button>
+  </div>
+</div>

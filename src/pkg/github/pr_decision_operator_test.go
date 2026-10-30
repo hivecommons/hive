@@ -10,6 +10,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
@@ -103,6 +104,102 @@ func TestRecordOperatorPullRequestDecisionRecordsChangeRequestAndReplies(t *test
 	}
 	if facts := prDecisionFacts(t, c2); len(facts) != 1 || facts[0].Instruction {
 		t.Fatalf("stage facts = %+v, want one PRDecided without an instruction", facts)
+	}
+}
+
+func TestRecordOperatorPullRequestDecisionRefusesBodyOnlyClankerEvidence(t *testing.T) {
+	for _, marker := range []struct{ name, body string }{
+		{"origin", "<!-- hive:origin hive=contributors-hive -->"},
+		{"attribution", "— hive: backend=codex"},
+		{"identity", "🐝 **Hive Agent**"},
+	} {
+		for _, humanLabel := range []bool{false, true} {
+			t.Run(marker.name+"/human-label="+strconv.FormatBool(humanLabel), func(t *testing.T) {
+				labels := []string{PRNeedsDecisionStageLabel, issueNeedsHumanLabel}
+				if humanLabel {
+					labels = append(labels, "author/human")
+				}
+				pr := parkedPR(77, "someone", labels)
+				pr.Body += "\n\n" + marker.body
+				c, rec := newUnparkPRClient(t, []unparkWireIssue{pr}, nil)
+				store := review.NewHumanChangeRequests("")
+
+				if _, err := c.RecordOperatorPullRequestDecision(context.Background(), "org/repo", 77, "maintainer", "drop the workflow change", store); !errors.Is(err, ErrPullRequestNotHiveAuthored) {
+					t.Fatalf("body marker alone: err = %v, want ErrPullRequestNotHiveAuthored", err)
+				}
+				if store.Len() != 0 {
+					t.Fatal("refused direction must not be stored")
+				}
+				if len(rec.posted[77])+len(rec.added[77])+len(rec.removed[77]) != 0 {
+					t.Fatalf("refused direction must not write to GitHub: comments=%v added=%v removed=%v", rec.posted[77], rec.added[77], rec.removed[77])
+				}
+				if facts := prDecisionFacts(t, c); len(facts) != 0 {
+					t.Fatalf("refused direction must not submit a stage decision: %+v", facts)
+				}
+			})
+		}
+	}
+}
+
+func TestRecordOperatorPullRequestDecisionConfiguredAuthorLabels(t *testing.T) {
+	custom := authorkind.Names{Human: "author/person", Clanker: "author/relay", Hive: "author/local"}
+	for _, tc := range []struct {
+		name         string
+		names        authorkind.Names
+		label        string
+		selfAuthored bool
+		refused      bool
+	}{
+		{name: "default clanker", label: "author/clanker"},
+		{name: "default hive", label: "author/hive", selfAuthored: true},
+		{name: "configured clanker", names: custom, label: custom.Clanker},
+		{name: "configured hive", names: custom, label: custom.Hive, selfAuthored: true},
+		{name: "partial config defaults clanker", names: authorkind.Names{Hive: custom.Hive}, label: "author/clanker"},
+		{name: "partial config defaults hive", names: authorkind.Names{Clanker: custom.Clanker}, label: "author/hive", selfAuthored: true},
+		{name: "old clanker name", names: custom, label: "author/clanker", refused: true},
+		{name: "old hive name", names: custom, label: "author/hive", refused: true},
+		{name: "configured human", names: custom, label: custom.Human, refused: true},
+		{name: "unclassified", names: custom, refused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := parkedPR(78, "contributor", []string{PRNeedsDecisionStageLabel, tc.label})
+			pr.Body += "\n\n— hive: backend=codex"
+			c, rec := newUnparkPRClient(t, []unparkWireIssue{pr}, nil)
+			// Install before changing names, as a live config reload would.
+			names := authorkind.Names{}
+			c.SetAuthorKindLabels(func() authorkind.Names { return names })
+			names = tc.names
+			store := review.NewHumanChangeRequests("")
+			event, err := c.RecordOperatorPullRequestDecision(context.Background(), "org/repo", 78, "maintainer", liveDecisionText, store)
+			if tc.refused {
+				if !errors.Is(err, ErrPullRequestNotHiveAuthored) {
+					t.Fatalf("direction: err = %v, want ErrPullRequestNotHiveAuthored", err)
+				}
+				if store.Len() != 0 || len(rec.posted[78])+len(rec.added[78])+len(rec.removed[78]) != 0 || len(prDecisionFacts(t, c)) != 0 {
+					t.Fatal("refused direction must not write a decision, comment, label or stage fact")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("direction: %v", err)
+			}
+			wantContributor := "contributor"
+			if tc.selfAuthored {
+				wantContributor = ""
+			}
+			if event.ToContributor != wantContributor || event.HeadSHA != liveDecisionHead {
+				t.Fatalf("event = %+v, want ToContributor %q", event, wantContributor)
+			}
+			if got, ok := store.For("org/repo", 78, liveDecisionHead); !ok || got.Body != liveDecisionText {
+				t.Fatalf("stored request = %+v, ok=%v", got, ok)
+			}
+			if facts := prDecisionFacts(t, c); len(facts) != 1 || facts[0].SelfAuthored != tc.selfAuthored || !facts[0].Instruction {
+				t.Fatalf("stage facts = %+v, want SelfAuthored=%v instruction", facts, tc.selfAuthored)
+			}
+			if len(rec.posted[78]) != 1 {
+				t.Fatalf("expected one decision reply, got %v", rec.posted[78])
+			}
+		})
 	}
 }
 

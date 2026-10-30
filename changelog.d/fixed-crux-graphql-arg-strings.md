@@ -1,0 +1,1 @@
+- crux proxy: `topLevelMutationFields` now reads block strings and `#` comments inside GraphQL argument lists the same way it does in selection sets, so a `"""..."""` holding a lone quote (or a commented quote) in a mutation's arguments can no longer desynchronise the scan and hide later top-level fields from the capability check (hivecommons/crux#54)

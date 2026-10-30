@@ -18,6 +18,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
@@ -187,6 +188,10 @@ type Client struct {
 	// so the self-approval guard treats a base and its replicas as one
 	// author. nil compares exact lane names.
 	agentBase func(agent string) string
+	// relayKnown reports that a login has a contributor profile on this
+	// hive (runs a relay that targets it), so a PR under that login is an
+	// agent's, not a person's — see SetRelayKnownFunc.
+	relayKnown func(login string) bool
 	// priorArtFiling* enforce the prior-art filing verdict on relayed issue
 	// creates (issue_request_prior_art.go, hivecommons/hive#13879).
 	priorArtFilingGate   func() config.PriorArtGateConfig
@@ -253,6 +258,10 @@ type Client struct {
 	// to do for, keyed "owner/repo#n". Guarded by sharedCIRerunMu.
 	sharedCIRerunSeen map[string]sharedCIRerunSeen
 	sharedCIRerunMu   sync.Mutex
+	// sharedCIRerunForbidden records when the App was last refused a rerun in
+	// a repo (403 "Resource not accessible by integration"), keyed
+	// "owner/repo". Guarded by sharedCIRerunMu.
+	sharedCIRerunForbidden map[string]time.Time
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
@@ -412,6 +421,9 @@ type Client struct {
 	// issueStage resolves the live `governor.labels.stage` policy for the
 	// issue stage reconciler; nil disables it.
 	issueStage func() IssueStagePolicy
+	// authorKindLabels resolves the live governor.labels.author names for
+	// dashboard decisions; nil uses the default names.
+	authorKindLabels func() authorkind.Names
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
@@ -628,6 +640,29 @@ func (c *Client) SetAgentBaseFunc(fn func(agent string) string) {
 	c.agentBase = fn
 }
 
+// SetRelayKnownFunc tells the client which logins are relay contributors
+// registered on this hive. The duplicate-fix sweep uses it to tell the
+// hive's own contributor agent (closable, writes allowed as a hive item)
+// from a person who happens to have no author/* label yet
+// (hivecommons/hive#15469: a relay's duplicate PR read as a person's, so
+// the gate refused the notice and the pair rode the merge train together).
+func (c *Client) SetRelayKnownFunc(fn func(login string) bool) {
+	if c == nil {
+		return
+	}
+	c.relayKnown = fn
+}
+
+// IsRelayContributorLogin reports whether login runs a registered relay on
+// this hive; false when no registry is installed.
+func (c *Client) IsRelayContributorLogin(login string) bool {
+	login = strings.TrimSpace(login)
+	if c == nil || c.relayKnown == nil || login == "" {
+		return false
+	}
+	return c.relayKnown(login)
+}
+
 func (c *Client) agentBaseName(agent string) string {
 	agent = strings.TrimSpace(agent)
 	if agent == "" || c == nil || c.agentBase == nil {
@@ -787,6 +822,9 @@ type Issue struct {
 	// stage/030-pr-in-progress from stage/020-claimed; the claim's kind
 	// alone never does (hivecommons/hive#13069).
 	ClaimPRStarted bool `json:"claim_pr_started,omitempty"`
+	// ClaimHive is the marker's hive= — the hive that recorded the live
+	// claim — when the claim came from a `hive:claim` marker; empty otherwise.
+	ClaimHive string `json:"claim_hive,omitempty"`
 	// ClaimAdvisory is set when the issue carries a live contributor claim
 	// the live-claim filter chose NOT to honour — the issue is in contributor
 	// cool-off, or contributor claims have kept hive agents off it past the
@@ -893,7 +931,13 @@ type PullRequest struct {
 	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
-	CIStatus       string `json:"ci_status"`
+	// BaseDiffEmpty is true when the per-PR detail fetch reported zero
+	// changed files, additions and deletions against the base: the PR
+	// carries nothing the base does not already have (an adoption whose
+	// original landed another way, hivecommons/hive#15499). Only the
+	// single-PR GET carries these counts; false until EnrichCIStatus ran.
+	BaseDiffEmpty bool   `json:"base_diff_empty,omitempty"`
+	CIStatus      string `json:"ci_status"`
 	// CIRealCheckRuns is the count of non-meta check runs observed on the head.
 	// CIRealCheckRunsKnown distinguishes an observed metadata-only head from
 	// older/test payloads that did not collect this evidence.
@@ -1758,11 +1802,11 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		switch standingMetaIssueKindFor(issue.GetTitle(), safeGetLogin(issue.GetUser()), labels) {
 		case standingMetaHiveAdvisory:
 			breakdown.HiveAdvisory++
-			details = append(details, repoWorkIssue(repo, issue, labels, "hive_advisory", "Hive advisory report"))
+			details = append(details, c.workIssue(repo, issue, labels, "hive_advisory", "Hive advisory report"))
 			continue
 		case standingMetaDependencyDashboard:
 			breakdown.DependencyDashboard++
-			details = append(details, repoWorkIssue(repo, issue, labels, "dependency_dashboard", "Dependency dashboard control panel"))
+			details = append(details, c.workIssue(repo, issue, labels, "dependency_dashboard", "Dependency dashboard control panel"))
 			continue
 		}
 
@@ -1794,7 +1838,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if c.isExempt(labels) {
 			breakdown.Filtered++
 			breakdown.Exempt++
-			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", "Exempt label"))
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", "Exempt label"))
 			continue
 		}
 		// A tracking/archive issue (hive/tracking label, hive:tracking
@@ -1804,7 +1848,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if _, tracking := isTrackingIssue(issue); tracking {
 			breakdown.Filtered++
 			breakdown.Tracking++
-			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", trackingFilterReason))
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", trackingFilterReason))
 			continue
 		}
 		// Blocked on an unmerged PR (hivecommons/hive#13093): out of the
@@ -1815,7 +1859,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			row := repoWorkIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
 			row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
 			row.RecheckDone = blockedRecheckDone(issue.GetBody())
 			details = append(details, row)
@@ -1824,13 +1868,13 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
 			breakdown.Filtered++
 			breakdown.ReporterConfirmation++
-			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", issueNeedsReporterConfirmationLabel))
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", issueNeedsReporterConfirmationLabel))
 			continue
 		}
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
-			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", suppress))
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", suppress))
 			continue
 		}
 
@@ -1855,7 +1899,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			if !ra.AdmitsReporter(labels, safeGetLogin(issue.GetUser()), issue.GetAuthorAssociation()) {
 				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra, reporterTrustWaitBudget)
 				breakdown.ReporterTriage++
-				details = append(details, repoWorkIssue(repo, issue, labels, workBucketReporterTriage, reporterTriageAwaitingReason))
+				details = append(details, c.workIssue(repo, issue, labels, workBucketReporterTriage, reporterTriageAwaitingReason))
 				continue
 			}
 			labels = c.clearReporterTrustAwaiting(ctx, repo, issue, labels, ra)
@@ -1863,7 +1907,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 
 		if !issueFilter.Admits(labels) {
 			breakdown.Filtered++
-			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", "Project issue filter"))
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", "Project issue filter"))
 			continue
 		}
 
@@ -2505,6 +2549,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
 		pr.MergeableState = full.GetMergeableState()
 		pr.MaintainerCanModify = full.GetMaintainerCanModify()
+		pr.BaseDiffEmpty = PRChangedFilesClaimsEmpty(full)
 		if base := full.GetBase().GetSHA(); base != "" {
 			pr.BaseSHA = base
 		}
@@ -4587,23 +4632,29 @@ func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hi
 }
 
 type RepoWorkIssue struct {
-	Repo      string    `json:"repo"`
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Author    string    `json:"author,omitempty"`
-	Labels    []string  `json:"labels,omitempty"`
-	Assignees []string  `json:"assignees,omitempty"`
-	CreatedAt time.Time `json:"created_at,omitzero"`
-	UpdatedAt time.Time `json:"updated_at,omitzero"`
-	URL       string    `json:"url,omitempty"`
-	Bucket    string    `json:"bucket"`
-	Reason    string    `json:"reason,omitempty"`
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Author string `json:"author,omitempty"`
+	// AuthorIsHuman is Issue.AuthorIsHuman for a sidelined issue, so the
+	// tracker can still classify the reporter of a row parked in a work
+	// bucket (reporter triage, filtered, …) instead of rendering it with an
+	// unknown author kind.
+	AuthorIsHuman bool      `json:"author_is_human,omitempty"`
+	Labels        []string  `json:"labels,omitempty"`
+	Assignees     []string  `json:"assignees,omitempty"`
+	CreatedAt     time.Time `json:"created_at,omitzero"`
+	UpdatedAt     time.Time `json:"updated_at,omitzero"`
+	URL           string    `json:"url,omitempty"`
+	Bucket        string    `json:"bucket"`
+	Reason        string    `json:"reason,omitempty"`
 	// ClaimKind, ClaimedBy and ClaimPRStarted are Issue.ClaimKind /
 	// Issue.ClaimedBy / Issue.ClaimPRStarted, copied for the issue stage
 	// reconciler.
 	ClaimKind      string `json:"claim_kind,omitempty"`
 	ClaimedBy      string `json:"claimed_by,omitempty"`
 	ClaimPRStarted bool   `json:"claim_pr_started,omitempty"`
+	ClaimHive      string `json:"claim_hive,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -4625,6 +4676,10 @@ type RepoWorkIssue struct {
 	// RecheckDone is set once the soak triage has stamped
 	// `<!-- hive:recheck-done -->` into the body (hivecommons/hive#13311).
 	RecheckDone bool `json:"recheck_done,omitempty"`
+	// Advisory is the body-derived advisory classification (dedupe
+	// checklist marker, "Decision required: no"), read here because the
+	// body itself is not carried (hivecommons/hive#15381).
+	Advisory *IssueAdvisory `json:"advisory,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
@@ -4634,6 +4689,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		Number:          issue.Number,
 		Title:           issue.Title,
 		Author:          issue.Author,
+		AuthorIsHuman:   issue.AuthorIsHuman,
 		Labels:          append([]string(nil), issue.Labels...),
 		Assignees:       append([]string(nil), issue.Assignees...),
 		CreatedAt:       issue.CreatedAt,
@@ -4644,11 +4700,13 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		ClaimKind:       issue.ClaimKind,
 		ClaimedBy:       issue.ClaimedBy,
 		ClaimPRStarted:  issue.ClaimPRStarted,
+		ClaimHive:       issue.ClaimHive,
 		LinkedPRs:       append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext:    issue.ClaimContext,
 		Children:        issue.Children,
 		TrackerProgress: progress,
 		IsTracker:       RendersAsTracker(issue.IsTracker, issue.Labels, progress),
+		Advisory:        IssueAdvisoryFromBody(issue.Body),
 	}
 }
 
@@ -4662,6 +4720,16 @@ func appendRepoWorkIssueDetail(result *ActionableResult, issue Issue, bucket, re
 	details := result.WorkDetailsByRepo[issue.Repo]
 	details.Issues = append(details.Issues, repoWorkIssueFromIssue(issue, bucket, reason))
 	result.WorkDetailsByRepo[issue.Repo] = details
+}
+
+// workIssue is repoWorkIssue with the client's author classification, so a
+// sidelined issue carries AuthorIsHuman the way an actionable one does.
+func (c *Client) workIssue(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
+	row := repoWorkIssue(repo, issue, labels, bucket, reason)
+	if issue != nil {
+		row.AuthorIsHuman = c.isHumanAuthor(issue.GetUser())
+	}
+	return row
 }
 
 func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
@@ -4683,6 +4751,7 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 		TrackerProgress: progress,
 		Bucket:          bucket,
 		Reason:          reason,
+		Advisory:        IssueAdvisoryFromBody(issue.GetBody()),
 	}
 }
 

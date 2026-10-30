@@ -67,15 +67,15 @@ func TestReviewGateKeepsItsSubgroups(t *testing.T) {
 	}
 	section := rest[:next]
 
-	for _, want := range []string{`<div class="config-subgroup">Merge gate</div>`, `<div class="config-subgroup">Reviewers</div>`} {
+	for _, want := range []string{`<div class="config-subgroup">Merge queue</div>`, `<div class="config-subgroup">Reviewers</div>`} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Review Gate section is missing %s — its controls read as one flat list again", want)
 		}
 	}
 
 	// Ordering matters: the gate controls come before the reviewer controls.
-	if strings.Index(section, "Merge gate") > strings.Index(section, ">Reviewers<") {
-		t.Error("the Merge gate sub-group must precede Reviewers")
+	if strings.Index(section, "Merge queue") > strings.Index(section, ">Reviewers<") {
+		t.Error("the Merge queue sub-group must precede Reviewers")
 	}
 }
 

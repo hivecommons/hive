@@ -46,6 +46,7 @@ type sharedCIRerunFake struct {
 	reruns       []int64
 	posted       map[int][]string
 	commentLists map[int]int
+	forbidRerun  bool
 }
 
 func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*sharedCIRerunPR) (*httptest.Server, *sharedCIRerunFake) {
@@ -134,6 +135,11 @@ func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*shar
 		case rerunRE.MatchString(r.URL.Path) && r.Method == http.MethodPost:
 			id, _ := strconv.ParseInt(rerunRE.FindStringSubmatch(r.URL.Path)[1], 10, 64)
 			f.reruns = append(f.reruns, id)
+			if f.forbidRerun {
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"})
+				return
+			}
 			w.WriteHeader(http.StatusCreated)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -287,5 +293,29 @@ func TestPendingSharedCIReruns(t *testing.T) {
 		if got := pendingSharedCIReruns(tc.texts, closed); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestSweepSharedCIReruns_ForbiddenStopsAndIsRememberedPerRepo(t *testing.T) {
+	now := sharedCIRerunNow()
+	issues := []sharedCIRerunIssue{{Number: 800, Title: "[shared-ci] test failing across org/repo", ClosedAt: now.Add(-time.Hour)}}
+	marker := []string{"<!-- hive-shared-ci-800 -->"}
+	prs := []*sharedCIRerunPR{
+		{Number: 1, SHA: "aaaaaaaaaa", Comments: marker, Runs: []sharedCIRerunRun{failedRun(11, 1), failedRun(12, 2), failedRun(13, 3)}},
+		{Number: 2, SHA: "bbbbbbbbbb", Comments: marker, Runs: []sharedCIRerunRun{failedRun(21, 1), failedRun(22, 2)}},
+	}
+	srv, fake := newSharedCIRerunFake(t, issues, prs)
+	fake.forbidRerun = true
+	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	res, err := c.SweepSharedCIReruns(context.Background(), SharedCIRerunOptions{Now: sharedCIRerunNow})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	reruns, posted, _ := fake.snap()
+	if len(reruns) != 1 {
+		t.Fatalf("reruns = %v, want exactly one POST across both PRs", reruns)
+	}
+	if len(res.Rerun) != 0 || len(posted[1]) != 0 || len(posted[2]) != 0 {
+		t.Fatalf("expected no rerun result or marker comment: result=%+v posted=%v", res, posted)
 	}
 }

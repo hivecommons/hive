@@ -82,7 +82,7 @@ func stageTrackerStagePhrase(stage stagelabels.Stage) string {
 	case stagelabels.AdoptedByHive:
 		return "adopted by hive"
 	case stagelabels.AwaitingMergeAdmission:
-		return "at the merge gate"
+		return "at the merge queue"
 	case stagelabels.ReadyForHumanMerge:
 		return "ready for human merge"
 	case stagelabels.PreMergeSoak:

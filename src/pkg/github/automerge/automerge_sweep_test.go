@@ -425,7 +425,7 @@ func TestExecuteMergeEffectReconcilesUnknownOpenPRBeforeRetry(t *testing.T) {
 		Actor:  "automerge",
 		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "self-authored"},
 	}
-	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, func(context.Context) (effects.Result, error) {
+	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, "", func(context.Context) (effects.Result, error) {
 		return effects.Result{Provenance: "merge-sha"}, nil
 	})
 	if err != nil {
@@ -1043,6 +1043,55 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
 	if err == nil || reason != "merge-failed" {
 		t.Fatalf("trySweepQueuedPR reason=%q err=%v, want merge-failed error", reason, err)
+	}
+}
+
+func TestTrySweepQueuedPRRequiredChecksExpectedIsRemembered(t *testing.T) {
+	var merges int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{
+				"number": 7, "state": "open", "mergeable_state": "clean", "mergeable": true,
+				"user":   map[string]string{"login": "alice"},
+				"head":   map[string]string{"sha": "sha7"},
+				"labels": []map[string]string{{"name": hgithub.AutoMergeQueuedLabel}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": testHiveAppBotLogin}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{{"name": "build", "status": "completed", "conclusion": "success"}}})
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
+			merges++
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"message": "4 of 4 required status checks are expected."})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	// Two passes against the same head: the first is refused and remembered,
+	// the second must skip the merge call on the memory alone.
+	for pass := 1; pass <= 2; pass++ {
+		_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
+		if err != nil || reason != autoMergeReasonChecksExpected {
+			t.Fatalf("pass %d: trySweepQueuedPR reason=%q err=%v, want %q without error", pass, reason, err, autoMergeReasonChecksExpected)
+		}
+	}
+	if merges != 1 {
+		t.Fatalf("merges = %d, want 1 (the remembered refusal must not be re-PUT)", merges)
+	}
+	attempt := mergeAttempt{owner: "acme", repo: "widget", number: 7, head: "sha7", state: "clean"}
+	if got := c.knownMergeRefusal(attempt); got != autoMergeReasonChecksExpected {
+		t.Fatalf("knownMergeRefusal = %q, want %q for the queued head", got, autoMergeReasonChecksExpected)
+	}
+	// A check reporting moves mergeable_state, which re-arms the merge call.
+	attempt.state = "unstable"
+	if got := c.knownMergeRefusal(attempt); got != "" {
+		t.Fatalf("knownMergeRefusal = %q after mergeable_state changed, want re-armed", got)
 	}
 }
 

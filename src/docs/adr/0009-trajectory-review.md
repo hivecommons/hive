@@ -2,6 +2,15 @@
 
 Status: Accepted (retroactive)
 
+**Current behavior:** periodically review an agent's recent transcript for goal
+drift; pause and alert on divergence by default. Review-service failures do not
+halt agents. Only a proven-idle agent with no output since its last review may
+skip an interval, and overdue reviews always run. The addendum below gives the
+exact skip predicate; an unchanged transcript alone never qualifies.
+
+A **lane** is a recurring category of agent work. The **governor tick** is
+the scheduler's periodic evaluation, which decides when this review is due.
+
 ## Context
 
 Per-action guards can miss goal drift: a session may take individually ordinary
@@ -71,6 +80,6 @@ Every decision is recorded with a reason (`first-review`, `overdue`, `active`,
 `/metrics` as `hive_trajectory_reviews_total{decision}`,
 `hive_trajectory_skipped_total{reason}` and `hive_trajectory_ran_total{reason}`.
 
-Consequence: token cost now scales with agents that are actually working rather
-than with fleet size, without weakening the invariant that a running agent is
-always reviewed on cadence.
+Consequence: token cost scales with agents actually working rather than fleet
+size. Active agents remain reviewed on cadence; only proven-idle agents may
+skip, and even they are reviewed once the overdue limit is reached.

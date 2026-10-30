@@ -1,0 +1,178 @@
+    :root {
+      /* ── Authoritative design tokens (hub-aligned dark palette) ── */
+      --bg: var(--surface-0); --bg-soft: var(--surface-1);
+      --panel: var(--surface-2); --panel-strong: var(--surface-3);
+      --text: #f6f8fb; --muted: var(--text-muted); --line: var(--line-strong);
+      /* Ghost-button / clickable-tile outlines. Same as --line in dark;
+         remapped a step darker in light mode where --line hairlines all
+         but vanish on white. */
+      --line-strong: #263545;
+      /* --amber is brand/chrome ONLY — never use it for status. */
+      --amber: var(--brand);
+      /* Semantic status colors (agent + governor state) — must stay distinct. */
+      --green: var(--status-ok); --blue: var(--status-info); --red: var(--status-error);
+      --yellow: var(--status-warn); /* status warning — warm ochre, distinguishable from brand amber */
+      --orange: var(--status-attention); /* status alert — between warning yellow and critical red */
+      --indigo: var(--acmm-level-4); /* on-demand agent state */
+      --cyan: var(--acmm-level-2); --purple: var(--acmm-level-5); /* desaturated toward the hub palette */
+      /* Radii / shadows / fonts — defined in Phase 0, applied in later phases. */
+      --radius-sm: var(--r-sm); --radius: var(--r); --radius-lg: var(--r-lg);
+      --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.5);
+      --modal-gap: var(--sp-8);
+      --modal-scrim: rgba(0, 0, 0, 0.55);
+      --modal-scrim-strong: rgba(0, 0, 0, 0.78);
+      --overlay-scrim: var(--modal-scrim);
+      --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.45); /* toasts / floating chrome */
+      --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      /* Type ramp — section headers / card titles / labels only; body-copy sizes stay. */
+      --fs-xs: .68rem; --fs-sm: .75rem; --fs-base: .82rem;
+      --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem;
+      /* Touch floor: iOS Safari zooms the page when a focused control is under 16px. */
+      --fs-touch: 16px;
+      /* Mobile icon-only buttons (section ?/⚙/grip, topbar chips): a fixed
+         square tap target with a glyph sized to fill it. Width AND height are
+         pinned so a touch-target min-size can never inflate a round button
+         into a circle several times its glyph. */
+      --tap-target: 40px;
+      --tap-glyph: 16px;
+      --tap-ring: 28px;
+      /* Terminal surface — terminals always read as terminals: near-black
+         in dark mode, deep neutral (never white) in light mode. The
+         fg/muted/cyan companions are mode-independent because the
+         surface stays dark in both modes. */
+      --terminal-bg: var(--surface-terminal);
+      --terminal-line: #2a3442;
+      --terminal-fg: #d7dfe9;
+      --terminal-muted: #8b98a9;
+      --terminal-cyan: var(--acmm-level-2);
+      /* Layout */
+      --sidebar-w: 302px;
+      /* ── Legacy aliases — every old token name keeps working ── */
+      --surface: var(--panel);
+      --border: var(--line);
+      --fg: var(--text);        /* was referenced but never defined */
+      --card-bg: var(--panel);  /* was referenced only via var(--card-bg, #161b22) fallback */
+      --accent: var(--blue);    /* mode accent: blue in dark, remapped to red in light */
+      --oc-accent: var(--red);
+      --oc-accent-light: rgba(255, 126, 126, 0.12);
+      --green-bg: rgba(116, 223, 154, 0.15); --green-border: rgba(116, 223, 154, 0.35);
+      --red-bg: rgba(255, 126, 126, 0.15); --red-border: rgba(255, 126, 126, 0.35);
+      --prt-actor-hive: var(--green); --prt-actor-human: var(--purple); --prt-actor-other: var(--muted);
+      --band-unclaimed: #8fb4d9;
+      --band-claimed: #2dd4bf;
+      --band-agent-filed: #c084fc;
+      --band-needs-human: #fb923c;
+      --band-confirm-close: #a3e635;
+      --band-merge-eligible: #22c55e;
+      --band-blocked: #f87171;
+      --band-in-review: #facc15;
+      --band-open: #a78bfa;
+      --band-draft: #94a3b8;
+      --anim-chart-slow: 1200ms;
+      --anim-band-grow: 900ms;
+      --anim-kpi-count: 800ms;
+      --anim-chart-stagger: 150ms;
+      --anim-band-stagger: 80ms;
+      --anim-ease-out-cubic: cubic-bezier(0.22, 1, 0.36, 1);
+      --navbar-sticky-height: 48px;
+      --navbar-sticky-z: 9400;
+      --navbar-motion-duration: var(--overview-transition-duration, 600ms);
+      --bee-orbit-duration: 11s;
+      --navbar-shadow: 0 1px 0 color-mix(in srgb, var(--line) 42%, transparent), 0 8px 24px color-mix(in srgb, var(--bg) 42%, transparent);
+    }
+    * { margin: var(--sp-0); padding: var(--sp-0); box-sizing: border-box; }
+    /* ── Deliberate monospace: data surfaces only. UI chrome uses --font-ui. ── */
+    code, pre { font-family: var(--font-mono); }
+    .mono { font-family: var(--font-mono); }
+    /* Section eyebrow label — hub convention (amber, uppercase, tracked). */
+    .section-label {
+      font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber);
+    }
+    /* The overflow guard has to live on the root element, not just on body.
+       A too-wide descendant still grows documentElement.scrollWidth when only
+       body clips, and the document then scrolls sideways — that is the blank
+       strip down the right edge on phones, with the page content ending
+       short of it. Belt-and-braces: clip at both levels.
+       NOTE: do not write literal HTML tag syntax in this stylesheet's
+       comments. dashboard/build-snapshot.mjs splits the page with
+       sourceHtml.indexOf('<' + 'body>'), so a tag-looking string here makes
+       the snapshot builder cut mid-stylesheet and dump the CSS into the page
+       as visible text. */
+    html { overflow-x: hidden; max-width: 100%; }
+    body {
+      font-family: var(--font-ui);
+      background: var(--bg); color: var(--text);
+      /* Bottom clearance keeps the last rows scrollable clear of the fixed
+         chat FAB (48px + 24px offset + breathing room — #7160); the phone
+         media query overrides it with its own FAB-sized clearance. */
+      padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
+      margin: var(--sp-0); min-height: 100vh; min-height: 100dvh; max-width: 100vw; overflow-x: hidden;
+    }
+    [data-dashboard-section], #governor, #token-panel, #cost-panel, #lifecycle-section { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
+    h1 { font-size: var(--fs-xl); margin-bottom: var(--sp-7); display: flex; align-items: center; }
+    h1 span.bee { font-size: var(--fs-2xl); margin-right: var(--sp-4); }
+    .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: var(--sp-5); }
+    /* Pill badge. .agent-card.status-stale reuses the class name for its pulse
+       animation only — without the :not() the pill recipe turned a stale agent
+       card into an inline-flex row that overflowed the viewport. */
+    .status-stale:not(.agent-card) {
+      display: inline-flex; align-items: center; gap: var(--sp-2);
+      margin-left: var(--sp-4); padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--status-warn) 45%, transparent);
+      border-radius: var(--r-pill); background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+      color: var(--status-warn); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap;
+    }
+    .status-stale[hidden] { display: none; }
+    .git-version { font-size: 0.65rem; color: var(--muted); margin-left: 10px; font-weight: 400; font-family: var(--font-mono); }
+    .git-version .git-behind { color: var(--yellow); font-weight: 600; white-space: nowrap; }
+    /* Release channel + last upgrade attempt panel (#7092). */
+    #dash-notices { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
+    #dash-notices:empty { display: none; }
+    .release-status { margin: 6px 0 10px; padding: var(--sp-3) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.35; display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
+    .release-status-row { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .release-status-row + .release-status-row { margin-top: var(--sp-0); }
+    .release-status-row--selector { display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .release-status-row--info { color: var(--accent); }
+    .release-status-row--warn { color: var(--yellow, #d4a017); }
+    .release-status-row--success { color: var(--green); font-weight: 600; }
+    .release-status-row--danger { color: var(--red); font-weight: 600; }
+    .release-status-row--muted { color: var(--muted); font-weight: 600; }
+    .release-status-detail { color: var(--muted); line-height: 1.35; }
+    .release-status-hint { color: var(--muted); border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-0) var(--sp-2); font-size: var(--fs-xs); cursor: help; }
+    .release-channel-select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 3px 8px; }
+    .release-status code { font-family: var(--font-mono); font-size: 0.9em; }
+    .dashboard-notice { border-radius: 8px; padding: var(--sp-5) var(--sp-6); margin-bottom: var(--sp-4); display: flex; align-items: center; gap: 10px; font-size: var(--fs-base); }
+    .dashboard-notice__icon { font-size: var(--fs-lg); }
+    .dashboard-notice__body { flex: 1; color: var(--text); }
+    .dashboard-notice--planning { background: rgba(124,58,237,0.10); border: 1px solid rgba(124,58,237,0.32); }
+    .dashboard-notice--info { background: color-mix(in srgb, var(--status-info) 12%, var(--panel)); border: 1px solid var(--status-info); }
+    .git-version .git-dirty { color: var(--yellow); }
+    .header-spacer { flex: 1; }
+    /* .widget-dl / .layout-toggle — ghost buttons (system recipe at end of
+       the style block); only placement-specific properties live here. */
+    .widget-dl { display: inline-flex; align-items: center; text-decoration: none; margin-left: auto; margin-right: auto; white-space: nowrap; }
+    .layout-toggle:not(.nav-chip) { margin-left: var(--sp-5); margin-right: var(--sp-4); }
+    /* Icon-only theme toggle: square-ish, centered glyph, larger for tap target. */
+    .layout-toggle:not(.nav-chip) { min-width: 34px; padding-left: var(--sp-4); padding-right: var(--sp-4); font-size: 1rem; line-height: 1; text-align: center; }
+
+    /* ── Light mode ── */
+    body.light-mode {
+      /* Light mode = shared token remap in tokens.css. */
+      --oc-accent-light: rgba(220,38,38,0.08);
+      --green-bg: #f0fdf4; --green-border: #bbf7d0;
+      --red-bg: #fef2f2; --red-border: #fecaca;
+      --band-unclaimed: #2563eb;
+      --band-claimed: #0f766e;
+      --band-agent-filed: #7c3aed;
+      --band-needs-human: #c2570f;
+      --band-confirm-close: #65a30d;
+      --band-merge-eligible: #15803d;
+      --band-blocked: #dc2626;
+      --band-in-review: #a16207;
+      --band-open: #6d28d9;
+      --band-draft: #475569;
+      background: var(--bg); color: var(--text);
+    }
+    body.light-mode .connection { display: none; }
+

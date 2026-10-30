@@ -303,6 +303,93 @@ assert_exit0 $rc_multi "$out_multi" "multiple shard profiles merge correctly"
 assert_contains "$out_multi" "Patch coverage: 100.0%" "both functions covered across shards"
 
 # ==============================================================================
+# Test 7: Comment upsert without the gh CLI (self-hosted runner images)
+# ==============================================================================
+# The v5 coverage job runs on the self-hosted pool, whose images do not ship
+# gh; the script must still post/update the comment over plain HTTPS with
+# GH_TOKEN against GITHUB_API_URL instead of dropping it with a ::notice.
+printf '\n--- Test 7: comment upsert without gh on PATH ---\n'
+API_LOG="$TMP/api_calls.log"
+API_PORT_FILE="$TMP/api_port"
+rm -f "$API_LOG" "$API_PORT_FILE"
+python3 - "$API_LOG" "$API_PORT_FILE" <<'PYEOF' &
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+log_path, port_path = sys.argv[1], sys.argv[2]
+existing = {"GET /repos/example/hive/issues/42/comments": []}
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def _record(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n).decode("utf-8") if n else ""
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{self.command} {self.path} auth={self.headers.get('Authorization','')}\n{body}\n")
+        return body
+    def _reply(self, obj):
+        data = json.dumps(obj).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+    def do_GET(self):
+        self._record()
+        if self.path.startswith("/repos/example/hive/issues/42/comments"):
+            self._reply(existing["GET /repos/example/hive/issues/42/comments"])
+        else:
+            self._reply([])
+    def do_POST(self):
+        body = self._record()
+        existing["GET /repos/example/hive/issues/42/comments"] = [{"id": 555, "body": json.loads(body)["body"]}]
+        self._reply({"id": 555})
+    def do_PATCH(self):
+        self._record()
+        self._reply({"id": 555})
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_path, "w") as f:
+    f.write(str(srv.server_address[1]))
+srv.serve_forever()
+PYEOF
+API_PID=$!
+for _ in $(seq 1 50); do [[ -s "$API_PORT_FILE" ]] && break; sleep 0.1; done
+if [[ ! -s "$API_PORT_FILE" ]]; then
+  bad "stub GitHub API server did not start"
+else
+  API_URL="http://127.0.0.1:$(cat "$API_PORT_FILE")"
+  NO_GH_BIN="$TMP/no_gh_bin"
+  mkdir -p "$NO_GH_BIN"
+  for tool in python3 git bash env awk sed grep cat dirname basename mktemp rm sort wc head tail; do
+    p="$(command -v "$tool" 2>/dev/null || true)"
+    [[ -n "$p" ]] && ln -sf "$p" "$NO_GH_BIN/$tool"
+  done
+  git -C "$REPO_DIR" checkout -q pr-uncovered
+  run_without_gh() {
+    (cd "$REPO_DIR" && env -i HOME="$HOME" PATH="$NO_GH_BIN" GH_TOKEN="test-token-123" GITHUB_API_URL="$API_URL" \
+      bash "$SCRIPT" --base "$base_commit" --head HEAD --profile "$TMP/coverage-uncovered.out" --pr 42 --repo example/hive --advisory 2>&1)
+  }
+  out_nogh=$(run_without_gh)
+  assert_exit0 $? "$out_nogh" "advisory run without gh exits 0"
+  assert_not_contains "$out_nogh" "No such file or directory: 'gh'" "does not fail over to a missing gh binary"
+  assert_contains "$out_nogh" "Posted patch coverage comment on PR #42" "reports the REST post"
+  assert_contains "$(cat "$API_LOG")" "POST /repos/example/hive/issues/42/comments auth=Bearer test-token-123" "posts comment over REST with GH_TOKEN"
+  assert_contains "$(cat "$API_LOG")" "<!-- hive-patch-coverage -->" "REST comment carries the marker"
+  assert_contains "$(cat "$API_LOG")" "src/pkg/sample/sample.go" "REST comment lists uncovered file"
+
+  rm -f "$API_LOG"
+  out_nogh2=$(run_without_gh)
+  assert_exit0 $? "$out_nogh2" "second advisory run without gh exits 0"
+  assert_contains "$out_nogh2" "Updated patch coverage comment on PR #42 (comment ID 555)" "reports the REST in-place update"
+  assert_contains "$(cat "$API_LOG")" "PATCH /repos/example/hive/issues/comments/555" "edits the existing comment over REST"
+  assert_not_contains "$(cat "$API_LOG")" "POST /repos/example/hive/issues/42/comments" "does not post a duplicate over REST"
+fi
+kill "$API_PID" 2>/dev/null
+wait "$API_PID" 2>/dev/null
+
+# ==============================================================================
 # Test Summary
 # ==============================================================================
 printf '\n=======================================================\n'

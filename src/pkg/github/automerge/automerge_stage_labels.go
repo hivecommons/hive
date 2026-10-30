@@ -72,6 +72,13 @@ type StageLabelPolicy struct {
 	// source (ContributorPresenceSource); without one the graces above apply.
 	AdoptAfterOffline      time.Duration
 	AdoptAfterUnregistered time.Duration
+	// AdoptOfflineGrace is the stage-stalled escape for a recorded adoption
+	// attempt that opened nothing (a supersede whose replay failed) while
+	// the author's clanker is still offline or unregistered: after it the
+	// head is admitted to adoption again instead of sitting at 072/085
+	// (governor.labels.stage.adoption.offline_grace, default 30m;
+	// hivecommons/hive#15307).
+	AdoptOfflineGrace time.Duration
 	// AdoptInPlace allows adoption by pushing to the PR's own branch when
 	// GitHub permits (same-repo head or maintainer_can_modify) instead of a
 	// superseding App PR (governor.labels.stage.adoption.in_place, default on).
@@ -99,6 +106,14 @@ type StageLabelPolicy struct {
 	// hivecommons/hive#15135). Off, the original stays open at 074 until
 	// the copy merges.
 	AdoptSupersedeCloseFirst bool
+	// AdoptCloseSuperseded is governor.labels.stage.adoption.close_superseded
+	// (config.AdoptionCloseSuperseded*): when an agent-authored original
+	// (author/clanker, author/hive) closes once the hive's copy exists.
+	// "" or on_adopt closes it in the adopting pass by policy, without the
+	// write-back opt-in label the contributor_adopt kind otherwise needs;
+	// on_merge leaves it open until the copy merges. Human-authored
+	// originals always take the gated path.
+	AdoptCloseSuperseded string
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.
@@ -1075,6 +1090,16 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				obs.Reason = stagelabels.AdoptBlockedSupersedeConflict
 				pass.AdoptionRefusedReason = stagelabels.AdoptBlockedSupersedeConflict
 			}
+			if !verdict.Terminal && verdict.Stage == fixingStage(obs) && c.adoptionCopyRebaseFailedTwice(obs) {
+				// The hive's own adoption copy, still conflicting after the
+				// fixer's two rebase-resolve attempts (hivecommons/hive#15307):
+				// a person decides (adopt into a fresh branch / close as
+				// superseded) instead of the copy idling on its fixing stage.
+				verdict.Stage = stagelabels.NeedsDecision
+				verdict.Rank = stageRankOwned
+				obs.Reason = stagelabels.LaneReasonRebaseFailedTwice
+				pass.RebaseFailedTwice = true
+			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.
@@ -1237,7 +1262,27 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
-		if !hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
+		// hivecommons/hive#15307: an adoption attempt that opened nothing
+		// pins the PR at 074/085 where this block never ran, so a clanker
+		// that stayed offline was never adopted again. The retry runs the
+		// adoption half only (adoptionRetryDue gates it on the offline
+		// grace); nobody is re-nudged.
+		adoptionRetry := false
+		if policy.Adoption && !obs.Merged && (want.Stage == stagelabels.AdoptedByHive || want.Stage == stagelabels.NeedsDecision) {
+			if rec, ok := store.Get(key); ok && rec.AdoptionAttemptedNothingOpened(obs.HeadSHA) {
+				adoptionRetry = true
+			}
+		}
+		if dup := mergeTrainDuplicateOf(obs.Reason); dup > 0 && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) {
+			// A duplicate held out of the merge queue
+			// (hivecommons/hive#15469) is parked with its author as
+			// superseded: no "fix your CI" nudge, no adoption — there is
+			// nothing to fix, and adopting it would land the issue twice.
+			// Its one notice is the duplicate-fix sweep's gated comment.
+			if rec, ok := store.Get(key); !ok || rec.NudgeHead != obs.HeadSHA {
+				c.info("stage labels: 07x duplicate held without interrupt", "stage", want.Stage.String(), "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "duplicate_of", dup)
+			}
+		} else if !hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor || adoptionRetry) && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
 			// interrupt or stand in for. A human-authored PR simply waits
@@ -1250,7 +1295,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				kind = c.stageAuthorKind(obs, policy, true)
 			}
 			if kind == authorkind.Clanker {
-				if policy.ContributorNudge {
+				if policy.ContributorNudge && !adoptionRetry {
 					n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
 					result.Comments += n
 					if err != nil && firstErr == nil {

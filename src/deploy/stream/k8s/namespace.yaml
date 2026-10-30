@@ -1,0 +1,10 @@
+# Dedicated namespace: the hosted hive's own namespace is created and deleted
+# wholesale by the hub's provisioner (pkg/hub/saas_provision.go), so the
+# streamer and its Twitch secret live beside it, not inside it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hive-stream
+  labels:
+    app.kubernetes.io/name: hive-stream
+    pod-security.kubernetes.io/enforce: baseline

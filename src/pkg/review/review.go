@@ -151,6 +151,12 @@ type PerspectiveReport struct {
 	// to the author, but explicitly deferred a maintainer/product decision.
 	DecisionRequested bool   `json:"decision_requested,omitempty"`
 	DecisionQuestion  string `json:"decision_question,omitempty"`
+	// RedundantOf is the PR the review found already carries this change
+	// (`<!-- hive-redundant-of: #N -->`), set by the relay from the review
+	// body. A decision question that names one is never self-resolved to
+	// approve: the answer is a close, which the superseded closer performs
+	// for the hive's own PRs (hivecommons/hive#15499).
+	RedundantOf int `json:"redundant_of,omitempty"`
 	// DecisionRiskHigh is the reviewer's explicit escape hatch: the review
 	// body carried `<!-- hive-decision-risk: high -->`, so the question parks
 	// the PR for a person even when its wording matches no risk class.
@@ -217,28 +223,31 @@ type AggregateOptions struct {
 }
 
 type Aggregate struct {
-	Repo              string                  `json:"repo"`
-	Number            int                     `json:"number"`
-	HeadSHA           string                  `json:"head_sha,omitempty"`
-	BodyDigest        string                  `json:"body_digest,omitempty"`
-	AuthorModel       string                  `json:"author_model,omitempty"`
-	ReviewModel       string                  `json:"review_model,omitempty"`
-	HiveAuthored      bool                    `json:"hive_authored,omitempty"`
-	HiveAuthoredKnown bool                    `json:"hive_authored_known,omitempty"`
-	Verdict           Verdict                 `json:"verdict"`
-	MergeEligible     bool                    `json:"merge_eligible"`
-	FixCycle          bool                    `json:"fix_cycle"`
-	RequiresHuman     bool                    `json:"requires_human"`
-	CloseRecommended  bool                    `json:"close_recommended"`
-	DecisionRequested bool                    `json:"decision_requested,omitempty"`
-	DecisionQuestion  string                  `json:"decision_question,omitempty"`
-	HumanSummaries    []string                `json:"human_summaries,omitempty"`
-	FixAttempts       int                     `json:"fix_attempts,omitempty"`
-	MaxFixAttempts    int                     `json:"max_fix_attempts,omitempty"`
-	Threshold         outputschema.Severity   `json:"human_threshold"`
-	Reasons           []string                `json:"reasons,omitempty"`
-	Findings          []PerspectiveFinding    `json:"findings,omitempty"`
-	Perspectives      map[Perspective]Verdict `json:"perspectives"`
+	Repo              string  `json:"repo"`
+	Number            int     `json:"number"`
+	HeadSHA           string  `json:"head_sha,omitempty"`
+	BodyDigest        string  `json:"body_digest,omitempty"`
+	AuthorModel       string  `json:"author_model,omitempty"`
+	ReviewModel       string  `json:"review_model,omitempty"`
+	HiveAuthored      bool    `json:"hive_authored,omitempty"`
+	HiveAuthoredKnown bool    `json:"hive_authored_known,omitempty"`
+	Verdict           Verdict `json:"verdict"`
+	MergeEligible     bool    `json:"merge_eligible"`
+	FixCycle          bool    `json:"fix_cycle"`
+	RequiresHuman     bool    `json:"requires_human"`
+	CloseRecommended  bool    `json:"close_recommended"`
+	DecisionRequested bool    `json:"decision_requested,omitempty"`
+	DecisionQuestion  string  `json:"decision_question,omitempty"`
+	// RedundantOf is the PR a reviewer named as already carrying this
+	// change, carried from the first report that set one.
+	RedundantOf    int                     `json:"redundant_of,omitempty"`
+	HumanSummaries []string                `json:"human_summaries,omitempty"`
+	FixAttempts    int                     `json:"fix_attempts,omitempty"`
+	MaxFixAttempts int                     `json:"max_fix_attempts,omitempty"`
+	Threshold      outputschema.Severity   `json:"human_threshold"`
+	Reasons        []string                `json:"reasons,omitempty"`
+	Findings       []PerspectiveFinding    `json:"findings,omitempty"`
+	Perspectives   map[Perspective]Verdict `json:"perspectives"`
 	// Heads lists, per perspective, the review heads whose reports this
 	// aggregate holds. Empty unless reports came from review_heads; with
 	// several heads Perspectives holds the strictest of their verdicts.
@@ -440,6 +449,9 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		}
 		if reportRequiresRiskEscalation(r) {
 			riskEscalation = true
+		}
+		if r.RedundantOf > 0 && agg.RedundantOf == 0 {
+			agg.RedundantOf = r.RedundantOf
 		}
 		if r.DecisionRequested {
 			decisionRequested = true
@@ -817,7 +829,10 @@ func reportsHiveAuthored(reports []PerspectiveReport) bool {
 // answer the linked issue had already written down.
 func selfAuthoredDecisionResolvable(r PerspectiveReport) bool {
 	q := strings.TrimSpace(r.DecisionQuestion)
-	if q == "" || r.DecisionRiskHigh {
+	if q == "" || r.DecisionRiskHigh || r.RedundantOf > 0 {
+		// A redundancy question ("close as a no-op, #N already landed
+		// it?") has no approve answer: resolving it would merge an empty
+		// PR. It stays a decision so the superseded closer can act.
 		return false
 	}
 	_, risk := DecisionQuestionRiskClassFor(q, r.PermissionsTighteningOnly)

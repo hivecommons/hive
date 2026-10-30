@@ -28,6 +28,7 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerCueClasses"),
 		jsFunc(t, html, "stageTrackerStateMap"),
 		jsFunc(t, html, "stageTrackerStageFell"),
+		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsFunc(t, html, "stageTrackerEventsNext"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
@@ -63,6 +64,29 @@ func TestStageTrackerCuesWiring(t *testing.T) {
 		`@media (prefers-reduced-motion: reduce) { .cue-working .ham-seg.active .ham-active-ico, .cue-spin, .cue-acting .ham-seg.active, .cue-event { animation: none; } }`,
 		`@media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; }`,
 		`id="activity-monitor-merged"`, `class="ham-merged-n"`, `class="ham-merged-sub"`,
+		// The merge glyph is sized and haloed through tokens, not a literal
+		// (hivecommons/hive#15398: at --fs-lg the operator could not tell
+		// what the bee was).
+		`:root { --cue-flight-size: var(--fs-3xl); --cue-flight-halo: drop-shadow(`,
+		`.cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--cue-flight-size); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); filter: var(--cue-flight-halo);`,
+		`.ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums;`,
+		// The pill's own bee keeps a 28 px hit area and the count is a drum
+		// at rest (hivecommons/hive#15398 follow-up: #15409 sized only the
+		// flying glyph, and the roll was a 900 ms overlay over plain text),
+		// but the drum is the chip's own type size on one quiet inset track
+		// — no per-digit cells, bevels or 18 px digits (hivecommons/hive#15543:
+		// "the odometer is too big of font. the animation is perfect though").
+		`:root { --ham-merged-bee: 28px; --ham-odo-digit: var(--fs-xs); --ham-odo-track: color-mix(in srgb, var(--panel) 95%, black); --ham-odo-divider: color-mix(in srgb, var(--text) 10%, transparent); }`,
+		`.ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--ham-merged-bee); box-sizing: border-box; padding-top: 0; padding-bottom: 0;`,
+		`.ham-merged-count .ham-merged-ico { flex: 0 0 auto; width: var(--ham-merged-bee); height: calc(var(--ham-merged-bee) - 2 * var(--line-width));`,
+		`<svg class="ham-merged-ico" viewBox="0 0 18 12" focusable="false" aria-hidden="true"><ellipse class="oc-version-bee-wing"`,
+		`.ham-merged-count .ham-merged-n .ham-odo { gap: 0; padding: 0 var(--sp-1); border-radius: var(--r); border: var(--line-width) solid var(--line-subtle); background: var(--ham-odo-track); }`,
+		`.ham-merged-count .ham-merged-n .ham-odo-col { position: relative;`,
+		`.ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left: var(--line-width) solid var(--ham-odo-divider); }`,
+		`body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col {`,
+		`.ham-merged-count .ham-merged-sub { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--fs-xs);`,
+		`.ham-odo-run .ham-odo-roll .ham-odo-strip { transition: transform var(--odo-ms, 900ms)`,
+		`.ham-odo-strip { transition: none !important; }`,
 		// The chip and the column header strip stick under the navbar
 		// while the list scrolls (hivecommons/hive#15096: the chip sat
 		// 2,300 px above the operator's viewport when the merge played).
@@ -254,6 +278,10 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_STAGGER_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_FLY_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_ODOMETER_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ODOMETER_SUB_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ODOMETER_TURN"),
+		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_GLYPH_HALF"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGED_LAST_KEY"),
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS"),
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_EXIT_PAD"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_MS"),
@@ -275,7 +303,14 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMergedSync"),
 		jsFunc(t, html, "stageTrackerMergedHoldback"),
 		jsFunc(t, html, "stageTrackerOdometerPlan"),
+		jsFunc(t, html, "stageTrackerOdometerRest"),
 		jsFunc(t, html, "stageTrackerOdometerSet"),
+		jsFunc(t, html, "stageTrackerOdometerDraw"),
+		jsFunc(t, html, "stageTrackerOdometerSeed"),
+		jsFunc(t, html, "stageTrackerMergedLastParse"),
+		jsFunc(t, html, "stageTrackerMergedLastLoad"),
+		jsFunc(t, html, "stageTrackerMergedLastSave"),
+		jsFunc(t, html, "stageTrackerMergedInFlight"),
 		jsFunc(t, html, "stageTrackerMergedCountDraw"),
 		jsFunc(t, html, "stageTrackerMergedPopDraw"),
 		jsFunc(t, html, "hamMergedToggle"),
@@ -355,6 +390,7 @@ const pop = el('div', { id: 'activity-monitor-merged-pop' }); pop.hidden = true;
 const byId = { 'activity-monitor-panel': panel, 'activity-monitor-merged': chip, 'activity-monitor-merged-pop': pop, 'merge-banners': banners, 'activity-monitor-merged-live': live };
 global.document = { body, hidden: false, getElementById(id) { return byId[id] || null; }, createElement(tag) { if (tag === 'template') { const tpl = el('template'); Object.defineProperty(tpl, 'innerHTML', { set(v) { const c = el('p'); c.classList.add('cue-event'); c.attrs['data-cue-key'] = (v.match(/data-cue-key="([^"]*)"/) || [])[1]; c.textContent = v.replace(/<[^>]+>/g, ''); const age = el('span'); age.classList.add('cue-event-age'); age.attrs['data-at'] = (v.match(/data-at="(\d+)"/) || [])[1]; c.appendChild(age); tpl.content = { firstElementChild: c }; } }); return tpl; } return el(tag); } };
 const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem(k, v) { store[k] = String(v); } };
+const session = {}; global.sessionStorage = { getItem: k => (k in session ? session[k] : null), setItem(k, v) { session[k] = String(v); } };
 let reduced = false; function stageTrackerReducedMotion() { return reduced; }
 let soundOn = true; function stageTrackerSoundGate() { return soundOn; }
 const zaps = []; function stageTrackerPlayZap(c) { zaps.push(c); }
@@ -365,6 +401,7 @@ let _stageTrackerEvents = {};
 const STAGE_TRACKER_TERMINAL = 110;
 var _stageTrackerPRHost = {}; var _stageTrackerPRTitle = {}; var _stageTrackerMergeState = null, _stageTrackerZapped = {}, _stageTrackerMerged = { server: null, local: {} }, _stageTrackerMergedShown = 0, _stageTrackerCelebrating = {}, _stageTrackerCelebratePending = {}, _stageTrackerFlights = 0, _stageTrackerReleaseTimer = 0;
 let settingsClosed = 0; function closeStageTrackerSettings() { settingsClosed++; }
+const odoText = e => e.getAttribute('data-odo-value');
 const flights = () => body.children.filter(c => c.classList.contains('cue-flight'));
 function row(key, prs) { const r = el('div', { 'data-ham-key': key }); r.classList.add('ham-row'); if (prs) r.attrs['data-ham-prs'] = prs; const strip = el('div'); strip.classList.add('ham-strip-row'); const cap = el('li'); cap.classList.add('ham-seg'); cap.classList.add('cap'); cap.rect = { left: 300, top: 400, width: 20, height: 20 }; strip.appendChild(cap); r.appendChild(strip); srcs.set(r, '<row ' + key + '>'); return r; }
 const header = { key: '__header__', html: 'h' };
@@ -392,12 +429,12 @@ assert.ok(r1.children.some(c => c.classList.contains('cue-event') && /merged #1 
 assert.strictEqual(flights().length, 1, 'one glyph in flight'); assert.strictEqual(flights()[0].textContent, '🐝', 'the default glyph is the bee');
 assert.strictEqual(flights()[0].style.props['--cue-dx'], (530 - 310) + 'px'); assert.strictEqual(flights()[0].style.props['--cue-dy'], (20 - 410) + 'px', 'the chip is in view: the flight ends on it');
 assert.strictEqual(flights()[0].style.props['--cue-end-opacity'], '0.25');
-assert.strictEqual(n.textContent, '0', 'the count waits for the glyph');
+assert.strictEqual(odoText(n), '0', 'the count waits for the glyph');
 assert.strictEqual(banners.children.length, 1, 'a banner is up at once'); assert.ok(/#1<\/span> merged/.test(banners.children[0].innerHTML), banners.children[0].innerHTML); assert.ok(banners.children[0].innerHTML.includes('data-action="hamBannerShowRow" data-arg0="o/r/pr#1"'), 'show row link');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(flights().length, 0, 'glyph gone'); assert.strictEqual(n.textContent, '1', 'count bumped'); assert.ok(chip.classList.contains('cue-tick'), 'pop'); assert.deepStrictEqual(zaps, [1], 'zap on arrival');
+assert.strictEqual(flights().length, 0, 'glyph gone'); assert.strictEqual(odoText(n), '1', 'count bumped'); assert.ok(chip.classList.contains('cue-tick'), 'pop'); assert.deepStrictEqual(zaps, [1], 'zap on arrival');
 assert.ok(chip.title.startsWith('Merged: 1 all time\n1 today · 1 this week\no/r#1 · '), chip.title);
-assert.strictEqual(sub.textContent, '1 today · 1 this week');
+assert.strictEqual(odoText(sub), '1 today · 1 this week');
 assert.strictEqual(live.textContent, 'Merged: 1 all time, 1 today · 1 this week', 'announced for screen readers');
 rows = stageTrackerPinnedRows(panel, [header], clock);
 assert.ok(rows.some(r => r.key === 'o/r/pr#1'), 'still pinned before 3.5 s (' + (clock) + ')');
@@ -415,10 +452,10 @@ tick(0); assert.strictEqual(flights().length, 1, 'first glyph at once');
 tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS); assert.strictEqual(flights().length, 2, 'second 200 ms later');
 tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS); assert.strictEqual(flights().length, 3);
 tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS); assert.strictEqual(flights().length, 3, 'capped at ' + STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS + ' flights');
-assert.strictEqual(n.textContent, '2', 'the capped one bumped without flying');
+assert.strictEqual(odoText(n), '1', 'the capped ones wait for the glyphs in the air (issue 15568)');
 assert.strictEqual(banners.children.length, STAGE_TRACKER_MERGE_BANNER_MAX, 'banners stack, oldest dropped past the cap');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(flights().length, 0); assert.strictEqual(n.textContent, '6'); assert.deepStrictEqual(zaps, [], 'muted');
+assert.strictEqual(flights().length, 0); assert.strictEqual(odoText(n), '6', 'one draw to the final value once the last glyph lands'); assert.deepStrictEqual(zaps, [], 'muted');
 tick(STAGE_TRACKER_MERGE_BANNER_MS);
 assert.strictEqual(banners.children.length, 0, 'banners leave on their own after ' + STAGE_TRACKER_MERGE_BANNER_MS + ' ms');
 
@@ -427,13 +464,13 @@ reduced = true; panel.appendChild(row('o/r/pr#8'));
 stageTrackerNoteMerges(items(8)); stageTrackerNoteMerges(payloadMerged(8)); tick(0);
 assert.strictEqual(flights().length, 1, 'a fading glyph'); assert.ok(flights()[0].classList.contains('cue-flight-fade')); assert.strictEqual(flights()[0].style.props['--cue-dy'], '0px', 'no travel');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(flights().length, 0); assert.strictEqual(n.textContent, '7');
+assert.strictEqual(flights().length, 0); assert.strictEqual(odoText(n), '7');
 assert.ok(panel.querySelector('[data-ham-key="o/r/pr#8"]').classList.contains('cue-merged'));
 reduced = false;
 
 // 4. A merged PR not on the board still counts.
 stageTrackerNoteMerges(items(9)); stageTrackerNoteMerges(payloadMerged(9)); tick(0);
-assert.strictEqual(n.textContent, '8'); assert.strictEqual(flights().length, 0);
+assert.strictEqual(odoText(n), '8'); assert.strictEqual(flights().length, 0);
 assert.ok(banners.children.some(b => /#9<\/span> merged/.test(b.innerHTML) && !b.innerHTML.includes('hamBannerShowRow')), 'its banner has no "show row" (no row)');
 
 // 5. Toggle off: immediate zap as before, no pin.
@@ -442,7 +479,7 @@ stageTrackerSetCelebrate(false); soundOn = true; zaps.length = 0; panel.appendCh
 stageTrackerNoteMerges(items(10)); stageTrackerNoteMerges(payloadMerged(10));
 assert.deepStrictEqual(zaps, [1], 'zap at once');
 assert.deepStrictEqual(stageTrackerPinnedRows(panel, [header], clock).map(r => r.key), ['__header__'], 'nothing pinned');
-assert.strictEqual(n.textContent, '9', 'the counter still counts');
+assert.strictEqual(odoText(n), '9', 'the counter still counts');
 // celebrateRow is reusable on its own.
 stageTrackerSetCelebrate(true);
 const r11 = row('o/r/issue#11'); panel.appendChild(r11);
@@ -490,7 +527,7 @@ panel.appendChild(row('hivecommons/hive/issue#14816', 'hivecommons/hive/pr#14822
 panel.appendChild(row('hivecommons/hive/issue#15009', 'hivecommons/hive/pr#15017 hivecommons/hive/pr#15020'));
 panel.appendChild(row('hivecommons/docs/pr#500', 'hivecommons/docs/pr#500'));
 stageTrackerNoteMerges(before);
-assert.strictEqual(n.textContent, '1', 'hydrated from the server ledger, no flourish');
+assert.strictEqual(odoText(n), '1', 'hydrated from the server ledger, no flourish');
 assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/hive/pr#14822', panel), 'hivecommons/hive/issue#14816', 'inline PR resolves to its issue row');
 assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/hive/pr#15020', panel), 'hivecommons/hive/issue#15009');
 assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/docs/pr#500', panel), 'hivecommons/docs/pr#500');
@@ -500,14 +537,14 @@ stageTrackerNoteMerges(after);
 assert.deepStrictEqual(Object.keys(_stageTrackerCelebrating), ['hivecommons/hive/issue#14816'], 'the issue row is the celebrating row');
 let rows = stageTrackerPinnedRows(panel, [{ key: '__header__', html: 'h' }, { key: 'hivecommons/hive/issue#15009', html: 'x' }, { key: 'hivecommons/docs/pr#500', html: 'y' }], clock);
 assert.ok(rows.some(r => r.key === 'hivecommons/hive/issue#14816' && r.pinned), 'the dropped issue row is pinned');
-assert.strictEqual(n.textContent, '1', 'the server already counts it: held back until the glyph lands');
+assert.strictEqual(odoText(n), '1', 'the server already counts it: held back until the glyph lands');
 tick(0);
 const issueRow = panel.children[0];
 assert.ok(issueRow.classList.contains('cue-merged'), 'issue row glows: ' + issueRow.className);
 assert.ok(issueRow.children.some(c => c.classList.contains('cue-event') && /merged #14822 · by hive/.test(c.textContent)), 'event line names the merged PR');
 assert.strictEqual(flights().length, 1, 'a glyph is in flight');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(flights().length, 0); assert.strictEqual(n.textContent, '2', 'count bumped on landing'); assert.deepStrictEqual(zaps, [1]);
+assert.strictEqual(flights().length, 0); assert.strictEqual(odoText(n), '2', 'count bumped on landing'); assert.deepStrictEqual(zaps, [1]);
 
 // Host memory: a PR whose row left the DOM between renders (no stamp to find) still resolves through the last payload.
 panel.children.length = 0;
@@ -521,7 +558,7 @@ const r = stageTrackerTestCelebration();
 assert.deepStrictEqual(r, { flew: true, lands: true, faded: false }, JSON.stringify(toasts));
 assert.strictEqual(flights().length, 1, 'test glyph in flight');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(n.textContent, '2', 'the test does not count'); assert.ok(chip.classList.contains('cue-tick'), 'but pops'); assert.deepStrictEqual(zaps, [1], 'and zaps');
+assert.strictEqual(odoText(n), '2', 'the test does not count'); assert.ok(chip.classList.contains('cue-tick'), 'but pops'); assert.deepStrictEqual(zaps, [1], 'and zaps');
 assert.ok(!panel.children[0].children.some(c => c.classList.contains('cue-event')), 'no event line is written for a test');
 tick(STAGE_TRACKER_CELEBRATE_PIN_MS + 1);
 assert.ok(!panel.children[0].classList.contains('cue-merged'), 'test glow clears');
@@ -543,8 +580,8 @@ const rec = (num, by, title) => ({ repo: 'o/r', number: num, title: title || ('f
 // First render: the server number, no pop, no zap.
 panel.appendChild(row('o/r/pr#1'));
 stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 1, stage: 50, title: 'feat: one' }], merged: merged(33, [rec(31, 'clubanderson'), rec(30)]) });
-assert.strictEqual(n.textContent, '33', 'hydrated from the server on first render');
-assert.strictEqual(sub.textContent, '4 today · 9 this week');
+assert.strictEqual(odoText(n), '33', 'hydrated from the server on first render');
+assert.strictEqual(odoText(sub), '4 today · 9 this week');
 assert.ok(!chip.classList.contains('cue-tick'), 'no pop on hydration'); assert.deepStrictEqual(zaps, []);
 assert.ok(chip.title.startsWith('Merged: 33 all time\n4 today · 9 this week (UTC)\no/r#31 fix 31 · '), chip.title);
 // Popover: click opens it with the recent list.
@@ -555,10 +592,10 @@ assert.ok(pop.innerHTML.includes('33 all time'), pop.innerHTML);
 assert.strictEqual(hamMergedToggle(), false); assert.strictEqual(pop.hidden, true); assert.strictEqual(chip.attrs['aria-expanded'], 'false');
 // A lower server number later (a roll before the ledger caught up) does not pull the chip down.
 stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 1, stage: 50, title: 'feat: one' }], merged: merged(30, [rec(30)]) });
-assert.strictEqual(n.textContent, '33', 'never backwards');
+assert.strictEqual(odoText(n), '33', 'never backwards');
 // The server already counts the merge (webhook beat the poll; the ledger's recent list is what settles it): the chip holds back by one until the glyph lands.
 stageTrackerNoteMerges({ items: [], merged: merged(34, [rec(1, 'hive', 'feat: one'), rec(31, 'clubanderson'), rec(30)]) });
-assert.strictEqual(n.textContent, '33', 'held back while the glyph flies');
+assert.strictEqual(odoText(n), '33', 'held back while the glyph flies');
 tick(0); assert.strictEqual(flights().length, 1);
 assert.ok(banners.children[0].innerHTML.includes('feat: one (hive, by hive, '), 'the banner carries the ledger title and merger: ' + banners.children[0].innerHTML);
 assert.ok(banners.children[0].innerHTML.includes('href="https://github.com/o/r/pull/1"'), 'and the link');
@@ -574,9 +611,9 @@ for (const b of [{ key: 'o/r/pr#15122', repo: 'o/r', pr: { number: 15122 }, at: 
 assert.strictEqual(stageTrackerMergeBannerText({ repo: 'o/r', at: 0 }, 0).head, 'merged', 'no number anywhere: no bare "#"');
 assert.ok(!stageTrackerMergeBanner({ repo: 'o/r', at: 0 }).innerHTML.includes('>#<'), 'never a bare "#"'); banners.children[banners.children.length - 1].remove();
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(n.textContent, '34', 'bumps on landing'); assert.ok(chip.classList.contains('cue-tick'));
+assert.strictEqual(odoText(n), '34', 'bumps on landing'); assert.ok(chip.classList.contains('cue-tick'));
 stageTrackerNoteMerges({ items: [], merged: merged(34, [rec(1, 'hive', 'feat: one'), rec(31, 'clubanderson'), rec(30)]) });
-assert.strictEqual(n.textContent, '34', 'steady once the server lists it');
+assert.strictEqual(odoText(n), '34', 'steady once the server lists it');
 // A merge the server has not recorded yet still counts in this tab, and reconciles when it arrives.
 panel.appendChild(row('o/r/pr#2'));
 stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 2, stage: 50, title: 'fix: two' }], merged: merged(34, [rec(1), rec(31), rec(30)]) });
@@ -584,11 +621,11 @@ stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 2 }
 tick(0);
 assert.ok(banners.children[banners.children.length - 1].innerHTML.includes('href="https://github.com/o/r/pull/2"'), 'a banner the ledger has not enriched yet still links to the PR: ' + banners.children[banners.children.length - 1].innerHTML);
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(n.textContent, '35', 'local merge on top of the server number');
-assert.strictEqual(sub.textContent, '5 today · 10 this week');
+assert.strictEqual(odoText(n), '35', 'local merge on top of the server number');
+assert.strictEqual(odoText(sub), '5 today · 10 this week');
 stageTrackerNoteMerges({ items: [], merged: merged(35, [rec(2), rec(1), rec(31), rec(30)], { today: 5, total_7d: 10 }) });
-assert.strictEqual(n.textContent, '35', 'no double count when the server catches up');
-assert.strictEqual(sub.textContent, '5 today · 10 this week');
+assert.strictEqual(odoText(n), '35', 'no double count when the server catches up');
+assert.strictEqual(odoText(sub), '5 today · 10 this week');
 // "Show row" from a banner scrolls to the row while it is on the board, and says so once it has gone.
 const r2 = panel.querySelector('[data-ham-key="o/r/pr#2"]'); let scrolled = 0; r2.scrollIntoView = () => { scrolled++; };
 assert.strictEqual(hamBannerShowRow('o/r/pr#2'), true); assert.strictEqual(scrolled, 1); assert.ok(r2.classList.contains('cue-merged'));
@@ -603,63 +640,186 @@ console.log('ok');
 `)
 }
 
-// TestStageTrackerOdometerNode: the chip's numbers roll like a mileage
-// odometer when they rise — per digit, through the digits it passes — and
-// just set on the first draw, on a fall (today → 0 at midnight), under
-// reduced motion, and when the text's words changed; the plain text is
-// always the final value so width, tests and screen readers see no roll.
+// TestStageTrackerOdometerNode: the chip's numbers are a drum at rest —
+// one .ham-odo-col wheel per digit, a .ham-odo-static plate per run of
+// other characters — and roll like a mileage odometer when they rise:
+// only the wheels that change carry ham-odo-roll and a strip of the
+// digits they pass; the rest keep one cell. The first draw, a fall (today
+// → 0 at midnight), reduced motion and text whose words changed draw the
+// drum at rest. The value is on data-odo-value and aria-label (the drum's
+// cells are aria-hidden), so a screen reader and a redraw read one number.
 func TestStageTrackerOdometerNode(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerCelebrateJS(t, html)+stageTrackerCelebrateFixture+`
-// The plan: only the digits that rose roll, carries wrap past 9, a new
-// leading digit comes in from a blank, falls and foreign text sit still.
-assert.deepStrictEqual(stageTrackerOdometerPlan('9127', '9128'), [{ text: '9' }, { text: '1' }, { text: '2' }, { steps: ['7', '8'] }]);
-assert.deepStrictEqual(stageTrackerOdometerPlan('199', '200'), [{ steps: ['1', '2'] }, { steps: ['9', '0'] }, { steps: ['9', '0'] }], 'a carry wraps');
-assert.deepStrictEqual(stageTrackerOdometerPlan('7', '12'), [{ steps: [' ', '1'] }, { steps: ['7', '8', '9', '0', '1', '2'] }], 'a grown number rolls its new column in from a blank');
-assert.deepStrictEqual(stageTrackerOdometerPlan('201 today · 730 this week', '0 today · 731 this week'), [{ text: '0' }, { text: ' today · ' }, { text: '7' }, { text: '3' }, { steps: ['0', '1'] }, { text: ' this week' }], 'the day rollover sets today and rolls the week');
+// The plan: only the digits that rose roll; the first changed wheel rolls
+// its own distance, every wheel right of it — and the rightmost wheel
+// always — spins a full turn first (hivecommons/hive#15398: a one-cell
+// nudge was invisible); carries wrap past 9, a new leading digit comes in
+// from a blank; unchanged digits, falls and held numbers are still wheels
+// (one cell) so the drum never loses a cell mid-roll; foreign text sits.
+const turn = (from, to) => { const out = [from]; let d = Number(from); do { d = (d + 1) % 10; out.push(String(d)); } while (d !== Number(to) || out.length <= STAGE_TRACKER_ODOMETER_TURN); return out; };
+const still = d => ({ steps: [d] });
+assert.deepStrictEqual(turn('7', '8'), ['7', '8', '9', '0', '1', '2', '3', '4', '5', '6', '7', '8'], 'a +1 on the last wheel is a full turn and one');
+assert.deepStrictEqual(stageTrackerOdometerPlan('9127', '9128'), [still('9'), still('1'), still('2'), { steps: turn('7', '8') }]);
+assert.deepStrictEqual(stageTrackerOdometerPlan('199', '200'), [{ steps: ['1', '2'] }, { steps: turn('9', '0') }, { steps: turn('9', '0') }], 'a carry: the first wheel steps once, the zeros whirr past');
+assert.deepStrictEqual(stageTrackerOdometerPlan('9471', '9481'), [still('9'), still('4'), { steps: ['7', '8'] }, { steps: turn('1', '1') }], 'an unchanged wheel right of the change still spins round once');
+assert.deepStrictEqual(stageTrackerOdometerPlan('7', '12'), [{ steps: [' ', '1'] }, { steps: turn('7', '2') }], 'a grown number rolls its new column in from a blank');
+assert.deepStrictEqual(stageTrackerOdometerPlan('201 today · 730 this week', '0 today · 731 this week'), [still('0'), { text: ' today · ' }, still('7'), still('3'), { steps: turn('0', '1') }, { text: ' this week' }], 'the day rollover sets today and rolls the week');
 assert.strictEqual(stageTrackerOdometerPlan('5', '5'), null, 'no change, no roll');
 assert.strictEqual(stageTrackerOdometerPlan('5', '4'), null, 'a fall never rolls');
 assert.strictEqual(stageTrackerOdometerPlan('1 today', '2 this week'), null, 'different words: no roll');
 assert.strictEqual(stageTrackerOdometerPlan(null, '9'), null);
-// The setter: the first write is plain; a rise overlays the columns and
-// takes them down after STAGE_TRACKER_ODOMETER_MS; the text is final at once.
-const odo = el('span');
+assert.deepStrictEqual(stageTrackerOdometerRest('9539'), [still('9'), still('5'), still('3'), still('9')], 'at rest: a wheel per digit, no thousands separator');
+assert.deepStrictEqual(stageTrackerOdometerRest('108 today · 934 this week'), [still('1'), still('0'), still('8'), { text: ' today · ' }, still('9'), still('3'), still('4'), { text: ' this week' }]);
+// The setter: the first write draws the drum at rest — N cells for N
+// digits, every strip one cell, nothing rolling; a rise marks only the
+// changed wheels ham-odo-roll with the digits they pass, and after
+// STAGE_TRACKER_ODOMETER_MS the drum is at rest on the new value.
+const drum = e => e.children[0];
+const cols = e => drum(e).children.filter(c => c.classList.contains('ham-odo-col'));
+const rolling = e => cols(e).filter(c => c.classList.contains('ham-odo-roll'));
+const shown = e => cols(e).map(c => c.children[0].children.map(d => d.textContent).join(''));
+const odo = el('span'); odo.textContent = '0';
 assert.strictEqual(stageTrackerOdometerSet(odo, 9127), false, 'first draw: no roll');
-assert.strictEqual(odo.textContent, '9127'); assert.strictEqual(odo.children.length, 0); assert.strictEqual(odo.getAttribute('data-odo-value'), '9127');
+assert.strictEqual(odoText(odo), '9127'); assert.strictEqual(odo.getAttribute('aria-label'), '9127'); assert.strictEqual(odo.getAttribute('role'), 'img');
+assert.strictEqual(odo.textContent, '', 'the placeholder text is gone: the drum is the content');
+assert.strictEqual(odo.children.length, 1); assert.strictEqual(drum(odo).className, 'ham-odo'); assert.strictEqual(drum(odo).getAttribute('aria-hidden'), 'true');
+assert.strictEqual(cols(odo).length, 4, 'four digits, four drum cells'); assert.deepStrictEqual(shown(odo), ['9', '1', '2', '7']); assert.strictEqual(rolling(odo).length, 0, 'nothing rolls at rest');
+assert.deepStrictEqual(cols(odo).map(c => c.children[0].style.props['--odo-shift']), ['0.000%', '0.000%', '0.000%', '0.000%']);
 assert.strictEqual(stageTrackerOdometerSet(odo, 9127), false, 'same value: nothing');
 assert.strictEqual(stageTrackerOdometerSet(odo, 9128), true, 'a rise rolls');
-assert.strictEqual(odo.textContent, '9128', 'the plain text is the final value at once');
+assert.strictEqual(odoText(odo), '9128', 'the value is final at once'); assert.strictEqual(odo.getAttribute('aria-label'), '9128');
 assert.ok(odo.classList.contains('ham-odo-rolling'));
-assert.strictEqual(odo.children.length, 1); const wrap = odo.children[0];
-assert.strictEqual(wrap.className, 'ham-odo ham-odo-run'); assert.strictEqual(wrap.getAttribute('aria-hidden'), 'true');
-assert.deepStrictEqual(wrap.children.map(c => c.className), ['ham-odo-static', 'ham-odo-static', 'ham-odo-static', 'ham-odo-col']);
-const strip = wrap.children[3].children[0];
-assert.deepStrictEqual(strip.children.map(c => c.textContent), ['7', '8']); assert.strictEqual(strip.style.props['--odo-shift'], '-50.000%');
-assert.strictEqual(wrap.style.props['--odo-ms'], STAGE_TRACKER_ODOMETER_MS + 'ms');
+assert.strictEqual(odo.children.length, 1, 'one drum, rebuilt in place'); assert.strictEqual(drum(odo).className, 'ham-odo ham-odo-run');
+assert.strictEqual(cols(odo).length, 4, 'still four cells mid-roll');
+assert.deepStrictEqual(cols(odo).map(c => c.classList.contains('ham-odo-roll')), [false, false, false, true], 'only the changed wheel rolls');
+const strip = rolling(odo)[0].children[0];
+assert.deepStrictEqual(strip.children.map(c => c.textContent), turn('7', '8')); assert.strictEqual(strip.style.props['--odo-shift'], (-(turn('7', '8').length - 1) * 100 / turn('7', '8').length).toFixed(3) + '%');
+assert.strictEqual(drum(odo).style.props['--odo-ms'], STAGE_TRACKER_ODOMETER_MS + 'ms');
 tick(STAGE_TRACKER_ODOMETER_MS + 100);
-assert.strictEqual(odo.children.length, 0, 'the overlay is gone'); assert.ok(!odo.classList.contains('ham-odo-rolling')); assert.strictEqual(odo.textContent, '9128');
+assert.ok(!odo.classList.contains('ham-odo-rolling')); assert.strictEqual(drum(odo).className, 'ham-odo', 'the run is over');
+assert.deepStrictEqual(shown(odo), ['9', '1', '2', '8'], 'settled: one cell per wheel on the new value'); assert.strictEqual(rolling(odo).length, 0);
 // A second rise mid-roll restarts from the last value written.
-stageTrackerOdometerSet(odo, 9129); assert.strictEqual(odo.children.length, 1);
-stageTrackerOdometerSet(odo, 9131); assert.strictEqual(odo.children.length, 1, 'one overlay at a time');
-assert.deepStrictEqual(odo.children[0].children[2].children[0].children.map(c => c.textContent), ['2', '3'], 'tens: 2 → 3');
-assert.deepStrictEqual(odo.children[0].children[3].children[0].children.map(c => c.textContent), ['9', '0', '1'], 'units: from the 9 last written');
-tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(odo.children.length, 0);
-assert.strictEqual(stageTrackerOdometerSet(odo, 3), false, 'a fall just sets'); assert.strictEqual(odo.textContent, '3'); assert.strictEqual(odo.children.length, 0);
+stageTrackerOdometerSet(odo, 9129); assert.strictEqual(rolling(odo).length, 1);
+stageTrackerOdometerSet(odo, 9131); assert.strictEqual(odo.children.length, 1, 'one drum at a time');
+assert.deepStrictEqual(cols(odo).map(c => c.classList.contains('ham-odo-roll')), [false, false, true, true], 'the tens and the units roll');
+assert.deepStrictEqual(cols(odo)[2].children[0].children.map(c => c.textContent), ['2', '3'], 'tens: 2 → 3');
+assert.deepStrictEqual(cols(odo)[3].children[0].children.map(c => c.textContent), turn('9', '1'), 'units: from the 9 last written');
+tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.deepStrictEqual(shown(odo), ['9', '1', '3', '1']);
+assert.strictEqual(stageTrackerOdometerSet(odo, 3), false, 'a fall just sets'); assert.strictEqual(odoText(odo), '3'); assert.deepStrictEqual(shown(odo), ['3']); assert.strictEqual(rolling(odo).length, 0);
 reduced = true;
-assert.strictEqual(stageTrackerOdometerSet(odo, 4), false, 'reduced motion: no roll'); assert.strictEqual(odo.textContent, '4'); assert.strictEqual(odo.children.length, 0);
+assert.strictEqual(stageTrackerOdometerSet(odo, 4), false, 'reduced motion: no roll'); assert.strictEqual(odoText(odo), '4'); assert.deepStrictEqual(shown(odo), ['4']); assert.strictEqual(rolling(odo).length, 0);
 reduced = false;
+// The day/week line: the same columns, words as static plates, and a
+// shorter roll — the duration is the caller's.
+const odo2 = el('span'); stageTrackerOdometerSet(odo2, '1 today');
+assert.deepStrictEqual(drum(odo2).children.map(c => c.className), ['ham-odo-col', 'ham-odo-static']); assert.strictEqual(drum(odo2).children[1].textContent, ' today');
+stageTrackerOdometerSet(odo2, '2 today', STAGE_TRACKER_ODOMETER_SUB_MS);
+assert.strictEqual(drum(odo2).style.props['--odo-ms'], STAGE_TRACKER_ODOMETER_SUB_MS + 'ms'); assert.strictEqual(rolling(odo2).length, 1); tick(STAGE_TRACKER_ODOMETER_SUB_MS + 100); assert.strictEqual(rolling(odo2).length, 0);
+// The session seed: an unwritten element takes the value it showed last
+// time only when the new value would roll from it, and draws it at rest.
+const odo3 = el('span');
+assert.strictEqual(stageTrackerOdometerSeed(odo3, '9471', 9472), true); assert.strictEqual(odoText(odo3), '9471'); assert.deepStrictEqual(shown(odo3), ['9', '4', '7', '1']);
+assert.strictEqual(stageTrackerOdometerSet(odo3, 9472), true, 'the first real write rolls up from the seed');
+assert.strictEqual(stageTrackerOdometerSeed(odo3, '1', 2), false, 'a written element is never re-seeded');
+const odo4 = el('span');
+assert.strictEqual(stageTrackerOdometerSeed(odo4, '9480', 9472), false, 'a seed ahead of the value is dropped'); assert.strictEqual(odoText(odo4), null);
+assert.strictEqual(stageTrackerOdometerSeed(odo4, null, 9472), false, 'no seed');
+assert.deepStrictEqual(stageTrackerMergedLastParse('{"n":"9471","sub":"73 today · 886 this week"}'), { n: '9471', sub: '73 today · 886 this week' });
+assert.strictEqual(stageTrackerMergedLastParse('{"n":"x"}'), null); assert.strictEqual(stageTrackerMergedLastParse('nope'), null); assert.strictEqual(stageTrackerMergedLastParse(''), null);
 // Through the chip: the landing rolls both numbers; a redraw with the same
 // values does not restart the roll.
 panel.appendChild(row('o/r/pr#1'));
 stageTrackerNoteMerges(items(1)); stageTrackerNoteMerges(payloadMerged(1)); tick(0);
 stageTrackerMergedCountDraw(false);
-assert.strictEqual(n.textContent, '0', 'holds back while the glyph flies'); assert.strictEqual(n.children.length, 0, 'the first draw does not roll');
+assert.strictEqual(odoText(n), '0', 'holds back while the glyph flies'); assert.strictEqual(cols(n).length, 1, 'the first draw is a drum at rest'); assert.strictEqual(rolling(n).length, 0, 'and does not roll');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(n.textContent, '1'); assert.strictEqual(n.children.length, 1, 'the landing rolls the total'); assert.strictEqual(sub.textContent, '1 today · 1 this week'); assert.strictEqual(sub.children.length, 1, 'and the day/week line');
+assert.strictEqual(odoText(n), '1'); assert.strictEqual(rolling(n).length, 1, 'the landing rolls the total'); assert.strictEqual(odoText(sub), '1 today · 1 this week'); assert.strictEqual(rolling(sub).length, 2, 'and the day/week line');
 stageTrackerMergedCountDraw(false);
-assert.strictEqual(n.children.length, 1, 'a redraw mid-roll keeps the overlay');
+assert.strictEqual(rolling(n).length, 1, 'a redraw mid-roll keeps the roll');
 tick(STAGE_TRACKER_ODOMETER_MS + 100);
-assert.strictEqual(n.children.length, 0); assert.strictEqual(sub.children.length, 0);
+assert.strictEqual(rolling(n).length, 0); assert.strictEqual(rolling(sub).length, 0); assert.deepStrictEqual(shown(n), ['1']);
+assert.deepStrictEqual(stageTrackerMergedLastParse(session[STAGE_TRACKER_MERGED_LAST_KEY]), { n: '1', sub: '1 today · 1 this week' }, 'the values shown are remembered for the next load');
+// A fresh page (new chip, remembered values behind the server's) rolls up
+// from them on its first draw instead of just appearing.
+session[STAGE_TRACKER_MERGED_LAST_KEY] = JSON.stringify({ n: '0', sub: '0 today · 0 this week' });
+const chip2 = el('button', { id: 'activity-monitor-merged' }); const n2 = el('span'); n2.classList.add('ham-merged-n'); const sub2 = el('span'); sub2.classList.add('ham-merged-sub'); chip2.appendChild(n2); chip2.appendChild(sub2);
+chip.remove(); body.appendChild(chip2); byId['activity-monitor-merged'] = chip2; stageTrackerMergedChip.node = null;
+stageTrackerMergedCountDraw(false);
+assert.strictEqual(odoText(n2), '1'); assert.strictEqual(rolling(n2).length, 1, 'first draw rolls up from the remembered value'); assert.strictEqual(rolling(sub2).length, 2);
+tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(rolling(n2).length, 0);
+`)
+}
+
+// TestStageTrackerOdometerAfterBeeNode (hivecommons/hive issue 15568): the
+// drum rolls after the bee lands, never under it. While a glyph is in the
+// air neither the total nor the day/week line moves — not for the payload
+// that brought the merge (its today/week already rose), not for a later
+// poll whose all_time the server raised, not for a merge over the flight
+// cap. The glyph's animationend (or stageTrackerAfter's timer) draws once,
+// to the final values, and zaps; several merges in one flight are one
+// roll after the last landing. Reduced motion lands instantly; the first
+// render sets the drum directly.
+func TestStageTrackerOdometerAfterBeeNode(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerCelebrateJS(t, html)+stageTrackerCelebrateFixture+`
+const drum = e => e.children[0];
+const cols = e => drum(e).children.filter(c => c.classList.contains('ham-odo-col'));
+const rolling = e => cols(e).filter(c => c.classList.contains('ham-odo-roll'));
+const srv = (all, today, week, ...recent) => ({ all_time: all, today, total_7d: week, total_30d: week, recent: recent.map(x => ({ repo: 'o/r', number: x, merged_at: new Date(clock).toISOString() })) });
+// First render: the server's numbers, drawn at rest — no bee, no roll.
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 1, stage: 50 }], merged: srv(9127, 3, 40) });
+assert.strictEqual(odoText(n), '9127'); assert.strictEqual(rolling(n).length, 0, 'first draw: set directly'); assert.strictEqual(odoText(sub), '3 today · 40 this week'); assert.strictEqual(rolling(sub).length, 0);
+// #1 merges; the same payload carries the server's raised numbers.
+panel.appendChild(row('o/r/pr#1'));
+stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 1, merged_at: new Date(clock).toISOString() }], merged: srv(9128, 4, 41, 1) });
+tick(0);
+assert.strictEqual(flights().length, 1, 'the bee is in the air');
+assert.strictEqual(odoText(n), '9127', 'the total waits for it'); assert.strictEqual(rolling(n).length, 0);
+assert.strictEqual(odoText(sub), '3 today · 40 this week', 'so does the day/week line (it used to roll here)'); assert.strictEqual(rolling(sub).length, 0);
+assert.deepStrictEqual(zaps, []);
+// A poll mid-flight: the server counted a merge elsewhere too. Still nothing moves.
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS / 2);
+stageTrackerNoteMerges({ items: [], merged: srv(9129, 5, 42, 1, 2) });
+assert.strictEqual(odoText(n), '9127', 'a raised server total does not roll under the bee'); assert.strictEqual(rolling(n).length, 0); assert.strictEqual(rolling(sub).length, 0);
+assert.ok(chip.title.startsWith('Merged: 9128 all time'), 'the tooltip may already know: ' + chip.title);
+// The bee lands (animationend): one roll, to the final numbers, and the zap.
+flights()[0]._ev.animationend();
+assert.strictEqual(flights().length, 0);
+assert.strictEqual(odoText(n), '9129', 'the landing draws the final total'); assert.strictEqual(rolling(n).length, 1, 'and rolls it — one roll 7 → 9, not two queued');
+assert.deepStrictEqual(cols(n)[3].children[0].children.slice(0, 3).map(c => c.textContent), ['7', '8', '9']);
+assert.strictEqual(odoText(sub), '5 today · 42 this week'); assert.strictEqual(rolling(sub).length, 2);
+assert.deepStrictEqual(zaps, [1], 'zap with the roll'); assert.ok(chip.classList.contains('cue-tick'), 'pop with the roll');
+assert.strictEqual(drum(n).style.props['--odo-ms'], STAGE_TRACKER_ODOMETER_MS + 'ms', 'the roll itself is unchanged');
+tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(rolling(n).length, 0);
+// Two merges in one flight: the first landing is folded into the second — one roll, one zap.
+zaps.length = 0; chip.classList.remove('cue-tick');
+panel.appendChild(row('o/r/pr#3')); panel.appendChild(row('o/r/pr#4'));
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 3, stage: 50 }, { repo: 'o/r', kind: 'pr', number: 4, stage: 50 }], merged: srv(9129, 5, 42, 1, 2) });
+stageTrackerNoteMerges({ items: [], recently_merged: [3, 4].map(x => ({ repo: 'o/r', number: x, merged_at: new Date(clock).toISOString() })), merged: srv(9131, 7, 44, 1, 2, 3, 4) });
+tick(STAGE_TRACKER_CELEBRATE_STAGGER_MS);
+assert.strictEqual(flights().length, 2);
+flights()[0]._ev.animationend();
+assert.strictEqual(flights().length, 1); assert.strictEqual(odoText(n), '9129', 'the first landing waits for the second bee'); assert.strictEqual(rolling(n).length, 0); assert.deepStrictEqual(zaps, [], 'no zap yet');
+flights()[0]._ev.animationend();
+assert.strictEqual(odoText(n), '9131', 'the last landing rolls straight to the final value'); assert.strictEqual(rolling(n).length, 2, 'tens and units'); assert.deepStrictEqual(zaps, [1], 'one zap');
+assert.deepStrictEqual(cols(n)[3].children[0].children.slice(0, 3).map(c => c.textContent), ['9', '0', '1'], 'one roll 9 → 1, not two queued');
+tick(STAGE_TRACKER_ODOMETER_MS + 100);
+// No animationend at all: stageTrackerAfter's timer at the flight length lands it.
+panel.appendChild(row('o/r/pr#5'));
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 5, stage: 50 }], merged: srv(9131, 7, 44, 1, 2, 3, 4) });
+stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 5, merged_at: new Date(clock).toISOString() }], merged: srv(9132, 8, 45, 1, 2, 3, 4, 5) });
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS); assert.strictEqual(odoText(n), '9131', 'still held at the flight\'s nominal end');
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS / 2 + 1); assert.strictEqual(odoText(n), '9132', 'the fallback timer lands it'); assert.strictEqual(rolling(n).length, 1);
+tick(STAGE_TRACKER_ODOMETER_MS + 100);
+// Reduced motion: the glyph fades, the drum is set the instant it is gone.
+reduced = true; panel.appendChild(row('o/r/pr#6'));
+stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 6, stage: 50 }], merged: srv(9132, 8, 45, 1, 2, 3, 4, 5) });
+stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 6, merged_at: new Date(clock).toISOString() }], merged: srv(9133, 9, 46, 1, 2, 3, 4, 5, 6) });
+tick(0); assert.strictEqual(odoText(n), '9132', 'held while the glyph fades');
+flights()[0]._ev.animationend();
+assert.strictEqual(odoText(n), '9133'); assert.strictEqual(rolling(n).length, 0, 'reduced motion: set, not rolled');
+console.log('ok');
 `)
 }
 
@@ -693,10 +853,10 @@ tick(0);
 assert.strictEqual(flights().length, 1); const g = flights()[0];
 assert.strictEqual(g.textContent, '+1', 'the chosen glyph');
 assert.strictEqual(g.style.props['--cue-dx'], '0px'); assert.strictEqual(g.style.props['--cue-dy'], -(410 + STAGE_TRACKER_CELEBRATE_EXIT_PAD) + 'px'); assert.strictEqual(g.style.props['--cue-end-opacity'], '1');
-assert.strictEqual(g.style.props['left'], '300px'); assert.strictEqual(g.style.props['top'], '400px', 'spawned at the ✓ cell');
+assert.strictEqual(g.style.props['left'], (310 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px'); assert.strictEqual(g.style.props['top'], (410 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px', 'spawned centred on the ✓ cell');
 assert.strictEqual(g.attrs['aria-hidden'], 'true');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(n.textContent, '1', 'the count bumps although the glyph left the screen');
+assert.strictEqual(odoText(n), '1', 'the count bumps although the glyph left the screen');
 chip.rect = { left: 500, top: 10, width: 60, height: 20 };
 
 // Test celebration: closes the settings dialog, picks the first row in view (not the first row), flies, shows a "(test)" banner, counts nothing.
@@ -708,10 +868,10 @@ const r = stageTrackerTestCelebration();
 assert.strictEqual(settingsClosed, 1, 'the dialog closes first');
 assert.deepStrictEqual(r, { flew: true, lands: true, faded: false }, JSON.stringify(toasts));
 assert.ok(inView.classList.contains('cue-merged') && !above.classList.contains('cue-merged'), 'the row in view is the one that glows');
-assert.strictEqual(flights().length, 1); assert.strictEqual(flights()[0].style.props['top'], (410 - 10) + 'px', 'from the visible row\'s ✓ cell');
+assert.strictEqual(flights().length, 1); assert.strictEqual(flights()[0].style.props['top'], (410 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px', 'from the visible row\'s ✓ cell');
 assert.strictEqual(banners.children.length, 1); assert.ok(banners.children[0].innerHTML.includes('(test)'), banners.children[0].innerHTML);
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
-assert.strictEqual(n.textContent, '1', 'the test does not count'); assert.ok(chip.classList.contains('cue-tick'), 'but pops'); assert.deepStrictEqual(zaps, [1], 'and zaps');
+assert.strictEqual(odoText(n), '1', 'the test does not count'); assert.ok(chip.classList.contains('cue-tick'), 'but pops'); assert.deepStrictEqual(zaps, [1], 'and zaps');
 assert.ok(!inView.children.some(c => c.classList.contains('cue-event')), 'no event line is written for a test');
 // Reduced motion: the test fades instead and says so.
 reduced = true; const r2 = stageTrackerTestCelebration(); assert.strictEqual(r2.faded, true); assert.ok(toasts.some(x => /Reduced motion/.test(x[1])));

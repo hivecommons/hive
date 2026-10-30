@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -118,11 +119,13 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			GraceOffline:              stage.EffectiveContributorGraceOffline(),
 			AdoptAfterOffline:         stage.Adoption.EffectiveAfterOffline(),
 			AdoptAfterUnregistered:    stage.Adoption.EffectiveAfterUnregistered(),
+			AdoptOfflineGrace:         stage.Adoption.EffectiveOfflineGrace(),
 			AdoptInPlace:              stage.Adoption.InPlaceEnabled(),
 			AdoptionStrictAttribution: stage.Adoption.StrictAttributionEnabled(),
 			AdoptionAutoMerge:         stage.Adoption.AutoMergeEnabled(),
 			AdoptionMaintainerPolicy:  stage.Adoption.EffectiveMaintainerPolicy(),
 			AdoptSupersedeCloseFirst:  stage.Adoption.Supersede.CloseFirstEnabled(),
+			AdoptCloseSuperseded:      stage.Adoption.EffectiveCloseSuperseded(),
 			HiveID:                    cfg.HiveID,
 			AuthorKindLabels:          cfg.Governor.Labels.Author.Names(),
 			RelayKnown:                contributorRelayKnown,
@@ -202,7 +205,7 @@ func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automer
 		}
 		artifact, err := review.LoadArtifact("")
 		if err != nil {
-			if logger != nil {
+			if logger != nil && !errors.Is(err, os.ErrNotExist) {
 				logger.Warn("contributor-lane verdict gate: review-verdicts.json unavailable; failing closed", "error", err)
 			}
 			return automerge.ContributorLaneVerdict{Configured: true}
@@ -231,6 +234,7 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 			Verdict:            string(match.Verdict),
 			DecisionRequested:  match.DecisionRequested,
 			DecisionQuestion:   match.DecisionQuestion,
+			RedundantOf:        match.RedundantOf,
 			HumanSummaries:     append([]string(nil), match.HumanSummaries...),
 			HiveAuthoredKnown:  match.HiveAuthoredKnown,
 			HiveAuthored:       match.HiveAuthored,

@@ -25,6 +25,12 @@ func (b *boot) forgeStateOpenPRs() *github.ForgeStateView {
 	}
 	view := b.ghClient.ForgeStateView()
 	if view == nil {
+		// No cache: the lanes run their listing ticker, but a trigger is
+		// still wired so a webhook CI-failure nudge runs a targeted pass
+		// at once (the legacy loop selects on it too).
+		if b.sweepTrigger == nil {
+			b.sweepTrigger = automerge.NewSweepTrigger(nil)
+		}
 		return nil
 	}
 	b.forgeView = view
@@ -50,8 +56,8 @@ func (b *boot) webhookDeliveryFunc() func(event, deliveryID string, payload []by
 
 // sweepNudgeFunc is the dashboard.Dependencies.SweepNudge hook: schedule
 // an automerge pass for one PR. The trigger is resolved per call because
-// it is wired before the App client exists; without the forgestate cache
-// the governor loop is woken instead, whose eval cycle runs the lanes.
+// it is wired before the App client exists; before it is, the governor
+// loop is woken instead, whose eval cycle runs the lanes.
 func (b *boot) sweepNudgeFunc() func(repo string, number int) {
 	return func(repo string, number int) {
 		if trigger := b.sweepTrigger; trigger != nil {

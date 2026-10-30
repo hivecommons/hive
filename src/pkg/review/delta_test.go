@@ -373,3 +373,29 @@ func TestRecordDeltaRestampsRoundTrip(t *testing.T) {
 		t.Fatalf("note = %q", got.Delta.Note)
 	}
 }
+
+// hivecommons/hive#15499: a PR with no diff against its base is re-stamped
+// on every new head, even when the compare from the previous head is not
+// empty (a merge-from-base shows the base's commits there).
+func TestPlanDeltaEmptyBaseDiffRestampsDespiteNonTrivialCompare(t *testing.T) {
+	prior := priorAggregate("sha1", VerdictRequiresHuman, deltaNow.Add(-time.Hour))
+	prior.DecisionRequested = true
+	prior.RedundantOf = 15427
+	art := Artifact{Items: []Aggregate{prior}}
+	pr := dispatchPR("sha2")
+	pr.BaseDiffEmpty = true
+	pr.DeltaDiff = knownDelta("sha1", DeltaFile{Path: "pkg/a/a.go", Additions: 300, Deletions: 40}, DeltaFile{Path: "pkg/b/b.go", Additions: 90})
+	plan := PlanDispatch([]PullRequest{pr}, art, DispatchState{}, deltaOpts(reviewer("r1")))
+	if len(plan.ReviewKicks) != 0 || len(plan.DeltaRestamps) != 1 {
+		t.Fatalf("kicks=%d restamps=%d, want 0/1", len(plan.ReviewKicks), len(plan.DeltaRestamps))
+	}
+	agg := plan.DeltaRestamps[0].Aggregate
+	if agg.Verdict != VerdictRequiresHuman || agg.RedundantOf != 15427 || agg.Delta == nil || !agg.Delta.Trivial || !strings.Contains(agg.Delta.Note, "no diff against its base") {
+		t.Fatalf("restamped aggregate = %+v delta=%+v", agg, agg.Delta)
+	}
+	pr.BaseDiffEmpty = false
+	plan = PlanDispatch([]PullRequest{pr}, art, DispatchState{}, deltaOpts(reviewer("r1")))
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("with a real diff the delta must still be reviewed: %+v", plan)
+	}
+}

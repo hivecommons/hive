@@ -1,15 +1,20 @@
 package automerge
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Close-first supersession (hivecommons/hive#15135): the original closes as
@@ -329,6 +334,268 @@ func TestAdoptionCloseFirstReopenPingPongGuard(t *testing.T) {
 	// Past the window the guard no longer applies.
 	if !rec.AdoptionReopenedWithin(h.clock.now(), stagelabels.AdoptionReopenWindow) || rec.AdoptionReopenedWithin(h.clock.now().Add(stagelabels.AdoptionReopenWindow), stagelabels.AdoptionReopenWindow) {
 		t.Fatalf("reopen window: %+v now=%v", rec, h.clock.now())
+	}
+}
+
+// closeFirstGateState is what a test flips on the write-back gate it
+// installs: the contributor_adopt kind refused (own-only) and an operator
+// repo pause.
+type closeFirstGateState struct {
+	adoptOff bool
+	paused   bool
+	// requireLabel keeps the contributor_adopt kind's default opt-in label
+	// requirement (the live hive's needs-opt-in-label refusal on #15526).
+	requireLabel bool
+}
+
+// installWritebackGate puts a write-back gate on the harness's client at
+// L6 with stage labels allowed unlabelled, so only the adoption kind (and
+// the pause) decide.
+func (h *closeFirstHarness) installWritebackGate(st *closeFirstGateState) *writeback.Gate {
+	h.t.Helper()
+	gate := writeback.New(writeback.Config{}, writeback.Deps{
+		LevelFor:   func(string) int { return 6 },
+		RepoListed: func(string) bool { return true },
+		RepoPause: func(string) (writeback.RepoPauseInfo, bool) {
+			return writeback.RepoPauseInfo{By: "ops", Reason: "freeze"}, st.paused
+		},
+		Config: func() writeback.Config {
+			one, no, yes, ownOnly, adoptLabel := 1, false, true, st.adoptOff, st.requireLabel
+			return writeback.Config{
+				Unsolicited: writeback.UnsolicitedConfig{Backfill: &yes},
+				Kinds: map[string]writeback.KindPolicyOverride{
+					string(writeback.KindStageLabel):       {MinLevel: &one, RequireLabel: &no},
+					string(writeback.KindContributorAdopt): {MinLevel: &one, RequireLabel: &adoptLabel, OwnOnly: &ownOnly},
+				},
+			}
+		},
+		Now: h.clock.now,
+	}, "")
+	client, ok := h.e.transport.(*hgithub.Client)
+	if !ok {
+		h.t.Fatalf("transport %T is not *hgithub.Client", h.e.transport)
+	}
+	client.SetWritebackGate(gate)
+	return gate
+}
+
+func suppressedFor(gate *writeback.Gate, number int, kind writeback.Kind) []writeback.Suppressed {
+	var out []writeback.Suppressed
+	for _, s := range gate.Recent() {
+		if s.Number == number && s.Kind == kind {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// The close-first note, label and close on a contributor's original are
+// unsolicited writes: the write-back gate decides them (#15272).
+func TestAdoptionCloseFirstWritebackGate(t *testing.T) {
+	t.Run("refused leaves the original open on the keep-open path", func(t *testing.T) {
+		h, done := newCloseFirstHarness(t, closeFirstPolicy())
+		defer done()
+		gate := h.installWritebackGate(&closeFirstGateState{adoptOff: true})
+		h.adoptCloseFirst()
+		if len(h.adopt.pulls) != 1 {
+			t.Fatalf("copy not opened: pulls=%d", len(h.adopt.pulls))
+		}
+		if len(h.adopt.prEdits) != 0 {
+			t.Fatalf("original closed through a refusing gate: %v", h.adopt.prEdits)
+		}
+		for _, c := range h.api.comments {
+			if strings.Contains(c, "close_first=true") {
+				t.Fatalf("close-first note posted through a refusing gate: %v", h.api.comments)
+			}
+		}
+		for _, l := range h.addedLabels() {
+			if l == hgithub.SupersededLabel {
+				t.Fatalf("superseded label added through a refusing gate: %v", h.api.added)
+			}
+		}
+		rec := h.record()
+		if rec.SupersededClosedFirst || rec.AdoptedBy != 90 {
+			t.Fatalf("record = %+v", rec)
+		}
+		if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 1 || s[0].Reason != writeback.ReasonOwnOnly {
+			t.Fatalf("suppressed = %+v", gate.Recent())
+		}
+	})
+	t.Run("allowed closes the original first", func(t *testing.T) {
+		h, done := newCloseFirstHarness(t, closeFirstPolicy())
+		defer done()
+		gate := h.installWritebackGate(&closeFirstGateState{})
+		h.adoptCloseFirst()
+		if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+			t.Fatalf("original not closed: %v", h.adopt.prEdits)
+		}
+		if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "close_first=true") {
+			t.Fatalf("comments: %v", h.api.comments)
+		}
+		if rec := h.record(); !rec.SupersededClosedFirst || rec.SupersededBy != 90 {
+			t.Fatalf("record = %+v", rec)
+		}
+		if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 0 {
+			t.Fatalf("suppressed = %+v", s)
+		}
+	})
+}
+
+// hivecommons/hive#15526: with the contributor_adopt kind requiring a repo
+// opt-in label (the default), an agent-authored original the hive has
+// re-authored closes on adopt by policy (close_superseded: on_adopt,
+// writeback.ReasonSupersededAgentPR); on_merge leaves it to the merge-time
+// close. A person's original still needs the label (TestCloseFirstGateItem
+// and the gate's own decision table).
+func TestAdoptionCloseFirstSupersededAgentPolicy(t *testing.T) {
+	run := func(t *testing.T, policy StageLabelPolicy) (*closeFirstHarness, *writeback.Gate, func()) {
+		t.Helper()
+		h, done := newCloseFirstHarness(t, policy)
+		gate := h.installWritebackGate(&closeFirstGateState{requireLabel: true})
+		h.adoptCloseFirst()
+		return h, gate, done
+	}
+	t.Run("clanker original closes on adopt without the label", func(t *testing.T) {
+		h, gate, done := run(t, closeFirstPolicy())
+		defer done()
+		if len(h.adopt.pulls) != 1 {
+			t.Fatalf("copy not opened: pulls=%d", len(h.adopt.pulls))
+		}
+		if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+			t.Fatalf("original not closed: %v", h.adopt.prEdits)
+		}
+		if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "close_first=true") || !strings.Contains(c[0], "same commits and sign-off") {
+			t.Fatalf("comments: %v", h.api.comments)
+		}
+		if rec := h.record(); !rec.SupersededClosedFirst || rec.SupersededBy != 90 || rec.SupersededOpen {
+			t.Fatalf("record = %+v", rec)
+		}
+		if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 0 {
+			t.Fatalf("suppressed = %+v", s)
+		}
+	})
+	t.Run("on_merge leaves a clanker original open until the copy merges", func(t *testing.T) {
+		p := closeFirstPolicy()
+		p.AdoptCloseSuperseded = config.AdoptionCloseSupersededOnMerge
+		h, gate, done := run(t, p)
+		defer done()
+		if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 0 {
+			t.Fatalf("pulls=%d edits=%v", len(h.adopt.pulls), h.adopt.prEdits)
+		}
+		if c := adoptionComments(h.api); len(c) != 0 {
+			t.Fatalf("close-first note posted under on_merge: %v", c)
+		}
+		rec := h.record()
+		if rec.SupersededClosedFirst || rec.AdoptedBy != 90 {
+			t.Fatalf("record = %+v", rec)
+		}
+		// Not a gate refusal: nothing was asked of the gate.
+		if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 0 {
+			t.Fatalf("suppressed = %+v", s)
+		}
+	})
+}
+
+// closeFirstGateItem: only an agent-authored original names the copy for the
+// gate; a person's never does, whatever close_superseded says.
+func TestCloseFirstGateItem(t *testing.T) {
+	obs := func(kind authorkind.Kind) stageObservation {
+		return stageObservation{Number: 7, Author: "odttlnt", AuthorKind: kind, Labels: []string{"stage/072-returned-to-contributor"}}
+	}
+	onAdopt, onMerge := closeFirstPolicy(), closeFirstPolicy()
+	onMerge.AdoptCloseSuperseded = config.AdoptionCloseSupersededOnMerge
+	for _, tc := range []struct {
+		name    string
+		kind    authorkind.Kind
+		policy  StageLabelPolicy
+		agent   bool
+		by      int
+		onMerge bool
+	}{
+		{"clanker default", authorkind.Clanker, onAdopt, true, 90, false},
+		{"hive default", authorkind.Hive, onAdopt, true, 90, false},
+		{"clanker on_merge", authorkind.Clanker, onMerge, false, 0, true},
+		{"human default", authorkind.Human, onAdopt, false, 0, false},
+		{"human on_merge", authorkind.Human, onMerge, false, 0, false},
+		{"unknown default", authorkind.Unknown, onAdopt, false, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			item, onMerge := closeFirstGateItem(obs(tc.kind), tc.policy, 90)
+			if item.AgentAuthored != tc.agent || item.SupersededBy != tc.by || onMerge != tc.onMerge || item.Number != 7 || item.Author != "odttlnt" || !item.IsPR {
+				t.Fatalf("item=%+v onMerge=%v", item, onMerge)
+			}
+		})
+	}
+}
+
+// A paused repo gets no reopen while paused; the record stays due its poll
+// and the reopen lands once the pause lifts.
+func TestAdoptionCloseFirstReopenWaitsForWritebackGate(t *testing.T) {
+	h, done := newCloseFirstHarness(t, closeFirstPolicy())
+	defer done()
+	st := &closeFirstGateState{}
+	gate := h.installWritebackGate(st)
+	h.adoptCloseFirst()
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed: %v", h.adopt.prEdits)
+	}
+	h.adopt.setSuperseder(90, "closed", false)
+	st.paused = true
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	res := h.sweep()
+	if len(h.adopt.prEdits) != 1 || res.Comments != 0 || len(commentsWithPrefix(h.api, AdoptionCopyFailedMarker)) != 0 || len(h.api.removed) != 0 {
+		t.Fatalf("wrote while paused: edits=%v comments=%v removed=%v res=%+v", h.adopt.prEdits, h.api.comments, h.api.removed, res)
+	}
+	if rec := h.record(); !rec.SupersededClosedFirst || rec.AdoptionCopyFailed() {
+		t.Fatalf("record settled while paused = %+v", rec)
+	}
+	if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 1 || s[0].Reason != writeback.ReasonRepoPaused {
+		t.Fatalf("suppressed = %+v", gate.Recent())
+	}
+
+	st.paused = false
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	res = h.sweep()
+	if len(h.adopt.prEdits) != 2 || h.adopt.prEdits[1] != "7:open" {
+		t.Fatalf("original not reopened after the pause lifted: %v", h.adopt.prEdits)
+	}
+	if notes := commentsWithPrefix(h.api, AdoptionCopyFailedMarker); len(notes) != 1 || res.Comments != 1 {
+		t.Fatalf("reopen note: %v res=%+v", h.api.comments, res)
+	}
+}
+
+// A policy refusal (not a pause) after the hive closed the original is
+// warned, not merely logged at info: the PR the hive shut stays closed
+// until the contributor_adopt policy allows the reopen or a person acts.
+func TestAdoptionCloseFirstReopenPolicyRefusalWarns(t *testing.T) {
+	h, done := newCloseFirstHarness(t, closeFirstPolicy())
+	defer done()
+	st := &closeFirstGateState{}
+	gate := h.installWritebackGate(st)
+	h.adoptCloseFirst()
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed: %v", h.adopt.prEdits)
+	}
+	h.adopt.setSuperseder(90, "closed", false)
+	st.adoptOff = true
+	var logs bytes.Buffer
+	h.e.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	res := h.sweep()
+	if len(h.adopt.prEdits) != 1 || res.Comments != 0 || len(commentsWithPrefix(h.api, AdoptionCopyFailedMarker)) != 0 {
+		t.Fatalf("wrote through a refusing gate: edits=%v comments=%v res=%+v", h.adopt.prEdits, h.api.comments, res)
+	}
+	if rec := h.record(); !rec.SupersededClosedFirst || rec.AdoptionCopyFailed() {
+		t.Fatalf("record settled through a refusing gate = %+v", rec)
+	}
+	if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 1 || s[0].Reason != writeback.ReasonOwnOnly {
+		t.Fatalf("suppressed = %+v", gate.Recent())
+	}
+	if out := logs.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "hive-closed PR stays closed") || !strings.Contains(out, "writeback_reason="+writeback.ReasonOwnOnly) {
+		t.Fatalf("policy refusal not warned: %q", out)
 	}
 }
 

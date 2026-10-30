@@ -71,6 +71,9 @@ func (s *Server) delegatedHumanMergeOutcome(repoFull string, number int, itemTyp
 		code = delegatedHumanMergeRule
 	}
 	why := stageTrackerUntrustedAuthorWhy(base, in.Author)
+	if fix := stageTrackerUntrustedAuthorFix(base, in.Author); why != "" && fix != "" {
+		why += ". " + strings.TrimSuffix(fix, ".")
+	}
 	if why == "" {
 		why = decisionPlainReason(base)
 		if base == "" || why == base {
