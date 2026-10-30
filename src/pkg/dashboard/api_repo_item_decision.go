@@ -582,14 +582,32 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 	// between the approval landing and the merge (hivecommons/hive#15136).
 	admitted := s.admitPullRequestHead(repoFull, number, state.HeadSHA, user)
 	if decision == repoItemDecisionQueueMerge {
-		if err := gh.QueuePRAutoMergeWithNote(ctx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment)); err != nil {
+		queued, err := gh.QueuePRAutoMergeWithNoteResult(ctx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment))
+		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
+		released := []string{"admitted"}
+		if !queued.ReviewSubmitted {
+			// The hive's own PR: the App cannot review it, so the operator's
+			// approval is recorded in the hive's store exactly as the plain
+			// Approve decision records it; the self-authored lane merges on
+			// that record once CI is green (hivecommons/hive#15666).
+			event, err := gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
+				HumanChangeRequests: repoItemDecisionChangeRequests(),
+				LiftNeedsHuman:      true,
+				SentinelLabel:       s.sentinelLabel(),
+			})
+			if err != nil {
+				jsonError(w, "recording approval on the hive's own pull request: "+err.Error(), http.StatusBadGateway)
+				return
+			}
+			released = append(repoItemApprovalReleased(event), released...)
+		}
 		label := gh.AutoMergeLabel()
-		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label, "admitted_by", admitted), "", repoFull, number)
+		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label, "admitted_by", admitted, "review_submitted", strconv.FormatBool(queued.ReviewSubmitted)), "", repoFull, number)
 		s.invalidateStageTrackerForWebhook()
-		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA, AdmittedBy: admitted,
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA, AdmittedBy: admitted, Released: released,
 			Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)})
 		return
 	}

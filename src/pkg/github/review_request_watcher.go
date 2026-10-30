@@ -566,6 +566,25 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		c.denyReviewRequest(path, req, err.Error(), nowFn)
 		return
 	}
+	ownPRNote := ""
+	if IsOwnPullRequestReviewRefusal(err) && apiEvent != "COMMENT" {
+		// GitHub never lets the App approve or request changes on its own
+		// pull request (422), and no retry changes that: post the same text
+		// as a COMMENT review so the verdict still lands on the PR
+		// (hivecommons/hive#15666). The verdict is recorded below as asked.
+		commentEvent, commentState, _ := reviewEventToAPI("comment")
+		reviewReq.Event = gh.Ptr(commentEvent)
+		if reviewReq.Body == nil {
+			reviewReq.Body = gh.Ptr(contributorCommentBody(""))
+		}
+		created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+		if err == nil {
+			ownPRNote = fmt.Sprintf("%s downgraded to COMMENT: GitHub refuses a review on the App's own pull request", apiEvent)
+			apiEvent, state = commentEvent, commentState
+			c.logger.Warn("review-request watcher: own-PR review refused by GitHub, posted as COMMENT",
+				slog.String("agent", req.Agent), slog.String("repo", req.Repo), slog.Int("number", req.Number))
+		}
+	}
 	if err != nil {
 		// Retry with exponential backoff and quarantine at the give-up horizon
 		// (request_retry.go) — an every-tick retry loop on a poisoned request
@@ -590,6 +609,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	resp.State = state
 	if commentOnlyNote != "" {
 		resp.Note = commentOnlyNote
+	}
+	if ownPRNote != "" {
+		resp.Note = ownPRNote
 	}
 	if sentinelBlockNote != "" {
 		resp.Note = sentinelBlockNote
