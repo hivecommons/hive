@@ -20,7 +20,7 @@ type Edge struct {
 // stage is applied as usual. Reconcile-from-truth therefore always wins.
 //
 // The table is the mermaid state diagram in
-// docs/labels-and-control-signals.md (DiagramEdges) plus the Store's
+// docs/labels-and-control-signals/stage-labels.md (DiagramEdges) plus the Store's
 // IsRegression semantics: `None → *`, `* → None` and a no-op are always
 // expected; a hop between two stages the kind can carry is expected when the
 // diagram draws it or when IsRegression does not count it as a fall (every

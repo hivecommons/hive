@@ -176,7 +176,7 @@ requires an `Origin` on its request and normalises labels through
 upstream-watch, convergence channel) add their non-lane origin label themselves.
 Provenance is never a gate: if a non-lane origin label cannot be ensured on the
 repo the issue is still filed without it (logged as a warning), whereas a
-retryable failure on a routing label keeps the request queued as before. See [labels-and-control-signals.md](labels-and-control-signals.md#origin-sources).
+retryable failure on a routing label keeps the request queued as before. See [labels-and-control-signals.md](labels-and-control-signals/reference.md#origin-sources).
 
 ## Lane allowlist
 
