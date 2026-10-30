@@ -206,12 +206,57 @@
 
     // Rows for the current filter. Outside the Pull requests view a PR that
     // is nested under a listed issue is drawn as that issue's sub-row only.
+    // A `blocked` review-backlog issue (review_note_of = its source PR) is
+    // never a row of its own while that PR is open: it folds under the PR's
+    // row (one muted "N review notes blocked on this PR" line), or, when the
+    // PR is not drawn in this view, into the lowest-numbered note of its
+    // group, so a PR with eight notes costs the count one row, not eight.
     function stageTrackerVisible(items, filter, ctx) {
       const f = stageTrackerNormalizeFilter(filter || _stageTrackerFilter);
       const rows = (items || []).filter(it => stageTrackerMatches(it, f, ctx));
       if (f.kind === 'pr') return rows;
       const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
-      return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
+      const out = rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
+      const drawnPRs = new Set(rows.filter(it => it.kind === 'pr').map(it => it.repo + '#' + it.number));
+      const lead = {};
+      for (const it of out) {
+        if (!stageTrackerIsReviewNote(it)) continue;
+        const k = it.repo + '#' + it.review_note_of;
+        if (!(k in lead) || Number(it.number) < lead[k]) lead[k] = Number(it.number);
+      }
+      return out.filter(it => {
+        if (!stageTrackerIsReviewNote(it)) return true;
+        const k = it.repo + '#' + it.review_note_of;
+        return !drawnPRs.has(k) && lead[k] === Number(it.number);
+      });
+    }
+
+    // Pure: an issue the tracker folds as a review note (see stageTrackerVisible).
+    function stageTrackerIsReviewNote(it) {
+      return !!(it && it.kind === 'issue' && Number(it.review_note_of) > 0);
+    }
+
+    // Pure: the review notes folded into this row. On a PR row, its
+    // review_notes; on the lead note of a group whose PR is not drawn, the
+    // other open notes of that group (from the full item list).
+    function stageTrackerFoldedReviewNotes(item, items) {
+      if (!item) return [];
+      if (item.kind === 'pr') return Array.isArray(item.review_notes) ? item.review_notes : [];
+      if (!stageTrackerIsReviewNote(item)) return [];
+      return (items || []).filter(it => stageTrackerIsReviewNote(it) && it.repo === item.repo && it.review_note_of === item.review_note_of && it.number !== item.number)
+        .sort((a, b) => a.number - b.number);
+    }
+
+    // The muted one-line summary of a row's folded review notes, with each
+    // note's number as a link so nothing becomes unreachable.
+    function stageTrackerReviewNotesHtml(item, ctx) {
+      const notes = stageTrackerFoldedReviewNotes(item, ctx && ctx.items);
+      if (!notes.length) return '';
+      const links = notes.map(n => n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener" title="${esc(n.title || '')}">#${Number(n.number)}</a>` : `<span title="${esc(n.title || '')}">#${Number(n.number)}</span>`).join(', ');
+      const lead = item.kind === 'pr'
+        ? `${notes.length} review note${notes.length === 1 ? '' : 's'} blocked on this PR`
+        : `+${notes.length} more review note${notes.length === 1 ? '' : 's'} blocked on PR #${Number(item.review_note_of)}`;
+      return `<div class="ham-review-notes" data-ham-review-notes="${notes.length}">${esc(lead)} · ${links}</div>`;
     }
 
     // The canonical tracker count (owner): rows of the default view — every
@@ -303,15 +348,18 @@
     // spells out how the row count is made ("33 issues + 4 PRs on their
     // own row") in the header and the pill tooltip, so the two pills read
     // as different views of one population rather than a disagreement.
-    function stageTrackerCountsText(page, allCount, attention, open, attentionAll) {
+    function stageTrackerCountsText(page, allCount, attention, open, attentionAll, folded) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
       const attnText = n => n ? n + ' need' + (n === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
       const attn = attnText(attention);
       const attnAll = attnText(Number.isFinite(Number(attentionAll)) ? Number(attentionAll) : attention);
       const rowsWord = n => n === 1 ? 'row' : 'rows';
-      const parts = stageTrackerRowBreakdown(allCount, open);
-      const note = parts.shared ? `${parts.shared} ${parts.shared === 1 ? 'PR' : 'PRs'} shown on ${parts.shared === 1 ? 'its' : 'their'} issue's row` : '';
+      const parts = stageTrackerRowBreakdown(allCount, open, folded);
+      const noteBits = [];
+      if (parts.shared) noteBits.push(`${parts.shared} ${parts.shared === 1 ? 'PR' : 'PRs'} shown on ${parts.shared === 1 ? 'its' : 'their'} issue's row`);
+      if (parts.folded) noteBits.push(`${parts.folded} review ${parts.folded === 1 ? 'note' : 'notes'} folded under ${parts.folded === 1 ? 'its' : 'their'} PR`);
+      const note = noteBits.join(' · ');
       const breakdown = parts.known ? `${parts.issues} ${parts.issues === 1 ? 'issue' : 'issues'} + ${parts.standalonePRs} ${parts.standalonePRs === 1 ? 'PR' : 'PRs'} on ${parts.standalonePRs === 1 ? 'its' : 'their'} own row` : '';
       return {
         showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
@@ -324,15 +372,28 @@
     }
 
     // Pure: how the default view's row count decomposes against the open
-    // item totals. Every open issue is a row; a PR is a row only when it is
-    // not drawn under a listed issue, so standalonePRs = rows − issues and
-    // shared = (issues + PRs) − rows. `known` is false without totals.
-    function stageTrackerRowBreakdown(rowCount, open) {
+    // item totals. Every open issue is a row except a review note folded
+    // under its PR (`folded`, see stageTrackerVisible); a PR is a row only
+    // when it is not drawn under a listed issue, so standalonePRs = rows −
+    // (issues − folded) and shared = (issues − folded + PRs) − rows. `known`
+    // is false without totals. `issues` stays the open-issue total so the
+    // breakdown still adds up to the Overview tile.
+    function stageTrackerRowBreakdown(rowCount, open, folded) {
       const rows = Math.max(0, Number(rowCount) || 0);
-      if (!open || !Number.isFinite(Number(open.issues)) || !Number.isFinite(Number(open.prs))) return { known: false, rows, issues: 0, prs: 0, standalonePRs: 0, shared: 0 };
+      if (!open || !Number.isFinite(Number(open.issues)) || !Number.isFinite(Number(open.prs))) return { known: false, rows, issues: 0, prs: 0, standalonePRs: 0, shared: 0, folded: 0 };
       const issues = Math.max(0, Number(open.issues)), prs = Math.max(0, Number(open.prs));
-      const standalonePRs = Math.min(prs, Math.max(0, rows - issues));
-      return { known: true, rows, issues, prs, standalonePRs, shared: Math.max(0, issues + prs - rows) };
+      const fold = Math.min(issues, Math.max(0, Number(folded) || 0));
+      const standalonePRs = Math.min(prs, Math.max(0, rows - (issues - fold)));
+      return { known: true, rows, issues, prs, standalonePRs, shared: Math.max(0, issues - fold + prs - rows), folded: fold };
+    }
+
+    // Pure: how many issues of the default view are folded review notes
+    // rather than rows (stageTrackerVisible drops them; the count line
+    // explains the difference).
+    function stageTrackerFoldedCount(items, ctx) {
+      const f = stageTrackerDefaultFilter();
+      const shown = new Set(stageTrackerVisible(items, f, ctx).map(it => it.repo + '#' + it.number));
+      return (items || []).filter(it => stageTrackerIsReviewNote(it) && stageTrackerMatches(it, f, ctx) && !shown.has(it.repo + '#' + it.number)).length;
     }
 
     // The tracker's open issue / PR counts: the payload's open_issues/open_prs
@@ -631,6 +692,7 @@
       ctx.events = _stageTrackerEvents;
       ctx.noteTuck = stageTrackerNoteTuckSetting();
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
+      ctx.items = d.items;
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
@@ -655,7 +717,7 @@
       // is the warn-coloured header suffix and the pill's tooltip, counted
       // over every item regardless of filter.
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
-      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll);
+      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll, stageTrackerFoldedCount(d.items, ctx));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }

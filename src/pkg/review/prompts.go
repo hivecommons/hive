@@ -535,6 +535,7 @@ func scopeContractSection(pr PullRequest) string {
 	}
 	b.WriteString("- Classify every finding with review_scope: \"in-scope\" when it affects whether this PR satisfies that contract, or \"out-of-scope\" when it is a real adjacent/pre-existing concern for later work.\n")
 	b.WriteString("- Only in-scope findings may affect your verdict. Out-of-scope findings need file:line evidence too, but they do not block this PR; the hive will file them as backlog issues.\n")
+	b.WriteString(priorNotesInstruction)
 	if isLinear && linearText != "" {
 		b.WriteString("- Mark each acceptance criterion in that issue delivered, missing, or deferred in your summary.\n\n")
 		return b.String()
@@ -546,6 +547,17 @@ func scopeContractSection(pr PullRequest) string {
 	b.WriteString("\n\n")
 	return b.String()
 }
+
+// priorNotesInstruction keeps a perspective from re-reporting another
+// perspective's or an earlier head's note as a finding of its own: each such
+// re-report used to become one more backlog issue per perspective per head
+// (hivecommons/hive#15627, #15628, #15629 were one finding). The hive drops
+// carry-over wrappers and treats ReviewRefersToMarker as a reference.
+const priorNotesInstruction = "- Report only findings that are NEW from this perspective at this head. Do NOT re-report another perspective's note, or a note already raised at an earlier head, as a finding of your own: a finding titled \"Previous style note still present\" or \"Prior finding unchanged\" is a reference, not a finding, and the hive discards it instead of filing it. If you must mention a prior note, say so in your summary, or cite its backlog issue inside the finding's summary with `<!-- hive-refers-to: #N -->`; the hive treats that as a reference to issue N, never as a new filing.\n"
+
+// ReviewRefersToMarker is the marker a finding carries to cite an existing
+// backlog item instead of raising a new one; pkg/github reads it.
+const ReviewRefersToMarker = "<!-- hive-refers-to:"
 
 // untrustedFence returns a backtick fence longer than any backtick run in
 // text, so the text cannot close the block it is quoted in.
