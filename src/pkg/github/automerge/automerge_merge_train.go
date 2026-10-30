@@ -150,6 +150,22 @@ type mergeTrainMember struct {
 	// (hivecommons/hive#15741 at CI / Review led #15748 and #15755, both
 	// queued at 080, and nothing merged).
 	Readiness int
+	// SeatedSince is when this exact head first took a seat in a train
+	// (zero: not seated before this pass). Earlier seats lead, so a member
+	// that left the train and came back ready rides at the back
+	// (hivecommons/hive#15825).
+	SeatedSince time.Time
+}
+
+// mergeTrainSeated reports whether a member may take a train seat: items
+// that have not passed the review or CI is not green should not be (a)
+// ready for merge, (b) in a merge train (hivecommons/hive#15825). Only a
+// head the lane last saw ready — green on the current head, every
+// required verdict recorded for it, mergeable — rides; the rest are
+// candidates: they share the train's files but hold no position and never
+// front it.
+func mergeTrainSeated(m mergeTrainMember) bool {
+	return !m.Blocked && m.Readiness == mergeTrainReadinessReady
 }
 
 // Readiness tiers. The zero value is unknown; mergeTrainReadinessRank
@@ -186,7 +202,12 @@ type mergeTrainGroup struct {
 	Base         string
 	Order        []int
 	OverlapFiles []string
-	members      map[int]mergeTrainMember
+	// Candidates share the train's files but are not ready on their
+	// current head (CI running, a verdict owed, blocked): no position,
+	// never front. They are evaluated on the lane's normal path and take a
+	// seat at the back once ready (hivecommons/hive#15825).
+	Candidates []int
+	members    map[int]mergeTrainMember
 }
 
 // Front is the PR the train merges next.
@@ -241,6 +262,38 @@ func mergeTrainStateRank(state string) int {
 func mergeTrainDirty(state string) bool {
 	s := strings.ToLower(strings.TrimSpace(state))
 	return s == "dirty" || s == "conflicting"
+}
+
+// mergeTrainSeatLess orders the seated members front-first: a head that
+// merges trails one that does not need the train's rebase first (a
+// conflict the train's own front merge caused is repaired last, after the
+// ready heads behind it have merged), then the seat taken earliest leads
+// (a member that came back ready re-enters at the back: zero SeatedSince
+// trails), then the mergeable-state ordering of hivecommons/hive#15763,
+// then age, then number.
+func mergeTrainSeatLess(ms []mergeTrainMember) func(a, b int) bool {
+	return func(a, b int) bool {
+		if da, db := mergeTrainDirty(ms[a].MergeableState), mergeTrainDirty(ms[b].MergeableState); da != db {
+			return !da
+		}
+		sa, sb := ms[a].SeatedSince, ms[b].SeatedSince
+		if !sa.Equal(sb) {
+			if sa.IsZero() != sb.IsZero() {
+				return !sa.IsZero()
+			}
+			return sa.Before(sb)
+		}
+		if ra, rb := mergeTrainStateRank(ms[a].MergeableState), mergeTrainStateRank(ms[b].MergeableState); ra != rb {
+			return ra < rb
+		}
+		if !ms[a].CreatedAt.Equal(ms[b].CreatedAt) {
+			if ms[a].CreatedAt.IsZero() != ms[b].CreatedAt.IsZero() {
+				return !ms[a].CreatedAt.IsZero()
+			}
+			return ms[a].CreatedAt.Before(ms[b].CreatedAt)
+		}
+		return ms[a].Number < ms[b].Number
+	}
 }
 
 // groupMergeTrains groups members per base by overlapping files (union of
@@ -307,32 +360,33 @@ func groupMergeTrains(members []mergeTrainMember) []mergeTrainGroup {
 			if len(ms) < 2 {
 				continue
 			}
-			sort.SliceStable(ms, func(a, b int) bool {
-				if ms[a].Blocked != ms[b].Blocked {
-					return !ms[a].Blocked
+			var seated, candidates []mergeTrainMember
+			for _, m := range ms {
+				if mergeTrainSeated(m) {
+					seated = append(seated, m)
+				} else {
+					candidates = append(candidates, m)
 				}
-				if ra, rb := mergeTrainReadinessRank(ms[a].Readiness), mergeTrainReadinessRank(ms[b].Readiness); ra != rb {
-					return ra < rb
-				}
-				ra, rb := mergeTrainStateRank(ms[a].MergeableState), mergeTrainStateRank(ms[b].MergeableState)
-				if ra != rb {
-					return ra < rb
-				}
-				if !ms[a].CreatedAt.Equal(ms[b].CreatedAt) {
-					if ms[a].CreatedAt.IsZero() != ms[b].CreatedAt.IsZero() {
-						return !ms[a].CreatedAt.IsZero()
-					}
-					return ms[a].CreatedAt.Before(ms[b].CreatedAt)
-				}
-				return ms[a].Number < ms[b].Number
-			})
-			if ms[0].Blocked {
+			}
+			if len(seated) == 0 {
 				continue
 			}
+			sort.SliceStable(seated, mergeTrainSeatLess(seated))
+			sort.SliceStable(candidates, func(a, b int) bool {
+				if ra, rb := mergeTrainReadinessRank(candidates[a].Readiness), mergeTrainReadinessRank(candidates[b].Readiness); ra != rb {
+					return ra < rb
+				}
+				return candidates[a].Number < candidates[b].Number
+			})
 			g := mergeTrainGroup{Base: base, members: map[int]mergeTrainMember{}}
 			count := map[string]int{}
-			for _, m := range ms {
+			for _, m := range seated {
 				g.Order = append(g.Order, m.Number)
+			}
+			for _, m := range candidates {
+				g.Candidates = append(g.Candidates, m.Number)
+			}
+			for _, m := range ms {
 				g.members[m.Number] = m
 				seen := map[string]bool{}
 				for _, f := range m.Files {
@@ -359,6 +413,9 @@ type mergeTrainPlan struct {
 	lane, displayRepo, owner, repo string
 	groups                         []mergeTrainGroup
 	byNumber                       map[int]*mergeTrainGroup
+	// candidates are the PRs that share a train's files but are not ready
+	// on their current head: they hold no seat (hivecommons/hive#15825).
+	candidates map[int]*mergeTrainGroup
 	// duplicates are the PRs held out of every train this pass because
 	// another open PR fixes the same issue (one PR per issue).
 	duplicates map[int]mergeTrainDuplicateHold
@@ -388,6 +445,62 @@ func (p *mergeTrainPlan) isFront(number int) bool {
 	return ok && g.Front() == number
 }
 
+// candidateOf returns the train number is a candidate for (shares files
+// with, without a seat), if any.
+func (p *mergeTrainPlan) candidateOf(number int) (*mergeTrainGroup, bool) {
+	if p == nil || p.candidates == nil {
+		return nil, false
+	}
+	g, ok := p.candidates[number]
+	return g, ok && g.Front() > 0
+}
+
+// isCandidate reports whether number shares a train's files this pass
+// without a seat: the lane evaluates it, but if it turns out ready it is
+// held for a seat at the back rather than merged ahead of the front.
+func (p *mergeTrainPlan) isCandidate(number int) bool {
+	_, ok := p.candidateOf(number)
+	return ok
+}
+
+// mergeTrainCandidateHoldKey is the context key under which a lane carries
+// the hold reason for a train candidate (hivecommons/hive#15825): the lane
+// evaluates the PR on its normal path, but a head that turns out ready is
+// not merged ahead of the train's front — it is held for a seat at the
+// back next pass.
+type mergeTrainCandidateHoldKey struct{}
+
+// withMergeTrainCandidateHold marks ctx as evaluating a train candidate.
+func withMergeTrainCandidateHold(ctx context.Context, reason string) context.Context {
+	if reason == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, mergeTrainCandidateHoldKey{}, reason)
+}
+
+// mergeTrainCandidateHold is the hold reason a merge point returns instead
+// of merging when the lane is evaluating a train candidate; "" otherwise.
+func mergeTrainCandidateHold(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	reason, _ := ctx.Value(mergeTrainCandidateHoldKey{}).(string)
+	return reason
+}
+
+// mergeTrainCandidateReason is the lane reason for a candidate the lane
+// found ready: `merge-train:admitted#<front>:0/<size>:0/0:<files>`. The
+// stage engine reads it as 080 (the PR is green and approved; its wait is
+// the train's turn), and mergeTrainReadinessOf reads it as ready, so the
+// next plan seats it at the back.
+func (c *Engine) mergeTrainCandidateReason(plan *mergeTrainPlan, number int) string {
+	g, ok := plan.candidateOf(number)
+	if !ok {
+		return ""
+	}
+	return prstage.MergeTrain{State: prstage.MergeTrainStateAdmitted, Front: g.Front(), Position: 0, Size: len(g.Order), OverlapFiles: g.OverlapFiles}.Reason()
+}
+
 // mergeTrainPolicyNow reads the live policy.
 func (c *Engine) mergeTrainPolicyNow() MergeTrainPolicy {
 	if c == nil || c.mergeTrainPolicy == nil {
@@ -413,10 +526,11 @@ func mergeTrainCandidate(prefilterReason string) bool {
 // candidates share a base. Errors are logged and leave the PR out of any
 // train, so a failed read never blocks a merge the lane would have made.
 func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, repo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) *mergeTrainPlan {
-	plan := &mergeTrainPlan{lane: lane, displayRepo: displayRepo, owner: owner, repo: repo, byNumber: map[int]*mergeTrainGroup{}}
+	plan := &mergeTrainPlan{lane: lane, displayRepo: displayRepo, owner: owner, repo: repo, byNumber: map[int]*mergeTrainGroup{}, candidates: map[int]*mergeTrainGroup{}}
 	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
 		return plan
 	}
+	defer c.mergeTrainSettleSeats(lane, owner, repo, displayRepo, prs, plan)
 	prs = c.planDuplicateHolds(ctx, plan, lane, owner, repo, displayRepo, prs, prefilter)
 	perBase := map[string][]*gh.PullRequest{}
 	for _, pr := range prs {
@@ -506,11 +620,20 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 			m.Number = 0
 		}
 	}
+	for i := range members {
+		m := &members[i]
+		if seat, ok := c.mergeTrainSeatFor(lane, owner, repo, m.Number); ok && seat.sha == m.HeadSHA {
+			m.SeatedSince = seat.since
+		}
+	}
 	plan.groups = groupMergeTrains(members)
 	for i := range plan.groups {
 		g := &plan.groups[i]
 		for _, n := range g.Order {
 			plan.byNumber[n] = g
+		}
+		for _, n := range g.Candidates {
+			plan.candidates[n] = g
 		}
 		c.logMergeTrainTransition(displayRepo, lane, *g)
 	}
@@ -867,16 +990,177 @@ type mergeTrainState struct {
 	// mergeTrainVerdicts remembers, per lane and PR, the last head whose
 	// verdict keeps it from fronting (or riding) a train.
 	mergeTrainVerdicts map[string]mergeTrainVerdict
+	// mergeTrainSeats remembers, per lane and PR, the head that holds a
+	// train seat and since when (hivecommons/hive#15825): the seat orders
+	// the train (earliest first) and its loss is the ejection the log and
+	// the stage store report.
+	mergeTrainSeats map[string]mergeTrainSeat
+	// mergeTrainNow is the planner's clock (tests inject one).
+	mergeTrainNow func() time.Time
+}
+
+// mergeTrainSeat is one PR's train seat: the head seated and since when.
+type mergeTrainSeat struct {
+	sha   string
+	since time.Time
+}
+
+// Ejection reasons: why a seated member left the train
+// (hivecommons/hive#15825). Logged once per ejection and recorded on the
+// stage store so the tracker row says what happened.
+const (
+	mergeTrainEjectHeadMoved   = "head-moved"
+	mergeTrainEjectCIPending   = "ci-pending"
+	mergeTrainEjectCIRed       = "ci-red"
+	mergeTrainEjectVerdictOwed = "verdict-owed"
+	mergeTrainEjectConflicting = "conflicting"
+	mergeTrainEjectUnderRepair = "under-repair"
+	mergeTrainEjectHumanMerge  = "human-merge"
+	mergeTrainEjectHeld        = "held"
+)
+
+func (c *Engine) mergeTrainClock() time.Time {
+	if c != nil && c.mergeTrainNow != nil {
+		return c.mergeTrainNow()
+	}
+	return time.Now()
+}
+
+func (c *Engine) mergeTrainSeatFor(lane, owner, repo string, number int) (mergeTrainSeat, bool) {
+	if c == nil {
+		return mergeTrainSeat{}, false
+	}
+	c.mergeTrainMu.Lock()
+	defer c.mergeTrainMu.Unlock()
+	seat, ok := c.mergeTrainSeats[mergeTrainVerdictKey(lane, owner, repo, number)]
+	return seat, ok
+}
+
+// mergeTrainSettleSeats reconciles the seat memory with this pass's plan:
+// every seated member keeps (or takes) its seat at its current head; a
+// PR that held a seat and is open but not seated now is ejected — once,
+// at INFO, with the why — and the stage store is told so the row reads
+// "left the merge train — new push, CI re-running" while it sits back in
+// the CI / Review column. A seat whose PR is gone (merged, closed) is
+// forgotten silently.
+func (c *Engine) mergeTrainSettleSeats(lane, owner, repo, displayRepo string, prs []*gh.PullRequest, plan *mergeTrainPlan) {
+	if c == nil || plan == nil {
+		return
+	}
+	now := c.mergeTrainClock()
+	open := map[int]*gh.PullRequest{}
+	for _, pr := range prs {
+		if pr != nil && pr.GetNumber() > 0 {
+			open[pr.GetNumber()] = pr
+		}
+	}
+	store := c.stageStoreOrShared()
+	type ejection struct {
+		number int
+		sha    string
+		why    string
+	}
+	var ejected []ejection
+	var seatedNow []int
+	c.mergeTrainMu.Lock()
+	if c.mergeTrainSeats == nil {
+		c.mergeTrainSeats = map[string]mergeTrainSeat{}
+	}
+	prefix := mergeTrainVerdictKey(lane, owner, repo, 0)
+	prefix = prefix[:strings.LastIndex(prefix, "#")+1]
+	for key, seat := range c.mergeTrainSeats {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		number, err := strconv.Atoi(strings.TrimPrefix(key, prefix))
+		if err != nil || number <= 0 {
+			delete(c.mergeTrainSeats, key)
+			continue
+		}
+		if g, ok := plan.group(number); ok && g.Position(number) > 0 {
+			continue
+		}
+		delete(c.mergeTrainSeats, key)
+		pr, isOpen := open[number]
+		if !isOpen {
+			continue
+		}
+		sha := pr.GetHead().GetSHA()
+		if why := c.mergeTrainEjectWhyLocked(lane, owner, repo, number, sha, seat, pr, plan); why != "" {
+			ejected = append(ejected, ejection{number: number, sha: sha, why: why})
+		}
+	}
+	for n, g := range plan.byNumber {
+		if g.Position(n) == 0 {
+			continue
+		}
+		key := mergeTrainVerdictKey(lane, owner, repo, n)
+		sha := g.members[n].HeadSHA
+		if seat, ok := c.mergeTrainSeats[key]; !ok || seat.sha != sha {
+			c.mergeTrainSeats[key] = mergeTrainSeat{sha: sha, since: now}
+		}
+		seatedNow = append(seatedNow, n)
+	}
+	c.mergeTrainMu.Unlock()
+	sort.Slice(ejected, func(a, b int) bool { return ejected[a].number < ejected[b].number })
+	for _, e := range ejected {
+		c.info("merge train: member ejected", "repo", displayRepo, "pr", e.number, "why", e.why, "lane", lane)
+		if store != nil {
+			store.NoteTrainEjected(stagelabels.Key(owner+"/"+repo, e.number), e.sha, e.why, now)
+		}
+	}
+	if store != nil {
+		for _, n := range seatedNow {
+			store.ClearTrainEjected(stagelabels.Key(owner+"/"+repo, n))
+		}
+	}
+}
+
+// mergeTrainEjectWhyLocked names why a seated PR lost its seat; the
+// caller holds mergeTrainMu. "" means no ejection worth reporting: the
+// train itself dissolved (the front merged and one PR remains), so the PR
+// simply merges on its own.
+func (c *Engine) mergeTrainEjectWhyLocked(lane, owner, repo string, number int, sha string, seat mergeTrainSeat, pr *gh.PullRequest, plan *mergeTrainPlan) string {
+	switch {
+	case sha != seat.sha:
+		return mergeTrainEjectHeadMoved
+	case mergeTrainDirty(pr.GetMergeableState()):
+		return mergeTrainEjectConflicting
+	}
+	if v, ok := c.mergeTrainVerdicts[mergeTrainVerdictKey(lane, owner, repo, number)]; ok && v.sha == sha {
+		switch {
+		case v.humanMerge:
+			return mergeTrainEjectHumanMerge
+		case v.blocked:
+			return mergeTrainEjectCIRed
+		case classifyCIReason(v.reason) == ciReasonPending:
+			return mergeTrainEjectCIPending
+		case v.readiness == mergeTrainReadinessUnready:
+			return mergeTrainEjectVerdictOwed
+		}
+	}
+	if c.mergeTrainUnderRepair(owner, repo, pr) != "" {
+		return mergeTrainEjectUnderRepair
+	}
+	if _, candidate := plan.candidates[number]; candidate {
+		return mergeTrainEjectVerdictOwed
+	}
+	if len(plan.groups) == 0 {
+		return ""
+	}
+	return mergeTrainEjectHeld
 }
 
 // mergeTrainVerdict is the remembered lane verdict for one head: Blocked
 // heads never front; HumanMerge heads are not train members at all;
-// Readiness orders the members that do ride (mergeTrainReadiness*).
+// Readiness orders the members that do ride (mergeTrainReadiness*);
+// reason is the verdict itself, so an ejection can say "ci-pending".
 type mergeTrainVerdict struct {
 	sha        string
 	blocked    bool
 	humanMerge bool
 	readiness  int
+	reason     string
 }
 
 // mergeTrainBlockingReason reports whether a lane's verdict means the head
@@ -896,6 +1180,9 @@ func mergeTrainBlockingReason(reason string) bool {
 // review gate still waiting is unready; any other reason says nothing
 // about readiness (unknown).
 func mergeTrainReadinessOf(reason string) int {
+	if mt, ok := prstage.ParseMergeTrain(reason); ok && mt.State == prstage.MergeTrainStateAdmitted {
+		return mergeTrainReadinessReady
+	}
 	switch {
 	case reason == "", strings.HasPrefix(reason, prstage.ContributorLaneReasonSoaking),
 		stageengine.MergeQueueReason(reason):
@@ -938,7 +1225,7 @@ func (c *Engine) noteMergeTrainOutcome(lane, owner, repo string, number int, sha
 		return
 	}
 	key := mergeTrainVerdictKey(lane, owner, repo, number)
-	v := mergeTrainVerdict{sha: sha, blocked: mergeTrainBlockingReason(reason), humanMerge: mergeTrainHumanMergeReason(reason), readiness: mergeTrainReadinessOf(reason)}
+	v := mergeTrainVerdict{sha: sha, blocked: mergeTrainBlockingReason(reason), humanMerge: mergeTrainHumanMergeReason(reason), readiness: mergeTrainReadinessOf(reason), reason: reason}
 	c.mergeTrainMu.Lock()
 	defer c.mergeTrainMu.Unlock()
 	if (!v.humanMerge && !v.blocked && v.readiness == mergeTrainReadinessUnknown) || strings.TrimSpace(sha) == "" {
@@ -978,6 +1265,12 @@ func (c *Engine) mergeTrainHeadReadiness(lane, owner, repo string, number int, s
 	if v, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha); ok {
 		return v.readiness
 	}
+	if seat, ok := c.mergeTrainSeatFor(lane, owner, repo, number); ok && seat.sha != sha {
+		// The head moved since the train seated it: CI and the verdicts
+		// are owed again, whatever the stage record still says
+		// (hivecommons/hive#15825).
+		return mergeTrainReadinessUnknown
+	}
 	store := c.stageStoreOrShared()
 	if store == nil {
 		return mergeTrainReadinessUnknown
@@ -987,6 +1280,19 @@ func (c *Engine) mergeTrainHeadReadiness(lane, owner, repo string, number int, s
 		return mergeTrainReadinessUnknown
 	}
 	if _, parked := prstage.ParseMergeTrain(rec.Reason); parked {
+		return mergeTrainReadinessUnknown
+	}
+	if rec.TrainEjectedWhy != "" && strings.EqualFold(rec.TrainEjectedHead, sha) {
+		// Ejected at this very head: only the lane's own verdict on it
+		// (above) re-admits it.
+		return mergeTrainReadinessUnknown
+	}
+	if rec.ActivityHead != "" && !strings.EqualFold(rec.ActivityHead, sha) {
+		// The record describes an earlier head: a push since then owes
+		// CI and the verdicts again (hivecommons/hive#15825).
+		return mergeTrainReadinessUnknown
+	}
+	if rec.LastPushSha != "" && !strings.EqualFold(rec.LastPushSha, sha) {
 		return mergeTrainReadinessUnknown
 	}
 	if rec.Stage.Number() >= stagelabels.AwaitingMergeAdmission.Number() {

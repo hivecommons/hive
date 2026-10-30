@@ -214,6 +214,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if pushed {
 			it.Adoption = nil
 		}
+		stageTrackerApplyTrainEjection(it, rec, hasRec, now)
 		if login := stageTrackerWaitingOn(*it, stage); login != "" && !pushed {
 			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
 			it.Rework = stageTrackerReworkFor(*it, login, stage, rec, hasRec, fixWork, now)

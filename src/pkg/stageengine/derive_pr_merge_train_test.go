@@ -57,3 +57,28 @@ func TestClassifyStageMergeTrainDuplicateParksWithAuthor(t *testing.T) {
 		}
 	}
 }
+
+// hivecommons/hive#15825: items that have not passed the review or CI is
+// not green should not be (a) ready for merge, (b) in a merge train. A
+// train reason never lifts a head whose own evidence is red or whose
+// reviewer asked for changes to 080; the admitted hold (green, reviewed,
+// waiting for a seat) is 080.
+func TestClassifyStageMergeTrainNotGreenOrReviewedIsNotMergeQueue(t *testing.T) {
+	parked := prstage.MergeTrain{State: prstage.MergeTrainStateQueuedBehind, Front: 15748, Position: 3, Size: 4}.Reason()
+	red := ClassifyStage(stageObservation{Lane: stageLaneSelf, Reason: parked, HeadSHA: goldenHead,
+		Detail: stageDetail{RedChecks: []string{"coverage"}, RedChecksHead: goldenHead}})
+	if red.Stage != stagelabels.Fixing || red.Reason != stageReasonOptionalCheckFailing+"coverage" {
+		t.Fatalf("red check under a train reason classified as %+v, want 070 with the check named", red)
+	}
+	changes := ClassifyStage(stageObservation{Lane: stageLaneSelf, Reason: parked, HeadSHA: goldenHead,
+		Detail: stageDetail{VerdictKnown: true, Verdict: prstage.ReviewVerdict{Verdict: "changes_requested"}}})
+	if changes.Stage != stagelabels.Fixing || changes.Reason == "" {
+		t.Fatalf("changes requested under a train reason classified as %+v, want 070", changes)
+	}
+	admitted := prstage.MergeTrain{State: prstage.MergeTrainStateAdmitted, Front: 15748, Position: 0, Size: 2}.Reason()
+	v := ClassifyStage(stageObservation{Lane: stageLaneContributor, Reason: admitted, HeadSHA: goldenHead,
+		Detail: stageDetail{VerdictKnown: true, Verdict: prstage.ReviewVerdict{Approved: true}}})
+	if v.Stage != stagelabels.AwaitingMergeAdmission || v.Human {
+		t.Fatalf("admitted candidate classified as %+v, want 080", v)
+	}
+}
