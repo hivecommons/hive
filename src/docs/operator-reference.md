@@ -2018,6 +2018,7 @@ dashboard:
     waiting_push_stale_h: 4        # hours without a push on a CI / Review row before the pill's age turns muted-amber
     toast_info_s: 15               # how long the tracker's result / waiting-on-you toasts stay (3-120 s); the merge banner stays twice as long
     toast_error_s: 30              # how long a failed row action's toast stays (3-120 s); editable from the Activity Monitor's ⚙ → Toasts & timing
+    merged_hold_s: 8               # ceiling on the "Merging · merge landed" bridge; celebration fires on the merged fact (min 3)
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

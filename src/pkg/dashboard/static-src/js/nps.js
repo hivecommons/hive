@@ -237,6 +237,7 @@
     function showNPSSurvey(status) {
       if (_npsShownThisLoad || _npsCard) return;
       if (window.hiveKioskMode && window.hiveKioskMode()) return;
+      if (window.hivePopoutMode && window.hivePopoutMode()) return;
       _npsShownThisLoad = true;
       const maxChars = Number(status && status.max_feedback_chars) || 0;
       let selected = null;

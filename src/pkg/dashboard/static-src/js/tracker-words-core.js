@@ -93,6 +93,9 @@
     // it alone); stage_tracker_merge_gate_test.go pins the two equal.
     const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
     // merge_gate.merge_path (the merge call's issuer) in words (#15245).
+    // A merge call (or a sweep's pass on a soaked PR) older than this says
+    // "waiting for GitHub…" rather than spinning without a reason (#15808).
+    const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
     const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
