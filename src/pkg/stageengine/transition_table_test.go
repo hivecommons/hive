@@ -12,7 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-const diagramDoc = "../../docs/labels-and-control-signals.md"
+const diagramDoc = "../../docs/labels-and-control-signals/stage-labels.md"
 
 var edgeLine = regexp.MustCompile(`^\s*s(\d{3})\s*-->\s*s(\d{3})\s*:`)
 

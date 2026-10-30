@@ -136,7 +136,7 @@ the relation survives a failed link. Once every child of `n` is closed the
 issue stage sweep closes `n` as completed, and while any child is open `n`
 is never marked `stage/stalled`
 ([#12857](https://github.com/hivecommons/hive/issues/12857); see
-[labels-and-control-signals.md](labels-and-control-signals.md#decomposed-parents--closed-by-their-children-never-stalled)).
+[labels-and-control-signals.md](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled)).
 
 `--blocked-by <n[,n]>` records that the new issue must wait for issue(s) `n`
 in the same repo, as GitHub "blocked by" dependencies
