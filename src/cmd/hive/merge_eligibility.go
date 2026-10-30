@@ -125,6 +125,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			AdoptionAutoMerge:         stage.Adoption.AutoMergeEnabled(),
 			AdoptionMaintainerPolicy:  stage.Adoption.EffectiveMaintainerPolicy(),
 			AdoptSupersedeCloseFirst:  stage.Adoption.Supersede.CloseFirstEnabled(),
+			AdoptCloseSuperseded:      stage.Adoption.EffectiveCloseSuperseded(),
 			HiveID:                    cfg.HiveID,
 			AuthorKindLabels:          cfg.Governor.Labels.Author.Names(),
 			RelayKnown:                contributorRelayKnown,
