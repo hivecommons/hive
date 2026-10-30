@@ -20133,6 +20133,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // toast says why in plain words and carries the next actions.
     const STAGE_TRACKER_ACTION_NO_EFFECT = 'no-effect';
     const STAGE_TRACKER_RESULT_TOAST_MAX = 5;
+    // An informational result toast ("adopted", "/lgtm posted", a no-op)
+    // closes itself after this long, with the countdown bar and hover /
+    // focus pause every timed toast gets; it still leaves earlier on × or
+    // when the tracker reports the target in a new state. Errors and
+    // toasts carrying next-action buttons wait for the operator instead.
+    const STAGE_TRACKER_RESULT_TOAST_MS = 15000;
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
@@ -20266,9 +20272,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return String(text || '').replace(STAGE_TRACKER_RFC3339_RE, m => { const ms = Date.parse(m); return isNaN(ms) ? m : agentNowClockTime(ms, nowMs) + (formatDashboardDate(new Date(ms)) === formatDashboardDate(nowMs) ? ' today' : ''); });
     }
     let _stageTrackerResultToasts = [];
-    // Build and show the persistent result toast; it leaves on × or when
-    // the tracker reports the target in a new state (see
-    // stageTrackerResultToastsSync).
+    // Build and show the result toast; it leaves on ×, when the tracker
+    // reports the target in a new state (see stageTrackerResultToastsSync)
+    // or, for a plain informational result, after
+    // STAGE_TRACKER_RESULT_TOAST_MS (see stageTrackerResultToastTimed).
     function stageTrackerResultToast(result, item, ctx) {
       const text = stageTrackerResultText(result, item, ctx);
       const container = document.getElementById('toast-container');
@@ -20306,10 +20313,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (container) container.appendChild(el);
       makeToastSticky(el);
+      if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));
       const key = stageTrackerTargetKey(result.target) || stageTrackerItemKey(item);
       const entry = { el, key, state: stageTrackerItemState(stageTrackerItemByKey(_stageTracker, key)), result, text };
       if (text.type !== 'error') _stageTrackerResultToasts.push(entry);
       return entry;
+    }
+    // Pure: does a result toast close itself? Errors need acknowledging
+    // and a toast offering next actions is a prompt, so both stay until
+    // the operator answers; everything else is information and times out.
+    function stageTrackerResultToastTimed(text) {
+      return text.type !== 'error' && !(text.options && text.options.length);
     }
     // Pure: has the toast's target left the state it was shown in?
     function stageTrackerResultToastStale(entry, d) {
@@ -20858,7 +20872,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        overlay that existed for 900 ms over plain text. The counter is
        now a drum at rest, always (stageTrackerOdometerRest /
        stageTrackerOdometerDraw): a wheel per digit, the day/week line the
-       same columns drawn plain; the pill's bee is --ham-merged-bee. */
+       same columns drawn plain; the pill's bee is --ham-merged-bee.
+       Owner (2026-10-29, hivecommons/hive issue 15568): "the odometer
+       should roll only after the bee animation finishes so it looks
+       correlated" — the day/week line rolled on arrival, a total the
+       server had already raised rolled at once, and merges over the
+       flight cap bumped under other bees. Now a glyph in the air holds
+       the whole drum (stageTrackerMergedInFlight); the last landing draws
+       once, to the final numbers, and only then the roll (and the zap). */
     const STAGE_TRACKER_CELEBRATE_KEY = 'hive.tracker.celebrate';
     const STAGE_TRACKER_MERGED_LAST_KEY = 'hive.tracker.merged.last';
     const STAGE_TRACKER_CELEBRATE_GLYPH_KEY = 'hive.tracker.celebrate_glyph';
@@ -21176,6 +21197,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergedLastSave(n, sub) {
       try { sessionStorage.setItem(STAGE_TRACKER_MERGED_LAST_KEY, JSON.stringify({ n: String(n), sub: String(sub) })); } catch {}
     }
+    // Stateful: whether a celebration glyph is in the air or about to be
+    // (stageTrackerCelebrateMerges staggers the launches; a merge is
+    // pending from the payload that brought it). The drum and the zap
+    // wait on this; the flight's own end — its animationend, or
+    // stageTrackerAfter's timer at STAGE_TRACKER_CELEBRATE_FLY_MS when the
+    // event never fires — is what clears it.
+    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0; }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
       const now = Date.now();
@@ -21188,16 +21216,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const n = chip.querySelector('.ham-merged-n'), sub = chip.querySelector('.ham-merged-sub');
       // First draw of this page: roll up from what the tab showed before
       // the reload, when that is behind the number we have now.
-      if (n && n.getAttribute('data-odo-value') == null) {
+      const first = !n || n.getAttribute('data-odo-value') == null;
+      if (n && first) {
         const last = stageTrackerMergedLastLoad();
         if (last) { stageTrackerOdometerSeed(n, last.n, shown); stageTrackerOdometerSeed(sub, last.sub, txt.sub); }
       }
-      stageTrackerOdometerSet(n, shown);
-      stageTrackerOdometerSet(sub, txt.sub, STAGE_TRACKER_ODOMETER_SUB_MS);
-      if (shown > 0) stageTrackerMergedLastSave(shown, txt.sub);
+      // A glyph in the air owns the drum (issue 15568): neither number
+      // moves under a flight — not the day/week line, not a total the
+      // server already raised, not a merge over the flight cap. The last
+      // landing (stageTrackerCelebrateTick) draws once, to the final
+      // values, so the bee lands and then the drum rolls.
+      const hold = !first && stageTrackerMergedInFlight();
+      if (!hold) {
+        stageTrackerOdometerSet(n, shown);
+        stageTrackerOdometerSet(sub, txt.sub, STAGE_TRACKER_ODOMETER_SUB_MS);
+        if (shown > 0) stageTrackerMergedLastSave(shown, txt.sub);
+      }
       const title = txt.title.replace(/^Merged: \d+ all time/, `Merged: ${shown} all time`);
       if (chip.title !== title) chip.title = title;
-      if (tick) {
+      if (tick && !hold) {
         chip.classList.remove('cue-tick'); void chip.offsetWidth; stageTrackerTransient(chip, 'cue-tick', 320);
         const live = document.getElementById('activity-monitor-merged-live');
         if (live) live.textContent = `Merged: ${shown} all time, ${txt.sub}`;
@@ -21240,7 +21277,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (pop && !pop.hidden) { hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
     });
     // The glyph has landed (or left the screen, or faded): count the PR,
-    // pop the chip, zap.
+    // pop the chip, zap — once the last glyph is down; a landing while
+    // others still fly is folded into theirs (issue 15568).
     function stageTrackerCelebrateTick(key, preview) {
       delete _stageTrackerCelebratePending[key];
       const i = String(key).indexOf('/pr#');
@@ -21250,7 +21288,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (!known && !_stageTrackerMerged.local[key]) _stageTrackerMerged.local[key] = { repo, number, at: Date.now(), title: _stageTrackerPRTitle[key] || '' };
       }
       stageTrackerMergedCountDraw(true);
-      if (stageTrackerSoundGate()) stageTrackerPlayZap(1);
+      if (!stageTrackerMergedInFlight() && stageTrackerSoundGate()) stageTrackerPlayZap(1);
     }
     var _stageTrackerCelebrating = {};
     var _stageTrackerFlights = 0;
