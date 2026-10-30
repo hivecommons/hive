@@ -20,6 +20,10 @@ var botControlPanelTitleFragments = []string{"dependency dashboard", "renovate d
 // out of the held bucket; it is counted as a hive advisory report.
 const dedupeAdvisoryLabelName = "triage/advisory"
 
+// DedupeAdvisoryLabelName is dedupeAdvisoryLabelName for the dashboard's
+// stage tracker, which classifies issues wearing it as advisories.
+const DedupeAdvisoryLabelName = dedupeAdvisoryLabelName
+
 // standingMetaIssueReason preserves the diagnostic predicate introduced by
 // #6158 while the typed classifier lets the repository breakdown distinguish
 // advisory reports from dependency dashboards without reimplementing policy.

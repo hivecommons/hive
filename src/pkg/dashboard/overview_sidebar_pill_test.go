@@ -56,7 +56,7 @@ assert.equal(pillEl().hidden, false);
 assert.equal(pillEl().textContent, '31/18', 'pill must print the tile totals, not the tracked working set');
 assert.equal(pillEl().textContent, kpi['open-issues'] + '/' + kpi['open-prs']);
 assert.ok(!('data-zero' in pillEl().attrs));
-assert.match(pillEl().title, /^31 total open issues \+ 18 total open PRs = 3 actionable now \+ /, 'pill title carries the tile equation breakdown');
+assert.match(pillEl().title, /^31 open issues \/ 18 open PRs — the Hive activity monitor pill counts rows of this same set \(every issue, plus each PR not shown under a listed issue\), so it can read differently · 31 total open issues \+ 18 total open PRs = 3 actionable now \+ /, 'pill title names each half, says how the activity-monitor pill differs, then carries the tile equation');
 assert.doesNotMatch(pillEl().title, /stale/);
 
 // 2. Stale / last-good: GitHub refused the enumeration, the tiles show the

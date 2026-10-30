@@ -32,3 +32,10 @@ agents.*.backend
 agents.*.model
 agents.*.enabled
 agents.*.paused
+# Per-repository merge policy (the dashboard's Merge settings): repository
+# names it checks against project.repos, and the path globs it accepts for
+# each. human_merge_paths is keyed by owner/repo; "*[*]" matches that key and
+# a list index in one segment.
+auto_merge.squash_only[*]
+auto_merge.require_current_base[*]
+auto_merge.human_merge_paths.*[*]

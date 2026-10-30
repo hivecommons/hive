@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -645,6 +646,28 @@ type InstallationInfo struct {
 	InstallationID int64
 	Account        string // login of the org/user the installation belongs to
 	IssuesPerm     string // granted issues permission: "read", "write", or "" (none)
+	// Permissions is the full granted permission map (name → "read" /
+	// "write" / "admin"), for the capability probe that asks whether a
+	// blocker's missing permission has been granted (hivecommons/hive#15099).
+	Permissions map[string]string
+}
+
+// Granted reports whether the installation holds permission name at least
+// at level ("read" or "write"; "admin" satisfies "write").
+func (i *InstallationInfo) Granted(name, level string) bool {
+	if i == nil {
+		return false
+	}
+	got := strings.ToLower(strings.TrimSpace(i.Permissions[strings.ToLower(strings.TrimSpace(name))]))
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "read":
+		return got == "read" || got == "write" || got == "admin"
+	case "write":
+		return got == "write" || got == "admin"
+	case "admin":
+		return got == "admin"
+	}
+	return got != ""
 }
 
 // VerifyInstallation resolves the configured installation and returns the
@@ -672,6 +695,7 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 		InstallationID: installationID,
 		Account:        inst.GetAccount().GetLogin(),
 		IssuesPerm:     inst.GetPermissions().GetIssues(),
+		Permissions:    installationPermissionMap(inst.GetPermissions()),
 	}, nil
 }
 
@@ -757,4 +781,28 @@ func NewClientFromAppWithBotLogin(auth *AppAuth, org string, repos []string, log
 		appBotLogin: appBotLogin,
 		prDetailTTL: func() time.Duration { return (config.GitHubConfig{}).PRDetailTTL() },
 	}
+}
+
+// installationPermissionMap flattens the granted permissions go-github
+// returns into name → level, dropping ungranted ones.
+func installationPermissionMap(p *gh.InstallationPermissions) map[string]string {
+	out := map[string]string{}
+	if p == nil {
+		return out
+	}
+	put := func(name, level string) {
+		if level = strings.TrimSpace(level); level != "" {
+			out[name] = level
+		}
+	}
+	put("actions", p.GetActions())
+	put("administration", p.GetAdministration())
+	put("checks", p.GetChecks())
+	put("contents", p.GetContents())
+	put("issues", p.GetIssues())
+	put("metadata", p.GetMetadata())
+	put("pull_requests", p.GetPullRequests())
+	put("secrets", p.GetSecrets())
+	put("workflows", p.GetWorkflows())
+	return out
 }

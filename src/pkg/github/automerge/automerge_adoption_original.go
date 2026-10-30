@@ -10,6 +10,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // A contributor PR the hive adopted can still be merged by a person. Nothing
@@ -86,12 +87,24 @@ func (c *Engine) closeAdoptionPRIfOriginalMerged(ctx context.Context, displayRep
 		c.info("automerge: adoption original merged at a different head; left for a person", "repo", displayRepo, "pr", number, "original", original, "head", headSHA, "original_head", orig.GetHead().GetSHA())
 		return false
 	}
-	if _, _, err := c.gh.PullRequests.Edit(restCtx, owner, repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
+	item := writeback.Item{Number: number, IsPR: true, HiveAuthored: true, Author: pr.GetUser().GetLogin(), CreatedAt: pr.GetCreatedAt().Time}
+	for _, label := range pr.Labels {
+		item.Labels = append(item.Labels, label.GetName())
+	}
+	if d := c.writebackAllowed(owner+"/"+repo, item, writeback.KindSupersessionClose, "original merged at the adoption head"); !d.Allowed {
+		c.info("automerge: adoption close withheld by write-back gate", "repo", displayRepo, "pr", number, "reason", d.Reason)
+		return false
+	}
+	if _, _, err := c.gh.PullRequests.Edit(restCtx, owner, repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil { // writeback:gated
 		c.warn("automerge: closing adoption PR after its original merged failed", "repo", displayRepo, "pr", number, "original", original, "error", err)
 		return false
 	}
 	c.info("automerge: closed adoption PR, its original merged at the same head", "repo", displayRepo, "pr", number, "original", original, "head", headSHA)
 	comment := fmt.Sprintf("%s\nClosing: #%d, the PR this one adopted, was merged at the same head (`%s`), so this copy has nothing left to merge.", adoptionOriginalMergedMarker, original, shortSHA(headSHA))
+	if d := c.writebackAllowed(owner+"/"+repo, item, writeback.KindSupersessionNotice, comment); !d.Allowed {
+		c.info("automerge: adoption close note withheld by write-back gate", "repo", displayRepo, "pr", number, "reason", d.Reason)
+		return true
+	}
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueComment,
@@ -99,7 +112,7 @@ func (c *Engine) closeAdoptionPRIfOriginalMerged(ctx context.Context, displayRep
 		Actor:  "automerge",
 		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(comment)},
 	}, func(ctx context.Context) (effects.Result, error) {
-		posted, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(comment)})
+		posted, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(comment)}) // writeback:gated
 		if apiErr != nil {
 			return effects.Result{}, effects.NotApplied(apiErr)
 		}

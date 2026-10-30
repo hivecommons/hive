@@ -413,7 +413,7 @@ const (
 // goes through ApplyRails. A runner or validation error falls back to the
 // rules' reversible default and is returned for the caller to note.
 func RunWithLLM(ctx context.Context, in Input, c LLMContext, runner TurnRunner) (Decision, LLMOutcome, error) {
-	rails := Rails{Held: hasLabel(in.Labels, LabelHold)}
+	rails := Rails{Held: hasLabel(in.Labels, LabelHold), PersonAuthored: in.PersonAuthored()}
 	rules := Decide(in)
 	if runner == nil || rails.Held || !IsReversibleDefault(rules) {
 		return ApplyRails(rules, rails), LLMNotConsulted, nil

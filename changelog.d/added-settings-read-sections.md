@@ -1,0 +1,1 @@
+- The admin MCP `settings_read` tool reads every dashboard Settings view, not only the governor settings: an optional `section` (and `agent` for the per-agent views) selects the endpoint that Settings tab reads, as the caller, with secrets named but never returned. A test keeps every `GET /api/config` route either reachable or excluded with a reason.

@@ -244,7 +244,7 @@ func (s *Server) handleNPSIssue(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), npsIssueTimeout)
 	defer cancel()
-	res, err := s.npsIssueFilerFor().CreateIssue(ctx, ghpkg.CreateIssueRequest{Repo: repo, Title: npsIssueTitle(feedback), Body: npsIssueBody(feedback, versionShort), Origin: config.OriginSourceDashboard})
+	res, err := s.npsIssueFilerFor().CreateIssue(ctx, ghpkg.CreateIssueRequest{Repo: repo, Title: npsIssueTitle(feedback), Body: npsIssueBody(feedback, versionShort), Origin: config.OriginSourceDashboard}) // writeback:solicited signed-in feedback author explicitly consented to opening this public issue.
 	if err != nil {
 		release()
 		if s.logger != nil {

@@ -158,6 +158,10 @@ func (c *Client) humanRemoval(h sentinelLabelHistory) (string, bool) {
 	return actor, true
 }
 
+// sentinelReleasedNote is the same closing line for a release made by a
+// dashboard Approve bound to this head.
+const sentinelReleasedNote = "_@%s approved this head from the Hive dashboard, so Hive treats it as reviewed and will not re-apply the `%s` label unless new commits are pushed._"
+
 // sentinelClearedAfterLatestPush reports whether the newest label event for
 // label on the PR is an `unlabeled` by a human who is not one of the hive's
 // own accounts, and whether it happened after head was pushed.
@@ -234,12 +238,48 @@ func (c *Client) newestOwnMarkerComment(ctx context.Context, owner, repo string,
 	}
 	var own *gh.IssueComment
 	for _, comment := range comments {
-		if comment == nil || !strings.Contains(comment.GetBody(), SentinelMarker) || !c.markerAuthorTrusted(comment.GetUser()) {
+		if comment == nil || !strings.Contains(comment.GetBody(), SentinelMarker) || !c.knowsOwnAccounts() || !c.isHiveAccount(comment.GetUser()) {
 			continue
 		}
 		own = comment
 	}
 	return own, nil
+}
+
+// sentinelReleasedByDashboardApproval reports the login on whose behalf the
+// hive posted a dashboard approval command bound to head
+// (renderPRApprovalCommandComment), or "" when no such comment exists.
+//
+// A dashboard Approve takes the alert label off as the hive's own account,
+// so sentinelClearedAfterLatestPush rightly refuses to read the `unlabeled`
+// event as a human clearance — and the sweep then re-alerted the head the
+// owner had just approved (dibs#510: approved 00:32Z, re-labelled 00:33Z).
+// The approval comment is the durable, hive-authored record of that
+// release: its marker names the head the person saw, so it is never
+// honoured on a later push. Only comments the hive itself wrote count;
+// anyone can type the marker. Unlike markerAuthorTrusted, a hive that cannot
+// name its own accounts trusts no author here: the comment releases a
+// security alert, and under the legacy any-author rule the PR author could
+// forge it for their own head (hivecommons/hive#15262).
+func (c *Client) sentinelReleasedByDashboardApproval(ctx context.Context, owner, repo string, number int, head string) (string, error) {
+	head = strings.ToLower(strings.TrimSpace(head))
+	if head == "" {
+		return "", nil
+	}
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return "", fmt.Errorf("listing comments of %s/%s#%d for sentinel release: %w", owner, repo, number, err)
+	}
+	for _, comment := range comments {
+		if comment == nil || !c.knowsOwnAccounts() || !c.isHiveAccount(comment.GetUser()) {
+			continue
+		}
+		_, actor, boundHead, ok := ParsePRApprovalCommandComment(comment.GetBody())
+		if ok && boundHead == head && actor != "" {
+			return actor, nil
+		}
+	}
+	return "", nil
 }
 
 // sentinelHeadArrivedAt returns the earliest server-stamped created_at of
@@ -290,19 +330,27 @@ func (c *Client) sentinelHeadArrivedAt(ctx context.Context, owner, repo, sha str
 }
 
 // recordSentinelClearance makes a clearance accepted by
-// sentinelClearedAfterLatestPush or sentinelClearanceCarriesOver durable: the
-// hive's newest marker comment
-// on the PR is rewritten as the alert for the current head, in the form
+// sentinelClearedAfterLatestPush, sentinelClearanceCarriesOver or sentinelReleasedByDashboardApproval
+// durable: the hive's newest marker comment on the PR is rewritten as the
+// alert for the current head followed by note (sentinelClearedNote or
+// sentinelReleasedNote, already formatted), in the form
 // sentinelClearedByMaintainer reads back, so a hub restart (empty
 // sentinelHeads) finds "alert for this head, label absent" and stays quiet.
-// When the hive has no marker comment on the PR one is posted. note is the
-// closing line naming who cleared it (sentinelClearedNote or
-// sentinelCarriedNote, already formatted).
+// When the hive has no marker comment on the PR one is posted, as it is when
+// the hive cannot name its own accounts: the clearance record must not be
+// written into a comment of unverified authorship (hivecommons/hive#15262).
 func (c *Client) recordSentinelClearance(ctx context.Context, owner, repo string, number int, note, alert string) error {
 	body := alert + "\n" + note + "\n"
-	own, err := c.newestOwnMarkerComment(ctx, owner, repo, number)
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
-		return err
+		return fmt.Errorf("listing comments for sentinel clearance: %w", err)
+	}
+	var own *gh.IssueComment
+	for _, comment := range comments {
+		if comment == nil || !strings.Contains(comment.GetBody(), SentinelMarker) || !c.knowsOwnAccounts() || !c.isHiveAccount(comment.GetUser()) {
+			continue
+		}
+		own = comment
 	}
 	if own != nil {
 		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, own.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {

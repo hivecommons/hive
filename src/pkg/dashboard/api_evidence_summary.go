@@ -758,9 +758,6 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 // (<owner>/<repo>/<pr>/<sha>.json). Unparseable files and bundles that fail
 // integrity verification are counted, not included in dashboard aggregates.
 func loadEvidenceBundles(root string, verifier ghpkg.ReviewEvidenceVerifier) ([]*evidence.Bundle, int, error) {
-	if root == "" {
-		root = ghpkg.ReviewEvidenceRoot
-	}
 	var out []*evidence.Bundle
 	unreadable := 0
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

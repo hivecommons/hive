@@ -46,7 +46,9 @@ func runHardSuppressReconcileWith(ctx context.Context, cfg *config.Config, ghCli
 		return
 	}
 	result, err := ghClient.ReconcileHiveHardSuppress(ctx, github.HardSuppressReconcileConfig{
-		Repos:    ghClient.Repositories(),
+		// ActiveRepositories, not Repositories: a paused repo gets no
+		// hard-suppress lift written to it (#6203).
+		Repos:    ghClient.ActiveRepositories(),
 		AIAuthor: cfg.EffectiveAIAuthor(),
 	})
 	if err != nil {

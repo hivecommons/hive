@@ -1201,6 +1201,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			OnDemand:        agentCfg.OnDemand,
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
 			SandboxRun:      sandboxRun,
+			SandboxRuntime:  effectiveSandboxRuntime(agentCfg, cfg),
 			Session:         name,
 			State:           string(proc.State),
 			Starting:        proc.Starting && proc.State != crux.StateRunning,
@@ -1496,6 +1497,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 		ReplicaCount:    agentCfg.ReplicaCount,
 		OnDemand:        onDemand,
 		Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
+		SandboxRuntime:  effectiveSandboxRuntime(agentCfg, cfg),
 		Session:         name,
 		State:           string(crux.StateStopped),
 		Busy:            "idle",
@@ -2585,6 +2587,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 			NonActionablePrs:    nonActionablePrsByRepo[repoName],
 			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
 			MergeStrategy:       cfg.RepoMergeStrategy(repoName),
+			RequireCurrentBase:  cfg.AutoMerge.RequireCurrentBaseFor(full),
 			Forge:               forgeKind,
 			ForgeURL:            forgeURL,
 		}
@@ -3603,4 +3606,14 @@ func formatSessionAge(startedAt *time.Time, now time.Time) string {
 		return age.Round(time.Second).String()
 	}
 	return age.Round(time.Minute).String()
+}
+
+// effectiveSandboxRuntime is the agent's resolved sandbox.runtime, or ""
+// when the agent is not sandboxed (a non-sandboxed agent has a tmux
+// terminal whatever the global runtime says).
+func effectiveSandboxRuntime(agentCfg config.AgentConfig, cfg *config.Config) string {
+	if !agentCfg.SandboxEnabled(cfg.AgentSandbox) {
+		return ""
+	}
+	return agentCfg.SandboxRuntime(cfg.AgentSandbox)
 }

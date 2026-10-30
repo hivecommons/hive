@@ -1,27 +1,20 @@
 # Provisioning a Hosted Hive
 
-> **Self-hosting a standalone hive (no hub)?** Most of this guide is about
-> **hub-attached** hosted hives on a managed fleet (a hub-reachable cluster and
-> a heartbeat-only cluster, a shared hub, placeholder pools). If instead you are
-> standing up your **own** hub-less hive on your **own** cluster against your
-> **own** repos, read
-> **[Standalone / self-hosted (no hub)](#standalone--self-hosted-no-hub)** below
-> and skip the hub-only Path A / Path B, `meta.json`, and placeholder-pool
-> sections — none of them apply to you.
+This is a **Kubernetes operator runbook**, including a separate standalone path. If you only want a hosted dashboard, use [Hosted Hive Hub onboarding](hosted-hub.md): request a hive and wait for an administrator to provision it. You do not need cluster credentials.
 
-This guide documents how hosted hives are provisioned, covering both paths:
+## Choose one provisioning task
 
-- **Automated provisioning** — the hub creates everything itself, on any cluster
-  the hub can reach with `kubectl`. This is the normal path.
-- **Manual provisioning** — hand-applied manifests, required when the hub has
-  **no network path** to the target cluster (a *heartbeat-only* cluster). This
-  is the situation on any **heartbeat-only** cluster.
+| Task | Required access and prerequisites | Command location | Finish at |
+|---|---|---|---|
+| [Standalone / self-hosted, no hub](#standalone--self-hosted-no-hub) | Your target cluster's `kubectl` context; permission to create the workload, storage, Secrets, and routing; a GitHub App/OAuth setup and model endpoint. A cluster admin may be needed for CRDs, storage, or capabilities. **No hub access is required.** | Your workstation, in the standalone overlay or your private configuration checkout | [Standalone completion checks](#standalone-completion-checks) |
+| [Path A: hub-reachable cluster](#path-a--automated-provisioning-hub-reachable-cluster) | Hub-operator access to execute in the hub pod, an authenticated/unblocked SaaS account with hosted quota, and a registered cluster the hub can reach. The hub's provisioning credentials must permit the generated resources. | Your workstation with the hub cluster context; the API call executes inside the hub pod | [Path A completion checks](#path-a-completion-checks) |
+| [Path B: heartbeat-only cluster](#path-b--manual-provisioning-heartbeat-only-cluster) | Access to both the target cluster and hub pod/PVC, hub-admin coordination, the hub heartbeat secret, storage/routing, and an administrator for cluster-scoped RBAC/SCC grants | Your workstation with explicit target and hub contexts as shown | [Path B completion checks](#path-b-completion-checks) |
 
-Every command and manifest below was executed and verified while standing up a
-pool of ten placeholder hives — five on a **heartbeat-only** cluster (manual)
-and five on a **hub-reachable** cluster (automated) — so the procedure is real,
-not aspirational. Where a step has a non-obvious failure mode, it is called out
-as a **Gotcha**.
+Use only the prerequisites for your chosen task. A **heartbeat** is an outbound status report from a hive to its hub; a heartbeat-only cluster can send those reports even though the hub cannot run `kubectl` against it.
+
+The manifests and gotchas below record a ten-placeholder deployment across hub-reachable and heartbeat-only clusters. Its example storage classes, inference placement, and OpenShift routing are not requirements for every deployment.
+
+**Reading route:** complete your chosen path, verify it, then return to [Getting started](getting-started.md). [Config precedence](#config-precedence--the-pvc-overlay-is-authoritative) applies to all Kubernetes paths. [Placeholder pools](#placeholder-pools), [identity labels](#mapping-a-namespace-back-to-its-hive-identity-labels), and the [failure-mode reference](#quick-failure-mode-reference) are advanced administration/recovery, not first-install steps.
 
 ---
 
@@ -49,8 +42,10 @@ the target cluster.
 
 ## Prerequisites (both paths)
 
-- `kubectl` access with a context per cluster (one for the hub-reachable
-  cluster, one for the heartbeat-only cluster).
+**Hosted Paths A and B only.** Standalone operators skip this section. You need the context for each cluster you actually administer; two contexts are needed only when target and hub are on different clusters.
+
+- `kubectl` access to the hub cluster for Path A; for Path B, access to the
+  heartbeat-only target as well as the hub cluster.
 - The hub is running on the **hub-reachable** cluster in namespace `hive-hub`,
   backed by a RWX PVC named `hive-hub-data-rwx` mounted at `/data`. The hub's
   SaaS store lives at `/data/saas/hives/<id>/meta.json`; its fleet registry at
@@ -69,6 +64,8 @@ their **own** repos, with **self-hosted inference** (litellm / vllm / llm-d) and
 **no attachment** to `hub.kubestellar.io`. Everything after this section (Path A,
 Path B, `meta.json`, placeholder pools, claiming, upgrade-via-hub) is
 **hub-only** and does **not** apply — skip it.
+
+**Required order:** check the [swap list](#what-you-must-swap), [NET_ADMIN decision](#the-net_admin-decision-stated-precisely), [firewall](#firewall--egress-locked-down-cluster), and [agent backend](#agent-backend); then edit, render, and apply the overlay. Verify with [Standalone completion checks](#standalone-completion-checks). The private-repository examples are optional configuration-management reference, not a second installation you must perform.
 
 ### What "standalone" means
 
@@ -250,6 +247,11 @@ app-level overlays, two equivalent ways:
 
 ### Keeping your overlay private
 
+<details>
+<summary>Optional operator reference: manage the overlay in a private repository</summary>
+
+This branch covers repository layout, Secrets, storage patches, upgrades, and air-gapped use. For a first installation using the local overlay, skip to [What you must swap](#what-you-must-swap).
+
 The example overlay in the public repo (`example-joe-spyre`) is a *template* —
 it carries placeholder values and is meant to be read, not applied. Your real
 overlay will contain private hostnames, OAuth client IDs, cluster domain names,
@@ -382,7 +384,7 @@ data:
       ai_author: your-bot-login        # GitHub login agents use when authoring PRs
       primary_repo: your-repo          # must appear in repos: above
 
-    acmm_level: 2                      # 2 = plan+approve gating; 3 = autonomous
+    acmm_level: 2                      # L2 = Advisory (Instructed); no new issues or PRs
 
     hub:
       enabled: false                   # standalone; no hub connection
@@ -555,9 +557,8 @@ kubectl -n hive rollout status deploy/hive     # wait for Ready
 kubectl -n hive-inference rollout status deploy/vllm     # inference backend
 ```
 
-**Changing a config value** — e.g. adding an authorized user or changing the
-LiteLLM endpoint. Edit your private repo, commit, push, re-apply — the cluster
-converges:
+**Changing a seed value for future first boots** — e.g. adding an authorized
+user or changing the LiteLLM endpoint. Commit and apply the desired seed:
 
 ```bash
 # Edit overlays/spyre/patch-configmap.yaml, then:
@@ -565,9 +566,15 @@ git add overlays/spyre/patch-configmap.yaml
 git commit -m "Add jane to authorized_users"
 git push
 kubectl apply -k overlays/spyre/
-# The ConfigMap updates in-place; hive picks up the change on its next
-# config reload cycle (or force one: kubectl rollout restart deploy/hive -n hive)
+# This updates the ConfigMap seed, not an existing hive's effective config.
+# A rollout restart alone still boots from /data/hive.yaml.runtime.
 ```
+
+**For a hive already booted**, make the corresponding change through its
+dashboard/settings API and verify the saved value. Keep the private seed in
+sync for disaster recovery, but do not expect applying it to replace PVC
+state. See [Config precedence](#config-precedence--the-pvc-overlay-is-authoritative)
+before any offline repair or deliberate reseed.
 
 **Upgrading hive to a new version:**
 
@@ -640,6 +647,8 @@ Before the first `apply -k`, verify:
 - [ ] If OpenShift: `openshift-netadmin` overlay applied by a cluster-admin, or `patch-advisory-mode.yaml` uncommented (see [The NET_ADMIN decision](#the-net_admin-decision-stated-precisely))
 - [ ] `kubectl kustomize overlays/spyre/ | grep YOUR_` returns nothing
 
+</details>
+
 ### What you must swap
 
 Every value below is a placeholder in the overlay. Cited location is where the
@@ -664,9 +673,9 @@ The base deployment **already requests** the `NET_ADMIN` capability
 (`src/deploy/k8s/deployment.yaml`) — the entrypoint uses it to install the
 forced-proxy-egress `iptables` REDIRECT that enforces the ACMM MITM egress proxy.
 
-- **Cluster GRANTS `NET_ADMIN` (most do):** nothing to do — the full,
-  fail-closed egress gate comes up automatically. This is the recommended
-  default.
+- **Cluster GRANTS `NET_ADMIN`:** retain that grant and verify the full,
+  fail-closed gate starts. The node also needs required netfilter modules and
+  working iptables tools; the capability alone is not sufficient.
 - **Cluster DENIES `NET_ADMIN`:** the entrypoint **FATALs** (refusing to start
   with an advisory-only capability model — `src/deploy/entrypoint.sh`) and the
   pod crash-loops, with **exit code 77** when the missing capability is the
@@ -680,7 +689,7 @@ forced-proxy-egress `iptables` REDIRECT that enforces the ACMM MITM egress proxy
      overlay (dedicated `hive-netadmin` SCC + RoleBinding); on plain Kubernetes,
      ensure the namespace's Pod Security admission allows the capability (see
      below).
-  2. **Deliberately run degraded.** Set `HIVE_PROXY_ADVISORY_OK=true` via the
+  2. **Deliberately run with advisory-only egress.** Set `HIVE_PROXY_ADVISORY_OK=true` via the
      **commented-out**
      [`patch-advisory-mode.yaml`](https://github.com/hivecommons/hive/blob/v4/src/deploy/kustomize/overlays/standalone/patch-advisory-mode.yaml)
      — uncomment its `- path: patch-advisory-mode.yaml` line in your
@@ -689,8 +698,9 @@ forced-proxy-egress `iptables` REDIRECT that enforces the ACMM MITM egress proxy
 **Security trade-off (one honest sentence):** in advisory-only mode forced
 proxy egress becomes advisory — the MITM egress gate is best-effort rather than
 enforced, so an agent holding a raw token could bypass the proxy policy —
-acceptable for a single-tenant hive whose owner controls every repo and agent,
-but not a control you should silently disable on a shared one.
+an explicit risk decision even on a single-tenant hive, and not a control you
+should silently disable on a shared one. This is different from degradation of
+the proxy's own connection exemption; see [the capability decision table](net-admin-requirement.md#full-gate-vs-degraded-mode).
 
 ### Does your cluster grant NET_ADMIN?
 
@@ -836,6 +846,14 @@ resolve and reach that endpoint (hosted provisioning injects it from the
 cluster `inference_endpoint` setting). Verify any key against
 `src/pkg/config/` before adding it.
 
+### Standalone completion checks
+
+- Both `kubectl -n hive rollout status deploy/hive` and the selected inference backend's rollout succeed. Inspect logs for authentication or egress errors; a running pod is not proof the backend works.
+- Open the dashboard using your configured Route/Ingress, sign in as an allowed owner, and verify the intended repository and model endpoint.
+- Confirm **L2 — Advisory** in the dashboard. L2 workers report findings without creating issues or PRs; reviewer can comment on existing PRs. See the [current policy matrix](acmm-policy-matrix.md).
+- Save one intended setting through the dashboard, restart only in a planned window, and verify it persists. Do not edit the ConfigMap expecting a running hive to reload it.
+- **No hub heartbeat or My Hives entry is expected.** Continue with [Getting started](getting-started.md). If blocked, use the [failure-mode reference](#quick-failure-mode-reference) or [troubleshooting](troubleshooting.md).
+
 ---
 
 ## Path A — Automated provisioning (hub-reachable cluster)
@@ -846,16 +864,22 @@ and writes the SaaS `meta.json` — all automatically.
 
 ### A.1 Call the API as the hub admin
 
-`handleCreateHive` authenticates via the `hive_hub_user` cookie, whose value is
-simply the username, validated against the SaaS user store. From **inside the
-hub pod** (localhost), that is all you need:
+**Who runs this:** the provisioning operator with access to the hub pod. The
+API requires an authenticated, unblocked SaaS account with hosted-hive quota;
+localhost does **not** bypass authentication. A `hive_hub_user` cookie must be
+a valid signed session cookie, not a bare username. The example uses the
+supported GitHub bearer-token authentication instead. Supply a token for the
+intended authorized account without putting it in the command history; do not
+copy session cookies or tokens into manifests, tickets, or logs.
 
 ```bash
+read -r -s -p "GitHub token for the authorized hub account: " HUB_API_TOKEN
+printf '\n'
 HUB_POD=$(kubectl --context <hub-reachable-cluster> -n hive-hub get pods -l app=hive-hub \
   --no-headers | grep Running | awk '{print $1}' | head -1)
 
 kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- curl -s -X POST \
-  -H "Cookie: hive_hub_user=<hub-admin-login>" \
+  -H "Authorization: Bearer ${HUB_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
         "org": "myorg",
@@ -871,6 +895,7 @@ kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- curl -s
         "is_public": false
       }' \
   http://localhost:80/api/saas/hives
+unset HUB_API_TOKEN
 ```
 
 Response:
@@ -907,6 +932,13 @@ The generated ID is `hosted-<org>-<primary_repo>-<4char>`.
 > the App is installed. This is expected for a not-yet-claimed hive. If you want
 > it to read as `available` instead of `error`, patch the `meta.json` status
 > (see [Placeholder pools](#placeholder-pools)).
+
+### Path A completion checks
+
+1. Record the returned hive ID and verify the workload reaches Ready on its registered target cluster.
+2. Verify its SaaS record exists automatically and the intended owner sees the hive in **My Hives**.
+3. Open that dashboard link; complete App/backend setup and confirm a recent heartbeat, correct `dashboard_url`, and reported version on the hub. An unclaimed placeholder may report the documented App-auth error until installation.
+4. If the link is wrong or health is partial, use the RBAC reference below and the [failure-mode table](#quick-failure-mode-reference). Do not broaden tenant permissions to make a health badge green.
 
 ### A.2 What the automated path creates that the manual path does not
 
@@ -981,6 +1013,12 @@ blank.
 ---
 
 ## Path B — Manual provisioning (heartbeat-only cluster)
+
+**Who runs this:** the target-cluster operator, with a cluster administrator
+for ClusterRole/SCC grants and the hub operator for the final SaaS record.
+Run target commands from your workstation using `$CTX`; hub commands name
+their separate context. Do not attempt cluster-admin actions as the hive's
+tenant ServiceAccount.
 
 The hub cannot reach a heartbeat-only cluster, so every object is applied by hand
 with `kubectl --context <heartbeat-only-cluster>`. The full set, in order:
@@ -1495,6 +1533,13 @@ kubectl --context "$CTX" -n "$NS" get pod "$POD" \
   -o jsonpath='{.metadata.annotations.openshift\.io/scc}'
 ```
 
+### Path B completion checks
+
+1. Confirm rollout readiness and the expected SCC. An `anyuid` grant alone does not grant `NET_ADMIN`; follow the [capability decision](#the-net_admin-decision-stated-precisely) and diagnose exit 77 rather than silently bypassing egress enforcement.
+2. Create the [hub SaaS record](#the-hub-saas-record-metajson--required-for-both-paths) below. Verify the owner sees the hive in **My Hives**.
+3. Open the **reported Route URL**, sign in as the allowed owner, and complete App/backend setup. Confirm recent outbound heartbeats and a reported version on the hub; the hub still cannot `kubectl` into this cluster.
+4. If heartbeats work but management says `hive not found`, inspect `meta.json`; if the link 503s, inspect route-reader RBAC and `dashboard_url`. Use the [failure-mode reference](#quick-failure-mode-reference) for recovery.
+
 ---
 
 ## The hub SaaS record (`meta.json`) — required for both paths
@@ -1586,35 +1631,42 @@ On **every later boot** it copies `/data/hive.yaml.runtime` over
 `/etc/hive/hive.yaml` and boots from that; the seed is not used and the overlay
 merge does not run. With neither file and no seed, it exits 1.
 
-The dashboard's `Config.Save()` writes the overlay. Therefore:
+The dashboard's `Config.Save()` writes the effective source, the dashboard
+overlay, and `/data/hive.yaml.runtime`. The runtime file is the later-boot
+input, not merely a backup. Therefore:
 
 - **Editing the ConfigMap after first boot does nothing** to the running config —
   the PVC overlay wins.
-- To change a running hive's config, edit `/data/hive.yaml.dashboard` on the PVC
-  (while scaled to 0, or the running process re-saves from memory), **or** clear
-  `/data/hive.yaml.dashboard` + `/data/hive.yaml.runtime` (and the legacy
-  `/data/hive.yaml.bak`, if the hive predates the rename) to let it reseed.
+- To change a running hive, prefer dashboard/settings API saves. Editing only
+  `.dashboard` is not a later-boot repair: `.runtime` wins before that merge.
+- For offline repair, stop the hive first and back up the runtime, dashboard,
+  and legacy files securely. Reconcile the intended change into the runtime
+  boot input and its corresponding overlay, preserving credentials and file
+  permissions. Otherwise an old layer or a live process save can undo it.
+- A deliberate reseed requires no non-empty `.runtime` or legacy `.bak`;
+  a remaining `.dashboard` may still override seed fields. Back up all three
+  before clearing any of them, review the new seed, and plan to restore any
+  dashboard-only state. A rollout restart alone never performs a reseed.
 - Verify effective config by `grep`-ing `/etc/hive/hive.yaml` in the running pod,
   **never** the ConfigMap.
 
-> **Gotcha — access grants (`dashboard.authorized_users`) only take effect on a
-> pod roll.** The overlay merge in step 2 runs **at boot**. When you grant a user
-> in the dashboard's **Manage Access** dialog, `Config.Save()` appends them to
-> `/data/hive.yaml.dashboard`, but the *running* device-flow authorizer keeps the
-> access list it built at startup — config hot-reload does **not** rebuild it.
-> Symptom: the user shows as `read-write` in Manage Access yet the spoke logs
-> `device-flow login rejected: user not authorized for this hive`.
+> **Access-grant verification.** Current device-flow login checks
+> `Config.Dashboard.AuthorizedRole(username)` at login, not a permanently
+> cached startup list. Verify the actual GitHub login and the effective
+> `dashboard.authorized_users` if a new grant is rejected. Editing the
+> ConfigMap or only the PVC overlay is not the same as a live dashboard save.
 >
 > This bites hardest **right after provisioning or a cross-cluster migration onto
 > a fresh PVC**, where the first grants are written after the pod already booted.
-> Always finish provisioning with the verification below.
+> Finish provisioning with the verification below. On an older build or after
+> an offline repair, a planned rollout can be needed to load the repaired
+> runtime state; it is not a way to make a changed ConfigMap authoritative.
 >
 > ```sh
 > # 1. Confirm the grant reached the effective config:
 > kubectl -n hive-hosted-<id> exec deploy/hive -c hive -- \
 >   grep -A6 authorized_users /etc/hive/hive.yaml
-> # 2. If the user is present but still rejected, roll the pod so the authorizer
-> #    rebuilds from the current overlay:
+> # 2. Only if an offline runtime repair or an older build needs a reload:
 > kubectl -n hive-hosted-<id> rollout restart deploy/hive
 > # 3. Confirm no post-roll rejections:
 > kubectl -n hive-hosted-<id> logs deploy/hive -c hive | grep 'not authorized'

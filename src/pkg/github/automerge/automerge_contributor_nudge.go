@@ -116,6 +116,10 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		human = true
 	case r == contributorLaneReasonChangesRequested, r == stagelabels.LaneReasonChangesRequested:
 		asks = append(asks, "the review swarm requested changes")
+	case r == stagelabels.LaneReasonReviewerQuestion:
+		// A person's PR routed to them on requires_human
+		// (hivecommons/hive#15202); the route carries the question itself.
+		asks = append(asks, "the review swarm returned `requires_human`: it has a question for you, not a fix for the hive")
 	case r == "conflicting" || r == "not-mergeable" || r == "label:needs-rebase":
 		asks = append(asks, "the branch conflicts with the base and needs a rebase")
 	case r == autoMergeReasonForkNotEditable:
@@ -176,6 +180,13 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 			}
 		case strings.HasPrefix(r, "merge conflict"):
 			if a := "the branch conflicts with the base and needs a rebase"; !seenAsk[a] {
+				seenAsk[a] = true
+				asks = append(asks, a)
+			}
+		case strings.HasPrefix(r, "reviewer question: "), strings.HasPrefix(r, "reviewer summary: "):
+			// A person's PR at 071 on a requires_human verdict: the
+			// reviewer's question is theirs to answer (hivecommons/hive#15202).
+			if a := "the reviewer asked you: " + strings.TrimSpace(r[strings.Index(r, ": ")+2:]); !seenAsk[a] {
 				seenAsk[a] = true
 				asks = append(asks, a)
 			}

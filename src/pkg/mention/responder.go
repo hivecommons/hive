@@ -105,7 +105,7 @@ func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 		r.logger.Info("mention: completion reply skipped at per-thread cap", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "count", count, "max", limit)
 		return
 	}
-	if err := gh.CreateIssueComment(context.Background(), ctx.Repo, ctx.Number, completionReply(agentName, kickObserverDetailReason(detail))); err != nil {
+	if err := gh.CreateIssueComment(context.Background(), ctx.Repo, ctx.Number, completionReply(agentName, kickObserverDetailReason(detail))); err != nil { // writeback:solicited completion reply to the claimed explicit mention request on this thread.
 		r.logger.Warn("mention: completion reply failed", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "error", err)
 		return
 	}

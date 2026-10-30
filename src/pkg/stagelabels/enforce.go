@@ -41,6 +41,10 @@ type Outcome struct {
 	Clamped bool
 	Wanted  Stage
 	Stage   Stage
+	// Suppressed is set when the write-back gate kept the planned labels
+	// off the item (a contributor PR nobody opted in, below the level
+	// stage labels need): the stage is tracked internally only.
+	Suppressed bool
 }
 
 // Changed reports whether any label was written.

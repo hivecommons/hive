@@ -53,6 +53,15 @@ const (
 	// archive's header, mirroring KickRecord.Snippet's truncation.
 	kickLogPromptSnippetLen = 120
 
+	// kickLogReasonTurnEnd is the archive reason written when the kicked
+	// turn is observed to have ended (kick_outcome.go). The other reasons
+	// ("kick", "restart", "shutdown") name the rotation point that destroyed
+	// or superseded the scrollback; this one names the moment the output was
+	// complete, so a crash before the next rotation point (OOM kill, exit
+	// code 17, node loss — none of which run the SIGTERM snapshot) does not
+	// lose the run.
+	kickLogReasonTurnEnd = "turn-end"
+
 	// kickLogHeaderMaxBytes bounds how much of an archive is read to find
 	// its header's source: line. The header is a dozen short lines plus a
 	// prompt snippet of kickLogPromptSnippetLen, so 4 KiB always covers it.
@@ -213,6 +222,20 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 	}
 	m.logger.Info("archived kick log", "name", agent.Name, "reason", reason, "source", source, "file", fname, "bytes", len(header)+len(content))
 
+	// One archive per kick, latest content wins. A turn-end archive written
+	// while the kick was still the current one is superseded by the archive
+	// the next rotation point (kick/restart/shutdown) takes of the same
+	// scrollback: same kick, same timestamp stem, different reason suffix —
+	// so the earlier file is removed rather than left as a duplicate that
+	// would burn a retention slot and list the same run twice.
+	if agent.kickLogArchivedPath != "" && agent.kickLogArchivedPath != path && agent.kickLogArchivedKick.Equal(filenameTime) {
+		if err := os.Remove(agent.kickLogArchivedPath); err != nil && !os.IsNotExist(err) {
+			m.logger.Warn("kick log archive: superseded archive remove failed", "name", agent.Name, "path", agent.kickLogArchivedPath, "error", err)
+		}
+	}
+	agent.kickLogArchivedKick = filenameTime
+	agent.kickLogArchivedPath = path
+
 	m.pruneKickLogs(dir)
 	m.notifyKickObserver(agent.Name, KickObserverEventArchived, kickObserverArchiveDetail(reason, agent.LastKickSource))
 	// The content length, not the file length: the header is hive's own
@@ -303,6 +326,22 @@ func (m *Manager) rotateKickLogOnKickLocked(agent *AgentProcess) {
 		m.clearScrollbackForAgent(agent)
 	}
 	agent.kickLogPending = false
+}
+
+// archiveKickLogOnTurnEndLocked runs when the kicked turn is observed to have
+// ended (settleKickOutcomeLocked): if the session holds un-archived kick
+// output, snapshot it now under the "turn-end" reason. Nothing is cleared —
+// the pane keeps showing the result to the operator and kickLogPending stays
+// set, so the next rotation point still takes the final snapshot (which
+// supersedes this one; see archiveKickLogBytesLocked) and clears the
+// scrollback as before. What changes is that a container crash between the
+// turn ending and that rotation point — the case the SIGTERM snapshot cannot
+// cover — no longer loses the run. Callers must hold m.mu.
+func (m *Manager) archiveKickLogOnTurnEndLocked(agent *AgentProcess) bool {
+	if !agent.kickLogPending {
+		return false
+	}
+	return m.archiveKickLogLocked(agent, kickLogReasonTurnEnd)
 }
 
 // alternateScreenOffArgs is the tmux invocation that turns alternate-screen off
@@ -427,7 +466,8 @@ func kickLogTimestamp(name string, fallback time.Time) time.Time {
 	return fallback
 }
 
-// kickLogReason extracts the snapshot reason ("kick", "restart", "shutdown")
+// kickLogReason extracts the snapshot reason ("kick", "restart", "shutdown",
+// "turn-end")
 // from a filename of the form <timestamp>-<reason>.log.
 func kickLogReason(name string) string {
 	base := strings.TrimSuffix(name, kickLogSuffix)

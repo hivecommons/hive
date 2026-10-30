@@ -32,7 +32,7 @@ const src = [
   pick(/const STAGE_TRACKER_TERMINAL = \d+;/, 'STAGE_TRACKER_TERMINAL'),
   pick(/const STAGE_TRACKER_ADOPTED_BY_HIVE = \d+;/, 'STAGE_TRACKER_ADOPTED_BY_HIVE'),
   pick(/function stageTrackerAdoptedWord\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptedWord'),
-  pick(/function stageTrackerAnchor\(stage, stages, kind\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
+  pick(/function stageTrackerAnchor\(stage, stages, kind, item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
 ].join('\n');
 const lifted = new Function(src + '; return { anchor: stageTrackerAnchor, adoptedWord: stageTrackerAdoptedWord, ADOPTED: STAGE_TRACKER_ADOPTED_BY_HIVE };')();
 
@@ -55,8 +55,8 @@ test('074 adopted-by-hive renders in the CI/Review column, not the merge gate', 
 test('every PR stage lands in its owner-rule column', () => {
   const want = {
     30: COLUMN.PR, 40: COLUMN.PR,                 // in progress / covered
-    50: COLUMN.REVIEW, 70: COLUMN.REVIEW, 71: COLUMN.REVIEW, 72: COLUMN.REVIEW, 74: COLUMN.REVIEW,
-    60: COLUMN.MERGE_GATE, 80: COLUMN.MERGE_GATE, 85: COLUMN.MERGE_GATE, 90: COLUMN.MERGE_GATE, 95: COLUMN.MERGE_GATE, 100: COLUMN.MERGE_GATE,
+    50: COLUMN.REVIEW, 60: COLUMN.REVIEW, 70: COLUMN.REVIEW, 71: COLUMN.REVIEW, 72: COLUMN.REVIEW, 74: COLUMN.REVIEW, // 060 reviewed waits on CI/soak, not the gate (#15185)
+    80: COLUMN.MERGE_GATE, 85: COLUMN.MERGE_GATE, 90: COLUMN.MERGE_GATE, 95: COLUMN.MERGE_GATE, 100: COLUMN.MERGE_GATE,
     110: COLUMN.DONE, 120: COLUMN.DONE,           // merged / closed (superseded, wontfix)
   };
   for (const [stage, col] of Object.entries(want)) {

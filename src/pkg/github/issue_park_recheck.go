@@ -44,6 +44,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // parkRecheckMarker opens the hive's one re-check note per parked issue.
@@ -189,6 +190,7 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		return nil
 	}
 	note := parkRecheckNote(label, start, changes)
+	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
 	for _, cm := range comments {
 		if cm == nil || !c.isHiveAccount(cm.GetUser()) || !strings.Contains(cm.GetBody(), parkRecheckMarker) {
 			continue
@@ -197,14 +199,22 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 			result.Skipped++
 			return nil
 		}
-		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(note)}); err != nil {
+		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+			result.Skipped++
+			return nil
+		}
+		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
 			return fmt.Errorf("editing park re-check note on %s/%s#%d: %w", owner, repo, number, err)
 		}
 		result.Updated++
 		result.Items = append(result.Items, fmt.Sprintf("%s/%s#%d", owner, repo, number))
 		return nil
 	}
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil {
+	if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+		result.Skipped++
+		return nil
+	}
+	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
 		return fmt.Errorf("posting park re-check note on %s/%s#%d: %w", owner, repo, number, err)
 	}
 	result.Posted++

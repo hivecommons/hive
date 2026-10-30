@@ -1,12 +1,14 @@
 # Agent Configuration
 
-A hive **agent** is a long-running AI worker — a CLI session the hive keeps alive in tmux, kicks on a cadence with a work prompt, and watches for stalls, rate limits, and login expiry. An agent's configuration is one YAML entry under `agents:` in `hive.yaml`: it names the agent, picks the engine that powers it (a subscription CLI or a self-hosted inference endpoint), and declares how it behaves. Everything else — cadences, models, pins, ACMM level — layers on top.
+A hive **agent** is an AI worker. Hive keeps its coding-tool session alive, sends it a work prompt (a **kick**) on a schedule (a **cadence**), and watches for stalls, rate limits, and expired logins. Its configuration chooses the engine, model, and allowed behavior.
 
-Start with only a name, a method, and a model. Add the rest when the agent needs it.
+Start with a name, backend (the engine's configuration ID), and model. A **pin** prevents automatic engine/model changes; **beads** are local work records; a **lane** groups matching work. **tmux** is the terminal-session manager Hive uses. **ACMM** selects a policy-level roster and human gates; configuration here does not replace the [ACMM policy](acmm-policy-matrix.md).
 
 For labels that route or gate agent work, see [Hive Labels and Control Signals](labels-and-control-signals.md).
 
 ## The smallest agent that works
+
+Before trying this, you need an operator account on a running hive, an installed and authenticated backend, and repository access configured for that hive. This example uses Copilot; importing YAML does not supply a subscription or log it in.
 
 ```yaml
 agents:
@@ -28,39 +30,61 @@ That is a complete, valid agent. Defaults fill in the rest at load time:
 
 You almost never write a full roster by hand: applying an ACMM level (below) generates one for you, and the dashboard edits it live.
 
+**Where to put it and how to check it:**
+
+- **Existing hive:** use the dashboard's agent controls or import a portable definition. Do not paste this snake_case `agents:` entry into the portable import dialog; the formats differ. Do not overwrite an existing `scanner` entry to try the example.
+- **New file-based deployment:** merge the entry under `agents:` in the Hive configuration that deployment loads (`--config`/`HIVE_CONFIG`; container default `/etc/hive/hive.yaml`). Before starting it on real repositories, review its permissions and cadence; add `enabled: false` if you want to configure it before allowing startup.
+- Apply file changes through that deployment's normal reload/restart process. Check the dashboard roster for the name and effective backend/model, then the agent session for successful login and the next kick. A saved entry alone does not establish a working backend. Use the dashboard to disable a trial agent afterward.
+
+The [ownership table](#where-configuration-lives) below explains why editing a mounted seed may not change an already-running hive.
+
+| Next task | Read |
+| --- | --- |
+| Choose what it may do | [Behavior](#behavior--what-it-may-do-and-when); permissions remain subject to the ACMM policy and hold gates |
+| Change when it receives work | [Cadences and the governor](#cadences-and-the-governor); pausing a cadence is not disabling an agent |
+| Change its model or engine | [Atomic backend/model changes](#changing-backend-and-model-together-use-the-atomic-endpoint); update both together to avoid an invalid pairing |
+| Understand a surprising work choice | [Explain mode](#explain-mode-debugging-agent-behaviour) before changing permissions or removing gates |
+| Keep a definition linked to its source | [Live-linked definitions](#live-linked-agent-definitions-definition_source); a linked refresh can replace definition-owned fields, but not operator lifecycle state |
+
 The formal-verification quality-lane opt-in (`quality.formal`), long-running run checkpoint policy (`runs.checkpoints`, `runs.wait_timeout_seconds`, `runs.wait_severity`), and the persona learning opt-in (`persona.learning.enabled`, see [hosted-hub.md](hosted-hub.md#persona-learning-default-off)) also live in the dashboard under Settings -> Features.
 
 In Go, `agents:` and the other runtime-owned blocks (`backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn`, `repeat_failure`, and the `governor.{watchdog,litellm,vllm,llm-d,bob,trajectory,kick_limits,gateways,rotation,provider_budget}` keys) are grouped under `config.AgentRuntimeConfig` / `config.AgentRuntimeGovernorConfig` in `crux/config/agent_config.go`, aliased by `pkg/config` — the configuration surface of the Crux agent runtime ([#13536](https://github.com/hivecommons/hive/issues/13536)). The grouping does not change where anything is written in `hive.yaml`; see [Agent-runtime blocks](operator-reference.md#agent-runtime-blocks-configagentruntimeconfig).
 
 ## Where configuration lives
 
-Hive's config is layered, and the layering is the point: **a file's location says who owns the setting.**
+**Use the dashboard for settings you own.** Hive saves them on persistent storage (a disk volume that survives container replacement). Do not edit `/data/hive.yaml.runtime` by hand. A *seed* is starting configuration, not necessarily the file that wins at the next boot.
 
-```
-/etc/hive/hive.yaml            ← ConfigMap seed (Kubernetes) or bind mount (Docker, Podman, LXC).
-│                                 The operator/platform layer. Re-seeded on every pod
-│                                 boot; authoritative for acmm_level and hub.is_public.
-├── /data/hive.yaml.dashboard  ← Dashboard overlay on the PVC. Every save from the
-│                                 dashboard UI lands here, secret-free, and is merged
-│                                 over the ConfigMap seed at the next boot. Wins for
-│                                 everything except the two ConfigMap-owned keys.
-├── /data/agent-configs/       ← One <name>.yaml per dashboard-managed agent
-│                                 (created, imported, or generated by an ACMM pack).
-│                                 Merged over the agents: map at load time.
-├── /data/hive.yaml.runtime    ← Persisted runtime config (was hive.yaml.bak). Never
-│                                 edit. The boot-time source of truth everywhere;
-│                                 on K8s the ConfigMap only seeds the first boot, after
-│                                 which the entrypoint boots from this file. The legacy name is still
-│                                 read as a fallback during the migration.
-├── /data/secrets/             ← Secret VALUES written by the dashboard (writable PVC).
-│   /secrets/                  ← Secret VALUES from Kubernetes Secret mounts (read-only).
-└── /data/policies/agents/     ← Kick templates and per-agent policy Markdown.
-```
+### Boot input: first boot versus restart
 
-Read the tree top to bottom and you can answer "who set this?" for any value:
+These are the container entrypoint paths; a directly launched binary uses the configuration path passed to it. A Kubernetes **ConfigMap** supplies seed text; a **PVC** supplies the persistent disk; an **init container** performs setup before Hive starts.
 
-- **The platform owns the seed.** In Kubernetes, an init container re-copies the ConfigMap to `/etc/hive/hive.yaml` on every boot. The entrypoint then merges the dashboard overlay over it — but the ConfigMap stays authoritative for the hub/admin-managed keys (`acmm_level`, `hub.is_public`).
-- **You (via the dashboard) own the overlay.** Every dashboard save writes `/data/hive.yaml.dashboard`, so a LiteLLM endpoint or agent tweak survives pod restarts and upgrades.
+| Deployment | No persisted runtime file (first boot/reprovision) | Runtime file already exists (later boot) |
+| --- | --- | --- |
+| Kubernetes | The init container seeds `/etc/hive/hive.yaml` from the ConfigMap. The entrypoint merges an existing `/data/hive.yaml.dashboard` over that seed, then writes `/data/hive.yaml.runtime`. | The entrypoint boots from nonempty `/data/hive.yaml.runtime` (legacy `hive.yaml.bak` fallback). It does **not** re-merge the ConfigMap seed. |
+| Docker, Podman, LXC | The mounted configuration seeds `/data/hive.yaml.runtime`. | The entrypoint restores runtime configuration over the config path, or reads the runtime file directly when the mount is read-only. There is no Kubernetes dashboard-overlay boot merge. |
+
+During the Kubernetes **seed-plus-overlay fallback** only:
+
+| Setting | Winner |
+| --- | --- |
+| Ordinary dashboard settings | Overlay over seed |
+| `acmm_level` | Overlay when present; seed is a fallback, not an unconditional platform override |
+| `hub.is_public` | Seed when set; the hosting hub can also reassert publication policy by heartbeat |
+| GitHub App credentials | Overlay, except a real installed App in the seed is protected against a placeholder overlay wiping it |
+
+For example, changing `acmm_level` in the ConfigMap of a hive with a runtime file will not apply a new pack on restart. Use the dashboard's pack controls or the hosting hub's supported controls instead. Public-hosting policy remains the hosting administrator's responsibility, not an arbitrary agent setting.
+
+### Saved settings and secrets
+
+| Path | Purpose |
+| --- | --- |
+| `/data/hive.yaml.dashboard` | Dashboard changes on Kubernetes; an overlay means saved changes layered over starting configuration. |
+| `/data/agent-configs/<name>.yaml` | Dashboard-managed, imported, and pack-generated per-agent entries, merged over the agent map at load time. Use dashboard controls rather than racing file synchronization. |
+| `/data/hive.yaml.runtime` | Persisted effective runtime configuration, rewritten by saves and used as a later boot input. Never hand-edit it. |
+| `/data/policies/agents/` | Kick templates and per-agent policy Markdown. |
+
+For environment overrides, ownership diagnostics, and detailed exceptions, see [Spoke configuration layering](config-layering.md). In particular, `/etc/hive/config.env` and per-agent overlays can affect the final loaded values after boot input selection.
+
 - **Secrets never enter YAML.** `hive.yaml` stores only env var *names* (`api_key_env`) and key file *paths* (`api_key_file`, `governor.backup.key_file`) — never key values. Values live in `/data/secrets/` (dashboard-entered) or `/secrets/` (Kubernetes Secret mounts). Because `Config.Save()` writes the whole config back to disk, a key value in YAML would be persisted in plaintext — so the code refuses the pattern entirely.
 
 ## Anatomy of an agent
@@ -127,7 +151,7 @@ older overlays, but new configs should use `bob.session_label`.
                                  #   launch_cmd, prompt, tools, and skills at launch.
 ```
 
-The dashboard API can update this field through [`POST /api/effort/{agent}/{effort}`](api-reference.md#agents-and-controls).
+The dashboard API can update this field through [`POST /api/effort/{agent}/{effort}`](api-reference/agents-and-controls.md).
 
 The dashboard shows a reasoning-effort dropdown next to the model picker for every method that has an effort control (`codex`, `agy`, `claude`, and `omp`). The value is validated at set time against the method's own set, so a `codex`-only level such as `minimal` is refused for a `claude` agent rather than stored and dropped at launch. For `omp`, the dropdown is per selected model: Hive reads `omp models --json` and uses that model's `thinking` levels, hiding the control for models that report no thinking support. Picking `default` clears the stored value; for `claude` and `omp` that means no effort flag at all and the CLI's own default. The dropdown persists through the same path as the model picker (`hive.yaml` plus the per-agent overlay under `agents_dir`), which is the durable path on a hosted spoke: a hand edit of the agent's file is reverted by the next sync, the dashboard write is not. Each dropdown change is recorded in the audit trail as `set_reasoning_effort` with the new value, like the other per-agent setting changes. The effort the agent was actually launched with is what the run rows and the `- hive:` PR trailer report, so a `claude` agent at `xhigh` shows `effort=xhigh` there and an agent with no stored effort shows none.
 
@@ -768,7 +792,7 @@ governor:
 - **Per-agent, per-mode intervals.** Anything Go's duration parser accepts works (`5m`, `2h`) for interval mode.
 - **Pausing.** The value `pause` (or `paused`) suspends an agent for that mode without disabling it.
 - **On-demand agents** (`on_demand: true`) are skipped by the governor timer entirely — they run only when explicitly triggered (the inception workflow drives `brainstorm` this way).
-- **Continuous agents** are configured per governor mode by setting that mode's cadence value to the literal `continuous` (case-insensitive), for example `agents.scanner.cadence.surge: continuous` with `busy: 1h`, `quiet: 6h`, and `idle: off`. No agent name (including `scanner`) has special behavior. The legacy `continuous: true` bool remains a shorthand for continuous in every non-QUIET mode, but new configs should prefer per-mode cadence values. They still need an active cadence entry in the current mode, but cadence no longer decides the next kick while continuous mode is on. Instead, the manager waits until the kicked CLI is genuinely back at its input prompt, records that turn end, and the governor schedules the next kick at `ended_at + continuous_cooldown` (default `60s`). The run loop wakes on that time directly (bounded to one early eval per 30s; if the eval cycle then skips the agent for a reason the governor does not track — dashboard pause, first-scan deferral, provider-budget gate, upgrade drain — the wake backs off that re-kick 1m, 2m, … up to 15m until the schedule changes), so the re-kick lands when the cooldown elapses rather than at the next `eval_interval_s` / `eval_interval_webhook_s` tick — on a webhook-healthy spoke that tick is 15 minutes apart, which used to leave a continuous reviewer idle at its prompt for most of each cycle. `/api/status` reports `lastKickEnd` and, while the agent waits for its re-kick, `idleSince`. Enabling continuous on an idle agent, including by entering a mode whose cadence is `continuous`, schedules its first continuous kick after one cooldown; leaving a non-continuous mode clears any pending continuous kick and `/api/status` reports `continuousBlocked: "not_in_mode"` for agents that are continuous only in other modes. Continuous never interrupts a busy turn and still respects `enabled: false`, operator/fleet-breaker pause, governor-mode `pause`/`off` (including QUIET-mode pauses), on-demand, non-kick channels, budget/provider holds, provider rate-limit/quota backoff, and upgrade/restart holds; failed deliveries such as "CLI did not reach input prompt" use capped exponential backoff. The turn-end signal is a pane heuristic, and a missed one used to leave a continuous agent idle at its prompt with no further kicks until the pod restarted (the only re-arm path was the recorded turn end, and every other recovery is keyed off kick attempts). `continuous_turn_ceiling` (default `45m`, `-1` disables) bounds that: when the most recent kick has reported no outcome for that long, the governor logs a warning, records a `presumed-ended` outcome, counts it in `/api/status` `presumedTurnEnds`, and re-arms the next kick after the normal cooldown. Re-arming only schedules an attempt — delivery still refuses to type into a Working pane — so a genuinely long turn is not interrupted. `continuous_budget_pct` (default `80`) stops only the continuous re-kick loop when the current token-budget window reaches that percentage of `governor.budget.total_tokens`; normal cadence resumes, and `/api/status` reports `continuousBlocked: "budget"` plus per-agent `continuousModes`, `continuousKicks`, and `continuousTokens` counters. The dashboard exposes per-mode `Continuous` in the agent settings **Cadences** form; the Governor cadence table is read-only and shows an `∞ continuous` chip in each continuous mode cell.
+- **Continuous agents** take another work prompt after their current turn finishes and a cooldown expires. Configure this per mode in the dashboard's **Cadences** form; see the settings and diagnostics below.
 - **Budget.** When the weekly token budget is exhausted, kicks are suppressed hive-wide (exempt agents excepted) until the period rolls over.
 
 Set `stale_timeout` with your cadences in mind: an agent kicked every 4h with a 30-minute stale timeout will look dead between kicks. The shipped packs use "longest cadence × 2".
@@ -778,6 +802,31 @@ config key declares CEL rules that kick a named agent directly off a
 source-control event (issue opened, PR opened, a label applied, a comment
 posted), independent of the governor's queue-depth cadence. See
 [CEL-based agent triggers](cel-triggers.md).
+
+### Continuous scheduling: configure and verify
+
+Set the mode's cadence to `continuous` (case-insensitive), for example `agents.scanner.cadence.surge: continuous`, with `busy: 1h`, `quiet: 6h`, and `idle: off`. No name, including `scanner`, receives special behavior. The legacy `continuous: true` shorthand enables continuous scheduling in every non-QUIET mode; prefer per-mode values for new configuration. An active cadence entry is still required in the current mode.
+
+The manager waits for the CLI to return to its input prompt, records the turn end, and schedules the next kick at `ended_at + continuous_cooldown` (default `60s`). Enabling continuous on an idle agent, including by entering a continuous mode, schedules the first kick after one cooldown. When a non-continuous mode is selected, pending continuous work is cleared; an agent configured continuous only in other modes reports `continuousBlocked: "not_in_mode"`.
+
+**Check it:** agent settings expose per-mode **Continuous**. The read-only Governor cadence table shows `∞ continuous`. `/api/status` reports `lastKickEnd`, `idleSince` while waiting, and the per-agent `continuousModes`, `continuousKicks`, and `continuousTokens` counters.
+
+**The same safety gates still apply.** Continuous never interrupts a busy turn and respects `enabled: false`, operator/fleet-breaker pause, mode `pause`/`off` (including QUIET pauses), on-demand, non-kick channels, token/provider holds, rate-limit/quota backoff, and upgrade/restart holds. Failed deliveries, such as “CLI did not reach input prompt,” use capped exponential backoff.
+
+| Setting | Default | Operational effect |
+| --- | --- | --- |
+| `continuous_cooldown` | `60s` | Wait after a completed turn before trying another kick. |
+| `continuous_turn_ceiling` | `45m`; `-1` disables | If the most recent kick has no reported outcome by this time, warn, record `presumed-ended`, increment `presumedTurnEnds`, and re-arm after the cooldown. Delivery still refuses to type into a Working pane, so this is not permission to interrupt a long turn. |
+| `continuous_budget_pct` | `80` | At this percentage of `governor.budget.total_tokens`, stop only the continuous loop and resume normal cadence. Status reports `continuousBlocked: "budget"`. |
+
+<details>
+<summary>Scheduler timing and recovery reference</summary>
+
+The run loop wakes at the cooldown time, bounded to one early evaluation per 30 seconds, rather than waiting for `eval_interval_s` / `eval_interval_webhook_s`. If evaluation skips the agent for a gate the governor does not track (dashboard pause, first-scan deferral, provider-budget gate, upgrade drain), that wake backs off 1m, 2m, … up to 15m until the schedule changes.
+
+This avoids leaving a continuous reviewer idle until the next webhook-healthy spoke evaluation, which may be 15 minutes away. Turn-end detection is a terminal-pane heuristic. Missing that signal previously left an idle continuous agent with no further kicks until restart; the turn ceiling now bounds that failure. Re-arming schedules an attempt, not a bypass of delivery checks.
+
+</details>
 
 ### Repo-scoped cadences (`cadence_scope`)
 
@@ -1186,6 +1235,30 @@ T3 list** — for the same reason none proposes lowering a floor.
 
 That is deliberate, and it is the point of the whole feature. A lane that ran on a strong model for months and then quietly starts producing work from a weak one costs more reviewer trust than a paused lane saves queue depth. **"Nobody qualifies, the lane stays paused" is an acceptable answer.** Lowering a floor should be a decision you made, in a file, on purpose.
 
+## Write-back containment (`writeback`)
+
+ACMM levels and label policy decide what *agents* may do. The `writeback`
+block decides what the *platform* may say on GitHub without being asked:
+sentinel alerts, hold-gate notices, stage labels, supersession and
+duplicate notices, reporter-trust holds, and so on. Each kind has a minimum
+level and, on PRs hive did not open, needs the review opt-in label
+(`review.require_labels`, fallback `hive-review`):
+
+```yaml
+writeback:
+  unsolicited:
+    min_level: 5
+    require_labels: true
+    backfill: false
+  per_repo:
+    torch-spyre/torch-spyre: { mode: issues-only }
+  kinds:
+    sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
+```
+
+Agent kicks on items already labelled for hive, hive's own PRs and issues,
+and `/hive` command replies are never gated. The default matrix per level
+is in [acmm-policy-matrix.md](acmm-policy-matrix.md#what-hive-will-say-on-github-at-each-level).
 ## When to add what
 
 | Add… | …when |
@@ -1199,7 +1272,7 @@ That is deliberate, and it is the point of the whole feature. A lane that ran on
 | `pause` in a mode | an agent is noisy exactly when the queue is deep (e.g. pause `architect` during surge) |
 | `stale_timeout` | you changed cadences — keep it above the longest interval |
 | `clear_on_kick: false` | the agent genuinely benefits from remembering previous kicks (rare; context bloat is real) |
-| `channels` | governor timer kicks aren't enough — you want webhook-, schedule-, or bead-triggered work |
+| `channels` | Make the default timer trigger explicit; `kick` is the only supported type. For event-based work use [CEL triggers](cel-triggers.md) or [work sources](work-sources.md), not `webhook`, `schedule`, or `bead` channel types. |
 | `tools` rules | one agent needs a sharper permission edge than its `mode` tier provides |
 | a higher ACMM level | your review capacity, CI trust, and appetite for autonomy have all grown — raise the level and let the pack reconcile the roster |
 | an inference method | you have GPUs (or a LiteLLM gateway) and want agents off subscription seats |

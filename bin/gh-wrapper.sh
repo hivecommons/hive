@@ -1196,6 +1196,46 @@ _identity_footer() {
   echo -e "$parts"
 }
 
+# Structured blocker marker for needs-human reports (hivecommons/hive#15099).
+#
+# A report that says the App / token / hive *cannot* do something (push to
+# .github/workflows without the `workflows` permission, change branch
+# protection, set a secret, sign a CLA) describes a capability gap no
+# "Let hive decide" can clear. pkg/blocker reads `<!-- hive:blocker kind=… -->`
+# and parks the item on that blocker instead of a bare needs-human, so the
+# dashboard says what is missing and the delegated decision answers
+# "no-effect" with the real options. Prose is classified here with the same
+# narrow rules as pkg/blocker.Infer (mirrored, not shared: this file runs
+# where no Go binary is guaranteed). Only bodies that cite needs-human are
+# marked, a body that already carries a marker is left alone, and anything
+# the rules do not match stays unmarked — a wrong kind is worse than none.
+_blocker_kind() {
+  local body
+  body="$(printf '%s' "$1" | tr '\n' ' ' | tr '[:upper:]' '[:lower:]')"
+  [[ "$body" == *"hive:blocker"* ]] && return 1
+  [[ "$body" =~ needs[-\ ]human|needs\ a\ (human|person|maintainer)|a\ maintainer\ must|a\ person\ must ]] || return 1
+  local cannot="(cannot|can\'t|can not|unable to|not able to|no permission to|not permitted to|is not allowed to)"
+  if [[ "$body" =~ (no|lacks?|lacking|missing|without)\ (the\ )?\`?workflows?\`?(:\ ?write)?\ permission ]] \
+     || [[ "$body" =~ $cannot\ (push|modify|change|edit|write|update|touch|commit)[^.]{0,80}(\.github/workflows|workflow\ files?|workflows?/) ]] \
+     || [[ "$body" =~ workflows?\ permission[^.]{0,40}(missing|lacking|not\ granted|needed|required) ]]; then
+    echo "capability:workflows-permission"; return 0
+  fi
+  if [[ "$body" =~ $cannot[^.]{0,60}(branch[\ -]protection|rulesets?|protected\ branch) ]]; then
+    echo "capability:branch-protection"; return 0
+  fi
+  if [[ "$body" =~ $cannot\ (set|add|create|read|rotate|update|configure)[^.]{0,60}(secrets?|credentials?) ]]; then
+    echo "capability:secret"; return 0
+  fi
+  if [[ "$body" =~ $cannot\ (push|write|commit)[^.]{0,60}(repository|repo|branch|fork) ]] \
+     || [[ "$body" =~ (no|lacks?|missing|without)\ (the\ )?\`?(contents|write|push)\`?(:\ ?write)?\ (permission|access) ]]; then
+    echo "capability:repo-write"; return 0
+  fi
+  if [[ "$body" =~ (sign|signing|signed)[^.]{0,30}(cla|contributor\ license\ agreement) ]]; then
+    echo "human-only:cla"; return 0
+  fi
+  return 1
+}
+
 # Guard Markdown thematic breaks against becoming setext heading underlines.
 #
 # A line of `---` placed DIRECTLY under a paragraph is not a rule in Markdown —
@@ -1366,6 +1406,11 @@ _inject_identity() {
     # the gap is exactly one blank line regardless of how the file ended.
     body_val="$(printf '%s\n' "${body_val}" | _guard_markdown_rules)"
     body_val="${body_val%"${body_val##*[![:space:]]}"}"
+    local blocker_kind
+    if blocker_kind="$(_blocker_kind "$body_val")"; then
+      body_val="${body_val}
+<!-- hive:blocker kind=${blocker_kind} -->"
+    fi
     new_args+=("--body" "${body_val}
 
 ${footer}")

@@ -549,6 +549,170 @@ func TestSweepSentinelClearanceOnNewerHeadIsHonoured(t *testing.T) {
 	}
 }
 
+// A dashboard Approve releases the head it names (dibs#510): the alert and
+// marker are for head A, the PR moves to head B without a fresh alert (the
+// label from A still blocks it), and the owner approves B from the
+// dashboard, which takes the label off as the hive's own account and posts
+// the `/lgtm` + `/approve` comments bound to B. The `unlabeled` event is by
+// a hive account and so is not a human clearance on its own; the approval
+// comment is. The sweep must stay quiet for B across restarts, rewrite the
+// marker as the released alert for B, and still re-alert on a later push.
+func TestSweepSentinelDashboardApprovalReleasesHead(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "workflows", Paths: []string{".github/workflows/ci.yml"}}})
+	approvals := func(head string) []string {
+		var out []string
+		for _, command := range PRApprovalCommands {
+			out = append(out, renderPRApprovalCommandComment(command, "clubanderson", head))
+		}
+		return out
+	}
+	timeline := []map[string]any{
+		sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-28T23:30:22Z"),
+		sentinelTimelineCommit("hB", "2026-10-28T23:55:54Z"),
+		sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-29T00:32:07Z"),
+	}
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+		files:        map[int][]map[string]any{9: {{"filename": ".github/workflows/ci.yml", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: append([]string{alertA}, approvals("hB")...)},
+		commentUsers: map[int][]string{9: {"hive[bot]", "hive[bot]", "hive[bot]"}},
+		timeline:     map[int][]map[string]any{9: timeline},
+		checkSuites:  map[string][]string{"hB": {"2026-10-28T23:56:00Z"}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	for pass := 0; pass < 2; pass++ {
+		c := newTestClient(t, srv, "o", []string{"o/r"})
+		c.SetAppBotLogin("hive[bot]")
+		res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+		if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
+			t.Fatalf("pass %d: dashboard-approved head must stay quiet: res=%+v err=%v", pass, res, err)
+		}
+		if got := f.labels[9]; len(got) != 0 {
+			t.Fatalf("pass %d: label re-applied after the owner approved this head: %v", pass, got)
+		}
+		if len(f.comments[9]) != 3 {
+			t.Fatalf("pass %d: no new alert comment may be posted: %d comments", pass, len(f.comments[9]))
+		}
+		if body := f.comments[9][0]; !strings.Contains(body, SentinelMarker+" hB") || !strings.Contains(body, sentinelAlertHeading) || !strings.Contains(body, "@clubanderson approved this head from the Hive dashboard") {
+			t.Fatalf("pass %d: marker comment must be rewritten as the released alert for hB: %q", pass, body)
+		}
+	}
+
+	// New commits re-arm: the approval named hB, not hC.
+	f.mu.Lock()
+	f.prs[0] = sentinelPR(9, "eve", "hC")
+	f.checkSuites["hC"] = []string{"2026-10-29T01:00:00Z"}
+	f.mu.Unlock()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 4 || !strings.Contains(f.comments[9][3], SentinelMarker+" hC") {
+		t.Fatalf("push after the approval must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	}
+}
+
+// An approval comment releases nothing unless the hive wrote it for this
+// head: a forged one by the PR author and the hive's own approval of an
+// earlier head both leave the new head alerted on and labelled.
+func TestSweepSentinelDashboardApprovalNotHonoured(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	approval := func(head string) string { return renderPRApprovalCommandComment("/approve", "clubanderson", head) }
+	for _, tc := range []struct {
+		name   string
+		body   string
+		author string
+	}{
+		{"forged by the author", approval("hB"), "eve"},
+		{"hive approval of an earlier head", approval("hA"), "hive[bot]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &sentinelFixture{
+				prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+				files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+				labelExists:  true,
+				comments:     map[int][]string{9: {alertA, tc.body}},
+				commentUsers: map[int][]string{9: {"hive[bot]", tc.author}},
+				timeline: map[int][]map[string]any{9: {
+					sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+					sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+					sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-22T18:19:00Z"),
+				}},
+			}
+			srv := newSentinelServer(t, f)
+			defer srv.Close()
+			c := newTestClient(t, srv, "o", []string{"o/r"})
+			c.SetAppBotLogin("hive[bot]")
+			res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 3 || !strings.Contains(f.comments[9][2], SentinelMarker+" hB") {
+				t.Fatalf("new head must re-alert: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
+			}
+		})
+	}
+}
+
+// A hive that cannot name its own accounts (no configured identity, GET
+// /user unresolved) keeps the legacy any-author rule for its other once-only
+// markers, but not for the sentinel release: the PR author's forged
+// approval comment for their own head must leave it alerted on and
+// labelled (hivecommons/hive#15262).
+func TestSweepSentinelDashboardApprovalIdentityUnknownForgedNotHonoured(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+		files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: {alertA, renderPRApprovalCommandComment("/approve", "clubanderson", "hB")}},
+		commentUsers: map[int][]string{9: {"hive[bot]", "eve"}},
+		timeline: map[int][]map[string]any{9: {
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-22T18:19:00Z"),
+		}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	if c.knowsOwnAccounts() {
+		t.Fatal("fixture must leave the hive unable to name its own accounts")
+	}
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 3 || !strings.Contains(f.comments[9][2], SentinelMarker+" hB") {
+		t.Fatalf("forged approval must not release the head when identity is unknown: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
+	}
+}
+
+// A hive that cannot name its own accounts records a maintainer's clearance
+// in a comment it posts itself rather than editing the newest marker comment
+// of unverified authorship, which the PR author may have written.
+func TestSweepSentinelClearanceIdentityUnknownPostsOwnRecord(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	forged := SentinelMarker + " hA\nnot the hive's\n"
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+		files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: {alertA, forged}},
+		commentUsers: map[int][]string{9: {"hive[bot]", "eve"}},
+		timeline: map[int][]map[string]any{9: {
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:30Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 0 || len(f.labels[9]) != 0 {
+		t.Fatalf("maintainer clearance must stay quiet: res=%+v err=%v labels=%v", res, err, f.labels[9])
+	}
+	if len(f.comments[9]) != 3 || f.comments[9][1] != forged || !strings.Contains(f.comments[9][2], SentinelMarker+" hB") {
+		t.Fatalf("clearance must be posted as a new comment, leaving the unverified one alone: %v", f.comments[9])
+	}
+}
+
 // The label removal counts only when it postdates a server-stamped push of
 // the current head and was made by a human who is not one of the hive's
 // accounts. A removal before the push, a removal by a hive account or

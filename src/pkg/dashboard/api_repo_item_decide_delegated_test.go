@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func newDelegatedServer(t *testing.T, mock *repoItemDecisionMock) *Server {
@@ -493,7 +494,7 @@ func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 	}
 	res := job.Result
 	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
-	for _, want := range []string{"Hive decided close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T12:01:00Z", "but it hasn't taken effect:"} {
+	for _, want := range []string{"Close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T12:01:00Z", "but it hasn't taken effect:"} {
 		if !strings.Contains(res.Outcome, want) {
 			t.Fatalf("outcome %q missing %q", res.Outcome, want)
 		}
@@ -505,7 +506,7 @@ func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 		t.Fatalf("why = %q", res.Why)
 	}
 	labels := optionLabels(res.Options)
-	for _, want := range []string{"Merge as maintainer (on GitHub)", "Re-run decision", "Close as superseded", "Send back for a new commit"} {
+	for _, want := range []string{"Merge as maintainer", "Re-run decision", "Close as superseded", "Send back for a new commit"} {
 		if !strings.Contains(strings.Join(labels, "|"), want) || !strings.Contains(res.Next, want) {
 			t.Fatalf("options %v / next %q missing %q", labels, res.Next, want)
 		}
@@ -553,6 +554,121 @@ func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 	}
 }
 
+// TestDelegatedDecisionReparkedAfterDecisionIsANewAsk is
+// hivecommons/hive#15021: the hive decided at 12:01Z and the park lifted;
+// later the scanner parked the item again with its own question. The
+// repeat click must not read the fresh park as the old decision failing to
+// take effect (no `no-effect`, no stalled follow-up comment): it is a new
+// ask, decided anew.
+func TestDelegatedDecisionReparkedAfterDecisionIsANewAsk(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	prior := delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede, Rule: "contributor-offline", Text: "supersede now: adopt #8 in supersede mode", Rationale: "offline"}
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	mock.priorComments = []string{delegatedecision.CommentBody(prior, "h1", "writer")}
+	mock.timeline = []map[string]any{
+		{"event": "unlabeled", "label": map[string]any{"name": "stage/085-needs-decision"}, "created_at": "2026-10-28T12:01:30Z"},
+		{"event": "labeled", "label": map[string]any{"name": "stage/085-needs-decision"}, "created_at": "2026-10-28T13:16:00Z"},
+	}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	body := `{"type":"pr","reason":"contributor-lane:changes-requested","caption":"changes requested"}`
+	w := postDelegated(t, srv, 8, "writer", body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action == rowActionNoEffect || job.Result.Action == rowActionNoop {
+		t.Fatalf("a re-parked item must be decided anew, got %+v notes=%v err=%s", job.Result, job.Notes, job.Error)
+	}
+	if !strings.Contains(strings.Join(job.Notes, "\n"), "parked again at 2026-10-28T13:16:00Z (stage/085-needs-decision) after the decision recorded at 2026-10-28T12:01:00Z") {
+		t.Fatalf("notes = %v, want the re-park named", job.Notes)
+	}
+	for _, c := range mock.comments {
+		if delegatedecision.IsStalledComment(c, "contributor-offline") {
+			t.Fatalf("stalled follow-up posted on a fresh ask:\n%s", c)
+		}
+	}
+
+	// A park label applied before the decision is the one it answered:
+	// the dedup still holds.
+	mock.timeline = []map[string]any{
+		{"event": "labeled", "label": map[string]any{"name": "stage/085-needs-decision"}, "created_at": "2026-10-28T11:00:00Z"},
+	}
+	mock.comments = nil
+	w = postDelegated(t, srv, 8, "writer", body, nil)
+	job = decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoEffect {
+		t.Fatalf("park before the decision must still dedup: %+v", job.Result)
+	}
+}
+
+func TestReparkFromEvents(t *testing.T) {
+	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	events := []github.IssueEvent{
+		{Event: "labeled", Label: "triage/accepted", At: t0.Add(time.Minute)},
+		{Event: "unlabeled", Label: "stage/045-needs-decision", At: t0.Add(2 * time.Minute)},
+		{Event: "labeled", Label: "needs-human", At: t0.Add(time.Hour)},
+		{Event: "labeled", Label: "Stage/045-Needs-Decision", At: t0.Add(2 * time.Hour)},
+	}
+	got, ok := reparkFromEvents(events)
+	if !ok || got.Label != "Stage/045-Needs-Decision" || !got.At.Equal(t0.Add(2*time.Hour)) {
+		t.Fatalf("got %+v ok=%v, want the latest park label", got, ok)
+	}
+	if _, ok := reparkFromEvents(events[:2]); ok {
+		t.Fatal("a triage label and an unlabel are not a re-park")
+	}
+}
+
+// TestDelegatedDecisionStuckIssueWording covers an approved issue with both
+// approved-direction and stage/045-needs-decision, with no later re-park
+// recorded. Unlike hivecommons/hive#15021, this fixture has no timeline
+// evidence that the park lifted and was added again. Past the effect timeout the
+// toast must not say "approved for merge" (nothing merges on an issue),
+// must name the stuck label, and must offer the lift first.
+func TestDelegatedDecisionStuckIssueWording(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T22:00:00Z")
+	prior := delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "default-approve", Text: "approve", Rationale: "default"}
+	mock := &repoItemDecisionMock{issueLabels: []string{"help wanted", "triage/accepted", "approved-direction", "stage/045-needs-decision"}}
+	mock.priorComments = []string{delegatedecision.CommentBodyWith(prior, "h1", "writer", delegatedecision.CommentOptions{Kind: delegatedecision.KindIssue})}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"needs-decision","caption":"Needs decision"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoEffect {
+		t.Fatalf("result = %+v notes=%v", job.Result, job.Notes)
+	}
+	res := job.Result
+	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
+	if res.Why != delegatedecision.GlossaryParkLabelStuck {
+		t.Fatalf("why = %q", res.Why)
+	}
+	for _, bad := range []string{"approved for merge", "merge gate", "Hive decided"} {
+		if strings.Contains(res.Outcome, bad) {
+			t.Fatalf("PR wording / repeated headline in issue outcome %q: %q", res.Outcome, bad)
+		}
+	}
+	for _, want := range []string{"Approved to proceed — an agent may claim it at 2026-10-28T", "stage/045-needs-decision is still on the issue"} {
+		if !strings.Contains(res.Outcome, want) {
+			t.Fatalf("outcome %q missing %q", res.Outcome, want)
+		}
+	}
+	if !strings.Contains(res.Next, "approved-direction") || !strings.Contains(res.Next, "Lift the park") {
+		t.Fatalf("next = %q", res.Next)
+	}
+	if len(res.Options) < 4 || res.Options[0].Action != decisionActionApprove || !res.Options[0].Enabled || res.Options[1].Action != decisionActionRetry {
+		t.Fatalf("options = %+v", res.Options)
+	}
+	if labels := strings.Join(optionLabels(res.Options), "|"); !strings.Contains(labels, "Re-run decision") || !strings.Contains(labels, "Give direction") || strings.Contains(labels, "Merge as maintainer") {
+		t.Fatalf("options = %q", labels)
+	}
+	// The follow-up comment carries the issue words too.
+	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "approved for merge") || !strings.Contains(mock.comments[0], "approved to proceed") {
+		t.Fatalf("comments = %v", mock.comments)
+	}
+}
+
 // TestDelegatedStuckWhyReadsTheLane covers the why derivation per lane
 // reason and verdict so every stuck decision gets a specific plain reason.
 func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
@@ -581,6 +697,13 @@ func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
 		{"hold", pr, approve, delegatedDecisionRequest{Reason: "hold"}, selfApprove, delegatedecision.GlossaryHold},
 		{"pr fallback", pr, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotMergedYet},
 		{"issue fallback", issue, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryStillParked},
+		{"issue park label outlived the approval", delegatedecision.Input{Kind: delegatedecision.KindIssue, Labels: []string{"help wanted", "approved-direction", "stage/045-needs-decision"}}, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryParkLabelStuck},
+		{"issue park label without the ack is just parked", delegatedecision.Input{Kind: delegatedecision.KindIssue, Labels: []string{"stage/045-needs-decision"}}, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryStillParked},
+		{"pr with both labels is not the issue case", func() delegatedecision.Input {
+			i := pr
+			i.Labels = []string{"approved-direction", "stage/045-needs-decision"}
+			return i
+		}(), approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotMergedYet},
 		{"close fallback", pr, delegatedecision.Decision{Verdict: delegatedecision.VerdictCloseSuperseded}, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotClosedYet},
 		{"direction fallback", pr, delegatedecision.Decision{Verdict: delegatedecision.VerdictDirection}, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNoNewCommit},
 	}
@@ -616,7 +739,7 @@ func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T
 	}
 	res := job.Result
 	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
-	for _, want := range []string{"I can't merge this: author @someone is untrusted on testrepo", "not a collaborator", "trusted or merger tier", "👥 Contributors"} {
+	for _, want := range []string{"I can't merge this: author @someone is untrusted on testrepo", "isn't a trusted author yet", "trusted tier under 👥 Contributors"} {
 		if !strings.Contains(res.Outcome, want) {
 			t.Errorf("outcome %q missing %q", res.Outcome, want)
 		}
@@ -682,5 +805,310 @@ func TestDelegatedAsyncFanOutSettlesOperatorAction(t *testing.T) {
 			t.Fatalf("async action never settled: %+v", got)
 		case <-tick.C:
 		}
+	}
+}
+
+// hivecommons/hive#15188: a delegated adopt-supersede is not "done" when
+// the request label lands. The ledger reads `executing` until the adoption
+// engine records a copy, then "adopted as #N"; a workflow-path PR is a
+// capability gap and routes to the workflows blocker instead of a bare
+// Needs human decision.
+func TestDelegatedAdoptSupersedeReportsExecutingUntilAdopted(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	now := time.Date(2026, 10, 28, 14, 23, 0, 0, time.UTC)
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	srv.operatorActionStore = newOperatorActionStore("")
+	srv.stageStore = stagelabels.NewStore("", func() time.Time { return now })
+	key := stagelabels.Key("testorg/testrepo", 8)
+	srv.stageStore.Observe(key, stagelabels.NeedsDecision, "adoption-stalled:contributor-lane:ci-red")
+
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-lane:ci-red","caption":"adoption stalled"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictAdoptSupersede {
+		t.Fatalf("decision = %+v err=%s", job.Decision, job.Error)
+	}
+	if !strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label not queued: %v", mock.added)
+	}
+	acts := srv.operatorActions().List("testorg/testrepo", 8)
+	if len(acts) != 1 || acts[0].Outcome != operatorActionOutcomeExecuting || !strings.Contains(acts[0].Detail, "executing") {
+		t.Fatalf("ledger after decision = %+v", acts)
+	}
+
+	// Before the engine runs: the row says the hive is carrying it out.
+	items := []StageTrackerItem{{Repo: "testorg/testrepo", Number: 8, Stage: 85, Head: "aaa"}}
+	srv.applyOperatorActions(items, now.Add(time.Minute))
+	last := items[0].LastOperatorAction
+	if last == nil || last.State != operatorActionStateExecuting || last.Progress == "" || last.Human != "" {
+		t.Fatalf("row before adoption = %+v", last)
+	}
+
+	// The adoption engine opened the copy: the same record now reads
+	// "adopted as #91" and is addressed, whatever stage the row sits at.
+	srv.stageStore.MarkAdopted(key, "aaa", 91, now.Add(2*time.Minute))
+	srv.invalidateStageTrackerCache()
+	items = []StageTrackerItem{{Repo: "testorg/testrepo", Number: 8, Stage: 85, Head: "aaa"}}
+	srv.applyOperatorActions(items, now.Add(3*time.Minute))
+	last = items[0].LastOperatorAction
+	if last == nil || last.State != operatorActionStateAddressed || last.Outcome != operatorActionOutcomeApplied || !strings.Contains(last.Progress, "adopted as #91") {
+		t.Fatalf("row after adoption = %+v", last)
+	}
+
+	// The engine refused the head instead (workflow path): blocked on the
+	// workflows capability, with what a person can do.
+	srv.stageStore.ClearAdoption(key)
+	srv.stageStore.MarkAdoptionEscalated(key, "aaa", "adoption-stalled:contributor-lane:workflow-path")
+	srv.invalidateStageTrackerCache()
+	items = []StageTrackerItem{{Repo: "testorg/testrepo", Number: 8, Stage: 85, Head: "aaa"}}
+	srv.applyOperatorActions(items, now.Add(3*time.Minute))
+	last = items[0].LastOperatorAction
+	if last == nil || last.State != operatorActionStateBlocked || last.Blocker != operatorActionBlockerWorkflows || last.Human == "" || !strings.Contains(last.Progress, "could not adopt") {
+		t.Fatalf("row after refusal = %+v", last)
+	}
+}
+
+// A PR that edits .github/workflows gets a capability-gap recommendation,
+// not an adopt-supersede the engine would refuse; the ledger is `blocked`.
+func TestDelegatedWorkflowPathIsCapabilityGap(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	srv.operatorActionStore = newOperatorActionStore("")
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-lane:workflow-path","caption":"adoption stalled: contributor lane: workflow path"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Rule != delegatedecision.RuleCapabilityGap || !job.Decision.KeepsPark {
+		t.Fatalf("decision = %+v err=%s", job.Decision, job.Error)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("adoption queued despite the capability gap: %v", mock.added)
+	}
+	acts := srv.operatorActions().List("testorg/testrepo", 8)
+	if len(acts) != 1 || acts[0].Outcome != operatorActionOutcomeBlocked {
+		t.Fatalf("ledger = %+v", acts)
+	}
+	if got := srv.delegatedStuckWhy(delegatedecision.Input{Kind: delegatedecision.KindPR, WorkflowPath: true}, delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede}, delegatedDecisionRequest{}, delegatedPriorState{Found: true}); got != delegatedecision.GlossaryWorkflowPath {
+		t.Fatalf("stuck why = %q", got)
+	}
+}
+
+// hivecommons/hive#15096 N13: a resolving delegated decision on a PR takes
+// `needs-human` and the 085 stage label off in the same write, or the next
+// label-derived pass re-parks the row the decision just answered.
+func TestDelegatedDecisionLiftsStaleNeedsHuman(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"needs-human", stagelabels.NeedsDecision.Label(), "kind/bug"}}
+	srv := newDelegatedServer(t, mock)
+	in := delegatedecision.Input{Repo: "testorg/testrepo", Number: 8, Kind: delegatedecision.KindPR, AdoptionStalled: true, Labels: mock.prLabels}
+	d := delegatedecision.Run(in)
+	if d.Verdict != delegatedecision.VerdictAdoptSupersede {
+		t.Fatalf("decision: %+v", d)
+	}
+	notes, err := srv.executeDelegatedDecision(context.Background(), in, d, "writer", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed := strings.Join(mock.removed, ",")
+	if !strings.Contains(removed, "needs-human") || !strings.Contains(removed, "085-needs-decision") {
+		t.Fatalf("park labels not lifted: removed=%v", mock.removed)
+	}
+	if strings.Contains(removed, "kind/bug") {
+		t.Fatalf("unrelated label removed: %v", mock.removed)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "park labels lifted: needs-human") {
+		t.Fatalf("notes: %v", notes)
+	}
+
+	// Recommend-only keeps the item with the person: nothing comes off.
+	mock.removed = nil
+	rec := delegatedecision.Decision{Verdict: delegatedecision.VerdictRecommendOnly, Rule: "hive-policy", Text: "x", Actions: []delegatedecision.Action{{Kind: delegatedecision.ActionRecommendOnly}}}
+	if _, err := srv.executeDelegatedDecision(context.Background(), in, rec, "writer", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.removed) != 0 {
+		t.Fatalf("recommend-only lifted labels: %v", mock.removed)
+	}
+}
+
+// hivecommons/hive#15289: the #15219 scenario end to end. A conflicting,
+// offline clanker PR whose issue a merged PR already closed is closed as
+// superseded with a note naming that PR — not adopted — and the job
+// exposes the ladder.
+func TestDelegatedAlreadyFixedClosesInsteadOfAdopting(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "dirty", prBody: "Fixes #42", fixedIssueClosedBy: 43,
+		prLabels: []string{"author/clanker", "adoption/supersede", "stage/085-needs-decision", "needs-rebase"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-offline","caption":"adoption stalled"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	d := job.Decision
+	if d == nil || d.Verdict != delegatedecision.VerdictCloseSuperseded || d.Rule != delegatedecision.RuleAlreadyFixed {
+		t.Fatalf("decision = %+v err=%s notes=%v", d, job.Error, job.Notes)
+	}
+	if d.Ladder == nil || d.Ladder.Decision != delegatedecision.RuleAlreadyFixed || len(d.Ladder.RuledOut) != 0 || !strings.Contains(d.Ladder.Reason, "#42 was already fixed by merged PR #43 (25de3ba)") {
+		t.Fatalf("ladder = %+v", d.Ladder)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("adoption queued for an already-fixed PR: %v", mock.added)
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "#42 was already fixed by merged PR #43 (25de3ba)") || !strings.Contains(mock.comments[0], "Thank you") {
+		t.Fatalf("close note = %v", mock.comments)
+	}
+	closed := false
+	for _, e := range mock.edits {
+		if e["state"] == "closed" {
+			closed = true
+		}
+	}
+	if !closed || !strings.Contains(strings.Join(mock.added, ","), github.SupersededLabel) {
+		t.Fatalf("PR not closed as superseded: edits=%v added=%v", mock.edits, mock.added)
+	}
+	if job.Result == nil || job.Result.Action != rowActionClosed || job.Result.Outcome != "Closed as superseded: #42 already fixed by #43 (25de3ba)." {
+		t.Fatalf("result = %+v", job.Result)
+	}
+}
+
+// Without a merged closer the same PR falls to the last rung — and the
+// decision names the author's clanker, not a hive.
+func TestDelegatedOfflineClankerAdoptsWithClankerWording(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "dirty", prBody: "Fixes #42",
+		prLabels: []string{"author/clanker", "stage/085-needs-decision"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-offline","caption":"adoption stalled"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	d := job.Decision
+	if d == nil || d.Verdict != delegatedecision.VerdictAdoptSupersede || d.Rule != delegatedecision.RuleContributorOffline {
+		t.Fatalf("decision = %+v err=%s", d, job.Error)
+	}
+	if d.Ladder == nil || len(d.Ladder.RuledOut) != 4 || !strings.Contains(strings.Join(d.Ladder.RuledOut, "\n"), "return-to-contributor: the author's clanker hasn't been connected since the nudge") {
+		t.Fatalf("ladder = %+v", d.Ladder)
+	}
+	if strings.Contains(d.Rationale, "author's hive") || job.Result == nil || !strings.HasSuffix(job.Result.Outcome, " Why: the author's clanker hasn't been connected since the nudge.") {
+		t.Fatalf("wording: rationale=%q result=%+v", d.Rationale, job.Result)
+	}
+}
+
+// Owner-style judgment of parked issues (hivecommons/hive#15021 and the
+// proposal rules): the fixture bodies are the real issues, trimmed.
+const delegatedSelfreportBody = "<!-- hive:selfreport fp=929efbb7d686368f1108570c hive=hosted-ibm-alchemy-logg-ptoo -->\n\n" +
+	"A hive hit an unusual runtime error (class `agent_login_required`) and is reporting it.\n\n" +
+	"| Field | Value |\n|---|---|\n| hive | hosted-ibm-alchemy-logg-ptoo |\n" +
+	"| spoke | [hosted-ibm-alchemy-logg-ptoo](https://hosted-ibm-alchemy-logg-ptoo.example) |\n| owner(s) | @clubanderson |\n"
+
+const delegatedEvidenceFreeProposalBody = "## Finding\n\nThis is now the third time a freshly-landed shell-checker change shipped with arms no self-test pins (#248, #257, #295).\n\n## Recommendation\n\nAdd a mutation gate for the shell checkers.\n"
+
+// A selfreport whose remedy is the spoke operator's: the hive posts the
+// direction to the spoke owner, adds needs-owner, and writes nothing that
+// would make the issue actionable — no `/hive decision` line, no
+// approved-direction, the 045 park kept.
+func TestDelegatedSelfreportOperatorAction(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"triage/accepted", "stage/045-needs-decision"},
+		issueTitle: "[selfreport] agent_login_required: login required detected", issueBody: delegatedSelfreportBody}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictOperatorAction || job.Decision.Rule != "selfreport-operator-action" {
+		t.Fatalf("decision = %+v (error %q)", job.Decision, job.Error)
+	}
+	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "/hive decision") || !strings.Contains(mock.comments[0], "@clubanderson: re-authenticate the agent provider") || !strings.Contains(mock.comments[0], "`stage/045-needs-decision` stays") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	added := strings.Join(mock.added, ",")
+	if !strings.Contains(added, delegatedecision.LabelNeedsOwner) || strings.Contains(added, github.HumanAckLabel) || strings.Contains(added, delegatedecision.LabelHold) {
+		t.Fatalf("labels added = %v: needs-owner only, never approved-direction or hold", mock.added)
+	}
+	if len(mock.removed) != 0 || len(mock.edits) != 0 {
+		t.Fatalf("park must stay and nothing edited: removed=%v edits=%v", mock.removed, mock.edits)
+	}
+	if job.Result == nil || job.Result.Action != rowActionRecommended || !strings.Contains(job.Result.Outcome, "Operator action") || !strings.Contains(job.Result.Next, "waiting on the spoke owner") {
+		t.Fatalf("result = %+v", job.Result)
+	}
+}
+
+// The #15021 loop: the same selfreport decided again, still parked, with a
+// label event after the first decision (the park was never lifted, so it is
+// not a new ask). The hive writes nothing and answers "already decided;
+// waiting on <who>" — never "it hasn't taken effect".
+func TestDelegatedSelfreportRedecideIsNoopNotLoop(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T20:00:00Z")
+	mock := &repoItemDecisionMock{issueLabels: []string{"needs-owner", "stage/045-needs-decision"},
+		issueTitle: "[selfreport] agent_login_required: login required detected", issueBody: delegatedSelfreportBody}
+	in := delegatedecision.Input{Kind: delegatedecision.KindIssue, Number: 7, Title: mock.issueTitle, Body: mock.issueBody, Author: "hive[bot]"}
+	prior := delegatedecision.Run(in)
+	mock.priorComments = []string{delegatedecision.CommentBodyWith(prior, "h1", "writer", delegatedecision.CommentOptions{Kind: delegatedecision.KindIssue})}
+	mock.timeline = []map[string]any{
+		{"event": "labeled", "label": map[string]any{"name": "stage/045-needs-decision"}, "created_at": "2026-10-28T13:16:00Z"},
+	}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoop {
+		t.Fatalf("result = %+v", job.Result)
+	}
+	if !strings.HasPrefix(job.Result.Outcome, "No change — hive already recorded this decision at 2026-10-28T12:01:00Z") || strings.Contains(job.Result.Outcome, "hasn't taken effect") {
+		t.Fatalf("outcome = %q", job.Result.Outcome)
+	}
+	if !strings.Contains(job.Result.Next, "Waiting on the spoke owner: @clubanderson") {
+		t.Fatalf("next = %q", job.Result.Next)
+	}
+	if len(mock.comments) != 0 || len(mock.added) != 0 || len(mock.removed) != 0 {
+		t.Fatalf("a repeat must write nothing: comments=%v added=%v removed=%v", mock.comments, mock.added, mock.removed)
+	}
+}
+
+// A hive-filed proposal without an incident or recurrence is declined for
+// now: the reason is posted and the issue is closed as not planned; no
+// approval, no approved-direction.
+func TestDelegatedProposalNotNowClosesAsNotPlanned(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"testing", "stage/045-needs-decision"},
+		issueTitle: "[quality] Gate proposal: shell-checker arms that survive mutation", issueBody: delegatedEvidenceFreeProposalBody}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictNotNow || job.Decision.Rule != "proposal-not-now" {
+		t.Fatalf("decision = %+v (error %q)", job.Decision, job.Error)
+	}
+	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "/hive decision") || !strings.Contains(mock.comments[0], "no incident or recurrence justifies the cost") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	closed := false
+	for _, e := range mock.edits {
+		if e["state"] == "closed" && e["state_reason"] == issueStateReasonNotPlanned {
+			closed = true
+		}
+	}
+	if !closed {
+		t.Fatalf("issue not closed as not planned: edits=%v", mock.edits)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), github.HumanAckLabel) {
+		t.Fatalf("a declined proposal must not get approved-direction: %v", mock.added)
+	}
+	if job.Result == nil || job.Result.Action != rowActionClosed || !strings.Contains(job.Result.Outcome, "Declined for now") {
+		t.Fatalf("result = %+v", job.Result)
 	}
 }

@@ -770,7 +770,7 @@ func (r *round) ensureForkWaitComment(tip string) error {
 Hi! This pull request is from a fork and needs to be updated with the latest %s before Hive can merge it.
 
 Hive cannot update this fork branch unless GitHub says this token can update it and the repository owner has enabled `+"`review.contributor_prs.base_sync`"+`. Please merge the latest target branch tip (%s) into your branch, then let the required checks pass; the pull request will stay eligible for the lane.`, forkWaitCommentMarker, r.branch, short(tip))
-	return r.l.opts.GitHub.CreateIssueComment(r.ctx, r.repo, r.front.PR, body)
+	return r.l.opts.GitHub.CreateIssueComment(r.ctx, r.repo, r.front.PR, body) // writeback:gated: RESTGitHub checks the item's policy before posting.
 }
 
 func (r *round) update(head, tip string) (Decision, error) {

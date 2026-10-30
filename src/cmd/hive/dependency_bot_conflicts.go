@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // renovateRebaseNeverMarker is the line Renovate writes into every PR body it
@@ -299,7 +300,7 @@ func sweepDependencyBotConflicts(
 				// The comment for this head is already on the PR. Retry the
 				// LABEL ONLY: a failed AddLabels on an earlier pass, or the
 				// same head stuck again after an undo.
-				applyDepBotConflictLabel(ctx, store, writer, repo, pr.Number, key, logger)
+				applyDepBotConflictLabel(ctx, store, writer, reader, repo, pr.Number, key, logger)
 			}
 			continue
 		}
@@ -336,14 +337,17 @@ func sweepDependencyBotConflicts(
 			}
 			comment = dependencyBotRedCIComment(pr)
 		}
-		if err := writer.CreateIssueComment(ctx, repo, pr.Number, comment); err != nil {
+		if !depBotWritebackAllowed(ctx, reader, repo, pr.Number, writeback.KindNeedsDecisionComment, comment, logger) {
+			continue
+		}
+		if err := writer.CreateIssueComment(ctx, repo, pr.Number, comment); err != nil { // writeback:gated
 			logger.Warn("dependency-bot hand-off comment failed; will retry next pass",
 				"repo", repo, "pr", pr.Number, "reason", depBotHandoffLogReason(reason), "error", err)
 			continue
 		}
 		store.markCommented(key, pr.HeadSHA, reason, now())
 		delete(waiting, key)
-		applyDepBotConflictLabel(ctx, store, writer, repo, pr.Number, key, logger)
+		applyDepBotConflictLabel(ctx, store, writer, reader, repo, pr.Number, key, logger)
 		logger.Info("stuck dependency-bot PR handed to a human",
 			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "reason", depBotHandoffLogReason(reason))
 	}
@@ -356,8 +360,11 @@ func depBotHandoffLogReason(reason string) string {
 	return reason
 }
 
-func applyDepBotConflictLabel(ctx context.Context, store *depBotConflictStore, writer forge.IssueWriter, repo string, number int, key string, logger *slog.Logger) {
-	if err := writer.AddLabels(ctx, repo, number, []string{escalation.NeedsHumanLabel}); err != nil {
+func applyDepBotConflictLabel(ctx context.Context, store *depBotConflictStore, writer forge.IssueWriter, reader depBotPRReader, repo string, number int, key string, logger *slog.Logger) {
+	if !depBotWritebackAllowed(ctx, reader, repo, number, writeback.KindStageLabel, escalation.NeedsHumanLabel, logger) {
+		return
+	}
+	if err := writer.AddLabels(ctx, repo, number, []string{escalation.NeedsHumanLabel}); err != nil { // writeback:gated
 		logger.Warn("dependency-bot conflict label failed; will retry next pass",
 			"repo", repo, "pr", number, "error", err)
 		return
@@ -406,7 +413,7 @@ func undoDependencyBotConflicts(ctx context.Context, store *depBotConflictStore,
 				continue
 			}
 		}
-		if !removeDepBotConflictLabel(ctx, writer, repo, number, logger) {
+		if !removeDepBotConflictLabel(ctx, writer, reader, repo, number, logger) {
 			continue
 		}
 		if closed {
@@ -431,16 +438,36 @@ func depBotConflictResolved(pr github.PullRequest) bool {
 	return !conflictMergeState(pr)
 }
 
-func removeDepBotConflictLabel(ctx context.Context, writer forge.IssueWriter, repo string, number int, logger *slog.Logger) bool {
+func removeDepBotConflictLabel(ctx context.Context, writer forge.IssueWriter, reader depBotPRReader, repo string, number int, logger *slog.Logger) bool {
 	remover, ok := writer.(labelRemover)
 	if !ok {
 		logger.Warn("cannot remove dependency-bot conflict label: forge writer cannot remove labels",
 			"repo", repo, "pr", number)
 		return false
 	}
-	if err := remover.RemoveLabel(ctx, repo, number, escalation.NeedsHumanLabel); err != nil {
+	if !depBotWritebackAllowed(ctx, reader, repo, number, writeback.KindStageLabel, escalation.NeedsHumanLabel, logger) {
+		return false
+	}
+	if err := remover.RemoveLabel(ctx, repo, number, escalation.NeedsHumanLabel); err != nil { // writeback:gated
 		logger.Warn("dependency-bot conflict label removal failed; will retry next pass",
 			"repo", repo, "pr", number, "error", err)
+		return false
+	}
+	return true
+}
+
+func depBotWritebackAllowed(ctx context.Context, reader depBotPRReader, repo string, number int, kind writeback.Kind, preview string, logger *slog.Logger) bool {
+	client, ok := reader.(*github.Client)
+	if !ok {
+		return true
+	}
+	item, err := client.WritebackItemForNumber(ctx, repo, number)
+	if err != nil {
+		logger.Warn("dependency-bot hand-off: writeback target lookup failed", "repo", repo, "pr", number, "error", err)
+		return false
+	}
+	if d := client.WritebackAllowed(repo, item, kind, preview); !d.Allowed {
+		logger.Info("dependency-bot hand-off withheld by write-back gate", "repo", repo, "pr", number, "reason", d.Reason)
 		return false
 	}
 	return true

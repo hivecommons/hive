@@ -366,7 +366,7 @@ The `deploy/` directory contains pre-built configurations for common deployment 
 - [Operator reference](docs/operator-reference.md) — config blocks, server flags/env, GitHub token scopes.
 - [Troubleshooting](docs/troubleshooting.md) — container logs, config validation, agent sessions, dashboard auth, and GitHub credential checks.
 - [Config layering](docs/config-layering.md) — effective config provenance and precedence.
-- [Dashboard API reference](docs/api-reference.md) — generated route index.
+- [Dashboard API reference](docs/api-reference.md) — route index, one page per area under `docs/api-reference/`.
 - [apiproxy](docs/apiproxy.md) — model API proxy purpose and deployment notes.
 - [CNCF Code of Conduct](../CODE_OF_CONDUCT.md) — Hive adopts the [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md) for project participation.
 

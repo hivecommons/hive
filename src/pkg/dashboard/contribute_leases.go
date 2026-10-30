@@ -759,6 +759,9 @@ func (h *ContributeWSHub) postCompletionPRComment(ctx context.Context, task *WST
 		return
 	}
 	body := "Hive completed the Spektacular implement stage.\n\nPull request: " + prURL
+	if _, epic := h.server.findRunEpic(runKey); epic != nil {
+		ctx = designWritebackContext(ctx, epic)
+	}
 	if err := commenter.AddComment(ctx, ref, body); err != nil {
 		h.logger.Warn("[contribute-ws] work item completion comment failed", "run", runKey, "error", err)
 	}

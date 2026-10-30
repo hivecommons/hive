@@ -790,6 +790,14 @@ var benignSubstrings = []string{
 	// is a per-hive operational signal, not a runtime error
 	// (hivecommons/hive#15009).
 	"stage labels: pr waits on the hive past the stage dwell",
+	// The kick-undeliverable WARN (src/crux/agent/busy_visibility.go) says in
+	// its own message that it is not self-reporting: until busyNoActivityStall
+	// has restarted the pane the condition is a dashboard warning and a log
+	// line only (decision B on hivecommons/hive#12787). The WARN repeats on
+	// every refused kick, so the generic feed filed it as a repeated runtime
+	// defect anyway (hivecommons/hive#15313). Kicks that keep failing after
+	// the restart are reported under kick_failed_repeatedly instead.
+	"busy-no-activity restart not yet attempted, not self-reporting",
 }
 
 // rateLimitSubstrings are lower-case fragments that mark a GitHub rate-limit
@@ -825,10 +833,41 @@ func IsGitHubRateLimited(s string) bool {
 	return false
 }
 
+// upstreamUnavailableSubstrings are lower-case fragments that mark a GitHub
+// gateway-class transient failure (see IsGitHubUpstreamUnavailable). The
+// status codes are anchored to go-github's "<METHOD> <url>: 503 ..." shape so
+// a PR number or page=503 cannot match; 500 is deliberately absent. The
+// status phrases are anchored to the same ": " separator so prose that merely
+// mentions them does not match.
+var upstreamUnavailableSubstrings = []string{
+	": 502 ",
+	": 503 ",
+	": 504 ",
+	": bad gateway",
+	": service unavailable",
+	": gateway timeout",
+	": gateway time-out",
+}
+
+// IsGitHubUpstreamUnavailable reports whether s (a log message or an error
+// string) is a GitHub 502/503/504 gateway-class failure. The caller retries
+// on its next tick, so the generic repeated-error feed treats such lines as
+// benign (hivecommons/hive#15365); the WARN stays in local logs.
+func IsGitHubUpstreamUnavailable(s string) bool {
+	m := strings.ToLower(s) + " "
+	for _, sub := range upstreamUnavailableSubstrings {
+		if strings.Contains(m, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
 // above applied to the whole line, GitHub rate-limit and pacing refusals
-// (IsGitHubRateLimited), every benignSubstrings entry, and the
+// (IsGitHubRateLimited), gateway failures (IsGitHubUpstreamUnavailable),
+// every benignSubstrings entry, and the
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
@@ -861,7 +900,7 @@ func IsBenignMessage(msg string) bool {
 		"[contribute-ws] refusing task: daily rate limit reached":
 		return true
 	}
-	if benignIOTimeout(m, m) || IsGitHubRateLimited(m) {
+	if benignIOTimeout(m, m) || IsGitHubRateLimited(m) || IsGitHubUpstreamUnavailable(m) {
 		return true
 	}
 	for _, s := range benignSubstrings {

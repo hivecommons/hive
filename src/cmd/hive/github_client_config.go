@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -16,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/mergelane"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // configureGitHubClient installs EVERY hook, policy gate and setting the hive
@@ -93,6 +96,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	if client == nil || b.cfg == nil {
 		return
 	}
+	// Use the same live author-kind names as the PR stage reconciler, also
+	// after an App client rebuild or config reload.
+	client.SetAuthorKindLabels(func() authorkind.Names { return b.cfg.Governor.Labels.Author.Names() })
 	client.SetLinearScopeTeams(b.cfg.Governor.WorkSource.Linear.Teams)
 	client.SetHoldLabels(b.githubHoldLabels())
 	// Umbrella issues no automated claim may take and no claim stages
@@ -102,6 +108,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// scanner.skip_issues_with_open_pr, default on).
 	client.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 	client.SetAdditionalBotLogins(b.cfg.GitHub.AdditionalBotLogins)
+	// Every unsolicited comment/label/review the client writes consults the
+	// one process-wide write-back gate (pkg/writeback); a rebuilt client
+	// must inherit it or the sweeps regress to ungated.
+	client.SetWritebackGate(b.writebackGate())
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// Per-repo pause (#6203). A live predicate over the shared config, so a
@@ -170,6 +180,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	})
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
+	// The duplicate-fix sweep tells a registered relay's PR from a
+	// person's by the same registry the stage engine uses
+	// (hivecommons/hive#15469).
+	client.SetRelayKnownFunc(contributorRelayKnown)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)
 	// Merge strategy (#10889): the self-merge sweep, the lgtm queue sweep and
 	// the hive-merge relay read the live per-repo strategy from config alone;
@@ -554,5 +568,42 @@ func evictHiveClosedPR(srv *dashboard.Server, rec github.AuditRecord, now time.T
 		srv.EvictHiveClosedItem(rec.Repo, rec.Target, true, true, rec.Action, now)
 	case github.AuditActionPRClosed:
 		srv.EvictHiveClosedItem(rec.Repo, rec.Target, true, false, rec.Action, now)
+	}
+}
+
+// writebackGate returns the process-wide unsolicited write-back gate,
+// building it on first use. The gate reads the live config on every
+// decision, so dashboard edits of the writeback block apply without a
+// rebuild; its first_seen ledger persists under /data so a repo that gains
+// write mid-life never back-fills onto PRs that predate the install.
+func (b *boot) writebackGate() *writeback.Gate {
+	b.writebackOnce.Do(func() {
+		deps := b.cfg.WritebackGateDeps()
+		deps.Config = func() writeback.Config { return b.cfg.Writeback }
+		deps.Logger = b.logger
+		b.writeback = writeback.New(b.cfg.Writeback, deps, writebackStatePath())
+		for _, repo := range b.cfg.Project.Repos {
+			b.writeback.ObserveRepo(repo)
+		}
+	})
+	return b.writeback
+}
+
+// writebackStatePath is the gate's persisted first_seen ledger, beside the
+// hold-guard ledger so a PVC restore brings both back together.
+func writebackStatePath() string {
+	if v := strings.TrimSpace(os.Getenv("HIVE_WRITEBACK_STATE_PATH")); v != "" {
+		return v
+	}
+	return "/data/metrics/writeback.json"
+}
+
+// observeWritebackRepos records first_seen for every repo now in
+// project.repos, so a repo added at runtime starts its backfill clock the
+// moment the hive learns of it, not when it first tries to write.
+func (b *boot) observeWritebackRepos() {
+	g := b.writebackGate()
+	for _, repo := range b.cfg.Project.Repos {
+		g.ObserveRepo(repo)
 	}
 }

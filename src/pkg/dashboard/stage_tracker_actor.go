@@ -197,11 +197,9 @@ func stageTrackerStageActor(it StageTrackerItem, workers map[string]stageTracker
 		}
 		return set(StageActorHuman, "", "a human decision is owed")
 	case stagelabels.ReadyForHumanMerge:
-		why := "ready for a maintainer's merge; the hive never merges this itself"
-		if it.HumanMergeReasonText != "" {
-			why = strings.TrimSpace(it.HumanMergeReasonText)
-		}
-		return set(StageActorHuman, it.HumanApprover, why)
+		// The chevron and the popover already carry HumanMergeReasonText;
+		// the next-move line says only who moves (hivecommons/hive#15394).
+		return set(StageActorHuman, it.HumanApprover, "a maintainer merges it")
 	case stagelabels.PreMergeSoak:
 		return set(StageActorHive, "", "automerge lane — the pre-merge soak window is running")
 	case stagelabels.MergeQueue:
@@ -316,9 +314,9 @@ func stageTrackerBotFixingCaption(it StageTrackerItem) string {
 }
 
 // stageTrackerResolveActors runs after stageTrackerResolveLinkedPRs: an
-// issue riding its covering PR (030 / 040 / mirrored) takes that PR's
-// actor, and each nested sub-row carries its PR's actor so the SPA draws
-// the same icon on both.
+// issue riding its covering PR (including stale intake narration replaced
+// after link resolution) takes that PR's actor, and each nested sub-row
+// carries its PR's actor so the SPA draws the same icon on both.
 func stageTrackerResolveActors(items []StageTrackerItem) {
 	prs := map[string]*StageTrackerItem{}
 	for i := range items {
@@ -340,7 +338,7 @@ func stageTrackerResolveActors(items []StageTrackerItem) {
 		if it.StageActor == nil || slices.Contains(it.Modifiers, modHold) {
 			continue
 		}
-		rides := it.Mirrored || it.Stage == trackerNumberPRInProgress || it.Stage == trackerNumberCoveredByPR
+		rides := it.Mirrored || it.Stage == trackerNumberPRInProgress || it.Stage == trackerNumberCoveredByPR || it.Actor == "its PR"
 		if !rides || len(it.LinkedPRs) == 0 {
 			continue
 		}

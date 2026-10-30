@@ -44,7 +44,7 @@ Whole evidence history, not just the window; months with n < 10 are gaps.
 
 ## Real examples
 
-- [hivecommons/hive#13523](https://github.com/hivecommons/hive/pull/13523): the [posted review](https://github.com/hivecommons/hive/pull/13523#pullrequestreview-5613922737) caught: The changelog note was written as a sentence, not a list entry, so the release build would have rejected it; a second, duplicate note was also added. The fixed head was approved 4 minutes later; the PR merged 16 minutes after opening (opened 12:07, caught 12:12, approved 12:16, merged 2026-10-22 12:23 UTC).
+- [hivecommons/hive#13523](https://github.com/hivecommons/hive/pull/13523): the [posted review](https://github.com/hivecommons/hive/pull/13523#pullrequestreview-5613922737) caught: The changelog note was written as a sentence, not a list entry, so the release build would have rejected it. A second, duplicate note was also added. The fixed head was approved 4 minutes later; the PR merged 16 minutes after opening (opened 12:07, caught 12:12, approved 12:16, merged 2026-10-22 12:23 UTC).
 - [hivecommons/pluk#328](https://github.com/hivecommons/pluk/pull/328): the [posted review](https://github.com/hivecommons/pluk/pull/328#pullrequestreview-5607075007) caught: An apostrophe inside a quoted message ended the string early, so the project would not compile and no tests could run. The fixed head was approved 10 minutes later; the PR merged 23 minutes after opening (opened 22:30, caught 22:36, approved 22:46, merged 2026-10-21 22:54 UTC).
 
 ## Scale

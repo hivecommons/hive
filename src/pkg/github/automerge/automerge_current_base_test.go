@@ -3,6 +3,7 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,6 +82,67 @@ func TestCurrentBaseGate(t *testing.T) {
 			defer mu.Unlock()
 			if compares != tc.wantCompares || updates != tc.wantUpdates {
 				t.Fatalf("compares, updates = %d, %d; want %d, %d", compares, updates, tc.wantCompares, tc.wantUpdates)
+			}
+		})
+	}
+}
+
+// TestCurrentBaseGateUpdateUnavailableFallback pins the inherited-default guard
+// (hivecommons/hive#15335): when the App cannot update a behind head — a fork
+// without maintainer edits, or a same-repo 403 from branch protection — a
+// repo gated only by the default merges the head as tested and WARNs once
+// per PR; a repo explicitly listed in auto_merge.require_current_base still
+// parks it.
+func TestCurrentBaseGateUpdateUnavailableFallback(t *testing.T) {
+	const head = "sha-head"
+	cases := []struct {
+		name         string
+		fork         bool
+		updateStatus int
+		updateBody   string
+		strict       bool
+		wantStop     bool
+		wantReason   string
+		wantWarns    int
+	}{
+		{name: "fork not editable falls back", fork: true, updateStatus: http.StatusForbidden, updateBody: `{"message":"Resource not accessible by integration"}`, wantWarns: 1},
+		{name: "fork maintainer edits off falls back", fork: true, updateStatus: http.StatusUnprocessableEntity, updateBody: `{"message":"Update is not a fast forward; maintainer edits disabled"}`, wantWarns: 1},
+		{name: "same-repo forbidden falls back", fork: false, updateStatus: http.StatusForbidden, updateBody: `{"message":"Resource not accessible by integration"}`, wantWarns: 1},
+		{name: "strict repo still parks fork", fork: true, strict: true, updateStatus: http.StatusForbidden, updateBody: `{"message":"Resource not accessible by integration"}`, wantStop: true, wantReason: autoMergeReasonForkNotEditable},
+		{name: "conflict never falls back", fork: false, updateStatus: http.StatusUnprocessableEntity, updateBody: `{"message":"merge conflict between base and head"}`, wantStop: true, wantReason: "conflicting"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/main..."+head:
+					_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
+				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
+					w.WriteHeader(tc.updateStatus)
+					_, _ = w.Write([]byte(tc.updateBody))
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			var logs strings.Builder
+			c := newAutoMergeSweepClient(srv.URL)
+			c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			c.requireCurrentBase = func(string) bool { return true }
+			c.requireCurrentBaseStrict = func(string) bool { return tc.strict }
+			for tick := 0; tick < 2; tick++ {
+				_, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, true, "behind", tc.fork)
+				if err != nil {
+					t.Fatalf("tick %d: err = %v", tick, err)
+				}
+				if stop != tc.wantStop || reason != tc.wantReason {
+					t.Fatalf("tick %d: stop, reason = %v, %q; want %v, %q", tick, stop, reason, tc.wantStop, tc.wantReason)
+				}
+			}
+			if got := strings.Count(logs.String(), currentBaseFallbackMessage); got != tc.wantWarns {
+				t.Fatalf("fallback WARN lines over two ticks = %d, want %d (one per PR, not per sweep):\n%s", got, tc.wantWarns, logs.String())
 			}
 		})
 	}

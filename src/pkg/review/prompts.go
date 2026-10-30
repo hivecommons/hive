@@ -713,6 +713,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 		// in one pass, recorded as one array, posted nowhere.
 		b.WriteString(buildHeadRecordOnlyInstruction(pr, head))
 		fmt.Fprintf(&b, "The verdict file carries all %d verdicts as ONE JSON array, including the clean ones, recorded with a single --record-verdict call. A perspective missing from the array is dispatched to you again.\n", len(perspectives))
+		b.WriteString(buildHeadFanOutInstruction(pr, perspectives, opts.ReviewBackend, opts.ReviewModel))
 	} else if opts.PostComments {
 		b.WriteString(buildCombinedPublishInstruction(pr, perspectives, opts))
 	}
@@ -720,6 +721,53 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 
 	b.WriteString(combinedPerspectiveSections(pr, perspectives, opts))
 	return b.String()
+}
+
+// buildHeadFanOutInstruction is the fan-out half of a combined review head
+// kick (hivecommons/hive#15058). The head reads the PR once and then judges
+// each perspective in its own parallel sub-agent, so one head kick costs
+// about as long as its slowest perspective rather than the sum of all of
+// them, and each perspective is still asked on its own evidence. The head
+// stays the only caller of hive-review: sub-agents return verdict objects and
+// the head records them as the one array the relay expects. Backend-neutral
+// on purpose: Claude Code and Codex both run sub-agents, under different
+// names. A kick carrying a single perspective (a re-ask) has nothing to fan
+// out, so it gets no section.
+func buildHeadFanOutInstruction(pr PullRequest, perspectives []Perspective, backend, model string) string {
+	if len(perspectives) < 2 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nFAN OUT: ONE SUB-AGENT PER PERSPECTIVE, IN PARALLEL.\n")
+	fmt.Fprintf(&b, "You orchestrate this review. The %d perspectives are independent questions, so answer them in parallel:\n", len(perspectives))
+	fmt.Fprintf(&b, "1. Fetch the PR metadata, the full diff of %s#%d and any linked issue or contract ONCE, yourself, as the read instructions above describe.\n", pr.Repo, pr.Number)
+	fmt.Fprintf(&b, "2. Start one sub-agent per perspective, all %d at once, IN PARALLEL, not one after another (Claude Code: the Task tool; Codex and other backends: their sub-agent facility). Give each sub-agent the diff, the PR metadata, the linked issue or contract text, the shared instructions above (scope contract, grounding, finding schema) and ONLY its own section from PERSPECTIVE SECTIONS below. Each sub-agent returns exactly one verdict object for its perspective.\n", len(perspectives))
+	writeFanOutModelPin(&b, backend, model)
+	b.WriteString("3. Sub-agents must NOT post anything on the PR, must NOT call hive-review, must NOT read other hive reviews of this head SHA, and must NOT fetch the PR or its diff again: they work from what you passed them. They may read the surrounding code in the checkout to ground a finding.\n")
+	b.WriteString("4. Collect every result, check each object names its own perspective and carries this PR's repo, number, head_sha and body_digest, write them as ONE JSON array to the verdict file, and record it ONCE with the --record-verdict command above. Only you call hive-review.\n")
+	b.WriteString("If sub-agents are unavailable, or one fails or returns no usable verdict, review those perspectives yourself one by one in this session. The array contract is unchanged either way.\n")
+	return b.String()
+}
+
+// writeFanOutModelPin keeps the head's model guarantee across the fan-out.
+// A head IS its model (review_heads: each head's report is stamped with the
+// model that head ran), and its kick already carries the independent-review
+// instruction naming one sub-agent pinned to that model. The fan-out replaces
+// that one sub-agent with one per perspective, so each of them must be pinned
+// to the same model; a backend whose sub-agent facility defaults to another
+// (often cheaper) model would otherwise produce verdicts under the head's name
+// that the head's model never made.
+func writeFanOutModelPin(b *strings.Builder, backend, model string) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		b.WriteString("   Run every sub-agent on the model you are running on now; never let one default to a different or cheaper model.\n")
+		return
+	}
+	target := model
+	if bk := strings.TrimSpace(backend); bk != "" {
+		target = bk + "/" + model
+	}
+	fmt.Fprintf(b, "   Launch EVERY sub-agent with `model` set to `%s`, this head's model. These per-perspective sub-agents ARE the independent review described above: launch them instead of that single sub-agent, not in addition to it. A sub-agent on any other model must not contribute a verdict; if your sub-agent facility cannot pin `%s`, review the perspectives yourself one by one. Every verdict object records review_model %q.\n", target, model, model)
 }
 
 // combinedSharedHeader opens the once-per-session block of a combined kick so

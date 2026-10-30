@@ -1,0 +1,1 @@
+- chore(stageengine): share decision-cause prose between automerge and goldens test (#15384, #15385)

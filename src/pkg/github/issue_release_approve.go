@@ -89,13 +89,13 @@ func (c *Client) ApproveIssueRelease(ctx context.Context, displayRepo string, nu
 	}
 	if refusal != "" {
 		body := renderReleaseApprovalRefusal(step.Tag, refusal)
-		if err := c.CreateIssueComment(ctx, displayRepo, number, body); err != nil {
+		if err := c.CreateIssueComment(ctx, displayRepo, number, body); err != nil { // writeback:solicited authenticated dashboard release approval response.
 			return IssueUnparkEvent{}, err
 		}
 		return IssueUnparkEvent{}, &IssueReleaseRefusalError{Reason: refusal}
 	}
 	body := renderUnparkAcceptedReply(actor, event.Decision, removed) + "\n\nRelease: " + event.ReleaseURL
-	if err := c.CreateIssueComment(ctx, displayRepo, number, body); err != nil {
+	if err := c.CreateIssueComment(ctx, displayRepo, number, body); err != nil { // writeback:solicited authenticated dashboard release approval response.
 		return event, fmt.Errorf("release %s was created but its issue comment failed: %w", step.Tag, err)
 	}
 	return event, nil

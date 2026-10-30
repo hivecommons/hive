@@ -396,8 +396,8 @@ func TestSweepLabelDrivenHiveApproveRemovesHiveLabelsOnly(t *testing.T) {
 			if got := strings.Join(rec.removed[41], ","); got != "needs-decision" {
 				t.Fatalf("removed = %q, want only the hive's needs-decision", got)
 			}
-			if len(rec.added[41]) != 1 || rec.added[41][0] != HumanAckLabel {
-				t.Fatalf("added = %v", rec.added[41])
+			if len(rec.added[41]) != 0 {
+				t.Fatalf("acknowledged an issue whose human park remains: added = %v", rec.added[41])
 			}
 			if len(rec.posted[41]) != 1 || !strings.Contains(rec.posted[41][0], "`needs-human` (added by @"+laWriter+")") {
 				t.Fatalf("reply must name the label left in place, got %v", rec.posted[41])
@@ -621,6 +621,9 @@ func TestSweepLabelDrivenHiveApproveKeptNeedsHumanKeepsStage(t *testing.T) {
 	if len(rec.removed[46]) != 0 {
 		t.Fatalf("removed = %v, want nothing: needs-human is not the hive's and the stage is the engine's", rec.removed[46])
 	}
+	if len(rec.added[46]) != 0 {
+		t.Fatalf("acknowledged an issue whose human park remains: added = %v", rec.added[46])
+	}
 	if len(rec.posted[46]) != 1 {
 		t.Fatalf("expected one reply, got %v", rec.posted[46])
 	}
@@ -628,9 +631,43 @@ func TestSweepLabelDrivenHiveApproveKeptNeedsHumanKeepsStage(t *testing.T) {
 	if strings.Contains(reply, "Hive's own") {
 		t.Fatalf("reply claims a removal that did not happen: %s", reply)
 	}
-	for _, want := range []string{"`needs-human` (added by @" + laOtherBot + ")", "`" + NeedsDecisionStageLabel + "` stays"} {
+	for _, want := range []string{"`needs-human` (added by @" + laOtherBot + ")", "`" + NeedsDecisionStageLabel + "` stays", "`" + HumanAckLabel + "` is not applied"} {
 		if !strings.Contains(reply, want) {
 			t.Fatalf("reply missing %q: %s", want, reply)
+		}
+	}
+}
+
+func TestSweepLabelDrivenKeptNeedsHumanDoesNotAcknowledge(t *testing.T) {
+	const number = 46
+	for _, actor := range []string{laOtherBot, laWriter, ""} {
+		for _, command := range []string{"/hive approve", "/hive decision keep the lifecycle park"} {
+			t.Run(actor+"/"+command, func(t *testing.T) {
+				issue := laIssue(number, "needs-human")
+				issue.Comments = []unparkWireComment{humanComment(602, laWriter, command)}
+				c, rec := laServer(t, []unparkWireIssue{issue})
+				if actor != "" {
+					rec.timelines[number] = []unparkWireTimelineEvent{labeledAt(1, actor, "needs-human", laBase)}
+				}
+				result := laSweep(t, c, true, laPolicyFn(laPolicy(), true))
+				if len(result.Unparked) != 1 {
+					t.Fatalf("expected a recorded decision, got %+v", result.Unparked)
+				}
+				if len(rec.removed[number]) != 0 || labelPresent(rec.added[number], HumanAckLabel) {
+					t.Fatalf("retained park must not cause an ack add/remove: added=%v removed=%v", rec.added[number], rec.removed[number])
+				}
+				current, _, err := c.client.Issues.Get(context.Background(), "org", "repo", number)
+				if err != nil {
+					t.Fatal(err)
+				}
+				labels := issueLabelNames(current.Labels)
+				if !labelPresent(labels, "needs-human") || !labelPresent(labels, NeedsDecisionStageLabel) || labelPresent(labels, HumanAckLabel) {
+					t.Fatalf("expected an unacknowledged human park at 045, got %v", labels)
+				}
+				if len(rec.posted[number]) != 1 || !strings.Contains(rec.posted[number][0], "`"+HumanAckLabel+"` is not applied") {
+					t.Fatalf("reply must not claim an acknowledgement: %v", rec.posted[number])
+				}
+			})
 		}
 	}
 }

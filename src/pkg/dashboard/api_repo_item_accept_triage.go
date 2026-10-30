@@ -202,8 +202,36 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 		outcome += ", `" + strings.Join(remove, "`, `") + "` removed"
 	}
 	out.Result = &RowActionResult{Action: rowActionTriaged, Target: rowActionTarget(repoFull, rowActionTargetIssue, number), Outcome: outcome + ".",
-		Next: "The reporter-trust gate admits the issue on its next poll; the stage engine records 015 → 010."}
+		Next: acceptTriageNextText(s.governorNextPassIn(time.Now()))}
 	jsonResponse(w, out)
+}
+
+// acceptTriageNextText is the result's "next" line: the hive picks the
+// issue up on its next scanner pass, with the governor's ETA when known.
+func acceptTriageNextText(eta string) string {
+	next := "Hive picks it up on its next scanner pass"
+	if eta != "" {
+		next += " (≈" + eta + ")"
+	}
+	return next + "; the reporter-trust gate admits the issue on that poll and the stage engine records it 010 actionable."
+}
+
+// governorNextPassIn is the governor's published next kick as an ETA
+// ("13m", "due now"), or "" when none is published.
+func (s *Server) governorNextPassIn(now time.Time) string {
+	if s == nil {
+		return ""
+	}
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+	if s.status == nil {
+		return ""
+	}
+	t, ok := parseGovernorNextKick(s.status.Governor.NextKickAt)
+	if !ok {
+		return ""
+	}
+	return formatETA(t.Sub(now))
 }
 
 // applyAcceptTriageToStatus patches the issue's labels in the status

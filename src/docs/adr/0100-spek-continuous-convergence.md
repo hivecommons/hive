@@ -4,6 +4,14 @@
 
 Accepted.
 
+**Spek** is the Spektacular spec → plan → implement workflow. A **campaign** is
+one tracked run; a **revision** is a linked new run that rechecks it without
+overwriting its history.
+A **spec lease** is the runner's ownership of the specification-stage work;
+a **delta** is the new or changed task set, not the whole prior plan.
+The [v6 addendum](#v6-addendum-run-rewind-semantics-10734-10799) below replaces
+the linked-revision model with in-place run revision on v6.
+
 ## Context
 
 Spektacular campaigns previously ran `spec -> plan -> implement` once. That
@@ -42,19 +50,20 @@ The evidence source interface is `RecheckEvidenceSource`.
 
 ### Discovery sources
 
-The outward-looking half is opt-in under
-`runs.spektacular.recheck.discovery` for typed release/activity/feed signals and
-under `runs.spektacular.recheck.sources` for exact document snapshots. Typed
-discovery rejects undeclared kinds and hosts outside
-`variables.security.http_allowlist`, records evidence on `drift.external`, and
-includes that evidence in the spec-stage prompt as context. Exact document
-sources are retained as `drift.drift_source` before the revision starts its
-spec lease; they require an explicit relay egress proxy and exact-host
-allow-list, never follow redirects or links, and have fixed request, time, and
-response-size bounds. Empty source lists perform no discovery network access.
-All discovery is read-only, non-fatal, and untrusted evidence only; source
-failures are recorded and never bypass human checkpoints or automatically apply
-external changes.
+The outward-looking half has separate opt-ins and safety boundaries:
+
+- **Typed signals:** `runs.spektacular.recheck.discovery` accepts typed
+  release/activity/feed signals. It rejects undeclared kinds and hosts outside
+  `variables.security.http_allowlist`, records evidence on `drift.external`,
+  and includes that evidence as spec-stage prompt context.
+- **Exact documents:** `runs.spektacular.recheck.sources` retains snapshots as
+  `drift.drift_source` before the revision starts its spec lease. It requires
+  an explicit relay egress proxy and exact-host allow-list, never follows
+  redirects or links, and has fixed request, time and response-size bounds.
+- **No implicit access:** empty source lists perform no discovery network access.
+- **No new authority:** all discovery is read-only, non-fatal and untrusted
+  evidence only. Failures are recorded; discovery never bypasses human
+  checkpoints or automatically applies external changes.
 
 ## Consequences
 

@@ -149,9 +149,11 @@ func (r *Responder) HandleSessionEvent(ev SessionEvent) {
 // HandleAgentEvent is the kick-lifecycle hook (component D): wired to
 // agent.Manager's kick observer, it maps the run's end back onto the session.
 // The archive of an agent's kick log is the durable "this run's output is
-// complete" moment in the existing infrastructure (#4296) — kick logs rotate
-// when a new kick, a restart, or a shutdown closes out the previous run — so
-// it is the honest completion signal without inventing a new one.
+// complete" moment in the existing infrastructure (#4296) — a kick log is
+// archived as soon as the kicked turn ends, and again when a new kick, a
+// restart, or a shutdown closes out the run — so it is the honest completion
+// signal without inventing a new one. Only the first archive reaches a
+// session: finishing it drops the agent's active mapping.
 func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 	if event != "kick-log-archived" {
 		return

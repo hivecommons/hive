@@ -1,0 +1,1 @@
+- Stage tracker: a PR row returned to its author (071 needs-author / 072 returned-to-contributor) now carries a `rework` pickup signal — requested / queued / acknowledged / working / re-review pending — on the waiting-on pill, its tooltip and the row event line, derived from the stage record, the PR list and the contributor fix queue with no extra GitHub calls.

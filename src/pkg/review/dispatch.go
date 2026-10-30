@@ -285,7 +285,36 @@ type DispatchState struct {
 	// the fix path. At RevisitStarvationCycles the planner forces the fix
 	// (hivecommons/hive#14665). Cleared when the head is settled normally.
 	RevisitStarved []RevisitStarvation `json:"revisit_starved,omitempty"`
+	// Waits records, per head, the consecutive cycles in which the head
+	// still owed perspectives but got no reviewer (plan.Waiting). Without
+	// it a half-reviewed head could starve indefinitely behind the webhook
+	// PRs the caller moves to the front of every cycle, and the stall was
+	// invisible: nothing recorded that the head had been passed over. At
+	// ReviewWaitStarvationCycles the planner moves the head ahead of the
+	// rest of the list; the record is dropped once it is dispatched or
+	// settled.
+	Waits []ReviewWaitRecord `json:"review_waits,omitempty"`
 }
+
+// ReviewWaitRecord is the durable form of ReviewWait: the per-head count of
+// consecutive cycles a head with perspectives still owed got no reviewer.
+type ReviewWaitRecord struct {
+	Repo    string    `json:"repo"`
+	Number  int       `json:"number"`
+	HeadSHA string    `json:"head_sha,omitempty"`
+	Reason  string    `json:"reason"`
+	Cycles  int       `json:"cycles"`
+	FirstAt time.Time `json:"first_at"`
+	LastAt  time.Time `json:"last_at"`
+}
+
+// ReviewWaitStarvationCycles is how many consecutive cycles a head may wait
+// for a reviewer before the planner walks it ahead of every other PR,
+// including the webhook-event PRs the caller promoted. Three cycles is long
+// enough that an ordinary busy cycle never reorders the queue, and short
+// enough that a head is not left half-reviewed for an hour while fresher PRs
+// keep taking the free reviewers (hivecommons/hive#15229).
+const ReviewWaitStarvationCycles = 3
 
 // RevisitStarvation is the per-head counter behind RevisitStarvationCycles.
 type RevisitStarvation struct {
@@ -511,7 +540,11 @@ type DispatchPlan struct {
 	// spent. They are the reviewer autoscaler's demand signal
 	// (hivecommons/hive#14685): one entry per PR, on its current head.
 	Waiting []ReviewWait
-	State   DispatchState
+	// Promoted are the heads this cycle walked ahead of the rest of the
+	// list because they had waited ReviewWaitStarvationCycles or more
+	// consecutive cycles for a reviewer. The caller logs each one.
+	Promoted []ReviewWaitRecord
+	State    DispatchState
 }
 
 // ReviewWait is one PR left waiting for a reviewer this cycle.
@@ -634,6 +667,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		maxParallel = DefaultMaxParallelReviews
 	}
 	availableSlots := maxParallel
+	prs, plan.Promoted = promoteStarvedWaits(prs, plan.State.Waits, opts.ProjectOrg)
 	for _, pr := range prs {
 		pr.Repo = fullRepoName(pr.Repo, opts.ProjectOrg)
 		if pr.Number <= 0 || pr.Repo == "" {
@@ -944,7 +978,99 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			availableSlots--
 		}
 	}
+	plan.State.Waits = reconcileWaits(plan.State.Waits, plan.Waiting, opts.ProjectOrg, now)
 	return plan
+}
+
+// promoteStarvedWaits returns prs with every head whose wait record has
+// reached ReviewWaitStarvationCycles moved to the front, in their existing
+// relative order, and the records it promoted. The caller has usually
+// already moved webhook-event PRs to the front; a head that has been passed
+// over for that many cycles goes ahead of them, so a steady stream of fresh
+// events cannot leave a half-reviewed head waiting indefinitely
+// (hivecommons/hive#15229). Every gate in PlanDispatch still applies.
+func promoteStarvedWaits(prs []PullRequest, waits []ReviewWaitRecord, org string) ([]PullRequest, []ReviewWaitRecord) {
+	if len(waits) == 0 || len(prs) < 2 {
+		return prs, nil
+	}
+	starved := make([]bool, len(prs))
+	var promoted []ReviewWaitRecord
+	for i, pr := range prs {
+		repo := fullRepoName(pr.Repo, org)
+		for _, w := range waits {
+			if w.Cycles >= ReviewWaitStarvationCycles && samePRHead(w.Repo, w.Number, w.HeadSHA, repo, pr.Number, pr.HeadSHA) {
+				starved[i] = true
+				promoted = append(promoted, w)
+				break
+			}
+		}
+	}
+	if len(promoted) == 0 {
+		return prs, nil
+	}
+	out := make([]PullRequest, 0, len(prs))
+	for i, pr := range prs {
+		if starved[i] {
+			out = append(out, pr)
+		}
+	}
+	for i, pr := range prs {
+		if !starved[i] {
+			out = append(out, pr)
+		}
+	}
+	return out, promoted
+}
+
+// reconcileWaits folds this cycle's Waiting into the durable wait records:
+// a head still waiting gains a cycle; a head that was waiting and now is
+// not (dispatched or settled) loses its record. Records for PRs no longer
+// open were already dropped by pruneState.
+func reconcileWaits(records []ReviewWaitRecord, waiting []ReviewWait, org string, now time.Time) []ReviewWaitRecord {
+	stillWaiting := make(map[string]ReviewWait, len(waiting))
+	for _, w := range waiting {
+		stillWaiting[reviewKey(fullRepoName(w.Repo, org), w.Number, w.HeadSHA, "")] = w
+	}
+	out := make([]ReviewWaitRecord, 0, len(waiting))
+	seen := map[string]bool{}
+	for _, r := range records {
+		key := reviewKey(fullRepoName(r.Repo, org), r.Number, r.HeadSHA, "")
+		w, waits := stillWaiting[key]
+		if !waits {
+			continue
+		}
+		r.Cycles++
+		r.Reason = w.Reason
+		r.LastAt = now
+		if r.FirstAt.IsZero() {
+			r.FirstAt = now
+		}
+		seen[key] = true
+		out = append(out, r)
+	}
+	for _, w := range waiting {
+		key := reviewKey(fullRepoName(w.Repo, org), w.Number, w.HeadSHA, "")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, ReviewWaitRecord{Repo: fullRepoName(w.Repo, org), Number: w.Number, HeadSHA: w.HeadSHA, Reason: w.Reason, Cycles: 1, FirstAt: now, LastAt: now})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// WaitFor returns the wait record for this PR head, if the planner has been
+// passing it over for lack of a reviewer.
+func (s DispatchState) WaitFor(repo string, number int, headSHA string) (ReviewWaitRecord, bool) {
+	for _, w := range s.Waits {
+		if samePRHead(w.Repo, w.Number, w.HeadSHA, repo, number, headSHA) {
+			return w, true
+		}
+	}
+	return ReviewWaitRecord{}, false
 }
 
 // deltaPreviousHead is the head a delta kick is judged against, "" for a
@@ -1947,6 +2073,13 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 		}
 	}
 	state.RevisitStarved = starved
+	var waits []ReviewWaitRecord
+	for _, w := range state.Waits {
+		if openHeads[reviewKey(w.Repo, w.Number, w.HeadSHA, "")] {
+			waits = append(waits, w)
+		}
+	}
+	state.Waits = waits
 	state = pruneReviewHeadState(state, openHeads)
 	return state
 }

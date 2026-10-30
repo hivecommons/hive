@@ -389,6 +389,48 @@ func TestDiagConfigOverlayProvenance(t *testing.T) {
 	}
 }
 
+// The dashboard's per-repository merge policy is read back by repository and
+// path, not as an anonymous "set" (on 2026-10-29 a projectbluefin operator
+// counting hidden squash_only entries wrongly concluded utah was missing from
+// the list). The overlay layer holds them, as the dashboard writes them there;
+// an auto_merge key not on the value list stays hidden.
+func TestDiagConfigShowsPerRepoMergePolicy(t *testing.T) {
+	writeProvenanceFixture(t, diagSeedYAML, `project:
+  org: acme
+  repos: [r1, r2]
+agents:
+  scanner: {backend: claude}
+auto_merge:
+  squash_only: [acme/r1, acme/r2]
+  require_current_base: [acme/r2]
+  human_merge_paths:
+    acme/r1: [".github/workflows/**", "deploy/*.yaml"]
+  merge_forward_trusted_human: [acme/r1]
+`)
+	s, _ := apiServer(t)
+	res, _ := diagConfigRead(t, s, "/api/diag/config")
+	for key, want := range map[string]string{
+		"auto_merge.squash_only[0]":               "acme/r1",
+		"auto_merge.squash_only[1]":               "acme/r2",
+		"auto_merge.require_current_base[0]":      "acme/r2",
+		"auto_merge.human_merge_paths.acme/r1[0]": ".github/workflows/**",
+		"auto_merge.human_merge_paths.acme/r1[1]": "deploy/*.yaml",
+	} {
+		got := diagKey(t, res, key)
+		if !got.Set || !got.ValueShown || got.Value != want || got.Hidden != "" || got.Layer != config.LayerDashboardOverlay.String() {
+			t.Errorf("%s = %+v, want %q shown from the dashboard overlay", key, got, want)
+		}
+	}
+	if other := diagKey(t, res, "auto_merge.merge_forward_trusted_human[0]"); !other.Set || other.ValueShown || other.Value != "" || other.Hidden != diagHiddenNotListed {
+		t.Errorf("auto_merge.merge_forward_trusted_human[0] = %+v, want set but hidden", other)
+	}
+	for _, k := range res.Keys {
+		if k.Value != "" && !diagConfigValueKey(k.Key) {
+			t.Errorf("value shown for unlisted key %q", k.Key)
+		}
+	}
+}
+
 func TestDiagConfigRejectedOverlay(t *testing.T) {
 	writeProvenanceFixture(t, diagSeedYAML, "project: [unclosed-secret-text\n")
 	s, _ := apiServer(t)
@@ -461,6 +503,22 @@ func TestDiagConfigValueKey(t *testing.T) {
 		"hub.url":                   true,
 		"hub.url.x":                 false,
 		"notifications.slack.hooks": false,
+		// Per-repository merge policy: repository names and path globs.
+		"auto_merge.squash_only[0]":                     true,
+		"auto_merge.require_current_base[2]":            true,
+		"auto_merge.human_merge_paths.acme/r1[0]":       true,
+		"auto_merge.human_merge_paths.[0]":              false,
+		"auto_merge.human_merge_paths.acme/r1":          false,
+		"auto_merge.human_merge_paths.acme/r1[0].x":     false,
+		"auto_merge.human_merge_paths.acme/my.site[0]":  false,
+		"auto_merge.squash_only":                        false,
+		"auto_merge.merge_forward_trusted_human[0]":     false,
+		"auto_merge.trusted_authors.repos[0]":           false,
+		"auto_merge.contributor_lane.enabled":           false,
+		"auto_merge.human_merge_paths_extra.acme/r1[0]": false,
+		"auto_merge.human_merge_paths.acme/r1.extra[0]": false,
+		"agents.scanner[0]":                             false,
+		"auto_merge.require_current_base.acme/r1[0]":    false,
 	} {
 		if got := diagConfigValueKey(key); got != want {
 			t.Errorf("diagConfigValueKey(%q) = %v, want %v", key, got, want)

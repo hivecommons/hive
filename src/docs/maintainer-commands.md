@@ -164,13 +164,26 @@ The whole comment after `/hive decision` is the instruction — numbered points
 on the lines below the command are kept and quoted verbatim — and the
 decision on the current head outranks the swarm's decision-requested verdict
 on that head, so the stage moves in the same pass as the acknowledgement
-rather than waiting on a re-review. A bare `/hive decision approve` (nothing
-beyond the approval word) is recorded as your answer to the swarm's question
-instead: no fix is kicked, requires_human is released for that head and the
+rather than waiting on a re-review. A `/hive decision` whose first word is
+`approve`, `approved`, or `lgtm` (a trailing comma or period is fine) is
+recorded as approval; the rest of the comment is retained as its rationale. A
+bare `yes` approves too, but `yes, but …` is a conditional answer and is routed
+as an instruction. To request changes, start with the instruction
+(e.g. `/hive decision change the PR body to Refs #123`). No fix is kicked
+for an approval, requires_human is released for that head and the
 PR follows the normal merge path. An acknowledged decision whose record did
 not survive a pod restart is rebuilt from the comment thread; a decision
 answered for an older head is left alone
 ([#14679](https://github.com/hivecommons/hive/issues/14679)).
+The sweep also reads `/hive decision` at `stage/070-fixing`: approve the
+current head after a body or metadata fix to release a standing request without
+pushing a cosmetic commit. A later trusted GitHub APPROVED review on the same
+head also supersedes the recorded request; an older approval does not. If
+that review is later dismissed, or the reviewer asks for changes again on the
+same head, the review-backed approval is dropped and the earlier instruction
+stands again — a `/hive decision approve` comment is durable and is not.
+Issue-link repair preserves edited `Refs` bodies and PRs with a recorded
+decision, so it cannot restore auto-close over the owner's direction.
 The 085 entry comment names both actions. The commenter must hold `write` or better on the
 repo *and* be in the hive's trusted-merger set (the bar a human approval
 already meets). `/hive decision` on a PR the hive did **not** open, or `/hive

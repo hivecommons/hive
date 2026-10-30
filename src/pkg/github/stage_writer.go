@@ -31,7 +31,16 @@ func (w *stageWriter) Apply(ctx context.Context, ref stageengine.Ref, hint []str
 	mu := m.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
-	return stagelabels.Enforce(ctx, w.c.StageLabeler(), ref.Kind, ref.Owner, ref.Repo, ref.Number, hint, want)
+	l := &stageLabeler{c: w.c, observed: map[int]string{}}
+	out, err := stagelabels.Enforce(ctx, l, ref.Kind, ref.Owner, ref.Repo, ref.Number, hint, want)
+	if l.suppressed {
+		// The write-back gate kept the labels off a contributor PR: the
+		// stage is tracked internally (the reconciler's Store recorded it
+		// before calling here), nothing landed on GitHub.
+		out.Added, out.Removed = nil, nil
+		out.Suppressed = true
+	}
+	return out, err
 }
 
 // StageWriter returns the client's stage writer. One per client, so the

@@ -1,0 +1,1 @@
+- The admin MCP effective-configuration read (`config_effective_read`) now shows the values of the per-repository merge policy: the repositories on `auto_merge.squash_only` and `auto_merge.require_current_base`, and the path globs under each `auto_merge.human_merge_paths` repository, instead of only reporting them as set.

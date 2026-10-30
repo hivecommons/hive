@@ -178,3 +178,59 @@ func TestAllowlist(t *testing.T) {
 		t.Fatal("want an error for a missing allowlist file")
 	}
 }
+
+// A field typed as another package's Config (config.Config.Writeback is a
+// writeback.Config) must resolve to that package's struct, not back to the
+// root Config by bare name — that collision recursed without bound.
+func TestConfigLeavesQualifiedTypeDoesNotCollideWithRootConfig(t *testing.T) {
+	root := fixtureRepo(t)
+	writeFile(t, filepath.Join(root, "src", "go.mod"), "module example.com/hive\n")
+	writeFile(t, filepath.Join(root, "src", "pkg", "config", "gate.go"), `package config
+
+import (
+	"time"
+
+	"example.com/hive/pkg/writeback"
+	tone "example.com/hive/pkg/dashboard/theme"
+)
+
+type Gate struct {
+	Writeback writeback.Config `+"`yaml:\"writeback\"`"+`
+	Tone      tone.Palette     `+"`yaml:\"tone\"`"+`
+	Clock     time.Duration    `+"`yaml:\"clock\"`"+`
+}
+`)
+	writeFile(t, filepath.Join(root, "src", "pkg", "writeback", "config.go"), `package writeback
+
+type Config struct {
+	Mode string `+"`yaml:\"mode\"`"+`
+}
+`)
+	// Point the fixture Config at Gate so the walk reaches the qualified types.
+	writeFile(t, filepath.Join(root, "src", "pkg", "config", "config.go"), `package config
+
+type Config struct {
+	Gate Gate `+"`yaml:\"gate\"`"+`
+}
+`)
+	leaves, err := ConfigLeaves(root)
+	if err != nil {
+		t.Fatalf("ConfigLeaves: %v", err)
+	}
+	got := map[string]string{}
+	for _, l := range leaves {
+		got[l.Path] = l.Type
+	}
+	for path, typ := range map[string]string{
+		"gate.writeback.mode": "string",
+		"gate.tone.primary":   "string",
+		"gate.clock":          "time.Duration",
+	} {
+		if got[path] != typ {
+			t.Errorf("leaf %q = %q, want %q (all: %v)", path, got[path], typ, leaves)
+		}
+	}
+	if _, ok := got["gate.writeback.gate"]; ok {
+		t.Fatal("writeback.Config resolved to the root Config and recursed")
+	}
+}

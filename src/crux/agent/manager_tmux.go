@@ -676,3 +676,41 @@ const attachedClientIdleGrace = 30 * time.Minute
 func (t tmuxTerminal) SleepDuringPromptDismiss(d time.Duration) {
 	time.Sleep(d)
 }
+
+// SessionMissing reports whether an agent the manager believes is RUNNING has
+// no live tmux session — the zombie case, where in-memory state and reality
+// have diverged.
+//
+// It is deliberately false for any agent that is not StateRunning: a paused,
+// stopped or never-started agent legitimately has no session, and reporting
+// those as missing would turn every deliberate pause into a fault.
+//
+// The session check must go through the agent's OWN tmux socket. Each agent
+// runs under its own UID on its own socket (e.g. /tmp/tmux-2007/hive-scanner),
+// so a query against the default socket answers "no server running" even when
+// every session is alive — the exact false reading that has sent live
+// diagnosis down the wrong path.
+func (m *Manager) SessionMissing(name string) bool {
+	m.mu.RLock()
+	agent, ok := m.agents[name]
+	if !ok || agent.State != StateRunning || agent.Paused {
+		m.mu.RUnlock()
+		return false
+	}
+	m.mu.RUnlock()
+	// The exec runs outside the lock: it shells out to tmux, and holding a
+	// manager lock across a subprocess is how the startup path has deadlocked
+	// before.
+	return !m.tmuxSessionExistsForAgent(agent)
+}
+
+func (m *Manager) TmuxSession(name string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	agent, ok := m.agents[name]
+	if !ok {
+		return ""
+	}
+	return agent.tmuxSession
+}

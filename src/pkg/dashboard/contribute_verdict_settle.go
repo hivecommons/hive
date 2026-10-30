@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // verdictSettleTimeout bounds the detached GitHub work settleIssueFromVerdict
@@ -261,6 +262,16 @@ func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string,
 	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
 		return ghpkg.ErrNoGitHubClient
 	}
+	if closeIssue {
+		client := h.server.deps.GHClient
+		item, err := client.WritebackItemForNumber(ctx, repo, number)
+		if err != nil {
+			return err
+		}
+		if d := client.WritebackAllowed(repo, item, writeback.KindIssueClose, "close issue already resolved by a merged PR"); !d.Allowed {
+			return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+		}
+	}
 	label := config.HubConfig{}.ContributeAlreadyDoneLabelOrDefault()
 	if h.server.deps.Config != nil {
 		label = h.server.deps.Config.Hub.ContributeAlreadyDoneLabelOrDefault()
@@ -290,7 +301,7 @@ func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string,
 	if !closeIssue {
 		return nil
 	}
-	return h.server.deps.GHClient.CloseIssue(ctx, repo, number, ghpkg.IssueCloseOptions{
+	return h.server.deps.GHClient.CloseIssue(ctx, repo, number, ghpkg.IssueCloseOptions{ // writeback:gated
 		StateReason: ghpkg.IssueStateReasonCompleted,
 	})
 }

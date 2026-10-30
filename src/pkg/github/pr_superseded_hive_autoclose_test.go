@@ -193,3 +193,147 @@ func TestCloseSupersededHivePRsForMergedPR_KnobOff(t *testing.T) {
 		t.Fatalf("knob off: closed=%v err=%v wire=%v", closed, err, obs.closed)
 	}
 }
+
+// TestDecideHiveSupersededAutoClose_DeclaredAndIssueClosed pins the two
+// hivecommons/hive#15208 additions: a merged PR that declares it supersedes
+// this one closes it whatever the head measures, and a PR whose every
+// closing target is closed with no merged closer (closed as not planned)
+// has nothing left to deliver.
+func TestDecideHiveSupersededAutoClose_DeclaredAndIssueClosed(t *testing.T) {
+	base := HiveSupersededAutoCloseFacts{Enabled: true, HiveAuthored: true, Superseded: true, Level: acmmLevelAutonomous}
+	declared := base
+	declared.Declared = true
+	if v, r := DecideHiveSupersededAutoClose(declared); v != hiveSupersededVerdictClose || r != SupersessionActionClosedDeclared {
+		t.Fatalf("declared clean head: got (%s, %s), want close/%s", v, r, SupersessionActionClosedDeclared)
+	}
+	issueClosed := base
+	issueClosed.IssuesClosedNoCloser = true
+	if v, r := DecideHiveSupersededAutoClose(issueClosed); v != hiveSupersededVerdictClose || r != SupersessionActionClosedIssueClosed {
+		t.Fatalf("issue closed, no closer: got (%s, %s), want close/%s", v, r, SupersessionActionClosedIssueClosed)
+	}
+	parked := declared
+	parked.ParkedByPerson = true
+	if v, r := DecideHiveSupersededAutoClose(parked); v != hiveSupersededVerdictKeep || r != hiveSupersededReasonPerson {
+		t.Fatalf("a person's park still wins over a declaration: got (%s, %s)", v, r)
+	}
+}
+
+func TestBodyDeclaresSupersedes(t *testing.T) {
+	cases := []struct {
+		body string
+		n    int
+		want bool
+	}{
+		{"## Supersedes #15208 · layers on #15209\n\nFixes #15188", 15208, true},
+		{"## Supersedes #15208 · layers on #15209\n\nFixes #15188", 15209, false},
+		{"supersedes: #12, #13", 13, true},
+		{"Supersedes #152080", 15208, false},
+		{"Fixes #15208", 15208, false},
+		{"Supersedes hivecommons/hive#15208", 15208, true},
+		{"", 15208, false},
+	}
+	for _, tc := range cases {
+		if got := bodyDeclaresSupersedes(tc.body, tc.n); got != tc.want {
+			t.Errorf("bodyDeclaresSupersedes(%q, %d) = %v, want %v", tc.body, tc.n, got, tc.want)
+		}
+	}
+}
+
+// TestCloseSupersededHivePRIfEligible_DeclaredByMergedPR is
+// hivecommons/hive#15208: the hive's PR says `Closes #15203` (a child
+// issue still open) and `Part of #15188`; #15206 merged with "## Supersedes
+// #15208" and closed #15188. The merged-closer rule reads #15208 as live
+// work (an issue it closes is open); the declaration closes it anyway,
+// with a comment naming #15206 and #15188, no conflict or file read.
+func TestCloseSupersededHivePRIfEligible_DeclaredByMergedPR(t *testing.T) {
+	open := supersessionPRFixture{Number: 15208, Title: "child (b)", Body: "Solves child (b).\n\nCloses #15203\nPart of #15188", Author: resolveBot, Files: []string{"pkg/a.go", "pkg/b.go"},
+		CrossRefs: []supersessionCrossRefFixture{
+			{Number: 15209, Body: "Refs #15208 (not a supersession)", Merged: true},
+			{Number: 15206, Body: "## Supersedes #15208 · layers on #15209\n\nFixes #15188", Merged: true},
+		}}
+	server, obs := supersessionSweepServer(t, resolveOrg, resolveRepo, []supersessionPRFixture{open},
+		[]supersessionIssueFixture{{Number: 15203, State: "open"}, {Number: 15188, State: "closed", GraphQLCloserPR: 15206}})
+	defer server.Close()
+	c, rec := newSupersessionTestClient(t, server, resolveOrg, resolveRepo)
+
+	prs, err := c.listOpenPRsForSupersessionSweep(context.Background(), resolveOrg, resolveRepo)
+	if err != nil || len(prs) != 1 {
+		t.Fatalf("list: %v %d", err, len(prs))
+	}
+	res, err := c.CloseSupersededHivePRIfEligible(context.Background(), resolveOrg+"/"+resolveRepo, prs[0])
+	if err != nil {
+		t.Fatalf("CloseSupersededHivePRIfEligible: %v", err)
+	}
+	if !res.Closed || res.Reason != SupersessionActionClosedDeclared || res.CloserPR != 15206 || res.Issue != 15188 {
+		t.Fatalf("res = %+v, want closed-declared by #15206 for #15188", res)
+	}
+	if len(obs.closed) != 1 || obs.closed[0] != 15208 || !slices.Contains(obs.labels[15208], SupersededLabel) {
+		t.Fatalf("closed=%v labels=%v", obs.closed, obs.labels)
+	}
+	if cs := obs.comments[15208]; len(cs) != 1 || !strings.Contains(cs[0], "Superseded by #15206 which closed #15188") {
+		t.Fatalf("comment = %v", cs)
+	}
+	closedFacts := 0
+	for _, f := range rec.All() {
+		if f.Method == "Closed" && f.Ref.Number == 15208 {
+			closedFacts++
+		}
+	}
+	if closedFacts != 1 {
+		t.Fatalf("stage Closed facts = %d, want 1", closedFacts)
+	}
+}
+
+// TestCloseSupersededHivePRIfEligible_UnmergedDeclarationKeeps: a PR that
+// merely says it supersedes this one but has not merged decides nothing.
+func TestCloseSupersededHivePRIfEligible_UnmergedDeclarationKeeps(t *testing.T) {
+	open := supersessionPRFixture{Number: 15208, Body: "Closes #15203", Author: resolveBot, Files: []string{"pkg/a.go"},
+		CrossRefs: []supersessionCrossRefFixture{{Number: 15206, Body: "Supersedes #15208", Merged: false}}}
+	server, obs := supersessionSweepServer(t, resolveOrg, resolveRepo, []supersessionPRFixture{open},
+		[]supersessionIssueFixture{{Number: 15203, State: "open"}})
+	defer server.Close()
+	c, _ := newSupersessionTestClient(t, server, resolveOrg, resolveRepo)
+	prs, _ := c.listOpenPRsForSupersessionSweep(context.Background(), resolveOrg, resolveRepo)
+	res, err := c.CloseSupersededHivePRIfEligible(context.Background(), resolveOrg+"/"+resolveRepo, prs[0])
+	if err != nil || res.Closed || res.Reason != hiveSupersededReasonNotSupers || len(obs.closed) != 0 {
+		t.Fatalf("res=%+v err=%v closed=%v, want kept not-superseded", res, err, obs.closed)
+	}
+}
+
+// TestCloseSupersededHivePRIfEligible_IssueClosedWithoutCloser: the issue
+// the hive's PR fixes was closed as not planned (no merged PR closed it);
+// the PR has nothing left to deliver and is closed with the reason said.
+// A "completed" close whose PR did not resolve is left alone (it may be a
+// transient lookup failure), as is a bare reference to a closed issue.
+func TestCloseSupersededHivePRIfEligible_IssueClosedWithoutCloser(t *testing.T) {
+	open := supersessionPRFixture{Number: 41, Body: "Fixes #40", Author: resolveBot, Files: []string{"pkg/a.go"}}
+	server, obs := supersessionSweepServer(t, resolveOrg, resolveRepo, []supersessionPRFixture{open},
+		[]supersessionIssueFixture{{Number: 40, State: "closed", StateReason: "not_planned"}})
+	defer server.Close()
+	c, _ := newSupersessionTestClient(t, server, resolveOrg, resolveRepo)
+	prs, _ := c.listOpenPRsForSupersessionSweep(context.Background(), resolveOrg, resolveRepo)
+	res, err := c.CloseSupersededHivePRIfEligible(context.Background(), resolveOrg+"/"+resolveRepo, prs[0])
+	if err != nil || !res.Closed || res.Reason != SupersessionActionClosedIssueClosed || res.Issue != 40 || res.CloserPR != 0 {
+		t.Fatalf("res=%+v err=%v, want closed-issue-closed for #40", res, err)
+	}
+	if cs := obs.comments[41]; len(cs) != 1 || !strings.Contains(cs[0], "every issue it closes (#40) was closed as not planned") || !strings.Contains(cs[0], "Closing PR: none") {
+		t.Fatalf("comment = %v", cs)
+	}
+	for name, tc := range map[string]struct {
+		pr    supersessionPRFixture
+		issue supersessionIssueFixture
+	}{
+		"bare reference is context, not delivery":   {supersessionPRFixture{Number: 42, Body: "Refs #40", Author: resolveBot, Files: []string{"pkg/a.go"}}, supersessionIssueFixture{Number: 40, State: "closed", StateReason: "not_planned"}},
+		"completed without a resolved closer keeps": {supersessionPRFixture{Number: 43, Body: "Fixes #40", Author: resolveBot, Files: []string{"pkg/a.go"}}, supersessionIssueFixture{Number: 40, State: "closed", StateReason: "completed"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server, obs := supersessionSweepServer(t, resolveOrg, resolveRepo, []supersessionPRFixture{tc.pr}, []supersessionIssueFixture{tc.issue})
+			defer server.Close()
+			c, _ := newSupersessionTestClient(t, server, resolveOrg, resolveRepo)
+			prs, _ := c.listOpenPRsForSupersessionSweep(context.Background(), resolveOrg, resolveRepo)
+			if res, err := c.CloseSupersededHivePRIfEligible(context.Background(), resolveOrg+"/"+resolveRepo, prs[0]); err != nil || res.Closed || len(obs.closed) != 0 {
+				t.Fatalf("res=%+v err=%v closed=%v, want kept", res, err, obs.closed)
+			}
+		})
+	}
+}

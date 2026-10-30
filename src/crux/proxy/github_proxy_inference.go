@@ -684,10 +684,6 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	}
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
-		if errors.Is(err, context.Canceled) && errors.Is(req.Context().Err(), context.Canceled) {
-			p.logger.Debug("inference request canceled", "agent", agentName)
-			return
-		}
 		p.logger.Error("inference upstream failed", "agent", agentName, "url", upstreamURL, "error", err)
 		if p.gatewayHealth != nil {
 			p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())

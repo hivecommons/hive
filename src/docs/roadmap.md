@@ -1,5 +1,81 @@
 # Hive public roadmap
 
+Hive's direction is to make ongoing agent work easier to operate: safer
+permissions, useful review evidence, reliable long-running tasks, and clear
+cost and fleet health. **Directional, not a delivery promise.** The short
+tables separate available foundations from follow-up work; the dated
+decision record below preserves the original evidence.
+
+## Release status and operator action
+
+| Line | Availability | What an operator should know |
+|---|---|---|
+| v5 | Supported stable line since 2026-09-21 | `stable` and `candidate` follow v5; [release channels](release-channels.md) explains promotion and update timing. |
+| v4 | Maintenance only until **2026-12-21 EOL** | Security/critical fixes only until EOL; then no further releases or image retags and the branch becomes read-only. Use [v4 → v5 migration](migration-v4-v5.md). |
+| v6 | Development branch; `edge`, **not stable** | Branch availability is not a stable-release commitment. The checked release allowlist is still `[v4, v5]`; v6 promotion requires its [readiness bar](https://github.com/hivecommons/hive/blob/v6/src/docs/v6-readiness.md). |
+
+The v5 readiness tracker closed **2026-09-21**. The cutover and the EOL
+announcement are completed work, not future roadmap items. The source and
+channel distinction above was checked against the current release configuration;
+the historical item dates below are not a fresh audit of every linked issue.
+
+## Now
+
+| Work | Status | Reader-facing outcome | Primary record |
+|---|---|---|---|
+| Prompt-injection controls | Foundations available; hardening continues | Check untrusted agent input and limit unsafe output. | [Security threat model](security-threat-model.md) |
+| Intent verification | Partial | Check change authority; extend review of whether work matches the requested intent. | [Intent verification](intent-verification.md) |
+| Review evidence and fan-out | Foundations available; follow-on work | Make reviews structured and combine perspectives into a usable verdict. | [Review swarm](review-swarm.md) |
+| Credential-free execution | Direction / follow-on work | Keep credentials and network effects outside agent sandboxes. | [#2804](https://github.com/hivecommons/hive/issues/2804) |
+| Long-running work | Foundations available; integration work | Track stages and verified results, including work that never opens a PR. | [#8290](https://github.com/hivecommons/hive/issues/8290) |
+| Multi-spoke operation | Accepted direction; foundations available | See overlapping repository claims, shared capacity, and provider limits. | [#5691](https://github.com/hivecommons/hive/issues/5691) |
+| Backend capacity and placement | Accepted direction | Make scheduling respect model availability, quota, and policy. | [#5698](https://github.com/hivecommons/hive/issues/5698) |
+| Hosted onboarding | Available service; improvements continue | Try Hive without operating a cluster, subject to approval and capacity. | [Hosted onboarding](hosted-hub.md) |
+| Retrospective learning | Deterministic foundation; further work | Learn from completed tasks through reviewable findings and knowledge. | [Retro lane](retro-lane.md) |
+| Large-spoke reliability | Fixes and reference available; measurement continues | Handle a growing backlog without hiding or stranding the work. | [Scale envelope](scale-envelope.md) |
+
+## Next
+
+| Work | Status | Reader-facing outcome | Primary record |
+|---|---|---|---|
+| Token-metering sourcing | Design decision recorded; not a claim of full cutover | Reuse backend parsers while retaining Hive attribution, budgets, and price labels. | [ccusage design](design/token-metering-ccusage.md) |
+| Non-GitHub forge integration | Adapters available; complete hive operation not supported | Separate tracker/forge policy from GitHub-specific enumeration before widening deployment support. | [ADR-0005](adr/0005-forge-abstraction.md) |
+| Contributor distribution | Homebrew route shipped; later phases separate | Make installing and connecting contributor compute easier. | [Distribution roadmap](https://github.com/hivecommons/hive/blob/v5/docs/contribute-distribution-roadmap.md) |
+
+## Later
+
+| Work | Status | Reader-facing outcome | Primary record |
+|---|---|---|---|
+| Cross-forge orchestration | Direction | Coordinate tasks, proposed changes, policy, and evidence across code hosts. | [ADR-0005](adr/0005-forge-abstraction.md) |
+| Memory and learning | Direction | Keep reusable knowledge durable, testable, and auditable. | [Knowledge design](design/knowledge-system.md) |
+| Kubernetes-native sandboxes | Direction | Isolate agent workloads with cluster policy where the complexity is justified. | [Security threat model](security-threat-model.md) |
+| v6 dashboard-optional operation | Development branch available; stable promotion gated | Let people act through GitHub threads, chat, and escalation surfaces with the same permission checks. | [#7563](https://github.com/hivecommons/hive/issues/7563) |
+
+## Recently completed and available foundations
+
+| Work | Status / date from the decision record | Operator consequence | Primary record |
+|---|---|---|---|
+| v5 readiness and channel cutover | Completed 2026-09-21 | v5 is the stable line; migrate v4 before 2026-12-21. | [#6016](https://github.com/hivecommons/hive/issues/6016) |
+| Documentation publication | Live; v5 sync cutover resolved | Read v5 docs at [docs.hivecommons.dev](https://docs.hivecommons.dev); Hive remains the canonical source for synced pages. | [#7814](https://github.com/hivecommons/hive/issues/7814) |
+| HiveCommons org migration | Tracker closed 2026-09-03 | Native org/package names changed; mirror tags and redirects remain compatibility surfaces pending dated deprecation. | [Migration tracker](hivecommons-migration.md) |
+| Architecture decision records | Back-fill completed | Knowledge, skills, triggers, and hub/spoke choices have an auditable record. | [ADR index](adr/README.md) |
+| Stable promotion gate | Available; originally introduced on v4 | Current v5 stable promotion waits for age, evidence, blocker, smoke, and generation gates. | [Stable policy](stable-soak-policy.md) |
+| Repo-scoped controls | Pause/custom-agent decisions recorded 2026-09-09; current code also supports narrower ACMM overrides | A repository override cannot raise authority above the hive-wide ACMM ceiling. | [Per-repo agents](per-repo-agents.md) |
+| Lite enrollment | Available entry path | `hivectl enroll OWNER/REPO` enrolls with a spoke; the hub tracks spokes, not a second repo registry. | [Lite enrollment](lite-enrollment.md) |
+
+## Detailed decision record and historical evidence
+
+<details>
+<summary>Optional: dated delivery history, implementation contracts, and supporting issue/PR links</summary>
+
+The tables below preserve the earlier planning record, including its original
+Now/Next/Later grouping. They are **not a second current roadmap**.
+In particular, the September per-repo-ACMM rejection is historical:
+`Config.EffectiveACMMLevelForRepo` now takes the narrower of the hive level
+and a repository override. The current `.github/release-lines.yml` still
+excludes v6 as a supported release line. Use the concise status tables above
+and linked current guides for operator decisions.
+
 > **Directional, not a promise.** This roadmap reflects the direction of the v5
 > stable line as of **2026-09-22** (v5 has been the default branch and supported
 > stable line since the 2026-09-21 cut-over,
@@ -14,11 +90,7 @@
 > work, not as live trackers: a closed umbrella says nothing about whether any
 > particular item under it shipped, so each row states its own status.
 
-Hive's roadmap is organized as **Now / Next / Later**: near-term work already in
-flight, likely follow-ups, and longer-horizon bets. Items are listed in planning
-order, not priority rank.
-
-## Now
+### Prior Now records
 
 | Work | Outcome | Tracking |
 | --- | --- | --- |
@@ -37,7 +109,7 @@ order, not priority rank.
 | HiveCommons org migration | **Tracker closed 2026-09-03 (#5686).** The kubestellar→hivecommons move is auditable in the [migration tracker](hivecommons-migration.md): repo transfer, Go module rename, GHCR namespace and the `hive.hivecommons.dev` hub cutover are done; the `ghcr.io/kubestellar/*` mirror tags and `hive.kubestellar.io` redirect stay as compatibility surfaces until the dated package deprecation (P6) is announced. | [migration tracker](hivecommons-migration.md), [#5686](https://github.com/hivecommons/hive/issues/5686) |
 | v4 stable soak gate | **Done.** CI now keeps `candidate` moving on every green v4 image build and promotes `stable` later by digest only after the soak, evidence, blocker, smoke, and monotonic guards pass. | [stable soak policy](stable-soak-policy.md), [#5974](https://github.com/hivecommons/hive/issues/5974) |
 
-## Next
+### Prior Next records
 
 | Work | Outcome | Tracking |
 | --- | --- | --- |
@@ -49,7 +121,7 @@ order, not priority rank.
 | One-command contribute install | **Shipped — #6635/#6641 closed 2026-09-11.** `brew install hivecommons/hive/contribute` from the [`hivecommons/homebrew-hive`](https://github.com/hivecommons/homebrew-hive) tap wraps the published `hive-contributor` image; see [Homebrew](contributor-relay.md#homebrew). The phased plan (distroless image → tap-repo conversion action → agent-harness integration) and its ownership split remain in the [contribute distribution roadmap](https://github.com/hivecommons/hive/blob/v5/docs/contribute-distribution-roadmap.md) for the follow-on phases. | [#6635](https://github.com/hivecommons/hive/issues/6635), [#6641](https://github.com/hivecommons/hive/issues/6641) |
 | GitLab through `pkg/forge` | `pkg/forge` ships GitHub, GitLab, and Gitea/Forgejo adapters with the read path and core write path implemented and tested; `Merge` is left an explicit interface TODO because merge semantics diverge across forges. **First production caller landed:** the governor's escalation writes (evidence comment + `needs-human` label) are now typed against the `forge.IssueWriter` seam, with the adapter selected from `project.forge` — so that key is no longer display-only. A GitHub hive is unchanged, still on `*github.Client`. Those writes are not yet *reached* on a non-GitHub hive, because the read path is still GitHub-shaped: `EnumerateActionable` feeds the whole governor cycle and owns hold-label filtering, issue filters and SLA tracking inside `pkg/github`. Neutralizing enumeration — lifting that policy above the forge boundary, and adding a bulk list method so an N-repo hive does not enumerate N times — is what remains. | [ADR-0005](adr/0005-forge-abstraction.md), [#5259](https://github.com/hivecommons/hive/issues/5259), origin: [#2812](https://github.com/hivecommons/hive/issues/2812) (closed) |
 
-## Later
+### Prior Later records
 
 | Work | Outcome | Tracking |
 | --- | --- | --- |
@@ -59,10 +131,19 @@ order, not priority rank.
 | v6 — dashboard-optional operation (line open) | The `v6` branch opened 2026-09-18 (cut from v5); v6 implementation PRs target the `v6` branch only and v6 tracks v5 by forward-merge. Theme: every operator interaction reachable from the places humans already are — GitHub threads (@-mention triggers), Slack/Discord/Teams/Matrix/Telegram over a shared `pkg/chat` spine, email and push/on-call escalation — all behind the same role/capability/ioscan guards the dashboard uses. **Tracks merged on the `v6` branch:** the `pkg/chat` spine and Discord port ([#7572](https://github.com/hivecommons/hive/pull/7572)) with reconnect/cancellation parity ([#7586](https://github.com/hivecommons/hive/pull/7586)); Slack Socket Mode ([#7585](https://github.com/hivecommons/hive/pull/7585)); Teams, Matrix, and Telegram ([#7621](https://github.com/hivecommons/hive/pull/7621), [#7617](https://github.com/hivecommons/hive/pull/7617), [#7616](https://github.com/hivecommons/hive/pull/7616)); GitHub @-mention triggers phases 1–3 ([#7582](https://github.com/hivecommons/hive/pull/7582), [#7597](https://github.com/hivecommons/hive/pull/7597), [#7623](https://github.com/hivecommons/hive/pull/7623)); outbound email and push escalation ([#7618](https://github.com/hivecommons/hive/pull/7618)). Still unbuilt: the Slack Events API accelerator and inbound reply-to-act email. **This is branch status, not stable-release status** — none of it exists on `v4` or `v5`; since the 2026-09-21 channel re-base ([#7721](https://github.com/hivecommons/hive/issues/7721)), `edge` is built from `v6`, so operators tracking `edge` run these surfaces as active-development builds while `stable`/`candidate` (v5) do not have them. **Beyond the dashboard-optional theme, the line accepts new tracks by RFC**, each measured against the same readiness bar: task-scoped MCP — expose the hive's view of a task to contributor agents as a Model Context Protocol endpoint ([#8033](https://github.com/hivecommons/hive/issues/8033); Phase 1 merged on `v6` via [#8164](https://github.com/hivecommons/hive/pull/8164), [#8177](https://github.com/hivecommons/hive/pull/8177), [#8179](https://github.com/hivecommons/hive/pull/8179) — `pkg/taskmcp`, the `/api/contribute/mcp` endpoint, and the first four tools; Phase 2 lease-scoped auth [#8228](https://github.com/hivecommons/hive/pull/8228) and Phase 3 repo tools [#8244](https://github.com/hivecommons/hive/pull/8244) also merged on `v6`; the RFC closed 2026-09-22 with the first live token-delta measurement, and the remaining saving — eliding stuffed issue/PR lists when the MCP pointer is present — is [#8261](https://github.com/hivecommons/hive/issues/8261)) — and standby contributors — a lane paused for budget hands its queue to volunteer contributors behind a model floor ([#7629](https://github.com/hivecommons/hive/issues/7629); design [#8038](https://github.com/hivecommons/hive/pull/8038); S0–S7 merged on `v6`, S8 waits on live-hive runbook evidence). **Known gaps ahead of promotion:** no release/GA workflow support exists for `v6` yet — `tagged-release.yml`, `promote-stable.yml`, and `.github/release-lines.yml` are still `v5`-only ([#9154](https://github.com/hivecommons/hive/issues/9154)); a fast-growing, largely un-triaged bug backlog spans nearly every shipped chat surface and is not reflected in the readiness bar's conformance checkmarks ([#9227](https://github.com/hivecommons/hive/issues/9227), [#9245](https://github.com/hivecommons/hive/issues/9245)); and the resulting bugfix-PR volume has produced a merge-conflict pileup — most open `v6` PRs currently collide on the same few hotspot files ([#9319](https://github.com/hivecommons/hive/issues/9319)). Promotion bar: [v6-readiness.md](https://github.com/hivecommons/hive/blob/v6/src/docs/v6-readiness.md), live tracker [#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar. Full policy in [ROADMAP.md](../../ROADMAP.md#v6--dashboard-optional-operation-line-open). | [#7563 epic](https://github.com/hivecommons/hive/issues/7563), [#7483](https://github.com/hivecommons/hive/issues/7483), [mention-triggers design](design/github-mention-triggers.md), [Slack design](design/slack-integration.md), [escalation design](design/escalation-surfaces.md) |
 | v6 — dashboard-optional operation (line open) | The `v6` branch opened 2026-09-18 (cut from v5); v6 implementation PRs target the `v6` branch only and v6 tracks v5 by forward-merge. Theme: every operator interaction reachable from the places humans already are — GitHub threads (@-mention triggers), Slack/Discord/Teams/Matrix/Telegram over a shared `pkg/chat` spine, email and push/on-call escalation — all behind the same role/capability/ioscan guards the dashboard uses. **Tracks merged on the `v6` branch:** the `pkg/chat` spine and Discord port ([#7572](https://github.com/hivecommons/hive/pull/7572)) with reconnect/cancellation parity ([#7586](https://github.com/hivecommons/hive/pull/7586)); Slack Socket Mode ([#7585](https://github.com/hivecommons/hive/pull/7585)); Teams, Matrix, and Telegram ([#7621](https://github.com/hivecommons/hive/pull/7621), [#7617](https://github.com/hivecommons/hive/pull/7617), [#7616](https://github.com/hivecommons/hive/pull/7616)); GitHub @-mention triggers phases 1–3 ([#7582](https://github.com/hivecommons/hive/pull/7582), [#7597](https://github.com/hivecommons/hive/pull/7597), [#7623](https://github.com/hivecommons/hive/pull/7623)); outbound email and push escalation ([#7618](https://github.com/hivecommons/hive/pull/7618)). Still unbuilt: the Slack Events API accelerator and inbound reply-to-act email. **This is branch status, not stable-release status** — none of it exists on `v4` or `v5`; since the 2026-09-21 channel re-base ([#7721](https://github.com/hivecommons/hive/issues/7721)), `edge` is built from `v6`, so operators tracking `edge` run these surfaces as active-development builds while `stable`/`candidate` (v5) do not have them. **Beyond the dashboard-optional theme, the line accepts new tracks by RFC**, each measured against the same readiness bar: task-scoped MCP — expose the hive's view of a task to contributor agents as a Model Context Protocol endpoint ([#8033](https://github.com/hivecommons/hive/issues/8033); Phase 1 merged on `v6` via [#8164](https://github.com/hivecommons/hive/pull/8164), [#8177](https://github.com/hivecommons/hive/pull/8177), [#8179](https://github.com/hivecommons/hive/pull/8179) — `pkg/taskmcp`, the `/api/contribute/mcp` endpoint, and the first four tools; Phase 2 lease-scoped auth [#8228](https://github.com/hivecommons/hive/pull/8228) and Phase 3 repo tools [#8244](https://github.com/hivecommons/hive/pull/8244) also merged on `v6`; the RFC closed 2026-09-22 with the first live token-delta measurement, and the remaining saving — eliding stuffed issue/PR lists when the MCP pointer is present — is [#8261](https://github.com/hivecommons/hive/issues/8261)) — and standby contributors — a lane paused for budget hands its queue to volunteer contributors behind a model floor ([#7629](https://github.com/hivecommons/hive/issues/7629); design [#8038](https://github.com/hivecommons/hive/pull/8038); S0–S7 merged on `v6`, S8 waits on live-hive runbook evidence). Promotion bar: [v6-readiness.md](https://github.com/hivecommons/hive/blob/v6/src/docs/v6-readiness.md), live tracker [#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar. Full policy in [ROADMAP.md](../../ROADMAP.md#v6--dashboard-optional-operation-line-open). **Known gap, updated 2026-10-02:** the dangerous part of the v6 release-path gap is fixed — `tagged-release.yml`/`promote-stable.yml` now derive `RELEASE_LINE`/`RELEASE_BRANCH` from `github.ref_name` and refuse to run from a branch that is not in `.github/release-lines.yml`'s `release_lines` list ([#9154](https://github.com/hivecommons/hive/issues/9154), closed, fixed by [#9307](https://github.com/hivecommons/hive/pull/9307)). What's still true: `release_lines` remains `[v4, v5]` — `v6` has not been added — and `docker.yml`'s `v6` rows still only ever publish `edge`, never `candidate`/`stable`; this is now a deliberate, guarded GA gate pending the readiness bar, not a bug. The readiness-runbook gap is resolved ([#9200](https://github.com/hivecommons/hive/issues/9200), closed). Tracked together in [#9227](https://github.com/hivecommons/hive/issues/9227), open pending a maintainer go/no-go on flipping the gate. | [#7563 epic](https://github.com/hivecommons/hive/issues/7563), [#7483](https://github.com/hivecommons/hive/issues/7483), [mention-triggers design](design/github-mention-triggers.md), [Slack design](design/slack-integration.md), [escalation design](design/escalation-surfaces.md), [#9227](https://github.com/hivecommons/hive/issues/9227) |
 
-## Reading this roadmap
+### Reading the historical grouping
 
 - **Now** does not mean all work is complete; it means active phase-2 work or
   freshly merged foundations with known wiring still in progress.
 - **Next** items are expected follow-ups, not release commitments.
 - **Later** items are strategic directions that may split into narrower issues
   before implementation.
+
+</details>
+
+## Reading this roadmap
+
+“Available” describes an existing foundation, not every planned extension.
+“Accepted” or “decided” records a design choice, not a release. “Development
+branch” does not mean “stable channel.” No ordering here commits a delivery date;
+completed items live separately so they do not look like the next thing to ship.

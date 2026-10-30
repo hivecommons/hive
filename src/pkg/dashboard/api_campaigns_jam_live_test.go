@@ -26,15 +26,18 @@ func jamLiveDial(t *testing.T, srv *httptest.Server, user, role string) *websock
 
 func readJamLiveUntil(t *testing.T, conn *websocket.Conn, want string, match func(jamLiveMessage) bool) jamLiveMessage {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)); err != nil {
-			t.Fatalf("set read deadline: %v", err)
-		}
+	// One deadline for the whole wait: gorilla/websocket marks the connection
+	// permanently failed after any read error (a deadline timeout included), so
+	// retrying ReadJSON after a short timeout panics with "repeated read on
+	// failed websocket connection" instead of waiting for the next frame.
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	for {
 		var msg jamLiveMessage
 		if err := conn.ReadJSON(&msg); err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure) || strings.Contains(err.Error(), "i/o timeout") {
-				continue
+			if strings.Contains(err.Error(), "i/o timeout") {
+				t.Fatalf("timed out waiting for live message %s", want)
 			}
 			t.Fatalf("read live message %s: %v", want, err)
 		}
@@ -42,8 +45,59 @@ func readJamLiveUntil(t *testing.T, conn *websocket.Conn, want string, match fun
 			return msg
 		}
 	}
-	t.Fatalf("timed out waiting for live message %s", want)
-	return jamLiveMessage{}
+}
+
+// jamLiveQuietGap is the silence TestReadJamLiveUntilWaitsPastShortGaps puts
+// between the client's "ready" frame and the server's snapshot. It must stay
+// longer than any per-read poll interval readJamLiveUntil might apply (the
+// retired implementation used 250 ms); the test fails if it is not honoured.
+const jamLiveQuietGap = 300 * time.Millisecond
+
+// TestReadJamLiveUntilWaitsPastShortGaps guards the helper above: a frame that
+// arrives after a quiet gap longer than any per-read poll interval must still
+// be delivered rather than tripping gorilla's failed-connection panic.
+func TestReadJamLiveUntilWaitsPastShortGaps(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Hand-off by signal: the client writes a frame once it is about to
+		// block in readJamLiveUntil, so the quiet gap below is measured from a
+		// known point rather than from an arbitrary moment after the dial.
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		// Simulate a slow producer: the socket stays silent for longer than the
+		// per-read poll the helper used to apply before the snapshot lands.
+		<-time.After(jamLiveQuietGap)
+		_ = conn.WriteJSON(jamLiveMessage{Type: jamLiveSnapshot})
+		// Keep the socket open until the client is done reading.
+		_, _, _ = conn.ReadMessage()
+	}))
+	t.Cleanup(srv.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// The test goroutine is the only reader on conn: gorilla/websocket allows
+	// one concurrent reader per connection, so the ready signal is a write.
+	if err := conn.WriteJSON(jamLiveMessage{Type: jamLiveFocus}); err != nil {
+		t.Fatalf("write ready signal: %v", err)
+	}
+	started := time.Now()
+	got := readJamLiveUntil(t, conn, jamLiveSnapshot, nil)
+	if got.Type != jamLiveSnapshot {
+		t.Fatalf("message type = %q, want %q", got.Type, jamLiveSnapshot)
+	}
+	if waited := time.Since(started); waited < jamLiveQuietGap {
+		t.Fatalf("snapshot arrived after %v, want a quiet gap of at least %v", waited, jamLiveQuietGap)
+	}
 }
 
 func TestCampaignJamLiveRejectsCrossOriginHandshake(t *testing.T) {

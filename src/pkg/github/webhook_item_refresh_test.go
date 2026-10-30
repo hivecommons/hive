@@ -21,8 +21,11 @@ func TestFetchWebhookItemSnapshotReadsOnePRAndOneIssue(t *testing.T) {
 	clock := &webhookTestClock{now: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
 	t.Cleanup(resetPRDetailCacheForTest(clock.Now, 0))
 	// Earlier tests in the binary may leave the process-wide core budget in
-	// its critical band; this test is about the reads, not the budget.
+	// its critical band or engage rate-limit caution. This test exercises the
+	// reads, not either discretionary-read gate.
 	resetRESTAccountingForTest(t, clock.now)
+	ResetRateLimitPacingForTest()
+	t.Cleanup(ResetRateLimitPacingForTest)
 	updated := clock.now.Add(-time.Minute)
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

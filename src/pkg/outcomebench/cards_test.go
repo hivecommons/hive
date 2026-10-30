@@ -1,6 +1,10 @@
 package outcomebench
 
 import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,16 +48,96 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 		t.Error("checks-green drawn with CI coverage below the floor")
 	}
 	svg, _ := rep.Card(CardAccuracy, cardThemes[0])
-	for _, want := range []string{"<title>", `<text`, "ACCURACY · 15 PULL REQUESTS SENT BACK · (oct &#39;26)", "The review agent sent 15 pull requests", "Three in four", ">3 in 4<", ">20 min<", "15 sent back (oct &#39;26); 4 merged as-is", `filter="url(#glow)"`, `width="1760"`, `viewBox="0 0 880 `} {
+	for _, want := range []string{"<title>", `<text`, "ACCURACY · 15 PULL REQUESTS SENT BACK · (oct &#39;26)", "The review agent sent 15 pull requests", "Three out of four", ">3 in 4<", "usually within 20 minutes", "fine on a second look", "15 pull requests sent back (oct &#39;26)", `width="1760"`, `viewBox="0 0 880 500"`, `font-weight="700"`} {
 		if !strings.Contains(svg, want) {
 			t.Errorf("accuracy card missing %q:\n%s", want, svg)
 		}
 	}
-	if light, _ := rep.Card(CardAccuracy, cardThemes[1]); strings.Contains(light, `filter="url(#glow)"`) {
-		t.Error("light theme must not glow")
+	// Flat colour only: no gradient, glow or filter, which render
+	// differently per browser and are not reproduced in the PNG.
+	for _, bad := range []string{"<filter", "<linearGradient", "url(#", "<defs>"} {
+		if strings.Contains(svg, bad) {
+			t.Errorf("accuracy card contains %q; cards are flat", bad)
+		}
 	}
 	if len(rep.Cards()) != 2*5 { // accuracy, checks-green, cost, also, how-it-works × dark/light
 		t.Errorf("Cards() = %d files: %v", len(rep.Cards()), rep.Cards())
+	}
+	// Every stat card is the same height so the README reads as a set.
+	for _, name := range []string{CardAccuracy, CardChecksGreen, CardCost} {
+		if c, _ := rep.card(name, cardThemes[0]); c.h != statCardH {
+			t.Errorf("%s card is %d tall, want %d", name, c.h, statCardH)
+		}
+	}
+}
+
+// TestCardPNGs renders every card to PNG with the embedded face and checks
+// each one is the SVG's size at cardScale, carries its source hash, and
+// has opaque card pixels inside a transparent rounded corner.
+func TestCardPNGs(t *testing.T) {
+	since, until, _ := ParseWindow("2026-10")
+	opts := Options{Since: since, Until: until, Now: now, Spend: &Spend{USD: 26, MergedPRs: 13}, ReadmeMinBase: 10}
+	rep := Compute(fixture(), 0, opts)
+	pngs, err := rep.CardPNGs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svgs := rep.Cards()
+	if len(pngs) != len(svgs) {
+		t.Fatalf("%d PNGs for %d SVGs", len(pngs), len(svgs))
+	}
+	for name, svg := range svgs {
+		pngName := strings.TrimSuffix(name, ".svg") + ".png"
+		b, ok := pngs[pngName]
+		if !ok {
+			t.Errorf("no PNG for %s", name)
+			continue
+		}
+		if got, want := PNGText(b, PNGSourceKey), SourceHash(svg); got != want {
+			t.Errorf("%s source hash %q, want %q", pngName, got, want)
+		}
+		w, h, err := PNGSize(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sw, sh int
+		fmt.Sscanf(svg[strings.Index(svg, ` width="`):], ` width="%d" height="%d"`, &sw, &sh)
+		if w != sw || h != sh || w != cardW*cardScale {
+			t.Errorf("%s is %dx%d, SVG declares %dx%d", pngName, w, h, sw, sh)
+		}
+		img, err := png.Decode(bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, a := img.At(0, 0).RGBA(); a != 0 {
+			t.Errorf("%s corner pixel is not transparent", pngName)
+		}
+		if _, _, _, a := img.At(w/2, h/2).RGBA(); a == 0 {
+			t.Errorf("%s centre pixel is transparent", pngName)
+		}
+	}
+	if len(pngs["x"]) != 0 {
+		t.Error("unexpected key")
+	}
+}
+
+func TestPNGTextRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	out, err := addPNGText(buf.Bytes(), "k", "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if PNGText(out, "k") != "v" || PNGText(out, "other") != "" {
+		t.Error("tEXt chunk round trip failed")
+	}
+	if _, err := png.Decode(bytes.NewReader(out)); err != nil {
+		t.Errorf("PNG with tEXt chunk does not decode: %v", err)
+	}
+	if _, err := addPNGText([]byte("nope"), "k", "v"); err == nil {
+		t.Error("expected error for non-PNG input")
 	}
 }
 
@@ -111,7 +195,7 @@ func TestLoadStoriesAndRedTeam(t *testing.T) {
 	}
 	rep := Report{RedTeam: rt, GeneratedAt: now}
 	svg, ok := rep.Card(CardPromptInjection, cardThemes[1])
-	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(svg, ">1 in 12<") || !strings.Contains(svg, "We hid 63 texts that try to redirect an") || !strings.Contains(svg, "TEST SET · (oct &#39;26)") || !strings.Contains(svg, "75 texts (oct &#39;26)") || !strings.Contains(svg, "not production traffic") {
+	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(svg, "harmless text in 12") || !strings.Contains(svg, "We planted 63 texts that try to redirect an") || !strings.Contains(svg, "TEST SET · (oct &#39;26)") || !strings.Contains(svg, "75 texts (oct &#39;26)") || !strings.Contains(svg, "not production traffic") {
 		t.Fatalf("prompt-injection card:\n%s", svg)
 	}
 }

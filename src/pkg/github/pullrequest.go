@@ -505,11 +505,15 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 		}
 		return effects.Result{Provenance: res.GetSHA()}, nil
 	}
+	// The tracker's "Merging" state (hivecommons/hive#15245) spans exactly
+	// the merge call, whichever caller issued it.
+	BeginMergeAttempt(owner+"/"+repo, number, auditPath)
 	out, err := effects.Execute(ctx, boundary, claim, merge)
 	if errors.Is(err, effects.ErrNeedsReconciliation) {
 		out, err = c.reconcileMerge(ctx, boundary, claim, owner, repo, number, merge, err)
 	}
 	if err != nil {
+		EndMergeAttempt(owner+"/"+repo, number, false, err)
 		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
 	}
 	sha, merged := res.GetSHA(), res.GetMerged()
@@ -518,6 +522,11 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 		// the journaled merge SHA as provenance; surface it as the typed
 		// result rather than an empty, unmerged-looking success.
 		sha, merged = out.Provenance, out.Provenance != ""
+	}
+	if merged {
+		EndMergeAttempt(owner+"/"+repo, number, true, nil)
+	} else {
+		EndMergeAttempt(owner+"/"+repo, number, false, fmt.Errorf("GitHub did not merge the pull request: %s", strings.TrimSpace(res.GetMessage())))
 	}
 	if merged {
 		c.forgeWriteThrough(owner+"/"+repo, number, forgestate.Mutation{Op: forgestate.OpMerge, Kind: forgestate.KindPR})

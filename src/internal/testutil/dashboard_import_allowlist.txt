@@ -25,9 +25,11 @@ github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
+github.com/hivecommons/hive/crux/kubejob
 github.com/hivecommons/hive/crux/logread
 github.com/hivecommons/hive/crux/logscrub
 github.com/hivecommons/hive/crux/paneclass
+github.com/hivecommons/hive/crux/sandbox
 github.com/hivecommons/hive/crux/skillreg
 github.com/hivecommons/hive/crux/taskmcp
 github.com/hivecommons/hive/crux/toolapprove
@@ -38,6 +40,7 @@ github.com/hivecommons/hive/pkg/advisor
 github.com/hivecommons/hive/pkg/advisory
 github.com/hivecommons/hive/pkg/agentaudit
 github.com/hivecommons/hive/pkg/beads
+github.com/hivecommons/hive/pkg/blocker
 github.com/hivecommons/hive/pkg/celtrigger
 github.com/hivecommons/hive/pkg/claims
 github.com/hivecommons/hive/pkg/classify
@@ -73,6 +76,7 @@ github.com/hivecommons/hive/pkg/outputschema
 github.com/hivecommons/hive/pkg/planning
 github.com/hivecommons/hive/pkg/policies
 github.com/hivecommons/hive/pkg/promptsrc
+github.com/hivecommons/hive/pkg/rebasemerge
 github.com/hivecommons/hive/pkg/releasenotes
 github.com/hivecommons/hive/pkg/resolve
 github.com/hivecommons/hive/pkg/retro
@@ -91,3 +95,4 @@ github.com/hivecommons/hive/pkg/tokens
 github.com/hivecommons/hive/pkg/turn
 github.com/hivecommons/hive/pkg/upstreamwatch
 github.com/hivecommons/hive/pkg/worksource
+github.com/hivecommons/hive/pkg/writeback

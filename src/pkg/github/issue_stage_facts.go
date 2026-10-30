@@ -10,6 +10,7 @@ package github
 import (
 	"strings"
 
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -99,6 +100,14 @@ func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 	is.LikelyDone = issueHasLabel(in.Labels, LikelyDoneLabel)
 	is.HoldLabel = issueHoldLabel(in)
 	is.NeedsHumanLabel = issueNeedsHumanLabel
+	is.Blocker, is.BlockerShort = "", ""
+	if b, ok := issueBlockerLookup(in.Repo, in.Number); ok {
+		is.Blocker, is.BlockerShort = string(b.Kind), b.Kind.Short()
+	}
+	is.ApprovedDirectionLabel = ""
+	if issueHasLabel(in.Labels, HumanAckLabel) {
+		is.ApprovedDirectionLabel = HumanAckLabel
+	}
 	is.UmbrellaLabel = issueUmbrellaLabel(in.Labels)
 	is.BlockedReason = ""
 	if hasBlockedLabel(in.Labels) {
@@ -112,6 +121,13 @@ func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 	if issueHasLabel(in.Labels, triageAwaitingLabel) {
 		is.TriageAwaitingLabel = triageAwaitingLabel
 	}
+}
+
+// issueBlockerLookup reads the structured blocker recorded on an issue
+// (pkg/blocker's shared ledger: an agent's `<!-- hive:blocker -->` marker
+// or the prose it inferred from). Tests swap it.
+var issueBlockerLookup = func(repo string, number int) (itemblocker.Blocker, bool) {
+	return itemblocker.Shared().Blocking(repo, number)
 }
 
 // issueInputFrom rebuilds the label/bucket view of an out-of-cycle Facts

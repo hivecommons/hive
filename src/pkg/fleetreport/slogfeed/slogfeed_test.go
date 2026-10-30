@@ -76,6 +76,48 @@ func TestHandlerWithAttrsCarriesBoundAttrsIntoDiagnostics(t *testing.T) {
 	}
 }
 
+// TestDiagnosticsKeepsBothPaneTimeoutExcerpts regression-tests
+// hivecommons/hive#14586 and #15311: the "pane content at timeout" WARN
+// (src/crux/agent/manager.go) logs head_500 before tail_500, each up to 500
+// runes. At the old 512-byte cap, head_500 alone (worse with multi-byte
+// box-drawing characters) filled the budget and diagnostics() dropped
+// tail_500 — the pane's current state and the only field useful for
+// diagnosing a stuck CLI — before it was ever written.
+func TestDiagnosticsKeepsBothPaneTimeoutExcerpts(t *testing.T) {
+	logger, seen, _ := newFeed(t)
+	head := strings.Repeat("❯", 500) // worst case: 500 runes, 3 bytes each
+	tail := strings.Repeat("z", 480) + "TAIL-MARKER-PRESENT"
+	logger.Warn("pane content at timeout",
+		"agent", "quality",
+		"len", 28517,
+		"has_goose_ready", false,
+		"has_enter", false,
+		"has_arrow", true,
+		"has_question_form", false,
+		"has_bob_placeholder", false,
+		"has_codex_ready", false,
+		"head_500", head,
+		"tail_500", tail,
+	)
+	if len(*seen) != 1 {
+		t.Fatalf("observed = %+v, want exactly one", *seen)
+	}
+	got := (*seen)[0]
+	if got.class != fleetreport.ClassAgentPaneTimeout {
+		t.Fatalf("class = %q, want %q", got.class, fleetreport.ClassAgentPaneTimeout)
+	}
+	d := got.diagnostics
+	if !strings.Contains(d, "has_codex_ready=false") {
+		t.Fatalf("diagnostics dropped a flag before head_500: %q", d)
+	}
+	if !strings.Contains(d, "head_500=") {
+		t.Fatalf("diagnostics missing head_500 entirely: %q", d)
+	}
+	if !strings.Contains(d, "TAIL-MARKER-PRESENT") {
+		t.Fatalf("diagnostics dropped tail_500 (the pane's current state): %q", d)
+	}
+}
+
 func TestKeyBoundsAndNormalises(t *testing.T) {
 	a := Key("request failed for owner/repo-1 after 3 attempts (id 0123456789abcdef)")
 	b := Key("request failed for owner/other-9 after 17 attempts (id fedcba9876543210)")
@@ -586,5 +628,89 @@ func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
 	logger.Warn("stage labels: check digest failed", "error", "GET https://api.github.com/repos/o/r/commits/abc/status: 500 Internal Server Error")
 	if len(*seen) != 2 {
 		t.Fatalf("non-rate-limit failures must remain reportable: %+v", *seen)
+	}
+}
+
+// #15365: a GitHub 502/503/504 on a fetch is transient and retried next tick.
+func TestGitHubUpstreamUnavailableLogsWithoutFleetReport(t *testing.T) {
+	cases := []struct {
+		msg  string
+		args []any
+	}{
+		{"fetch failed: GET https://api.github.com/repos/o/r/pulls/1336: 503  []", nil},
+		{"fetch failed: GET https://api.github.com/repos/o/r: 502 Bad Gateway []", nil},
+		{"fetch failed: GET https://api.github.com/repos/o/r: 504 Gateway Timeout []", nil},
+		{"self-authored automerge sweep skipped PR", []any{"repo", "kubestellar-mcp", "pr", 1336, "reason", "fetch-pr", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 503  []"}},
+		{"failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 502 Bad Gateway []"}},
+		{"failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 504 Gateway Timeout []"}},
+	}
+	for _, tc := range cases {
+		logger, seen, out := newFeed(t)
+		for i := 0; i < 8; i++ {
+			logger.Warn(tc.msg, tc.args...)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("%q: upstream-unavailable WARN produced observations: %+v", tc.msg, *seen)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 8 {
+			t.Errorf("%q: wrapped handler saw %d records, want 8", tc.msg, n)
+		}
+	}
+
+	logger, seen, _ := newFeed(t)
+	logger.Warn("self-authored automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 500 Internal Server Error []")
+	logger.Warn("self-authored automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 403 Resource not accessible by integration")
+	logger.Warn("fetch failed: GET https://api.github.com/repos/o/r/pulls/503: 404 Not Found")
+	logger.Warn("fetch failed: GET https://api.github.com/repos/o/r: 500 Internal Server Error")
+	if len(*seen) != 4 {
+		t.Fatalf("non-gateway failures must remain reportable: %+v", *seen)
+	}
+}
+
+// #15333: keep repeated translator identity refusals visible under their own
+// gateway class, without treating them as backend credential failures.
+func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
+	now := time.Date(2026, 10, 29, 6, 26, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "inference request from unidentified caller refused"
+	warn := func() {
+		logger.Warn(msg, "remote", "127.0.0.1:47724", "method", "POST", "path", "/v1/messages")
+	}
+	for i := 0; i < 4; i++ {
+		warn()
+		now = now.Add(time.Minute)
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("below threshold produced evidence: %+v", ev)
+		}
+	}
+	warn()
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassInferenceCallerUnknown || ev[0].Count != 5 || ev[0].Severity != "medium" || ev[0].Component != "inference-gateway" {
+		t.Fatalf("repeated identity refusals = %+v", ev)
+	}
+	for _, want := range []string{"remote=127.0.0.1:47724", "method=POST", "path=/v1/messages"} {
+		if !strings.Contains(ev[0].Diagnostics, want) {
+			t.Errorf("diagnostics %q missing %q", ev[0].Diagnostics, want)
+		}
+	}
+	if n := strings.Count(out.String(), "\n"); n != 5 {
+		t.Fatalf("wrapped handler saw %d records, want 5", n)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("idle identity refusals still reported: %+v", ev)
+	}
+	cleared := tr.TakeCleared()
+	if len(cleared) != 1 || cleared[0].Class != fleetreport.ClassInferenceCallerUnknown {
+		t.Fatalf("cleared = %+v", cleared)
+	}
+	// Other translator failures must still reach their existing classes.
+	logger2, seen, _ := newFeed(t)
+	logger2.Warn("inference upstream failed")
+	logger2.Warn("inference no route", "agent", "scanner")
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassInferenceUpstreamError || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("unrelated inference failures = %+v", *seen)
 	}
 }

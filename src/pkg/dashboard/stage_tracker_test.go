@@ -56,6 +56,41 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 	}
 }
 
+// TestStageTrackerStagesFallsTo: each stage row carries the lower same-kind
+// stages a move to which is a regression, so the SPA's event line says
+// "fell back to" only for those — not for triage accepted (015 → 010), a
+// decision made (085 → 080) or the author resuming (072 → 070)
+// (hivecommons/hive#15198).
+func TestStageTrackerStagesFallsTo(t *testing.T) {
+	byNum := map[int]StageTrackerStage{}
+	for _, st := range stageTrackerStages(nil) {
+		byNum[st.Number] = st
+	}
+	for _, tc := range []struct {
+		from, to int
+		fall     bool
+	}{
+		{trackerNumberTriageNeeded, trackerNumberActionable, false},
+		{trackerNumberPossiblyExists, trackerNumberActionable, false},
+		{trackerNumberIssueDecision, trackerNumberActionable, false},
+		{trackerNumberNeedsDecision, trackerNumberAwaitingMerge, false},
+		{trackerNumberReturned, trackerNumberFixing, false},
+		{trackerNumberFixing, trackerNumberReviewPending, false},
+		{trackerNumberCoveredByPR, trackerNumberActionable, true},
+		{trackerNumberCoveredByPR, trackerNumberTriageNeeded, true},
+		{trackerNumberReviewed, trackerNumberReviewPending, true},
+		{trackerNumberAwaitingMerge, trackerNumberFixing, true},
+		{trackerNumberReviewPending, trackerNumberCoveredByPR, false}, // PR stages never fall to issue stages
+	} {
+		if got := slices.Contains(byNum[tc.from].FallsTo, tc.to); got != tc.fall {
+			t.Errorf("%03d → %03d: falls_to lists it = %v, want %v (%v)", tc.from, tc.to, got, tc.fall, byNum[tc.from].FallsTo)
+		}
+	}
+	if len(byNum[trackerNumberActionable].FallsTo) != 0 {
+		t.Errorf("010 has nothing lower to fall to: %v", byNum[trackerNumberActionable].FallsTo)
+	}
+}
+
 // Stage 07x by author kind: 071 needs-author (human) and 072
 // returned-to-contributor (clanker) are both review-side detours with their
 // own chevron word and an author-must-act caption.
@@ -80,32 +115,45 @@ func TestStageTrackerNeedsAuthorAndReturnedWords(t *testing.T) {
 		}
 	}
 	caption, actor := stageTrackerCaption(stagelabels.NeedsAuthor, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0, "")
-	if caption != "Needs @sam — CI is red (check-failing:unit) — @sam must act" || actor != "sam" {
+	if caption != "Needs @sam — CI failed: unit — @sam must act" || actor != "sam" {
 		t.Errorf("071 caption = %q actor = %q", caption, actor)
 	}
 }
 
 func TestHumanizeStageReason(t *testing.T) {
 	cases := map[string]string{
-		"actionable":                                    "",
-		"live agent claim":                              "",
-		"mirrors PR #12332":                             "mirrors PR #12332",
-		"label:needs-rebase":                            "needs a rebase",
-		"held":                                          "held by a hold label",
-		"contributor-lane:no-verdict":                   "no review verdict yet",
-		"required-check-pending:build-and-test":         "check build-and-test still running",
-		"required-check-failing:DCO":                    "check DCO failing",
-		"reviewer-verdict:changes_requested":            "review swarm requested changes",
-		"pending: head pushed 59s ago (< min_head_age)": "head pushed 59s ago; waiting for the minimum head age",
-		"contributor-lane:soaking:12m":                  "soaking",
-		"excluded-label:do-not-merge":                   "label do-not-merge excludes it",
-		"some-new-token":                                "some new token",
-		"base-branch-red:docker (hive),docker (hub)":    "waiting for the base branch's CI to recover (docker (hive), docker (hub)) — not this PR's fault",
-		"shared-ci-incident:13208":                      "deferred to shared-CI incident #13208 — not this PR's fault",
-		"fork-guard:Canary":                             "check Canary refuses fork PRs — a maintainer must push this branch to the repository",
-		"contributor-lane:workflow-path":                "workflow path",
-		"contributor-lane:tests-removed":                "tests removed",
-		"human-merge-path":                              "human-merge path",
+		"actionable":                            "",
+		"live agent claim":                      "",
+		"mirrors PR #12332":                     "mirrors PR #12332",
+		"label:needs-rebase":                    "needs a rebase",
+		"held":                                  "held by a hold label",
+		"contributor-lane:no-verdict":           "no review verdict yet",
+		"required-check-pending:build-and-test": "check build-and-test still running",
+		// Pending is not red (hivecommons/docs#512 read "CI is red (check-pending)").
+		"check-pending":                      "CI running",
+		"status-pending":                     "CI running",
+		"check-success":                      "CI green",
+		"status-success":                     "CI green",
+		"check-failure":                      "CI failed",
+		"status-error":                       "CI failed",
+		"check-timed_out":                    "CI failed (timed out)",
+		"check-failing:lint":                 "CI failed: lint",
+		"status-failing:tests":               "CI failed: tests",
+		"ci-red":                             "CI failed",
+		"check-runs":                         "CI checks could not be read",
+		"required-check-failing:DCO":         "check DCO failing",
+		"reviewer-verdict:changes_requested": "review swarm requested changes",
+		"pending: head pushed 59s ago (< min_head_age)":              "head pushed 59s ago; waiting for the minimum head age",
+		"contributor-lane:soaking:12m":                               "soaking",
+		"excluded-label:do-not-merge":                                "label do-not-merge excludes it",
+		"some-new-token":                                             "some new token",
+		"base-branch-red:docker (hive),docker (hub)":                 "waiting for the base branch's CI to recover (docker (hive), docker (hub)) — not this PR's fault",
+		"shared-ci-incident:13208":                                   "deferred to shared-CI incident #13208 — not this PR's fault",
+		"fork-guard:Canary":                                          "check Canary refuses fork PRs — a maintainer must push this branch to the repository",
+		"contributor-lane:workflow-path":                             "workflow path",
+		"contributor-lane:tests-removed":                             "tests removed",
+		"human-merge-path":                                           "human-merge path",
+		"human-merge-required":                                       "human merge",
 		"contributor-lane:workflow-path:human-approved@clubanderson": "workflow path — approved by @clubanderson",
 		"reviewer-verdict:requires_human:human-approved@octocat":     "review verdict requires human — approved by @octocat",
 	}
@@ -135,21 +183,30 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 	}{
 		{
 			name: "workflow path approved", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:workflow-path:human-approved@clubanderson",
-			wantCaption:  "Awaiting human merge (workflow path) — approved by @clubanderson; the hive never merges this itself: click Merge (or /lgtm + /approve for tide)",
+			wantCaption:  "Ready to merge (workflow path) — approved by @clubanderson — a person merges it",
 			wantApprover: "clubanderson", wantManual: true, wantActor: "maintainer",
 		},
 		{
 			name: "tests removed, approver unknown", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:tests-removed",
-			wantCaption: "Awaiting human merge (tests removed); the hive never merges this itself: click Merge (or /lgtm + /approve for tide)",
+			wantCaption: "Ready to merge (tests removed) — a person merges it",
 			wantManual:  true, wantActor: "maintainer",
 		},
 		{
+			name: "breaking change parks at 090 for the owner", stage: stagelabels.ReadyForHumanMerge, reason: "human-merge-required",
+			wantCaption: "Ready for human merge (breaking change — owner merges)", wantManual: true, wantActor: "maintainer", wantNoCaption: "Ready to merge",
+		},
+		{
+			name: "breaking change approved still waits for the owner", stage: stagelabels.ReadyForHumanMerge, reason: "human-merge-required:human-approved@clubanderson",
+			wantCaption:  "Ready for human merge (breaking change — owner merges) — approved by @clubanderson",
+			wantApprover: "clubanderson", wantManual: true, wantActor: "maintainer",
+		},
+		{
 			name: "trust-blocked 090 unchanged", stage: stagelabels.ReadyForHumanMerge, reason: "untrusted-author-role",
-			wantCaption: "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — author's role is not trusted for unattended merge", wantActor: "maintainer",
+			wantCaption: "Ready to merge — a maintainer merges it — author's role is not trusted for unattended merge", wantActor: "maintainer",
 		},
 		{
 			name: "requires_human approved at 090", stage: stagelabels.ReadyForHumanMerge, reason: "reviewer-verdict:requires_human:human-approved@octocat",
-			wantCaption:  "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — review verdict requires human — approved by @octocat",
+			wantCaption:  "Ready to merge — a maintainer merges it — review verdict requires human — approved by @octocat",
 			wantApprover: "octocat", wantActor: "maintainer",
 		},
 		{
@@ -184,14 +241,14 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 	s.statusMu.Unlock()
 	resp := s.buildStageTracker(s.status, store, now)
 	it := trackerItem(t, resp, "pr", 120)
-	if it.Stage != 90 || it.HumanApprover != "clubanderson" || !it.ManualMerge || !strings.HasPrefix(it.Caption, "Awaiting human merge (workflow path) — approved by @clubanderson") {
+	if it.Stage != 90 || it.HumanApprover != "clubanderson" || !it.ManualMerge || !strings.HasPrefix(it.Caption, "Ready to merge (workflow path) — approved by @clubanderson") {
 		t.Fatalf("row = stage %d approver %q manual %v caption %q", it.Stage, it.HumanApprover, it.ManualMerge, it.Caption)
 	}
 	raw, err := json.Marshal(it)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files","human_merge_reason_text":"Changes .github/workflows/**`) {
+	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files","human_merge_reason_text":"It changes GitHub workflow files`) {
 		t.Fatalf("payload lacks the manual-merge / human-merge-reason fields: %s", raw)
 	}
 	if clean := trackerItem(t, resp, "pr", 101); clean.HumanApprover != "" || clean.ManualMerge || clean.HumanMergeReason != "" || clean.HumanMergeReasonText != "" {
@@ -209,14 +266,15 @@ func TestStageTrackerHumanMergeReason(t *testing.T) {
 	tests := []struct {
 		reason, wantCode, wantWord, wantTipPrefix string
 	}{
-		{"contributor-lane:workflow-path:human-approved@clubanderson", "workflow-files", "workflow files", "Changes .github/workflows/**"},
-		{"contributor-lane:tests-removed", "tests-removed", "tests removed", "Deletes tests"},
-		{"human-merge-path:human-approved@octocat", "manual-merge-policy", "manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths"},
-		{"untrusted-author-role", "untrusted-author", "untrusted author", "No lane can vouch for the author"},
-		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "No lane can vouch"},
-		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is switched off"},
-		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "The reviewer swarm returned requires_human"},
-		{"something-brand-new", "policy", "policy", "The merge lane will not merge this unattended (lane reason `something-brand-new`)"},
+		{"contributor-lane:workflow-path:human-approved@clubanderson", "workflow-files", "workflow files", "It changes GitHub workflow files"},
+		{"contributor-lane:tests-removed", "tests-removed", "tests removed", "It removes tests"},
+		{"human-merge-path:human-approved@octocat", "manual-merge-policy", "manual-merge policy", "It touches files this repo reserves"},
+		{"untrusted-author-role", "untrusted-author", "untrusted author", "Hive won't merge it alone"},
+		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "Hive won't merge it alone"},
+		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is off for this repo"},
+		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "A reviewer asked for a person to merge"},
+		{"human-merge-required", "breaking-change", "human merge", "Breaking change — owner merges"},
+		{"something-brand-new", "policy", "policy", "Hive's merge rules leave this one to a person (`something-brand-new`)"},
 		{"", "", "", ""},
 	}
 	for _, tt := range tests {
@@ -244,7 +302,7 @@ func TestStageTrackerHumanMergeReason(t *testing.T) {
 	resp := s.buildStageTracker(s.status, store, now)
 
 	pr401 := trackerItem(t, resp, "pr", 401)
-	if pr401.HumanMergeReason != "workflow-files" || !strings.HasPrefix(pr401.HumanMergeReasonText, "Changes .github/workflows/**") || pr401.NestedUnder != 400 {
+	if pr401.HumanMergeReason != "workflow-files" || !strings.HasPrefix(pr401.HumanMergeReasonText, "It changes GitHub workflow files") || pr401.NestedUnder != 400 {
 		t.Fatalf("PR 401 = reason %q text %q nested %d", pr401.HumanMergeReason, pr401.HumanMergeReasonText, pr401.NestedUnder)
 	}
 	issue400 := trackerItem(t, resp, "issue", 400)
@@ -484,7 +542,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if issue7.Stage != 95 || !issue7.Mirrored || issue7.LinkedPR != 102 || issue7.Lane != laneIssue || issue7.AuthorKind != authorKindHuman {
 		t.Fatalf("issue7 = %+v", issue7)
 	}
-	if issue7.Caption != "Covered by PR #102 — soaking on the PR side" {
+	if issue7.Caption != "Covered by PR #102 — "+pr102.Caption {
 		t.Fatalf("issue7 caption = %q", issue7.Caption)
 	}
 	// The covering PR is resolved onto the issue with what its sub-row
@@ -498,7 +556,8 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		t.Fatalf("nested_under: pr102=%d pr101=%d", pr102.NestedUnder, pr101.NestedUnder)
 	}
 	issue8 := trackerItem(t, resp, "issue", 8)
-	if issue8.Stage != 10 || issue8.Mirrored || issue8.Actor != "scanner" || issue8.AuthorKind != authorKindHive {
+	if issue8.Stage != 10 || issue8.Mirrored || issue8.Actor != "its PR" || issue8.AuthorKind != authorKindHive ||
+		issue8.Caption != "Covered by PR #103 — "+pr103.Caption {
 		t.Fatalf("issue8 = %+v", issue8)
 	}
 
@@ -623,7 +682,7 @@ func TestStageTrackerIssueFeedPRsAreNotIssues(t *testing.T) {
 		{Repo: "acme/console", Number: 9, Kind: "issue", LinkedPR: 9, LinkedPRs: []StageTrackerLinkedPR{{Number: 9}, {Number: 10}}},
 		{Repo: "acme/console", Number: 10, Kind: "pr", Title: "Real PR"},
 	}
-	stageTrackerResolveLinkedPRs(items)
+	stageTrackerResolveLinkedPRs(items, nil)
 	if len(items[0].LinkedPRs) != 1 || items[0].LinkedPRs[0].Number != 10 || items[0].LinkedPRs[0].Title != "Real PR" {
 		t.Fatalf("self-link not dropped: %+v", items[0].LinkedPRs)
 	}
@@ -735,7 +794,7 @@ func TestStageTrackerAdoptedCaptionNamesTheWork(t *testing.T) {
 	cases := map[string]string{
 		"conflicting":                        "Hive adopted this PR; hive is rebasing it onto the base branch — conflicting",
 		"label:needs-rebase":                 "Hive adopted this PR; hive is rebasing it onto the base branch — needs a rebase",
-		"check-failing:coverage":             "Hive adopted this PR; hive is fixing CI — CI is red (check-failing:coverage)",
+		"check-failing:coverage":             "Hive adopted this PR; hive is fixing CI — CI failed: coverage",
 		"required-check-failing:test":        "Hive adopted this PR; hive is fixing CI — check test failing",
 		"reviewer-verdict:changes_requested": "Hive adopted this PR; hive is addressing the review findings — review swarm requested changes",
 		"":                                   "Hive adopted this PR",
@@ -1053,12 +1112,20 @@ func TestStageTrackerClosedIssueAnchor(t *testing.T) {
 // (`Supersedes #14592`, an adoption's "close #14592"), is dropped rather than
 // drawn as an issue "(title unavailable)".
 func TestStageTrackerEnrichSoftLinks(t *testing.T) {
-	var gets atomic.Int32
+	var gets, closerReads atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql") {
+			// The closer lookup a closed issue costs: #14576 was closed by
+			// the merge of #14570; #14590 (open, body says Fixes #14576)
+			// is listed under the same relation and must not be named.
+			closerReads.Add(1)
+			fmt.Fprint(w, `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":14590,"merged":false},{"number":14570,"url":"https://github.com/hivecommons/hive/pull/14570","merged":true,"mergedAt":"2026-10-27T12:00:00Z"}]}}}}}`)
+			return
+		}
 		gets.Add(1)
 		switch r.URL.Path {
 		case "/repos/hivecommons/hive/issues/14576":
-			fmt.Fprint(w, `{"number":14576,"title":"Runner stalls","state":"closed"}`)
+			fmt.Fprint(w, `{"number":14576,"title":"Runner stalls","state":"closed","state_reason":"completed"}`)
 		case "/repos/hivecommons/hive/issues/14577":
 			fmt.Fprint(w, `{"number":14577,"title":"A PR","state":"open","pull_request":{}}`)
 		case "/repos/hivecommons/hive/issues/14592":
@@ -1092,11 +1159,14 @@ func TestStageTrackerEnrichSoftLinks(t *testing.T) {
 	if len(links) != 3 {
 		t.Fatalf("links = %+v, want the PR numbers 14577 and 14592 dropped", links)
 	}
-	if got := links[0]; got.Number != 14576 || got.Title != "Runner stalls" || got.State != "closed" {
-		t.Fatalf("refs link = %+v, want titled and closed", got)
+	if got := links[0]; got.Number != 14576 || got.Title != "Runner stalls" || got.State != "closed" || got.StateReason != "completed" || got.ClosedBy != 14570 {
+		t.Fatalf("refs link = %+v, want titled, closed (completed) by merged #14570", got)
 	}
-	if got := items[1].LinkedIssues[0]; got.Title != "Runner stalls" || got.State != "closed" {
-		t.Fatalf("second PR's refs link = %+v", got)
+	if got := items[1].LinkedIssues[0]; got.Title != "Runner stalls" || got.State != "closed" || got.ClosedBy != 14570 {
+		t.Fatalf("second PR's refs link = %+v, want closed by #14570 (never the open #14590)", got)
+	}
+	if n := closerReads.Load(); n != 1 {
+		t.Fatalf("closer reads = %d, want 1 (closed issues only, memoised)", n)
 	}
 	if got := links[1]; got.Number != 14578 || got.Title != "" || got.State != "" {
 		t.Fatalf("failed lookup = %+v, want untouched", got)

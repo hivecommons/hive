@@ -140,7 +140,7 @@ jobs:
           src/scripts/check-changelog-fragment.sh "$BASE_REF"
 
 
-      # api-reference.md `pkg/<file>:<line>` citations go stale when a PR edits
+      # api-reference.md and api-reference/*.md `pkg/<file>:<line>` citations go stale when a PR edits
       # a route-registering server.go. The `relative links and anchors resolve`
       # job reports that too, but it is not a required check, so the causing PR
       # merged red and every later PR inherited the failure (#11866). This
@@ -157,7 +157,7 @@ jobs:
             exit 0
           fi
           if ! bash src/scripts/check-api-reference-citations.sh; then
-            echo "::error::This PR edited a server.go or static pages and src/docs/api-reference.md citations drifted. Run 'bash src/scripts/check-api-reference-citations.sh --fix' and commit the result. If static pages under src/pkg/dashboard/ also changed, lower the matching baseline in src/pkg/dashboard/webstatic/style_ratchet_test.go (styleRatchetBaselines) in the same PR."
+            echo "::error::This PR edited a server.go or static pages and src/docs/api-reference.md / api-reference/*.md citations drifted. Run 'bash src/scripts/check-api-reference-citations.sh --fix' and commit the result. If static pages under src/pkg/dashboard/ also changed, lower the matching baseline in src/pkg/dashboard/webstatic/style_ratchet_test.go (styleRatchetBaselines) in the same PR."
             exit 1
           fi
 

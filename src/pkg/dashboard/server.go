@@ -42,6 +42,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 //go:embed static
@@ -105,6 +106,11 @@ type Server struct {
 
 	feedbackRefreshBackoff feedbackBackoff
 
+	// mergeTrains remembers the trains between tracker builds: the hourly
+	// "merge train stalled" activity-log line per train and each member's
+	// first estimate (stage_tracker_merge_train.go).
+	mergeTrains mergeTrainMemory
+
 	// chatGroundedInflight caps concurrent grounded chat turns
 	// (api_chat_grounded.go); created lazily by chatGroundedSlots.
 	chatGroundedOnce     sync.Once
@@ -125,9 +131,23 @@ type Server struct {
 	// presenceLookup overrides the contribute hub as the tracker's author
 	// presence source for 072 rows (stage_tracker_adoption.go); tests only.
 	presenceLookup func(login string) (automerge.ContributorPresence, bool)
+	// fixWorkLookup overrides the contribute hub as the tracker's fix-queue
+	// source for the rework-pickup signal (stage_tracker_rework.go); tests only.
+	fixWorkLookup func(login, repo string, number int) (StageTrackerFixWork, bool)
 	// sweepState overrides the automerge lanes' live sweep state for the
 	// tracker's merge-gate rows (stage_tracker_merge_gate.go); tests only.
 	sweepState func() automerge.SweepState
+	// adoptNowWait / rerouteAfterFunc let tests shorten the Adopt now
+	// sweep wait and run the reroute pickup timer by hand
+	// (api_repo_item_decision_reroute.go); zero/nil use the real clock.
+	adoptNowWait     time.Duration
+	rerouteAfterFunc func(time.Duration, func())
+	// rerouteCandidates overrides the contribute hub as the tracker's
+	// online-clanker source for the Reroute submenu; tests only.
+	rerouteCandidates func(author string) []RerouteCandidate
+	// mergeAttempts overrides the process-wide merge-attempt registry for
+	// the tracker's "Merging" rows (stage_tracker_merge_gate.go); tests only.
+	mergeAttempts func() []github.MergeAttempt
 	// stageTrackerCache is the last /api/stage-tracker payload built from
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
@@ -243,6 +263,10 @@ type Server struct {
 	// handleAgentFullLog tests so handler success paths can be exercised without
 	// a live tmux pane.
 	captureFullLogFn func(name string) (string, error)
+
+	// jobTerminal holds the test seams for the sandbox.runtime: job
+	// terminal (job_terminal.go); zero values take in-cluster defaults.
+	jobTerminal jobTerminalDeps
 
 	kickBrainstormSendKickFn func(name, msg string) error
 	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
@@ -533,6 +557,14 @@ type Server struct {
 	// is JSON-encoded as-is (cmd/hive passes gfi.Stats); typed as any so the
 	// dashboard does not import pkg/gfi (import ratchets).
 	goodFirstIssueStats atomic.Pointer[func() any]
+	// writebackGate is the unsolicited write-back gate (api_writeback.go);
+	// sentinelFindings is the ring behind /api/sentinel.
+	writebackMu      sync.RWMutex
+	writebackGate    *writeback.Gate
+	sentinelFindings sentinelFindings
+	// hotspotSource is the merge-hotspot advisor's store (api_hotspots.go).
+	hotspotMu     sync.RWMutex
+	hotspotSource HotspotSource
 
 	// forgeAppInventoryFn supplies the Forge App tab's key inventory from
 	// cmd/hive (resolved active key path + per-app-id PVC keys, fingerprints
@@ -694,8 +726,13 @@ type StatusPayload struct {
 	SystemResources     *SystemResources            `json:"systemResources,omitempty"`
 	GitHubAppRequired   bool                        `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string                      `json:"githubAppInstallURL,omitempty"`
-	GitHubAppPermIssue  string                      `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState      string                      `json:"githubAppState,omitempty"`
+	// Capabilities summarises the GitHub App permissions tracker items are
+	// blocked on (pkg/blocker ledger): ⚙ → Security/Features reads
+	// "GitHub App permissions: missing `workflows` · N items blocked"
+	// (hivecommons/hive#15099).
+	Capabilities       *FrontendCapabilities `json:"capabilities,omitempty"`
+	GitHubAppPermIssue string                `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState     string                `json:"githubAppState,omitempty"`
 	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
 	// or classification: a real App is named (app_id set, not the placeholder)
 	// but installation_id is 0. That state alone means every token is a
@@ -960,12 +997,16 @@ type FrontendAgent struct {
 	// from it (sandbox_health.go). Present only for sandboxed agents; the
 	// SPA reads health from here instead of State, which is "idle" between
 	// kicks for an agent that has no session to be down.
-	SandboxRun      *FrontendSandboxRun `json:"sandboxRun,omitempty"`
-	LastError       string              `json:"lastError,omitempty"`
-	StallNudges     int                 `json:"stallNudges,omitempty"`
-	StallRecoveries int                 `json:"stallRecoveries,omitempty"`
-	ActionNudges    int                 `json:"actionNudges,omitempty"`
-	TransientNudges int                 `json:"transientNudges,omitempty"`
+	SandboxRun *FrontendSandboxRun `json:"sandboxRun,omitempty"`
+	// SandboxRuntime is the effective sandbox.runtime for a sandboxed agent
+	// ("podman" or "job"); the SPA routes "▶ terminal" to the Job pod log
+	// viewer for "job" (hivecommons/hive#14798). Empty when not sandboxed.
+	SandboxRuntime  string `json:"sandboxRuntime,omitempty"`
+	LastError       string `json:"lastError,omitempty"`
+	StallNudges     int    `json:"stallNudges,omitempty"`
+	StallRecoveries int    `json:"stallRecoveries,omitempty"`
+	ActionNudges    int    `json:"actionNudges,omitempty"`
+	TransientNudges int    `json:"transientNudges,omitempty"`
 	// SessionRssMb is the resident memory of the agent's CLI process tree
 	// (MiB) and SessionAge how long the current CLI session has been up,
 	// both sampled on the health tick (#14842). SessionRecycles counts
@@ -1316,6 +1357,11 @@ type FrontendRepo struct {
 	AutoMerge    bool                    `json:"autoMerge"`
 	// MergeStrategy is the repo's merge_strategy (direct or hive-serialized).
 	MergeStrategy string `json:"mergeStrategy"`
+	// RequireCurrentBase is the effective current-base gate for this repo
+	// (auto_merge.require_current_base / skip_current_base over the hive-wide
+	// default, hivecommons/hive#15335); the repo card shows a "current-base"
+	// chip when it is on.
+	RequireCurrentBase bool `json:"requireCurrentBase,omitempty"`
 	// Upstream is the upstream a fork repo follows (hivecommons/hive#11433):
 	// the repo's upstream_watch entry, resolved to the fork parent once the
 	// watch has run. Empty for a repo that is not in the watch. UpstreamWatchOn
@@ -1632,6 +1678,9 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 	setOwnershipAuditSink(func(at time.Time, repo string, number int, detail string) {
 		s.audit.LogRecordAt(at.UTC().Format(time.RFC3339), "system", ownershipTransitionAction, detail, "", repo, number)
 	})
+	// A merge attempt beginning or ending is a tracker change the next poll
+	// must see (hivecommons/hive#15245).
+	github.DefaultMergeAttempts().SetOnChange(func() { s.invalidateStageTrackerCache() })
 	return s
 }
 
@@ -1822,6 +1871,11 @@ func (s *Server) Start() error {
 	costTicker := time.NewTicker(costHistoryMinIntervalMs * time.Millisecond)
 	defer costTicker.Stop()
 	go s.runCostSampler(costTicker.C)
+	// The operator's "Rebase, then merge as maintainer" follow-throughs
+	// (rebase_merge_followthrough.go) poll from here.
+	followCtx, cancelFollow := context.WithCancel(context.Background())
+	defer cancelFollow()
+	s.StartRebaseMergeFollowThrough(followCtx)
 	return srv.Serve(ln)
 }
 
@@ -2391,6 +2445,12 @@ func (s *Server) configuredOwnerUser() string {
 	return ""
 }
 
+// AuthorizedUserEntry splits a dashboard.authorized_users entry
+// ("login" or "login:role") into its login and role.
+func AuthorizedUserEntry(entry string) (name, role string) {
+	return dashboardAuthorizedUserEntry(entry)
+}
+
 func dashboardAuthorizedUserEntry(entry string) (name, role string) {
 	entry = strings.TrimSpace(entry)
 	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
@@ -2793,6 +2853,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired
 	status.GitHubAppInstallURL = s.githubAppInstallURL
+	status.Capabilities = s.capabilitiesStatus()
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
@@ -3895,12 +3956,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := s.status
 	snapshot := s.statusWithOverviewBands(status, now)
 	s.statusMu.RUnlock()
-	payload := statusWithWebhooks{StatusPayload: snapshot, Webhooks: github.WebhookHealthSnapshot()}
+	payload := statusWithWebhooks{StatusPayload: snapshot, Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot()}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
 	}
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
+	payload.Writeback = s.WritebackStatus()
+	payload.Hotspots = s.HotspotStatusBlock()
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
@@ -3910,12 +3973,23 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 type statusWithWebhooks struct {
 	*StatusPayload
 	Webhooks github.WebhookHealth `json:"webhooks"`
+	// CIFailureSignals is the webhook CI-failure signal store: retained
+	// signals, the last one, webhook-triggered kicks and unmatched heads.
+	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
 	*EvalLoopStatus
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
 	// machine (scheduled / draining / pulling / … / missed) with the drain
 	// countdown, derived at serve time (#14856). Absent on a hive the hub
 	// does not manage and that has no upgrade in flight.
 	UpgradeProgress *spoke.UpgradeProgress `json:"upgradeProgress,omitempty"`
+	// Writeback is the unsolicited write-back gate's live state: suppressed
+	// writes in the last 24h, per-repo first_seen / writable / mode, and the
+	// banners for repos the hive can now write to but left untouched.
+	Writeback *writeback.Status `json:"writeback,omitempty"`
+	// Hotspots is the merge-hotspot advisor's one-line summary: files hit by
+	// concurrent PRs in the window, how many warrant a split, how many have
+	// a modularize issue filed. Absent when the advisor is not wired.
+	Hotspots *HotspotStatus `json:"hotspots,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

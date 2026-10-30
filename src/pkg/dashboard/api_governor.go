@@ -71,6 +71,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	repoSelfAuthorizationHold := make(map[string]map[string]any, len(cfg.Project.Repos))
 	repoReporterTrustHold := make(map[string]map[string]any, len(cfg.Project.Repos))
 	repoLabelDriven := make(map[string]map[string]any, len(cfg.Project.Repos))
+	// #15335 current-base gate: same three-way shape as #5117/#9665
+	// (hive-wide default on the Features tab, per-repo override here).
+	repoCurrentBase := make(map[string]map[string]any, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
 		full := repo
 		if strings.Contains(repo, "/") {
@@ -90,6 +93,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		}
 		repoReporterTrustHold[full] = rtEntry
 		repoLabelDriven[full] = labelDrivenRepoPayload(cfg, repo)
+		cbEntry := map[string]any{"effective": cfg.AutoMerge.RequireCurrentBaseFor(full)}
+		if v := cfg.AutoMerge.CurrentBaseOverrideFor(full); v != nil {
+			cbEntry["value"] = *v
+		}
+		repoCurrentBase[full] = cbEntry
 	}
 	// hivecommons/hive#11313 label-driven approval, rendered on the Repos tab
 	// next to the per-repo opt-in. EFFECTIVE values are sent for the defaulted
@@ -191,6 +199,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"reporterTrustHoldEnvLocked":     cfg.GitHub.ReporterTrustHoldEnvOverrideSet(),
 		"repoLabelDriven":                repoLabelDriven,
 		"labelDrivenApproval":            labelDrivenApproval,
+		"currentBaseDefault":             cfg.AutoMerge.CurrentBaseDefaultEnabled(),
+		"repoCurrentBase":                repoCurrentBase,
 		// Kick-list caps, rendered on the Repos tab. The EFFECTIVE values are
 		// sent (defaults and ceiling already resolved) so the fields always
 		// show the number actually in force rather than an empty box when the
@@ -2910,6 +2920,10 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 		// knobs. Pointer-typed so absent keys mean "unchanged".
 		RepoLabelDriven     map[string]*labelDrivenRepoBody `json:"repoLabelDriven,omitempty"`
 		LabelDrivenApproval *labelDrivenApprovalBody        `json:"labelDrivenApproval,omitempty"`
+		// hivecommons/hive#15335 current-base gate per-repo override:
+		// true → auto_merge.require_current_base, false →
+		// auto_merge.skip_current_base, null → inherit (removed from both).
+		RepoCurrentBase map[string]*bool `json:"repoCurrentBase,omitempty"`
 		// Kick-list caps. POINTER-typed so an absent key means "unchanged":
 		// the Repos tab sends only the fields the operator actually touched,
 		// and editing a repo must not reset the caps (or vice versa).
@@ -2925,7 +2939,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	// the "nothing supplied" guard must only fire when the request would change
 	// nothing at all.
 	capsOnly := body.MaxIssuesPerKick != nil || body.MaxPRsPerKick != nil
-	holdOnly := body.ReporterTrustHold != nil || body.RepoReporterTrustHold != nil || body.RepoLabelDriven != nil || body.LabelDrivenApproval != nil
+	holdOnly := body.ReporterTrustHold != nil || body.RepoReporterTrustHold != nil || body.RepoLabelDriven != nil || body.LabelDrivenApproval != nil || body.RepoCurrentBase != nil
 	if len(body.Repos) == 0 && body.PrimaryRepo == nil && body.SelfAuthorizationHold == nil && body.RepoSelfAuthorizationHold == nil && !capsOnly && !holdOnly {
 		jsonError(w, "at least one repo is required", http.StatusBadRequest)
 		return
@@ -3120,6 +3134,15 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.LabelDrivenApproval != nil {
 		body.LabelDrivenApproval.applyTo(s.deps.Config)
+	}
+	for repo, value := range body.RepoCurrentBase {
+		// The auto_merge lists hold owner/repo; the Repos tab may send a bare
+		// name for a repo of this hive's org.
+		full := strings.TrimSpace(repo)
+		if full != "" && !strings.Contains(full, "/") && strings.TrimSpace(s.deps.Config.Project.Org) != "" {
+			full = strings.TrimSpace(s.deps.Config.Project.Org) + "/" + full
+		}
+		s.deps.Config.AutoMerge.SetCurrentBaseOverride(full, value)
 	}
 	s.deps.Config.PruneRepoPoliciesToWatched()
 

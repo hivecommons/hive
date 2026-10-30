@@ -11,6 +11,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // The reporter-trust hold (hivecommons/hive#9665) is the merge-side half of
@@ -415,14 +416,19 @@ func (c *Client) reconcileReporterTrustSignal(ctx context.Context, repo string, 
 			reason := finding.escalationReason()
 			c.recordReporterTrustEscalation(repo, pr.GetNumber(), reason)
 			if !hasExactLabel(labels, issueNeedsHumanLabel) {
+				// Write-back gate: the hold may sit on a PR the hive did not
+				// open; the escalation is recorded internally regardless.
+				if d := c.WritebackAllowed(repo, c.sentinelWritebackItem(pr), writeback.KindReporterTrustHold, reporterTrustNotice(finding)); !d.Allowed {
+					return labels, reason
+				}
 				if !finding.OwnsNeedsHuman {
 					finding.OwnsNeedsHuman = true
 					// Persist ownership when upgrading a legacy invisible hold.
-					if err := c.CreateIssueComment(ctx, repo, pr.GetNumber(), reporterTrustNotice(finding)); err != nil {
+					if err := c.CreateIssueComment(ctx, repo, pr.GetNumber(), reporterTrustNotice(finding)); err != nil { // writeback:gated
 						return labels, reason
 					}
 				}
-				if err := c.AddLabels(ctx, repo, pr.GetNumber(), []string{issueNeedsHumanLabel}); err == nil {
+				if err := c.AddLabels(ctx, repo, pr.GetNumber(), []string{issueNeedsHumanLabel}); err == nil { // writeback:gated
 					labels = append(labels, issueNeedsHumanLabel)
 				}
 			}

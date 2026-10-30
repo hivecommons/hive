@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // The three live shapes (2026-10-25), reduced to the facts the re-check
@@ -196,6 +198,28 @@ func TestParkRecheckReferencedPRMerged(t *testing.T) {
 	}
 	wantNote(t, f.posted[0], "parked for a maintainer (`stage/045-needs-decision`) since 2026-10-03",
 		"- #409 merged on 2026-10-06 (it refers to this issue).", "does not un-park")
+}
+
+func TestParkRecheckWritebackRefusalDoesNotPostOrEdit(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
+			f := prParkedIssue(385, "Maintainer decision needed.")
+			f.timeline = append(f.timeline, prCrossRef("org/repo", 409, true, "closed", parkT0.Add(50*time.Hour), parkT0.Add(50*time.Hour), "Refs #385"))
+			if existing {
+				f.comments = append(f.comments, map[string]any{"id": int64(99), "body": parkRecheckMarker + "\nstale", "user": map[string]any{"login": "hive[bot]"}})
+			}
+			client := parkClient(t, newParkFake(t, f))
+			gate := writeback.New(writeback.Config{}, writeback.Deps{LevelFor: func(string) int { return 1 }}, "")
+			client.SetWritebackGate(gate)
+			res, err := client.RecheckParkedIssues(context.Background(), ParkRecheckConfig{Repos: []string{"org/repo"}})
+			if err != nil || res.Posted != 0 || res.Updated != 0 || len(f.posted)+len(f.edited) != 0 {
+				t.Fatalf("result=%+v err=%v posted=%q edited=%q", res, err, f.posted, f.edited)
+			}
+			if suppressed := gate.Recent(); len(suppressed) != 1 || suppressed[0].Kind != writeback.KindNeedsDecisionComment || suppressed[0].Number != 385 {
+				t.Fatalf("suppressed=%+v", suppressed)
+			}
+		})
+	}
 }
 
 // utah#13: the park said #722 was in progress and agents should leave the

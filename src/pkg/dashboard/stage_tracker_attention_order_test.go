@@ -120,6 +120,7 @@ func TestStageTrackerAttentionOrderJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerRegressionHandled"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerWaitSince"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
 		stageTrackerActedJS(t, html),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerSort"),

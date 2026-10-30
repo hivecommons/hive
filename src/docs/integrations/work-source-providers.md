@@ -6,11 +6,17 @@ This page is for teams that want Hive to read actionable work items from a plann
 
 ## Concepts
 
+For example, a Linear task in team `ENG` can become work on `your-org/app`. Linear supplies the task title, ID, and blockers; the Git forge (the service hosting the repository and pull requests) still supplies the code repository. Selecting Linear does not move your code or turn Linear into a forge.
+
+A **primary** source supplies the main backlog. An **additive** source, such as run stages, appends extra work to that backlog. For example, Linear can remain primary while `run_stages: true` also offers approved plan stages.
+
 A **work source** is the Step 01 input to Hive's governor loop. The normalized record is `worksource.Issue`: it carries source type, target repo, source-native external ID, title, author, labels, assignees, priority, state, timestamps, canonical URL, tracker flag, stage, and dependency edges (`src/pkg/worksource/worksource.go:18`). The `WorkSource` interface itself has only `SourceType()` and `ListIssues(context.Context)` (`src/pkg/worksource/worksource.go:73`).
 
 `governor.work_source` chooses one primary source: `github`/empty, `github_projects`, `linear`, `jira`, `gitea`, `gitlab`, or `external`. Pending run stages and Wavefront graph nodes are additive sources, not replacement primaries. `FromConfig` resolves the configured type through the primary registry (`RegisterPrimary`) and rejects unknown values, so a bad type still makes the governor fail closed.
 
 ## Interface
+
+This section is for adapter authors. Operators configuring an existing provider can skip to [Configuration examples](#configuration-examples).
 
 Implement this contract:
 
@@ -37,6 +43,17 @@ Additive sources use a separate compile-time registry. `RegisterAdditive` is cal
 If you do not want to maintain an in-tree adapter at all, use [External provider](#external-provider) instead: it is the same seam, reached over HTTP/JSON.
 
 ## Configuration examples
+
+Before applying one of these examples:
+
+1. Obtain credentials for the selected provider with access to the intended organization, teams, or projects. Make their environment-variable references available to the **Hive process**, not just your interactive shell. Do not paste token values into saved YAML.
+2. Replace `your-org`, repository names, team/project keys, project number, states, and URLs with values from that service. Ensure the target repositories are monitored by Hive and accessible through its forge credentials.
+3. Use **Settings → Work Source** for supported dashboard settings, or edit the Hive configuration your deployment actually loads; see [configuration ownership](../agent-configuration.md#where-configuration-lives). Follow that deployment's reload/restart procedure for file changes.
+4. Create or choose one eligible item in a configured state, without a hold label or unresolved blocker. After the governor next lists work, check the dashboard's source-labelled items and queue. A successful connection can still yield no actionable items when filters exclude everything; check Hive logs for provider authentication/configuration errors before widening filters.
+
+For a trial, record the previous source and settings first. Restore them through the same dashboard/deployment path afterward. Changing the listing source does not undo code changes or complete work already assigned.
+
+**Linear `assigned_only: true` requires a connected Linear agent.** It is not simply “tasks assigned to the API-key owner”; configuration fails closed without the connected-agent identity. Complete [Linear agent integration](../linear-agent.md) first, or leave this optional filter off for the trial.
 
 ```yaml
 governor:
@@ -83,7 +100,7 @@ governor:
 
 ## Worked example: Linear
 
-The Linear adapter is the best reference for a non-GitHub work source.
+The Linear adapter is the implementation reference for a non-GitHub work source; these details are not additional setup steps.
 
 - `LinearConfig` maps teams to target repos, optional project routing, hold labels, cycle filtering, and an optional viewer ID used by `assigned_only` (`src/pkg/worksource/linear.go:51`).
 - `linearIssuesQuery` enumerates by team and state with pagination; `linearAssignedIssuesQuery` adds assignee/delegate filters when `assigned_only` is enabled (`src/pkg/worksource/linear.go:94`, `src/pkg/worksource/linear.go:138`).

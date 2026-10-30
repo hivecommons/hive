@@ -1,16 +1,22 @@
 package dashboard
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Merge-gate states (StageTrackerMergeGate.State), in pipeline order. The
-// Activity Monitor's Merge gate column lights one chevron for 060, 080,
-// 095 and 100; the state names which, in words a row can show without a
-// hover (hivecommons/hive#15073).
+// state names where a PR stands on its way to merge, in words a row can
+// show without a hover (hivecommons/hive#15073). 060 (gate-pending) is
+// pre-admission and is drawn in the CI / Review column as "Review passed ·
+// <lane reason>" (CI in progress / checks unreadable / soak Nm remaining);
+// the Merge gate column lights for 080, 095 and 100 (stageTrackerColumn).
 const (
 	// MergeGateStatePending: 060 reviewed — the review swarm approved but
 	// the admission gate still holds (CI pending or red, soak on an
@@ -25,6 +31,10 @@ const (
 	// MergeGateStateMerging: 100 merge queue — admitted and soaked, the
 	// merge is being attempted (GitHub merge queue / tide / merge window).
 	MergeGateStateMerging = "merging"
+	// MergeGateStateMergeFailed: a merge attempt the hive just made was
+	// refused (hivecommons/hive#15245); MergeFailed says why. The PR is
+	// still open at whatever stage the lane recorded.
+	MergeGateStateMergeFailed = "merge-failed"
 	// MergeGateStateMerged: 110.
 	MergeGateStateMerged = "merged"
 )
@@ -50,6 +60,40 @@ type StageTrackerMergeGate struct {
 	// SoakUntil / SoakRemainingSeconds: the soak window's end, at 095.
 	SoakUntil            *time.Time `json:"soak_until,omitempty"`
 	SoakRemainingSeconds int64      `json:"soak_remaining_seconds,omitempty"`
+	// MergingSince is when the hive issued the merge call (state merging
+	// from a live attempt, hivecommons/hive#15245); MergePath names the
+	// caller (sweep, dashboard, relay, forge). The SPA holds the row on
+	// "Merging" for at least the merge toast's lifetime from this instant.
+	MergingSince *time.Time `json:"merging_since,omitempty"`
+	MergePath    string     `json:"merge_path,omitempty"`
+	// MergeFailed / MergeFailedAt: the refusal, in words, and when, for
+	// state merge-failed.
+	MergeFailed   string     `json:"merge_failed,omitempty"`
+	MergeFailedAt *time.Time `json:"merge_failed_at,omitempty"`
+	// MergeFailedKind / MergeFailedText / MergeFailedChecks: the refusal
+	// translated (stageTrackerMergeRefusal) — a kind token the SPA maps to
+	// a short chip detail, the plain sentence for the tooltip, and for
+	// checks-pending how many required checks are still expected. The raw
+	// MergeFailed text is for the tooltip's Details line only.
+	MergeFailedKind   string `json:"merge_failed_kind,omitempty"`
+	MergeFailedText   string `json:"merge_failed_text,omitempty"`
+	MergeFailedChecks int    `json:"merge_failed_checks,omitempty"`
+	// DuplicateOf / DuplicateIssue: for State "duplicate-of:<n>", the open
+	// PR the merge queue kept for the same issue and that issue
+	// (hivecommons/hive#15395); the row waits for a person or the
+	// delegate to pick one.
+	DuplicateOf    int `json:"duplicate_of,omitempty"`
+	DuplicateIssue int `json:"duplicate_issue,omitempty"`
+}
+
+// MergeGateStateDuplicateOfPrefix opens the gate state of a PR held out of
+// the merge queue because another open PR fixes the same issue:
+// "duplicate-of:15402".
+const MergeGateStateDuplicateOfPrefix = prstage.MergeTrainStateDuplicateOf + ":"
+
+// MergeGateStateDuplicateOf is the gate state for a PR yielding to n.
+func MergeGateStateDuplicateOf(n int) string {
+	return MergeGateStateDuplicateOfPrefix + strconv.Itoa(n)
 }
 
 // stageTrackerMergeGateState maps a stage to its merge-gate state; "" off
@@ -97,10 +141,89 @@ func stageTrackerMergeGate(repo string, number int, stage stagelabels.Stage, rec
 	return mg
 }
 
+// stageTrackerMergeAttempts is the live merge-attempt registry keyed as
+// MergeAttempts does (repo#number, lower-cased), or the test override.
+func (s *Server) stageTrackerMergeAttempts() map[string]github.MergeAttempt {
+	var list []github.MergeAttempt
+	if s != nil && s.mergeAttempts != nil {
+		list = s.mergeAttempts()
+	} else {
+		list = github.MergeAttemptsSnapshot()
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	out := make(map[string]github.MergeAttempt, len(list))
+	for _, a := range list {
+		out[stageTrackerMergeAttemptKey(a.Repo, a.Number)] = a
+	}
+	return out
+}
+
+func stageTrackerMergeAttemptKey(repo string, number int) string {
+	return strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number)
+}
+
+// stageTrackerMergeAttemptStage is the stage a PR row shows while the
+// hive's merge call on it is in flight, or just returned merged and the
+// PR is still listed open: 100, lit "Merging" (hivecommons/hive#15245).
+// A refused attempt leaves the stage as recorded.
+func stageTrackerMergeAttemptStage(stage stagelabels.Stage, a github.MergeAttempt, ok bool) stagelabels.Stage {
+	if ok && (a.InFlight() || a.Merged) {
+		return stagelabels.MergeQueue
+	}
+	return stage
+}
+
+// stageTrackerMergeGateAttempt folds a merge attempt into the gate
+// narration: a live or just-successful attempt sets merging + since; a
+// refused one sets merge-failed with the reason (even off the gate, so
+// a 090 row whose maintainer merge GitHub refused says so). nil without
+// an attempt.
+func stageTrackerMergeGateAttempt(mg *StageTrackerMergeGate, a github.MergeAttempt, ok bool) *StageTrackerMergeGate {
+	if !ok {
+		return mg
+	}
+	if mg == nil {
+		mg = &StageTrackerMergeGate{}
+	}
+	since := a.StartedAt
+	switch {
+	case a.InFlight() || a.Merged:
+		mg.State = MergeGateStateMerging
+		mg.MergingSince = &since
+		mg.MergePath = a.Path
+		mg.SoakUntil, mg.SoakRemainingSeconds, mg.NextSweepAt = nil, 0, nil
+	case a.Failed():
+		mg.State = MergeGateStateMergeFailed
+		mg.MergingSince = &since
+		mg.MergePath = a.Path
+		mg.MergeFailed = a.Error
+		mg.MergeFailedKind, mg.MergeFailedText, mg.MergeFailedChecks = stageTrackerMergeRefusal(a.Error)
+		at := a.EndedAt
+		mg.MergeFailedAt = &at
+	}
+	return mg
+}
+
 // stageTrackerSweepState is the lanes' live state, or the test override.
 func (s *Server) stageTrackerSweepState() automerge.SweepState {
 	if s != nil && s.sweepState != nil {
 		return s.sweepState()
 	}
 	return automerge.SweepSnapshot()
+}
+
+// stageTrackerMergingCaption is the row caption while the hive's merge
+// call is in flight (or just returned merged): who issued it, in words.
+func stageTrackerMergingCaption(a github.MergeAttempt) string {
+	switch a.Path {
+	case github.PRAuditPathDashboard:
+		return "Merging now — a maintainer's merge from the dashboard is in flight"
+	case github.PRAuditPathRelay:
+		return "Merging now — the hive-merge relay's merge call is in flight"
+	case github.PRAuditPathForge:
+		return "Merging now — the forge adapter's merge call is in flight"
+	}
+	return "Merging now — the automerge sweep's merge call is in flight"
 }

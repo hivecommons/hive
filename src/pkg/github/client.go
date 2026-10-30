@@ -18,6 +18,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
@@ -27,6 +28,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.
@@ -75,6 +77,9 @@ type Client struct {
 	// and what every test constructs) means nothing is paused, so the client
 	// behaves exactly as it did before.
 	repoPaused func(repo string) bool
+	// writeback is the unsolicited write-back gate (writeback_gate.go);
+	// nil allows everything.
+	writeback *writeback.Gate
 	// agentServesRepo reports whether an agent is scoped to a repo (#6204).
 	// Guarded by reposMu because the dashboard can re-scope an agent while a
 	// relay goroutine is deciding whether to fulfil a request. Nil (the zero
@@ -189,6 +194,10 @@ type Client struct {
 	// so the self-approval guard treats a base and its replicas as one
 	// author. nil compares exact lane names.
 	agentBase func(agent string) string
+	// relayKnown reports that a login has a contributor profile on this
+	// hive (runs a relay that targets it), so a PR under that login is an
+	// agent's, not a person's — see SetRelayKnownFunc.
+	relayKnown func(login string) bool
 	// priorArtFiling* enforce the prior-art filing verdict on relayed issue
 	// creates (issue_request_prior_art.go, hivecommons/hive#13879).
 	priorArtFilingGate   func() config.PriorArtGateConfig
@@ -264,6 +273,10 @@ type Client struct {
 	// hivecommons/hive#13645). Guarded by openHeldMu.
 	openHeld   openHeldPRState
 	openHeldMu sync.Mutex
+	// sharedCIRerunForbidden records when the App was last refused a rerun in
+	// a repo (403 "Resource not accessible by integration"), keyed
+	// "owner/repo". Guarded by sharedCIRerunMu.
+	sharedCIRerunForbidden map[string]time.Time
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
@@ -424,6 +437,9 @@ type Client struct {
 	// issueStage resolves the live `governor.labels.stage` policy for the
 	// issue stage reconciler; nil disables it.
 	issueStage func() IssueStagePolicy
+	// authorKindLabels resolves the live governor.labels.author names for
+	// dashboard decisions; nil uses the default names.
+	authorKindLabels func() authorkind.Names
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
@@ -652,6 +668,29 @@ func (c *Client) SetAgentBaseFunc(fn func(agent string) string) {
 	c.agentBase = fn
 }
 
+// SetRelayKnownFunc tells the client which logins are relay contributors
+// registered on this hive. The duplicate-fix sweep uses it to tell the
+// hive's own contributor agent (closable, writes allowed as a hive item)
+// from a person who happens to have no author/* label yet
+// (hivecommons/hive#15469: a relay's duplicate PR read as a person's, so
+// the gate refused the notice and the pair rode the merge train together).
+func (c *Client) SetRelayKnownFunc(fn func(login string) bool) {
+	if c == nil {
+		return
+	}
+	c.relayKnown = fn
+}
+
+// IsRelayContributorLogin reports whether login runs a registered relay on
+// this hive; false when no registry is installed.
+func (c *Client) IsRelayContributorLogin(login string) bool {
+	login = strings.TrimSpace(login)
+	if c == nil || c.relayKnown == nil || login == "" {
+		return false
+	}
+	return c.relayKnown(login)
+}
+
 func (c *Client) agentBaseName(agent string) string {
 	agent = strings.TrimSpace(agent)
 	if agent == "" || c == nil || c.agentBase == nil {
@@ -819,6 +858,9 @@ type Issue struct {
 	// stage/030-pr-in-progress from stage/020-claimed; the claim's kind
 	// alone never does (hivecommons/hive#13069).
 	ClaimPRStarted bool `json:"claim_pr_started,omitempty"`
+	// ClaimHive is the marker's hive= — the hive that recorded the live
+	// claim — when the claim came from a `hive:claim` marker; empty otherwise.
+	ClaimHive string `json:"claim_hive,omitempty"`
 	// ClaimAdvisory is set when the issue carries a live contributor claim
 	// the live-claim filter chose NOT to honour — the issue is in contributor
 	// cool-off, or contributor claims have kept hive agents off it past the
@@ -4680,8 +4722,10 @@ type RepoWorkIssue struct {
 	Title     string          `json:"title"`
 	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"`
 	Author    string          `json:"author,omitempty"`
-	Labels    []string        `json:"labels,omitempty"`
-	Assignees []string        `json:"assignees,omitempty"`
+	// AuthorIsHuman carries the same reporter classification as Issue.
+	AuthorIsHuman bool     `json:"author_is_human,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	Assignees     []string `json:"assignees,omitempty"`
 	// HumanAcknowledged carries the issue's human acknowledgement so the
 	// your-turn decision can honour it on non-actionable rows.
 	HumanAcknowledged bool      `json:"human_acknowledged,omitempty"`
@@ -4698,6 +4742,7 @@ type RepoWorkIssue struct {
 	ClaimKind      string `json:"claim_kind,omitempty"`
 	ClaimedBy      string `json:"claimed_by,omitempty"`
 	ClaimPRStarted bool   `json:"claim_pr_started,omitempty"`
+	ClaimHive      string `json:"claim_hive,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -4725,6 +4770,10 @@ type RepoWorkIssue struct {
 	// (liftBlockedMarkerless).
 	ReviewBacklog bool `json:"review_backlog,omitempty"`
 	OpenBlockedBy int  `json:"open_blocked_by,omitempty"`
+	// Advisory is the body-derived advisory classification (dedupe
+	// checklist marker, "Decision required: no"), read here because the
+	// body itself is not carried (hivecommons/hive#15381).
+	Advisory *IssueAdvisory `json:"advisory,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
@@ -4735,6 +4784,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		Title:             issue.Title,
 		OwnerStep:         issue.OwnerStep,
 		Author:            issue.Author,
+		AuthorIsHuman:     issue.AuthorIsHuman,
 		Labels:            append([]string(nil), issue.Labels...),
 		Assignees:         append([]string(nil), issue.Assignees...),
 		HumanAcknowledged: issue.HumanAcknowledged,
@@ -4748,11 +4798,13 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		ClaimKind:                issue.ClaimKind,
 		ClaimedBy:                issue.ClaimedBy,
 		ClaimPRStarted:           issue.ClaimPRStarted,
+		ClaimHive:                issue.ClaimHive,
 		LinkedPRs:                append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext:             issue.ClaimContext,
 		Children:                 issue.Children,
 		TrackerProgress:          progress,
 		IsTracker:                RendersAsTracker(issue.IsTracker, issue.Labels, progress),
+		Advisory:                 IssueAdvisoryFromBody(issue.Body),
 	}
 }
 
@@ -4773,6 +4825,9 @@ func appendRepoWorkIssueDetail(result *ActionableResult, issue Issue, bucket, re
 func (c *Client) workIssue(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
 	out := c.repoWorkIssueAcked(repo, issue, labels, bucket, reason)
 	out.ReporterConfirmationGate = c.reporterConfirmationGateApplies(issue)
+	if issue != nil {
+		out.AuthorIsHuman = c.isHumanAuthor(issue.GetUser())
+	}
 	return out
 }
 
@@ -4803,6 +4858,7 @@ func (c *Client) repoWorkIssue(repo string, issue *gh.Issue, labels []string, bu
 		TrackerProgress: progress,
 		Bucket:          bucket,
 		Reason:          reason,
+		Advisory:        IssueAdvisoryFromBody(issue.GetBody()),
 	}
 }
 

@@ -107,12 +107,13 @@ jobs:
       - name: Check src/docs/ relative links and anchors
         run: python3 src/scripts/check-docs-links.py src/docs
 
-      # Verifies every `pkg/<file>:<line>` citation in api-reference.md still
+      # Verifies every `pkg/<file>:<line>` citation in api-reference.md and
+      # api-reference/*.md still
       # points at the route registration it names (hivecommons/hive#6628).
       - name: Self-test the api-reference citation checker
         run: bash src/scripts/test-check-api-reference-citations.sh
 
-      - name: Check api-reference.md source citations
+      - name: Check api-reference source citations
         run: bash src/scripts/check-api-reference-citations.sh
 
       # Verifies repo-local file:line citations across every src/docs/*.md file

@@ -1,42 +1,48 @@
 # Zero to Automation: Getting Started with Hive
 
-Hive is a team of AI agents that watch your project and help improve it — finding bugs, adding tests, writing docs. It works in **levels (L1–L6)**: at low levels agents only *suggest* things, and at high levels they can open and even merge pull requests. You climb the levels as you build trust in what the agents produce — over **weeks per level, not days**. And here's the most important thing to know before you start: **the goal is trust, not level.**
+Hive is a team of AI agents that watch your project and help improve it — finding bugs, adding tests, writing docs. This guide gets you from access to a dashboard to your first findings. Later sections explain optional changes in permissions.
 
 ## The Hive Way
 
-> Hive is not a fire-and-forget automation tool. It's a trust-building process. You run each level long enough to understand what the agents are doing and agree with their judgment — then you give them a little more autonomy. Most people spend 2–3 weeks at L2, 3–4 weeks at L3, 4–5 weeks at L4. By the time you reach L5 or L6, you won't be surprised by what the agents produce — because you've been watching them work for months. **That's the point.**
-
-The biggest mistake new users make: seeing agent output and either (a) panicking, or (b) immediately jumping to a higher level to get more automation. Neither is right. Read, review, and let trust build at its own pace.
+**ACMM** means **AI Codebase Maturity Model**. Its six levels connect agent permissions to the maturity of your project's tests, coverage, reviews, and security safeguards. They are not an issue-to-PR automation ladder or a schedule for promotion. Review output and strengthen safeguards before granting more authority.
 
 ## Trust > Level. Always.
 
-> You do not need to reach L6. Ever. L6 is Autonomous — agents merge code on green CI without per-PR human review. Some teams run at L4 or L5 indefinitely and that is completely fine. The number doesn't matter. What matters is whether you trust what the agents are producing. A team that runs at L3 with high confidence is in a better place than a team that jumped to L6 and is now drowning in agent change requests they don't understand.
->
-> **The goal is trust, not level.**
+You do not need to reach L6. At L6, permitted lanes can merge when automated checks pass, without per-PR human approval. Staying at L2, L3, L4, or L5 is a valid choice. A passing check is only useful if your tests can catch the mistakes you care about.
 
-## What this guide doesn't cover (and why)
+## Obtain a hive and check access
 
-> Hive is deeply configurable. There are agent policy templates, knowledge layers, custom agents, issue label filters, multi-repo setups, and a lot more. This guide doesn't cover any of that — and that's intentional. You don't need any of it to start. The goal of your first few months is to get comfortable with one or two agents at a low level, not to explore every feature. Features will still be there when you're ready for them. When you are ready for label behavior details, use [Hive Labels and Control Signals](labels-and-control-signals.md).
+| Starting point | Action | Continue when |
+|---|---|---|
+| No hive; you want hosting | Open [Request a hive](https://hive.hivecommons.dev/get-started) and follow [Hosted Hub onboarding](hosted-hub.md). Sign in with GitHub, supply the repository URL, and request a starting level. | An admin has approved and provisioned it; **My Hives** shows its dashboard URL. |
+| No hive; you will operate it | Choose [Docker Compose](quickstart-docker-compose.md), [Podman](quickstart-podman.md), or [Kubernetes](kubernetes-deployment.md). Complete that guide's runtime, storage, network, and login setup first. | Your container is running and you can open its dashboard. |
+| You already have a dashboard URL | Sign in with the GitHub identity granted access by its owner. | You can see the welcome checklist and settings. |
 
-When you are ready for a specialist, the dashboard has **＋ Add agent** in the Agents sidebar and at the top of the Agents section. It opens a create dialog with quick-start templates for common roles (scanner, reviewer, quality, CI maintainer, guide) plus import-from-YAML for shared agent definitions.
+Before Step 0, have:
+
+- A repository on **GitHub.com or GitHub Enterprise**. GitLab, Gitea, and Forgejo are not supported for running a hive today.
+- For the App route, someone with permission to install/authorize it for that repository. You can request a hosted hive before installing the App; the request is not an App authorization. A self-hosted PAT deployment instead needs the [documented token scopes](github-app-setup.md#personal-access-token-pat-scopes).
+- Owner access for changing owner-only settings, or an owner who will perform those steps. Viewing a dashboard does not grant configuration rights.
+- A supported agent-backend login/subscription or a model gateway and credentials. Hosting the hive does not automatically authenticate its coding agents.
+
+The hosted wizard offers L1–L3 and currently recommends L3; **do not assume your hive starts at L2**. Check the applied level in the dashboard. For an observation-first session, choose L2 deliberately before enabling workers. At L3, quality is already allowed to open held PRs.
+
+**First-session route:** [connect the App](#step-0--before-you-start-do-this-first) → [authenticate and set limits](#your-first-week-do-exactly-this) → set cadences **before** enabling agents → read findings. The [level-by-level reference](#l1--getting-started) is optional after that.
+
+### Words used in the dashboard
+
+- **PR (pull request):** a proposed code change; **CI:** automated build and test checks.
+- **Bead:** a saved work item or finding in Hive, visible on the dashboard.
+- **Cadence:** how often an agent may run; model **tokens** measure model input/output usage and affect cost.
+- **Governor:** the scheduler that checks for work and dispatches tasks.
+- **Heartbeat:** a periodic status/configuration exchange; it is not the agent's work schedule.
 
 ## What to expect (and what not to)
 
-✅ **Expect:**
-
-- A slow start — days or weeks before anything meaningful happens
-- Findings you already knew about — agents often surface obvious things first
-- Some findings you disagree with — that's normal, decline them and move on
-- PRs with a literal `hold` level-gate label — you control every merge below L6; dashboard manual holds use `hive-pause/<hive-id>`
-- Gradual improvement in finding quality as agents learn your codebase
-
-❌ **Don't expect:**
-
-- Instant results — this is a months-long investment
-- Agents to understand your codebase immediately — they learn over time
-- Every finding to be worth acting on — triage is part of the job
-- L6 to be the destination — most mature teams settle happily at L4 or L5
-- Agents to replace human judgment — they augment it
+- Work appears on the configured schedule, not instantly. You may need days or weeks of reviewing output to judge whether it helps.
+- Findings may be familiar, low-priority, or wrong. Decline or correct them; do not treat them all as tasks.
+- At PR-capable levels below L6, agent PRs carry literal `hold` for human review; `hive-pause/<hive-id>` is a separate dashboard manual hold.
+- Project knowledge and policy guidance can improve context over time, but agents do not replace human judgment and no level guarantees correct output.
 
 ---
 
@@ -44,18 +50,41 @@ When you are ready for a specialist, the dashboard has **＋ Add agent** in the 
 
 None of the level guidance below works until your hive is connected to your git host. Do this in your **first session**:
 
-1. **Install the Forge App.** The Forge App is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on **GitHub.com and GitHub Enterprise (GHE) it's a GitHub App**. This is how Hive talks to your repo. GitLab, Gitea, and Forgejo are **not supported for running a hive** today — see [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md).
+**Self-hosted with an already configured PAT?** Verify repository access using
+your runtime guide and the [required scopes](github-app-setup.md#personal-access-token-pat-scopes);
+do not install a second App just to follow this checklist. The App instructions
+below are the normal hosted path. The reclaim warning applies to hosted hives,
+not an unmanaged standalone deployment.
+
+1. **Install the Forge App.** On the supported hosts, **GitHub.com and GitHub Enterprise (GHE), this is a GitHub App**. It lets Hive access the repositories you authorize. GitLab, Gitea, and Forgejo are **not supported for running a hive** today — see [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md).
    - **From the dashboard (easiest):** click **Install Forge App** in the welcome checklist, or open **Governor Config → Forge App** and use the install link there. Grant the app access to your repo.
    - **On GitHub.com:** the install button sends you to `github.com/apps/<app-slug>` — pick your org/repo and approve.
    - **On GitHub Enterprise (IBM, corporate):** the same flow lives on your **GHE host**, not github.com — the install page is `https://<your-ghe-host>/github-apps/<app-slug>`. Make sure your hive is pointed at your GHE host URL (Governor Config → Forge App shows which host is configured).
    - **Self-hosting or creating the app yourself?** See the [GitHub App setup guide](github-app-setup.md) for app creation, permissions, and the `/gh-setup` flow.
    - **On GitLab, Gitea, or Forgejo?** There is no Forge App to install: those forges are **not supported for running a hive** today, and the rest of this guide assumes GitHub. See [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md) for what is and is not implemented.
-2. **⏰ Don't put this off.** Unconfigured hive instances are reclaimed on a timer. Finish the Forge App install in your first session or your hive may be reaped — see [What if my hive disappeared?](#what-if-my-hive-disappeared-inactive-hive-reaping) below.
-3. **Wait for the first heartbeat.** After installing, a heartbeat cycle has to run (a few minutes) before everything lights up green.
+2. **For hosted hives, finish setup promptly.** Unconfigured instances are reclaimed on a timer. Finish the Forge App install in your first session or your hive may be reaped — see [What if my hive disappeared?](#what-if-my-hive-disappeared-inactive-hive-reaping) below.
+3. **Verify the connection.** Check the App's auth state and repository access. On a hosted hive, allow a few minutes for the next heartbeat to report the new state. A heartbeat does not clear unrelated backend or configuration errors; standalone hives do not need a hub heartbeat.
 
 > **On GitHub Enterprise (IBM, corporate)?** Setup is slightly different: point Hive at your **GHE host URL**, not github.com. The Forge App install flow lives on your enterprise host — a 404 from the install button almost always means the wrong host.
 
 > 💡 **Tip: name your hive like a team member.** The `ai_author` field is the login your agents use when opening PRs. Pick a name that signals what it does — `hive-bot`, `your-repo-ai`, `proj-assistant`. A clear name means your team immediately knows which PRs are agent-authored vs human-authored.
+
+## Your first week (do exactly this)
+
+1. **Connect and authenticate.** Finish Step 0, then follow [hosted first-run setup](hosted-hub.md#3-finish-first-run-setup-on-the-spoke-dashboard) for **Settings → Model Gateways** or the per-backend CLI login. A gateway's **Test** should report `OK — N models available`; a CLI backend must finish its login. Check errors rather than waiting for authentication to fix itself.
+2. **Confirm limits before work starts.** Check the ACMM badge and **Settings → Budget**. Set Total Tokens, Period (days), and Critical Percent. To observe without new issues or PRs, use L2. Leave supervisor paused and brainstorm unchanged for this first exercise.
+3. **Set cadences, then enable workers.** At L2, open the gear settings for scanner, quality, and guide. Set each available governor/load-mode cadence to **12h or 1d**, then un-pause them. Start with one agent if you want to distinguish its output. Check reviewer separately if enabled: it can post COMMENT-only reviews at L2, not approvals or merges.
+4. **Verify setup.** Allow 2–3 minutes for configuration/status propagation. Confirm App access, backend authentication, the applied level, and the saved cadence. A first run can take 5–10 minutes or a full cadence interval; a heartbeat alone does not mean work has run. Check Activity and authentication errors if no run appears.
+5. **Over days 3–7, read results.** Read dashboard beads and the advisory digest/tracking issue when available. Choose one useful finding to handle manually. At L2, new issues and PRs are not expected; the reviewer may comment on existing PRs.
+
+**First success:** you can sign in, the App can access the intended repository, a backend is authenticated, your budget/cadences are saved, and an enabled worker produces a dashboard finding or a documented no-work result. Do not raise the level merely to make something happen.
+
+If workers were already active when you received the hive, pause them while
+confirming the level, budget, and cadences. For a self-hosted PAT deployment,
+the same success check is repository access using that credential, not an
+App-install requirement.
+
+For the following weeks, review findings and improve tests before considering more permissions. The durations in the level sections below are conservative learning suggestions, not guarantees, prerequisites enforced by a timer, or a required promotion schedule.
 
 ---
 
@@ -66,7 +95,7 @@ If you get stuck, [Join our Discord](https://hivecommons.dev/discord). The invit
 ## Common gotchas (so you don't panic)
 
 - **Dashboard full of warnings?** Normal. Most warnings clear automatically after the Forge App is installed and the first heartbeat runs. Don't panic.
-- **"Install Forge App" gives a 404?** Usually a GHE-vs-github.com mixup, or the app isn't available on your host yet. Double-check which source control host (GitHub.com, GitHub Enterprise, GitLab, Gitea) your hive is pointed at.
+- **"Install Forge App" gives a 404?** Check whether the hive is configured for GitHub.com or the correct GitHub Enterprise host, and whether the App exists on that host.
 - **Changed a setting and nothing happened?** Agents pick up config changes on the next **heartbeat cycle**. Wait 2–3 minutes before assuming something is broken.
 - **Hive vanished from Usage / old URL times out?** Your hive was probably reaped for inactivity. See the next section — recovery is quick.
 
@@ -82,10 +111,10 @@ Hosted hives that stay **unconfigured or inactive are reclaimed ("reaped") on a 
 **This is normal and recoverable.** Nothing is wrong with your account. To get going again:
 
 1. **Request a new hive.** Go to the hub and click **Request a hive** (the `/get-started` wizard — on the hosted hub that's [hive.hivecommons.dev/get-started](https://hive.hivecommons.dev/get-started)). You'll get a fresh hive with a new URL — don't wait for the old URL to come back.
-2. **Complete Step 0 right away.** Install the [Forge App](#step-0--before-you-start-do-this-first) — the app for your source control system (GitHub, GitHub Enterprise, GitLab, or Gitea) — in your **first session** on the new hive. An installed Forge App plus regular heartbeats is what keeps a hive from being reaped again.
+2. **Complete Step 0 right away.** Install the [GitHub App](#step-0--before-you-start-do-this-first) in your **first session** on the new hive. Keep the hive configured and active; installing the App is not a promise of indefinite hosting.
 3. **Update your bookmarks** to the new hive URL.
 
-> 💡 **Avoid a repeat:** the reap timer targets hives that never finished setup or went quiet. Finish the Forge App install on day one and your hive will stick around.
+> **Avoid a repeat:** finish App setup on day one and check that heartbeats and activity continue. Hosted capacity is reclaimed according to the hub's inactivity policy.
 
 ---
 
@@ -96,29 +125,30 @@ Hosted hives that stay **unconfigured or inactive are reclaimed ("reaped") on a 
 | **Advisory** | Watch only. Posts findings to your dashboard. Never touches your repo. |
 | **Measured** | Can file issues on your git host. |
 | **Holdgated** | Can open PRs, but every PR gets a `hold` label. A human must remove the hold to merge. |
-| **Full** | Opens PRs and merges automatically when CI is green. |
+| **Full** | Permitted autonomous lanes can open PRs and merge when CI and merge gates pass. Lane-specific restrictions still apply. |
+
+These are **permission modes**. The cadence grid instead uses governor **load modes** (`surge`, `busy`, `quiet`, `idle`) to choose run frequency. Reviewer has a separate comment/review capability while remaining advisory; it does not gain issue creation or merge rights.
 
 ---
 
 ## ⚠️ Cadences: the #1 thing to get right
 
-Every agent has a gear icon (⚙️). Click it. You'll see cadence settings for each mode (advisory, measured, holdgated, full). **Set them ALL to 12h or 1d when you first start.**
+Every agent has a gear icon (⚙️). Click it and open its cadence settings. Set the cadence for each governor load mode (`surge`, `busy`, `quiet`, `idle`) to **12h or 1d when you first start**, before un-pausing that agent. These are not the advisory/measured/holdgated/full permission modes.
 
 Here's why: agents run on a timer. A 15-minute cadence means an agent can run **96 times a day**. At scale, that burns your token budget in hours. A 12-hour cadence means 2 runs a day — steady, useful, not ruinous.
 
 You can always shorten cadences later once you know how fast an agent is burning through your budget. **Start long. Shorten deliberately.**
 
-This is a journey, not a sprint. Slow cadences = sustainable automation. Fast cadences = burned budget and noise.
-
-> 💡 **Tip: cadences aren't just about tokens.** Long cadences also mean agents produce fewer, higher-quality findings instead of flooding you with marginal ones. A scanner that runs every 15 minutes might re-flag the same issue 50 times. A scanner on a 12h cadence files it once and moves on.
+Long cadences also limit the volume you need to review; they do not guarantee
+better findings or deduplication.
 
 ---
 
 ## The advisory issue: start here every time
 
-Every hive creates a tracking/advisory issue in your repo. This is the central log of everything the agents have found and done.
+The dashboard advisory digest summarizes findings. A configured hive can also publish a tracking/advisory issue in your repo; it needs working App access and publication. If it has not appeared, use dashboard beads and check configuration rather than assuming an empty repository means no findings.
 
-**Start here every time you check in on your hive:** open the advisory issue in your repo (it's pinned — look for it in your issues). This is your hive's journal. Every finding, every action, every note the agents leave is summarized here.
+**Start here when you check in:** read the dashboard digest or the tracking issue, if published and pinned in your repository. It is a summary, not a complete audit log.
 
 Read it like a weekly digest, not a to-do list. You don't have to act on everything — just stay oriented.
 
@@ -149,21 +179,28 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 | Level | GitHub activity |
 |-------|-----------------|
-| **L1, L2** | No issues, no PRs. Dashboard beads only. If you see no repo activity, that's correct. |
+| **L1** | Inception: guide and brainstorm advise on setup and ideas. No agent-created issues or PRs. |
+| **L2** | Advisory: workers report beads; reviewer can post COMMENT-only reviews on existing PRs. No new issues, PRs, approvals, or merges. |
 | **L3** | **Quality only** can open PRs. Every PR has a literal `hold` level-gate label — it will NOT merge until you remove the hold. No other agent opens PRs at L3. |
 | **L4** | Quality, ci-maintainer, **and** sec-check can open PRs (all with literal `hold` level-gate labels). Scanner and guide file issues — not PRs. |
-| **L5** | All agents can open PRs, all with literal `hold` level-gate labels. Nothing auto-merges. You batch-review. |
-| **L6** | Auto-merge switches on for every active repo, then PRs auto-merge when CI goes green. Owners can toggle individual repos off or back on afterward. No level hold, except outreach PRs into repositories the hive does not manage, which are still held for human review. Full automation. |
+| **L5** | Delivery lanes propose issues and held PRs for human review. Supervisor and brainstorm remain advisory; reviewer never merges; dedupe only recommends consolidation. Telemetry and operations are paused opt-ins. |
+| **L6** | Switching levels enables auto-merge for active repos; owners can then toggle each repo. Scanner is the default merge-capable agent; most delivery agents still propose PRs, which Hive's separate auto-merge path can merge after gates pass. Cross-repo outreach stays held. Specialist restrictions remain. |
 
 > **The hold label is your safety net.** Hive uses literal `hold` as the level-gate merge-blocking PR label; `hive-pause/<hive-id>` is the dashboard's manual hold label and `hive/<hive-id>` is provenance only. At every level below L6, every PR an agent opens is blocked from merging until you remove `hold`. You are always in control. Nothing ships without your approval until you reach L6 — and you'll only reach L6 after months of trusting the system.
 >
-> One exception, so it doesn't surprise you: when you **raise the level**, the hive releases the level holds *it* placed on its own open PRs that the new level no longer requires. It never removes a hold you applied yourself, and never one you re-applied after the hive removed it — those stay put until you lift them.
-
-> **L6 is earned, not chased.** Auto-merge is not the goal you're optimizing for on day one — it's the outcome you earn after months of watching agents work and building confidence in their judgment. Most teams spend months at L4 and L5. That's not failure — that's the system working as designed.
+> Raising the level **does not automatically release existing holds**. A human removes them after review. An operator can deliberately request a one-off release of attributable Hive level holds with `release_level_holds: true`; human-applied or re-applied holds remain protected. See the [policy matrix](acmm-policy-matrix.md).
 
 ---
 
 > **Moving between levels:** open the **Governor config** and set the level number. Changes take a heartbeat cycle (a few minutes) to propagate.
+
+## Optional reference: levels and readiness
+
+The policy names are **Inception**, **Advisory**, **Quality-Gated**,
+**Security-Aware**, **Semi-Autonomous**, and **Autonomous**. The sections below
+offer a conservative learning routine for those levels, not a substitute for
+the [current per-agent policy matrix](acmm-policy-matrix.md). Enabling an agent
+does not promote its permissions.
 
 ## L1 — Getting Started
 
@@ -171,10 +208,10 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 **What you get:** Guide helps you structure your ideas. Brainstorm helps turn raw thoughts into real plans. Pure advice, posted to your dashboard.
 
-**Un-pause:** guide
-**Leave paused:** (nothing else to worry about) — don't touch brainstorm
-
-⚠️ **Set cadences first:** Click the gear on guide → set all modes to **12h or 1d**. Do this before you walk away.
+1. Set guide's cadences for all governor load modes to **12h or 1d**.
+2. Then un-pause guide. Leave brainstorm unchanged for this exercise. It
+   remains advisory and can be used for inception when wanted; this is a
+   conservative starting choice, not a permission rule.
 
 **Using the findings:** Read guide's suggestions like a newsletter. This is your reading list, not your to-do list.
 
@@ -184,14 +221,16 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 ## L2 — Watch and Learn
 
-**The level:** You're trusting agents to *look at your code* — but they can only report, never change anything.
+**The level:** Workers look at code and report findings, without creating
+issues or PRs. Reviewer may post COMMENT-only reviews on existing PRs;
+it cannot approve or merge them.
 
 **What you get:** Scanner looks for bugs in your code. Quality looks to add testing. Guide writes documentation for you. No changes, no issues filed — just a reading list on your dashboard (called **beads**). You will *not* see a flood of issues and PRs here — that's the point. You're reading, not reacting.
 
-**Un-pause:** scanner, quality, guide
-**Leave paused:** supervisor — and don't touch brainstorm
-
-⚠️ **Set cadences first:** Click the gear on each agent you un-pause → set all modes to **12h or 1d**. Do this before anything else or agents will run every few minutes and burn your token budget. This is the #1 mistake new users make.
+1. For scanner, quality, and guide, set every governor load-mode cadence to **12h or 1d**.
+2. Then un-pause the chosen worker(s). Leave supervisor paused and brainstorm
+   unchanged. Reviewer is a separate review-first entry point; check its
+   cadence and output if enabled.
 
 **Using the findings:** Read your dashboard beads and the pinned **advisory issue** in your repo. Pick **one finding per week** that you were already planning to fix, and fix it by hand. Ignore the rest for now — there will always be more findings than time.
 
@@ -209,10 +248,9 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 **What you get:** Quality builds your tests, one held PR at a time. CI-maintainer joins to keep your builds healthy. This level exists to build the safety net that makes higher levels safe.
 
-**Un-pause:** ci-maintainer (quality, scanner, guide stay on from L2)
-**Leave paused:** supervisor — and still don't touch brainstorm
-
-⚠️ **Set cadences first:** Gear icon on ci-maintainer → all modes to **12h or 1d**. Re-check the others while you're there.
+1. Set ci-maintainer's governor load-mode cadences to **12h or 1d**; re-check the existing workers.
+2. Then un-pause ci-maintainer; quality, scanner, and guide can stay on from L2.
+   Leave supervisor paused and brainstorm unchanged for this routine.
 
 **Using the findings:** Beads are still your reading list. Same rule: one finding per week, matched to what you already planned.
 
@@ -230,7 +268,7 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 ### Where agents actually run (read this before L3)
 
-By L3, agents are writing code and running commands on your behalf — so it's worth knowing exactly where that happens. On the contributor path (`just contribute-hive <backend>`), agents run in a **tmux session on the host** by default: the backend CLI runs as your own user, with permission prompts bypassed, and nothing containing it to the assigned workspace unless the backend provides its own confinement.
+**Applies to contributor-host execution, not normal hosted-dashboard onboarding.** A hosted spoke runs agents in its provisioned environment; a self-hosted container follows its deployment's isolation controls. The contributor path (`just contribute-hive <backend>`) can instead run agents in a **tmux session on your host** by default: the backend CLI runs as your own user, with permission prompts bypassed, and nothing containing it to the assigned workspace unless the backend provides its own confinement. Review this before accepting delegated code execution, regardless of level.
 
 **Confinement is not the same for every backend.** As of this writing:
 
@@ -255,14 +293,14 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 **What you get:** Scanner and guide file issues automatically. Sec-check finds security holes and can open PRs (alongside quality and ci-maintainer). Automated bug reports, doc suggestions, and security findings, delivered to you.
 
-**Un-pause:** sec-check
-**Leave paused:** supervisor — brainstorm still off-limits
-
-⚠️ **Set cadences first:** Gear icon on sec-check → all modes to **12h or 1d** before it runs. Security scans are token-hungry.
+1. Set sec-check's governor load-mode cadences to **12h or 1d**. Security scans can use substantial tokens.
+2. Then un-pause sec-check. Leave supervisor paused and brainstorm unchanged
+   unless deliberately configuring them separately.
 
 **Using the findings:** Read the issues agents file. Add a 👍 to the ones that match your priorities — the agents will pick up the signal. You don't have to respond to everything.
 
-> 💡 **Tip: your advisory issue is a living document.** Don't just read it — react to findings with 👍/👎. Agents use these signals to prioritize. A finding with 5 👍 reactions gets picked up sooner than one with none.
+> **Tip:** react to findings to communicate priorities, but do not assume a
+> reaction overrides eligibility, holds, filters, or other scheduling gates.
 
 > 💡 **Tip: scanner finds, quality fixes.** Scanner flags bugs. Quality fixes test gaps. They're a team. At L4, watch for scanner filing an issue and quality filing a PR that addresses it — that's the closed-loop feedback working.
 
@@ -274,16 +312,26 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 ## L5 — Propose and Review
 
-**The level:** You're trusting *every* agent to open issues and PRs — the system proposes, you decide. Every agent PR still has a literal `hold` level-gate label.
+**The level:** Delivery agents may propose issues and PRs — the system proposes, you decide. Every agent PR still has a literal `hold` level-gate label. Supervisor and brainstorm stay advisory, reviewer comments rather than merging, and dedupe posts recommendations rather than closing other people's work.
 
 **What you get:** The full hive works for you. Architect produces RFCs for bigger design changes. You shift from doing the work to batch-reviewing it.
 
-**Un-pause:** supervisor, architect — and yes, now you can un-pause brainstorm too
-**Leave paused:** telemetry, operations — unless you opt in (see below)
+1. Configure each newly enabled agent's governor load-mode cadences to **12h or 1d**.
+2. Then un-pause supervisor/architect if wanted. Brainstorm can be used
+   deliberately here too, but remains advisory. Other L5 specialists retain
+   their lane-specific rights.
+3. Leave telemetry and operations paused unless completing both opt-in steps below.
 
-⚠️ **Set cadences first:** Every newly un-paused agent gets the gear treatment: all modes **12h or 1d**. More agents running = faster token burn, so this matters more than ever.
+### Optional: enable telemetry and operations
 
-**Two new agents appear at L5:** `telemetry` and `operations` become available for the first time — they don't exist in the roster at any lower level — but they remain **paused by default**, even here. They're opt-in on purpose, in two steps: first open **Settings → Project Observability**, select your managed project's observability stack (OpenTelemetry, Prometheus, Grafana, a `ServiceMonitor`, a commercial backend — whatever you actually run), and save — without a declared stack their PR-capable policies fail closed. Then un-pause each agent from its Cadences tab like any other agent (a conservative `24h` is a good start); saving the Project Observability tab only persists the stack declaration and never changes cadences (#7261). Leave both steps undone and the agents stay paused — there's no rush to enable them just because you reached L5. See [Telemetry agent](telemetry.md) and [Operations agent](operations.md) for what each one actually does, and [agent-configuration.md](agent-configuration.md) for the `project_observability` config block.
+These agents first become available at L5 and remain **paused by default** at L5 and L6. They may propose issues and PRs but **never merge their own PRs**.
+
+1. Open **Settings → Project Observability**. Declare the stack your managed project actually runs and save. This may be OpenTelemetry, Prometheus, Grafana, a `ServiceMonitor`, or a commercial backend. Without that declaration, their PR-capable policies fail closed.
+2. Set each agent's cadence before un-pausing it; **24h** is a conservative start. Saving the observability declaration never changes cadences (#7261), so both steps are required.
+
+Leaving them paused is valid. See [Telemetry agent](telemetry.md), [Operations agent](operations.md), and the `project_observability` block in [agent configuration](agent-configuration.md).
+
+### L5 review routine
 
 **Using the findings:** Batch-review on a schedule (say, twice a week). Approve the PRs you like, decline the ones you don't, 👍 the issues that match your roadmap.
 
@@ -297,22 +345,34 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 ## L6 — Autonomous
 
-**The level:** Full trust. Auto-merge is off below L6; when you switch to L6, Hive enables auto-merge for every active repo, then agents open PRs and merge them automatically when CI goes green. Owners can toggle individual repos off or back on afterward. No level hold, except outreach PRs into repositories the hive does not manage, which remain held for human review; outreach PRs into the hive's own repos auto-merge like any other.
+**The level:** autonomous delivery where permitted. Auto-merge is off below L6;
+switching to L6 enables it for active repos, after which owners can toggle each
+repo. Permitted delivery lanes can merge when CI and gates pass; specialist
+restrictions still apply. New PRs do not get a level hold except outreach into
+unmanaged repositories. Existing holds are not automatically removed.
 
-**What you get:** A repo that improves itself while you sleep. The tests quality built at L3 are now the guardrails that keep agents honest.
+**What you get:** autonomous delivery where enabled. Tests, review/merge gates,
+branch rules, and the permission boundary remain important safeguards.
+
+The current L6 pack grants scanner `ISSUES_PRS_MERGE`; most other delivery
+agents keep `ISSUES_AND_PRS`. A policy filename ending in `-full.md` does not
+give every agent permission to merge its own work. Hive's system auto-merge
+path is separate from the proposing agent's capability.
 
 **Un-pause:** everything stays on from L5
 **Leave paused:** telemetry, operations — still opt-in, unless you already enabled them at L5
 
 ⚠️ **Cadence check:** You can shorten cadences now if your token budget allows — but 12h/1d still works fine. Faster isn't better if you're not reading the output.
 
-Telemetry and operations don't auto-enable just because you reached L6 — they carry the same opt-in requirement here as at L5 (**Settings → Project Observability**). If you enabled them at L5, they stay on and switch to full mode (auto-merge when checks pass) like the rest of your roster.
+Telemetry and operations do not auto-enable at L6. Their templates change to the L6 policies if enabled, but their `ISSUES_AND_PRS` capability still forbids merging their own PRs. Brainstorm and supervisor remain advisory; reviewer and adjudicator never merge, and dedupe stays recommendation-only.
 
 **Using the findings:** Spot-check merged PRs weekly. 👍 issues to steer agent priorities.
 
-**Building tests:** Keep improving your tests — they're your only gatekeeper now. Every test you add makes the automation safer.
+**Building tests:** Keep improving tests alongside review gates, holds, branch protection, and lane permissions. Green CI alone is not proof that a change is safe.
 
-**Be patient:** Trust the loop. If a bad PR merges, that's a signal to add a test, not to panic and drop levels.
+**If a bad PR merges:** pause the affected work or lower permissions if needed,
+follow recovery/rollback, and add a regression test. Do not leave unsafe
+automation running just to remain at L6.
 
 > 💡 **Tip: L6 doesn't mean you're done reviewing.** Even at L6, read the merged PRs weekly. Not to intervene — to calibrate. If you see a pattern you don't like (agents always touching the same file, tests that are too shallow), update the policy template and the next run corrects course.
 
@@ -320,31 +380,21 @@ Telemetry and operations don't auto-enable just because you reached L6 — they 
 
 ---
 
-## Your first week (do exactly this)
-
-**Day 1** — Complete **Step 0**: install the Forge App and wait for the heartbeat to connect. Then start at whatever level your hive is at (probably L2). Don't touch anything else. Just watch the dashboard for 24 hours — any leftover warnings should clear on their own.
-
-**Day 2** — In L2: un-pause **scanner**, **quality**, and **guide**. Leave **supervisor** paused. Don't touch **brainstorm**. Click the gear icon on each of the 3 agents and set the cadence to **12h or 1d**. Give it a heartbeat cycle (2–3 minutes) to take effect, then watch what they find.
-
-**Days 3–4** — Read the advisory beads on your dashboard, and open the pinned **advisory issue** in your repo — your hive's journal. Pick **one** finding you care about and act on it manually. This builds intuition.
-
-**Days 5–7** — Keep reading, keep acting on one finding at a time. Resist the urge to move up — you're staying at L2 for **2–3 weeks**. That's not slow; that's the Hive Way.
-
 ## And after that?
 
 **Weeks 2–3** — Stay at L2. When the agents' findings match what you'd find yourself, open the **Governor config** and set the level to **3**. Now quality can open PRs (with literal `hold` labels). Review and merge the ones you like.
 
 **Weeks 4–7** — Live at L3 while quality builds your test suite. Then L4 for a month or so while sec-check hardens things. L5 and L6 come when trust is genuinely earned — *if* you ever want them at all. L4 or L5 forever is a perfectly good place to live.
 
-This is a marathon, not a sprint. The teams who get the most out of Hive are the ones who resist the urge to rush. Set long cadences. Read the advisory issue weekly. **Move up a level when it feels boring — not when it feels exciting.** And remember: the goal is trust, not level.
-
-That's it. You now understand the full end-to-end of how Hive works — one trust level at a time. 🐝
+These are suggested review periods, not promotion criteria. Keep the current
+level until safeguards and output quality support the permissions you intend
+to grant; remaining at a lower level is valid.
 
 ---
 
 ## Tips, Tricks & Where to Find Things
 
-**Cadences:** Click the ⚙️ gear on any agent in the left sidebar → "Edit Agent" or "Configure" → cadence settings. Set each mode (advisory, measured, holdgated, full) to 12h or 1d. Do this for every agent you un-pause. You can come back and shorten later.
+**Cadences:** Click the ⚙️ gear on any agent in the left sidebar → "Edit Agent" or "Configure" → cadence settings. Set each governor load mode (`surge`, `busy`, `quiet`, `idle`) to 12h or 1d **before** un-pausing. Shorten deliberately once you know the cost and output quality.
 
 **Agent prompts:** Each agent has a policy template — the instructions it follows. Click the agent in the sidebar → gear icon → "Edit Policy" (or "Edit Prompt"). You can customize what the agent focuses on. Example: tell quality to focus only on your `/api` package, not your `/frontend` package. Be specific — agents follow instructions literally.
 
@@ -364,4 +414,16 @@ That's it. You now understand the full end-to-end of how Hive works — one trus
 
 ---
 
-> The teams who get the most from Hive aren't the ones who reached L6 fastest. They're the ones who spent the most time at L2 and L3, reading findings, building intuition, and learning what the agents are good at. **Slow down. The automation will still be there when you're ready.** 🐝
+For configuration beyond this first path, use [agent configuration](agent-configuration.md),
+[settings](settings.md), and the [documentation map](documentation-map.md).
+
+## What this guide doesn't cover (and why)
+
+Policy templates, knowledge layers, custom agents, issue-label filters, and
+multi-repo setups are optional next topics, not first-session requirements.
+Use [Hive Labels and Control Signals](labels-and-control-signals.md) when
+ready for label details.
+
+For a specialist, **＋ Add agent** in the Agents sidebar or Agents section
+opens quick-start templates (scanner, reviewer, quality, CI maintainer, guide)
+and import-from-YAML for shared agent definitions.

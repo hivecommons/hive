@@ -1,0 +1,263 @@
+    /* Experiment Lab (Nous) */
+    .nous-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: var(--sp-5); }
+    .nous-card h3 { font-size: var(--fs-md); margin: var(--sp-0) var(--sp-0) var(--sp-4) var(--sp-0); color: var(--fg); }
+    .nous-mode-toggle { display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+    /* Segmented mode toggle — active states are tints + colored label
+       (button-system convention), not solid semantic fills. */
+    .nous-mode-btn { flex: 1; padding: var(--sp-4) var(--sp-5); text-align: center; font-size: var(--fs-sm); font-family: var(--font-ui); cursor: pointer; border: none; background: var(--surface); color: var(--muted); transition: all 0.2s; }
+    .nous-mode-btn:not(:last-child) { border-right: 1px solid var(--border); }
+    .nous-mode-btn.active-observe { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); font-weight: 700; }
+    .nous-mode-btn.active-suggest { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); font-weight: 700; }
+    .nous-mode-btn.active-evolve { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); font-weight: 700; }
+    .nous-mode-btn:hover:not([class*="active-"]) { background: var(--panel-strong); }
+    .nous-progress { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin: var(--sp-4) var(--sp-0); }
+    .nous-progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s; background: var(--amber); }
+    .nous-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+    .nous-stat { text-align: center; }
+    .nous-stat .val { font-size: 1.3rem; font-weight: 700; color: var(--fg); }
+    .nous-stat .lbl { font-size: 0.7rem; color: var(--muted); }
+    .nous-principle { display: flex; align-items: center; gap: 10px; padding: var(--sp-4) var(--sp-0); border-bottom: 1px solid var(--border); }
+    .nous-principle:last-child { border-bottom: none; }
+    .nous-confidence-bar { width: 60px; height: 6px; background: var(--border); border-radius: 3px; flex-shrink: 0; }
+    .nous-confidence-fill { height: 100%; border-radius: 3px; background: var(--green); }
+    .nous-principle-text { font-size: 0.78rem; color: var(--fg); flex: 1; }
+    .nous-principle-score { font-size: 0.7rem; color: var(--muted); width: 35px; text-align: right; flex-shrink: 0; }
+    .nous-timeline { display: flex; gap: 3px; align-items: flex-end; height: 40px; margin-top: var(--sp-4); }
+    .nous-timeline-bar { flex: 1; min-width: 4px; border-radius: 2px 2px 0 0; cursor: default; }
+    .nous-pending-card { background: rgba(210,153,34,0.12); border: 1px solid var(--yellow); border-radius: 8px; padding: var(--sp-5); margin-bottom: 10px; }
+    .nous-pending-card h4 { margin: var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0); font-size: var(--fs-base); color: var(--text); }
+    .nous-pending-params { font-size: var(--fs-sm); margin: var(--sp-3) var(--sp-0); }
+    .nous-pending-params td { padding: var(--sp-1) var(--sp-4); }
+    /* .nous-btn(-approve/-reject/-abort) — primary/danger buttons (system recipe) */
+    .nous-btn-reject { margin-left: var(--sp-4); }
+    .nous-experiment-live { background: var(--green-bg); border: 1px solid var(--green); border-radius: 8px; padding: var(--sp-5); margin-bottom: 10px; }
+    .nous-experiment-live h4 { margin: var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0); font-size: var(--fs-base); color: var(--text); }
+    /* Verdict card (#11699): the engine's final recommendation plus the
+       owner's manual Promote actions. Nothing here fires on its own. */
+    .nous-verdict-card { border-color: var(--purple); }
+    .nous-verdict-card h3 { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .nous-verdict-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .nous-verdict-score { font-size: var(--fs-sm); color: var(--fg); }
+    .nous-verdict-label, .nous-verdict-note { font-size: var(--fs-sm); }
+    .nous-verdict-label code { font-size: var(--fs-sm); }
+    .nous-verdict-summary { font-size: var(--fs-sm); color: var(--fg); margin-bottom: var(--sp-4); }
+    .nous-verdict-list { margin: var(--sp-2) var(--sp-0) var(--sp-4); padding-left: var(--sp-7); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-verdict-list li { margin-bottom: var(--sp-1); }
+    .nous-verdict-promotions { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2); }
+    .nous-verdict-actions { display: flex; gap: var(--sp-4); flex-wrap: wrap; align-items: center; }
+    .nous-verdict-actions .nous-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .nous-progress-summary, .nous-exp-list, .nous-results-list { display: grid; gap: var(--sp-3); }
+    .nous-progress-label, .nous-exp-head, .nous-result-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+    .nous-progress-copy, .nous-exp-meta, .nous-exp-metrics, .nous-output-links { font-size: var(--fs-xs); color: var(--muted); }
+    .nous-exp-row, .nous-result-row { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: var(--panel); }
+    .nous-exp-title { font-size: var(--fs-sm); color: var(--text); font-weight: 700; min-width: var(--sp-0); overflow-wrap: anywhere; }
+    .nous-status-pill { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--muted); background: var(--surface); white-space: nowrap; }
+    .nous-exp-metrics, .nous-output-links { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); margin-top: var(--sp-2); }
+    .nous-output-links a { color: var(--accent); }
+    .nous-observation-note { font-size: var(--fs-xs); margin-top: var(--sp-2); }
+    .nous-campaign-meta { margin-top: var(--sp-2); }
+    .nous-archived-list { display: grid; gap: var(--sp-3); }
+    .nous-archived-row { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: var(--panel); opacity: 0.85; }
+    .nous-campaign-actions { margin-top: var(--sp-4); }
+
+    /* Nous Config Panel */
+    /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
+       (also reused by the kb modals via className); z-index stays. */
+    /* Same layer as .config-overlay: the fixed navbar (--navbar-sticky-z 9400)
+       used to draw over the dialog header on every viewport. */
+    .nous-config-overlay { z-index: 10000; }
+    .nous-config-dialog { width: min(900px, calc(100vw - var(--modal-gap) - var(--modal-gap))); max-width: calc(100vw - var(--modal-gap) - var(--modal-gap)); height: min(82vh, 760px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; padding: var(--sp-0); overflow: hidden; }
+    .nous-config-dialog > h2 { flex: 0 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-0); }
+    .nous-config-dialog > .nous-config-body { flex: 1 1 auto; min-height:0; overflow: auto; padding: var(--sp-6) var(--sp-8); }
+    .nous-config-dialog > .nous-config-footer { flex: 0 0 auto; padding: var(--sp-5) var(--sp-8); border-top: 1px solid var(--border); }
+    .nous-config-dialog h2 { font-size: var(--fs-lg); margin: var(--sp-0) var(--sp-0) var(--sp-6) var(--sp-0); display: flex; align-items: center; gap: var(--sp-4); }
+    /* Knowledge Sources dialog — a wide, fixed-height dialog with internal
+       scroll (the body stays the single scroller, #11786). The two-column
+       grid, section cards and form rhythm all use spacing tokens so the
+       content gets breathing room instead of hugging the 960px width it
+       used to be squeezed into; the ≤768px and landscape tiers below fold
+       it to one column inside the shared full-screen sheet. */
+    .nous-config-dialog.kb-sources-dialog { width: min(1480px, 94vw); height: min(92vh, 1100px); }
+    .nous-config-dialog.kb-sources-dialog > .nous-config-body { padding: var(--sp-6) var(--sp-9) var(--sp-9); }
+    .kb-sources-intro { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--sp-8); padding: var(--sp-6) var(--sp-7); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+    .kb-sources-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-8) var(--sp-9); align-items: start; }
+    .kb-sources-col { display: flex; flex-direction: column; gap: var(--sp-8); min-width: 0; }
+    .kb-sources-section { padding: var(--sp-7); background: var(--surface); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); min-width: 0; }
+    .kb-sources-section > .row { flex-wrap: wrap; }
+    .kb-sources-note { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--sp-6); }
+    .kb-sources-section .empty-dashed { padding: var(--sp-8) var(--sp-6); }
+    .kb-sources-add { margin-top: var(--sp-7); }
+    .kb-sources-add > summary { padding: var(--sp-2) var(--sp-0); }
+    .kb-sources-form { gap: var(--sp-5); margin-top: var(--sp-5); }
+    .kb-sources-form > .row-end { margin-top: var(--sp-4); }
+    .kb-sources-inline { display: flex; align-items: center; gap: var(--sp-4); }
+    .kb-sources-inline > .field-input, .kb-sources-inline > .kb-search-box { flex: 1 1 auto; min-width: 0; }
+    .kb-sources-inline > .hv-btn { flex: 0 0 auto; white-space: nowrap; }
+    .kb-sources-textarea { width: 100%; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--fg); font-size: var(--fs-sm); font-family: var(--font-mono); resize: vertical; min-height: 120px; box-sizing: border-box; }
+    .kb-sources-actions { margin-top: var(--sp-4); gap: var(--sp-4); flex-wrap: wrap; }
+    .kb-sources-file { font-size: var(--fs-xs); color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: var(--sp-2); }
+    .kb-sources-file input { font-size: var(--fs-xs); }
+    .nous-config-section { margin-bottom: var(--sp-7); padding-bottom: var(--sp-6); border-bottom: 1px solid var(--border); }
+    .nous-config-section:last-child { border-bottom: none; margin-bottom: var(--sp-0); padding-bottom: var(--sp-0); }
+    .nous-config-section h3 { font-size: 0.85rem; color: var(--accent); margin: 0 0 10px 0; display: flex; align-items: center; gap: var(--sp-3); }
+    .nous-config-section label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: var(--sp-2); }
+    /* nous-config inputs — shared input recipe (end of style block) */
+    .nous-config-section textarea, .nous-config-section input[type="text"], .nous-config-section input[type="number"] {
+      width: 100%; resize: vertical;
+    }
+    .nous-config-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--sp-5); margin-bottom: var(--sp-4); }
+    .nous-config-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-5); margin-bottom: var(--sp-4); }
+    .nous-config-check { display: flex; align-items: center; gap: var(--sp-4); font-size: 0.8rem; color: var(--fg); cursor: pointer; padding: var(--sp-2) var(--sp-0); }
+    .nous-config-check input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
+    /* .nous-config-pill — toggleable pill on the recipe. The two states must
+       read differently at a glance (#12520): .is-on / [aria-pressed="true"] is a
+       filled amber chip with a leading ✓; .is-off / [aria-pressed="false"] is a
+       dimmed outline. The chip-taxonomy base rule below sets the brand colours,
+       so the state rules here must win on specificity rather than rely on --pill-c. */
+    .nous-config-pill { margin: var(--sp-1); cursor: pointer; transition: all 0.15s; font: inherit; font-size: var(--fs-sm); font-weight: 600; }
+    .nous-config-pill.is-on, .nous-config-pill[aria-pressed="true"] { background: var(--amber); border-color: var(--amber); color: var(--bg); opacity: 1; }
+    .nous-config-pill.is-on::before, .nous-config-pill[aria-pressed="true"]::before { content: '✓'; font-weight: 800; }
+    .nous-config-pill.is-off, .nous-config-pill[aria-pressed="false"] { background: transparent; border-color: var(--border); color: var(--muted); opacity: 0.7; }
+    .nous-config-pill.is-off:hover, .nous-config-pill[aria-pressed="false"]:hover { opacity: 1; border-color: var(--amber); color: var(--fg); }
+    .nous-config-pill:hover { border-color: var(--accent); }
+    .nous-config-pill:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+    .nous-config-output-modes { flex:0 0 auto; display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+    .nous-config-btn-bar { display: flex; justify-content: flex-end; gap: var(--sp-4); margin-top: var(--sp-6); }
+    /* .nous-config-btn(-save/-cancel) — primary/ghost buttons (system recipe) */
+    .nous-config-principle-row { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); font-size: 0.78rem; }
+    .nous-config-principle-row:last-child { border-bottom: none; }
+    .nous-config-principle-row .conf { width: 40px; text-align: right; color: var(--muted); font-size: 0.72rem; flex-shrink: 0; }
+    .nous-config-principle-row .text { flex: 1; color: var(--fg); }
+    .nous-config-principle-row .del-btn { background: none; border: none; color: var(--red); cursor: pointer; font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); }
+    .nous-config-principle-row .del-btn:hover { background: rgba(220,38,38,0.1); }
+    .nous-trust-ladder { display: flex; align-items: center; gap: var(--sp-0); margin: var(--sp-5) var(--sp-0); }
+    .nous-trust-step { flex: 1; text-align: center; padding: 10px 8px; font-size: 0.72rem; font-family: var(--font-ui); border: 1px solid var(--border); position: relative; cursor: pointer; }
+    .nous-trust-step:disabled, .nous-mode-btn:disabled { cursor: not-allowed; opacity: 0.6; }
+    .nous-trust-step:first-child { border-radius: 8px 0 0 8px; }
+    .nous-trust-step:last-child { border-radius: 0 8px 8px 0; }
+    .nous-trust-step:not(:last-child) { border-right: none; }
+    .nous-trust-step.current { font-weight: 700; }
+    .nous-trust-step .step-label { font-weight: 600; display: block; margin-bottom: var(--sp-1); }
+    .nous-trust-step .step-desc { color: var(--muted); font-size: 0.65rem; }
+    /* Experiment Lab Configuration → Data (reset) section (RFC #11585).
+       Self-contained so it can be appended to the dialog independently. */
+    .nous-reset-section h3 { color: var(--red); }
+    .nous-reset-counts { display: flex; flex-wrap: wrap; gap: var(--sp-5); margin-bottom: var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-reset-counts strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+    .nous-reset-actions { display: flex; flex-wrap: wrap; gap: var(--sp-4); align-items: center; }
+    .nous-reset-actions .hv-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .nous-reset-note { font-size: var(--fs-sm); margin-top: var(--sp-3); }
+
+    /* Experiment Lab configuration dialog (.nous-lab-*): the same recipe as
+       the Knowledge Sources modal (#12000) — a wide fixed-size shell whose
+       body is the single scroller, a sticky header with its own Close, a
+       footer for Cancel/Save, and every section rendered as a padded card
+       instead of a hairline-divided run of text. Sizing overrides live on
+       the .nous-lab-dialog modifier so the base .nous-config-dialog shell
+       (shared with the kb modals) keeps its 900px recipe. */
+    .nous-config-dialog.nous-lab-dialog { width: min(1480px, 94vw); height: min(92vh, 1100px); }
+    .nous-config-dialog.nous-lab-dialog > h2 { margin: var(--sp-0); padding: var(--sp-6) var(--sp-8); border-bottom: var(--line-width) solid var(--border); justify-content: space-between; gap: var(--sp-5); }
+    .nous-config-dialog.nous-lab-dialog > h2 > .nous-lab-title { display: inline-flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+    .nous-config-dialog.nous-lab-dialog > h2 > .hv-btn { flex: 0 0 auto; }
+    .nous-config-dialog.nous-lab-dialog > .nous-config-body { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-8) var(--sp-9) var(--sp-9); font-size: var(--fs-base); line-height: 1.5; }
+    .nous-config-dialog.nous-lab-dialog > .nous-config-footer.nous-config-btn-bar { margin-top: var(--sp-0); flex-wrap: wrap; }
+    .nous-lab-loading { text-align: center; color: var(--muted); padding: var(--sp-9); }
+    .nous-lab-error { color: var(--red); padding: var(--sp-7) var(--sp-8); }
+    .nous-lab-dialog .nous-config-section { margin: var(--sp-0); padding: var(--sp-7); background: var(--surface); border: var(--line-width) solid var(--line-subtle); border-bottom: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); min-width: 0; }
+    .nous-lab-card-head { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-6); }
+    .nous-lab-eyebrow { color: var(--muted); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+    .nous-lab-dialog .nous-config-section h3 { font-size: var(--fs-md); margin: var(--sp-0); line-height: var(--lh-tight); }
+    .nous-lab-dialog .nous-config-section h3 .nous-lab-h3-note { font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
+    .nous-lab-card-desc { margin: var(--sp-0); color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; max-width: 80ch; }
+    .nous-lab-dialog .nous-config-section label { font-size: var(--fs-sm); line-height: 1.4; margin-bottom: var(--sp-3); }
+    .nous-lab-dialog .nous-config-section textarea { max-width: 100ch; min-height: 64px; line-height: 1.5; box-sizing: border-box; }
+    .nous-lab-field { display: flex; flex-direction: column; min-width: 0; }
+    .nous-lab-field + .nous-lab-field { margin-top: var(--sp-6); }
+    .nous-lab-dialog .nous-config-row, .nous-lab-dialog .nous-config-row-2 { gap: var(--sp-6); margin-bottom: var(--sp-0); }
+    .nous-lab-dialog .nous-config-row-2 { max-width: 80ch; }
+    .nous-lab-dialog .nous-config-row > div, .nous-lab-dialog .nous-config-row-2 > div { min-width: 0; }
+    .nous-lab-dialog .nous-config-row input[type="number"], .nous-lab-dialog .nous-config-row-2 input[type="number"] { box-sizing: border-box; }
+    .nous-config-output-note { font-size: var(--fs-base); line-height: 1.55; max-width: 90ch; }
+    .nous-lab-checks { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-6); }
+    /* Beats `.nous-config-section label { display: block }`, which was
+       flattening the flex row and dropping the checkbox/text gap. */
+    .nous-lab-dialog .nous-config-section .nous-config-check { display: flex; align-items: flex-start; gap: var(--sp-4); font-size: var(--fs-base); line-height: 1.5; margin: var(--sp-0); padding: var(--sp-2) var(--sp-0); }
+    .nous-lab-dialog .nous-config-check input[type="checkbox"] { flex: 0 0 auto; margin: calc((1.5em - 16px) / 2) var(--sp-0) var(--sp-0); }
+    .nous-lab-dialog .nous-config-check > span { min-width: 0; }
+    .nous-lab-dialog .nous-config-check code { font-size: var(--fs-sm); line-height: inherit; padding: var(--sp-0) var(--sp-2); vertical-align: baseline; }
+    .nous-lab-dialog .nous-config-check .var-meta { margin-left: var(--sp-2); }
+    .nous-lab-knobs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2) var(--sp-6); }
+    .nous-lab-chips { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+    .nous-lab-dialog .nous-config-pill { margin: var(--sp-0); }
+    .nous-lab-chips-note { margin-top: var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-lab-empty { padding: var(--sp-6); text-align: center; color: var(--muted); font-size: var(--fs-sm); border: var(--line-width) dashed var(--border); border-radius: var(--r); }
+    .nous-lab-invariant { display: inline-block; padding: var(--sp-2) var(--sp-5); border-radius: var(--r-pill); font-size: var(--fs-sm); background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--red); border: var(--line-width) solid color-mix(in srgb, var(--red) 25%, transparent); }
+    .nous-lab-principles { margin-top: var(--sp-6); max-height: 240px; overflow-y: auto; border-top: var(--line-width) solid var(--line-subtle); }
+    .nous-lab-dialog .nous-config-principle-row { font-size: var(--fs-base); padding: var(--sp-3) var(--sp-0); gap: var(--sp-5); }
+    .nous-lab-dialog .nous-config-principle-row .conf { font-size: var(--fs-sm); width: 44px; }
+    .nous-lab-dialog .nous-config-principle-row .del-btn { flex: 0 0 auto; }
+    /* Trust Ladder segmented control: equal cells, label and sublabel on
+       their own lines, active state is a tint + coloured text (button-system
+       convention) rather than the old solid semantic fill. */
+    .nous-lab-dialog .nous-trust-ladder { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--sp-0); }
+    .nous-lab-dialog .nous-trust-step { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: var(--sp-2); padding: var(--sp-5) var(--sp-6); min-height: 64px; font: inherit; font-size: var(--fs-base); line-height: 1.4; background: var(--bg); color: var(--muted); }
+    .nous-lab-dialog .nous-trust-step .step-label { margin: var(--sp-0); font-weight: 700; }
+    .nous-lab-dialog .nous-trust-step .step-desc { font-size: var(--fs-sm); color: var(--muted); }
+    .nous-lab-dialog .nous-trust-step.current .step-desc { color: inherit; opacity: 0.85; }
+    .nous-lab-dialog .nous-trust-step.current[data-step="observe"] { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); border-color: color-mix(in srgb, var(--blue) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current[data-step="suggest"] { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current[data-step="evolve"] { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: transparent; }
+    .nous-lab-dialog .nous-trust-step:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); z-index: 1; }
+    .nous-lab-dialog .nous-trust-step:disabled { opacity: 0.6; cursor: not-allowed; }
+    .nous-lab-trust-note { margin-top: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
+    /* Experiment cards (#12532) reuse the Inception campaign list look:
+       .campaigns-card / .campaign-row / .campaign-pill / .campaign-row-actions. */
+    .nous-exp-row .campaign-row-title { white-space: normal; overflow-wrap: anywhere; }
+    /* Breathing room on the card: title → meta row → stage / baseline (#12697). */
+    .nous-exp-row .campaign-row-meta { margin-top: var(--sp-3); }
+    .nous-exp-row .nous-exp-stage, .nous-exp-row .nous-exp-baseline { margin-top: var(--sp-3); }
+    /* The stat tiles used to touch the Experiments card below them. */
+    .nous-stat-grid + .nous-exp-cards { margin-top: var(--sp-4); }
+    .nous-exp-row[data-status="paused"] { opacity: 0.75; }
+    .nous-exp-pill[data-status="active"] { border-color: var(--green); color: var(--green); }
+    .nous-exp-pill[data-status="paused"] { border-color: var(--yellow); color: var(--yellow); }
+    .nous-exp-pill[data-status="archived"] { border-color: var(--border); color: var(--muted); }
+    .nous-scope-pill { background: var(--surface); color: var(--text); }
+    .nous-exp-baseline { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-exp-baseline .nous-progress { margin: var(--sp-2) var(--sp-0); }
+    .nous-exp-baseline .config-info { margin-left: var(--sp-1); }
+    .nous-exp-hypothesis { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-1); }
+    .nous-exp-stage { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .nous-exp-stage .nous-exp-stage-label { font-weight: 600; }
+    .nous-exp-stage[data-stage="ready"] .nous-exp-stage-label { color: var(--green); }
+    .nous-exp-stage[data-loop-idle="1"] .nous-exp-stage-label { color: var(--yellow); }
+    .nous-exp-stage[data-stage="proposed"] .nous-exp-stage-label { color: var(--yellow); }
+    .nous-exp-stage[data-stage="running"] .nous-exp-stage-label { color: var(--accent); }
+    .nous-exp-stage-detail { color: var(--muted); }
+    .nous-stat .lbl .config-info { margin-left: var(--sp-1); }
+    /* Add / edit experiment is a modal (hive-dialog recipe), never an inline
+       slot under the Experiments header: New and Edit used to share that
+       slot and ✎ silently morphed an open New form into Edit (#12697). */
+    .nous-exp-dialog { width: 560px; }
+    .nous-exp-dialog .hive-dialog-title { margin-bottom: var(--sp-2); }
+    .nous-exp-dialog-help { font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; margin-bottom: var(--sp-5); }
+    .nous-new-exp { display: grid; gap: var(--sp-4); margin-bottom: var(--sp-5); }
+    .nous-new-exp label { display: block; font-size: var(--fs-sm); font-weight: 600; margin-bottom: var(--sp-3); }
+    .nous-new-exp textarea, .nous-new-exp input[type="text"] { width: 100%; box-sizing: border-box; }
+    .nous-new-exp .nous-lab-chips { margin-top: var(--sp-1); }
+    .nous-new-exp-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap; }
+    .nous-exp-dialog .nous-conflict-warn { margin-bottom: var(--sp-5); }
+    /* In-app scope-conflict warning: never window.alert/confirm. */
+    .nous-conflict-warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); border: 1px solid var(--yellow); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); display: grid; gap: var(--sp-2); }
+    .nous-conflict-warn strong { color: var(--text); }
+    .nous-conflict-warn .nous-new-exp-actions { justify-content: flex-start; }
+    /* Card row actions are icon buttons (edit / pause|resume / archive); the
+       verb lives in aria-label + title. Hit area ≥ 28px, visible focus ring. */
+    .nous-exp-actions { align-items: center; }
+    .nous-exp-icon { min-width: 28px; min-height: 28px; width: 32px; height: 32px; padding: var(--sp-0); display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-md); line-height: 1; }
+    .nous-exp-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .nous-exp-version { font-size: var(--fs-sm); margin-top: var(--sp-1); }
+    .nous-exp-scope-warn { font-size: var(--fs-sm); margin-top: var(--sp-1); font-style: italic; }
+    .nous-data-note { display: grid; gap: var(--sp-2); }
+

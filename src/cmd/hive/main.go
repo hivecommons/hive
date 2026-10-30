@@ -82,6 +82,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
+	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
@@ -93,6 +94,7 @@ import (
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/telegram"
@@ -1496,10 +1498,12 @@ func (b *boot) wireBootClosures() {
 			ReviewerAutoscaleStatus: func() autoscale.Status { return reviewerAutoscaler.Status() },
 			ReviewEvents:            b.reviewEvents,
 			WebhookWake:             b.webhookWakeFunc(),
+			SweepNudge:              b.sweepNudgeFunc(),
 			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
 			WebhookDelivery:         b.webhookDeliveryFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),
 			SentinelPREvent:         b.sentinelPREventFunc(),
+			CIFailureKick:           b.ciFailureKickFunc(),
 			ProjectsV2ItemEvent:     b.projectsV2ItemEventFunc(),
 			GHAppAuth:               b.appAuth,
 			GHTokenScopes:           b.ghAuth.TokenScopes,
@@ -2719,7 +2723,6 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// A dependency-bot PR parked on a terminal required-check hold is handed
 	// to a person by the governor's dependency-bot sweep (#12379).
 	autoMergeOpts.OnTerminalHold = noteDependencyBotTerminalHold
-	autoMergeOpts.MergeTrainEnabled = func() bool { return b.cfg.AutoMerge.MergeTrain.IsEnabled() }
 	// Intent tier gate (#6258): the human lane only queues PRs that
 	// survive writeMergeEligible's intent check, but this sweep lists
 	// the App's PRs on its own, so it carries the same policy (same
@@ -2739,13 +2742,49 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
+	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	// Commit messages on a merge-ready head are read for closing keywords
 	// that name another pull request (hivecommons/hive#15025).
 	autoMergeOpts.ScanCommitClosingKeywords = true
+	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
+		return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseStrictFor(repo)
+	}
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
+	// Merge train (#15117): read live so a reload applies. A member the
+	// train could not update-branch is handed to the fixer's rebase-resolve
+	// episode (#15104): the request admits the PR to the fixer router —
+	// which still requires a head the hive can push to — under the shared
+	// two-attempt guard, and the lane merges the clean head on its next pass.
+	// The adoption lane opens the same episode on the hive's own copy of
+	// a contributor PR whose head would not replay onto the base
+	// (hivecommons/hive#15307), with RequestedBy naming it.
+	autoMergeOpts.RebaseResolver = automerge.RebaseResolverFunc(func(_ context.Context, req automerge.RebaseRequest) error {
+		requester := mergeTrainRebaseRequester
+		if req.RequestedBy != "" {
+			requester = req.RequestedBy
+		}
+		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, requester, time.Now())
+		return nil
+	})
+	autoMergeOpts.RebaseEpisode = func(repo string, number int) (automerge.RebaseEpisode, bool) {
+		a, ok := rebasemerge.SharedAttempts().Get(repo, number)
+		if !ok {
+			return automerge.RebaseEpisode{}, false
+		}
+		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
+	}
+	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
+		if b.cfg == nil {
+			return automerge.DefaultMergeTrainPolicy
+		}
+		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
+	}
+	// Merge-hotspot advisor intake (hotspot_advisor.go): the train's file
+	// lists and sibling conflicts are the advisor's only evidence.
+	autoMergeOpts.HotspotRecorder = hotspotRecorder{store: hotspotStore()}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
 		setMergeEligibleLaneGate(laneGate)
@@ -2876,6 +2915,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 		if b.saved.ConfigOverrides != nil {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
+			b.observeWritebackRepos()
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
 			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
 			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
@@ -2937,6 +2977,8 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
+	b.dashSrv.SetWritebackGate(b.writebackGate())
+	b.dashSrv.SetHotspotSource(hotspotDashSource{store: hotspotStore()})
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
 			return nil
@@ -4283,6 +4325,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		// Re-sync subsystems that cache config values
 		b.ghClient.SetRepos(b.cfg.Project.Repos)
+		b.observeWritebackRepos()
 		if b.metricsCollector != nil {
 			b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 		}
@@ -6343,6 +6386,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// way, so re-install it too — a hub-delivered filter must take
 				// effect on the next enumeration, not the next restart.
 				b.ghClient.SetRepos(b.cfg.Project.Repos)
+				b.observeWritebackRepos()
 				if b.metricsCollector != nil {
 					b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 				}
@@ -7909,6 +7953,15 @@ func runEvalCycle(
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
+	// Merge-hotspot advisor: at most hourly, score the files concurrent
+	// PRs keep colliding on (from the merge train's own records) and file
+	// one modularize issue per hotspot for the ci-maintainer lane through
+	// the writeback gate. Skipped with the other optional sweeps when the
+	// GitHub budget is tight.
+	if !budgetDecision.SkipOptional {
+		runHotspotAdvisor(ctx, cfg, ghClient, actionable, logger)
+	}
+
 	if !budgetDecision.SkipUnstick {
 		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 			PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -8512,6 +8565,9 @@ func runEvalCycle(
 					dashSrv.SetGitHubAppState(github.AppStateRepoMoved.String())
 					logger.Warn("GitHub App write failed — repository transferred to another owner",
 						"configured", moved.Configured, "current", moved.Current)
+				},
+				recordRepoPaused: func(repo string) {
+					recordAdvisoryPostSuccess(repo, time.Now())
 				},
 				recordWriteForbidden: func(repo string) {
 					backoff := advCfg.PostRetryBackoff()
@@ -9527,7 +9583,14 @@ func deliverReEngagement(
 	}
 	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent))); err != nil {
 		if logger != nil {
-			logger.Warn("re-engagement kick undeliverable; budget not charged",
+			level := slog.LevelWarn
+			// Pool contention is expected backpressure: retry on a later sweep.
+			// Keep it below WARN so slogfeed does not file a runtime defect
+			// for a healthy shared pool refusing another session (#15350).
+			if isSharedPoolBusyErr(err) {
+				level = slog.LevelInfo
+			}
+			logger.Log(context.Background(), level, "re-engagement kick undeliverable; budget not charged",
 				"repo", o.Repo, "pr", o.Number, "agent", fixer, "error", err)
 		}
 		return false
@@ -10001,9 +10064,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		}
 		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		opts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
-		opts.MergeTrainEnabled = func() bool { return cfg.AutoMerge.MergeTrain.IsEnabled() }
+		opts.MergeTrain = func() automerge.MergeTrainPolicy {
+			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
+		}
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {
@@ -10456,9 +10523,18 @@ func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *
 			if dashSrv == nil {
 				return
 			}
+			// Findings the write-back gate refused still reach the Security
+			// tab and /api/sentinel: the scan happened, only the GitHub
+			// write did not (#writeback containment).
+			dashSrv.RecordSentinelFinding(event)
 			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, head=%s, rules=%s",
 				event.Repo, event.Number, event.Author, event.HeadSHA, strings.Join(event.Rules(), ","))
-			dashSrv.AuditLogRecord("system", "sentinel-alert", detail, "", event.Repo, event.Number)
+			action := "sentinel-alert"
+			if event.Suppressed {
+				action = "sentinel-finding-suppressed"
+				detail += ", suppressed=" + event.SuppressedReason
+			}
+			dashSrv.AuditLogRecord("system", action, detail, "", event.Repo, event.Number)
 		},
 	}
 }
@@ -10500,7 +10576,7 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	}
 	logSentinelResult(result, logger)
 	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -10589,7 +10665,24 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if lastRun != nil {
 		*lastRun = now
 	}
+	// `/hive approve` on a PR is answered with what the merge lane will do
+	// with it (hivecommons/hive#13087); the engine here only reads policy.
+	approveOpts := automerge.Options{
+		MergerAuthorizer:       trustedMergerFunc(cfg),
+		TrustedAuthorizer:      trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:  contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict: contributorLaneVerdictFunc(cfg, logger),
+	}
+	if cfg != nil {
+		approveOpts.RepoAutoMergeEnabled = cfg.RepoAutoMergeEnabled
+		approveOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		approveOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
+		approveOpts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
+	}
+	approveEngine := automerge.New(ghClient, approveOpts)
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
+		PRApproveReply:       approveEngine.PRApproveReply,
 		MaxActions:           github.DefaultIssueUnparkSweepMaxActions,
 		LabelDriven:          issueUnparkLabelDriven(cfg),
 		LabelApproval:        labelApprovalPolicyResolver(cfg),
@@ -11626,6 +11719,12 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	}
 	for _, f := range plan.ForcedFixes {
 		logger.Warn("review fix forced: changes_requested head starved by the revisit path", "repo", f.Repo, "pr", f.Number, "head", f.HeadSHA, "reason", f.Reason, "cycles", f.Cycles, "limit", review.RevisitStarvationCycles)
+	}
+	for _, w := range plan.Promoted {
+		logger.Warn("review dispatch promoted: head starved of a reviewer walked ahead of the queue", "repo", w.Repo, "pr", w.Number, "head", w.HeadSHA, "reason", w.Reason, "cycles", w.Cycles, "since", w.FirstAt, "limit", review.ReviewWaitStarvationCycles)
+	}
+	for _, w := range plan.Waiting {
+		logger.Info("review dispatch waiting: perspectives still owed, no reviewer this cycle", "repo", w.Repo, "pr", w.Number, "head", w.HeadSHA, "reason", w.Reason)
 	}
 	if len(plan.ReviewKicks)+len(plan.FixKicks)+len(plan.FixExclusions) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks), "fix_excluded", len(plan.FixExclusions), "fix_excluded_reasons", fixExclusionReasonSummary(plan.FixExclusions))

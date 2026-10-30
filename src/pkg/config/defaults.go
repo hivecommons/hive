@@ -30,6 +30,8 @@ const (
 	DefaultEvalIntervalWebhookS       = 900
 	DefaultWebhookWakeDebounceS       = 10
 	DefaultWebhookWakeMinGapS         = 30
+	DefaultCIFailureKickCooldownS     = 600
+	DefaultMergeTrainStallWarnS       = 3600
 	DefaultConserveIntervalMultiplier = 2
 	DefaultOptionalSweepEveryNCycles  = 1
 )

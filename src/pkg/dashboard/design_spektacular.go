@@ -51,6 +51,15 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 	if err != nil {
 		return nil, "", err
 	}
+	if actor := worksource.SolicitedWritebackActor(ctx, issueWorkRef(issue)); actor != "" {
+		for key, value := range map[string]string{
+			designWritebackRequestedBy: actor, designWritebackRequestedRef: issueWorkRef(issue).Key(),
+		} {
+			if err := store.SetMetadata(epic.ID, key, value); err != nil {
+				return nil, "", err
+			}
+		}
+	}
 	// The governor re-enters here every cycle while the design label stays on
 	// the issue; an approved design is settled and must not be re-requested
 	// or re-admitted as a fresh spec run.
@@ -136,7 +145,7 @@ func (s *Server) postDesignArtifact(ctx context.Context, store *beads.Store, epi
 	if err != nil {
 		return err
 	}
-	if err := commenter.AddComment(ctx, issueWorkRef(issue), designArtifactComment(body)); err != nil {
+	if err := commenter.AddComment(designWritebackContext(ctx, epic), issueWorkRef(issue), designArtifactComment(body)); err != nil {
 		return err
 	}
 	if digest != "" {

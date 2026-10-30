@@ -1,0 +1,104 @@
+    /* Governor cadence matrix table */
+    /* Reserve readable agent/model columns; smaller cards scroll the table
+       locally instead of squeezing identifiers into narrow vertical pills. */
+    .gov-matrix-wrap { overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+    .mobile-table-hint { display: none; margin: 0 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
+    @media (max-width: 640px) {
+      .mobile-table-hint { display: block; position: sticky; left: 0; max-width: 100%; }
+    }
+    .gov-matrix-templates-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-3); flex-wrap: wrap; }
+    .gov-matrix-templates-label { font-size: var(--fs-xs); color: var(--muted); font-weight: 600; }
+    .gov-matrix-templates-buttons { display: inline-flex; gap: var(--sp-2); flex-wrap: wrap; }
+    .gov-matrix { margin-top: 10px; width: 100%; min-width: 64rem; border-collapse: collapse; font-size: 0.72rem; table-layout: fixed; }
+    .gov-matrix th { color: var(--muted); font-weight: 600; padding: 3px 8px; text-align: center; border-bottom: 1px solid var(--border); }
+    .gov-matrix th:nth-child(2) { width: 10rem; }
+    .gov-matrix th:last-child { width: 16rem; }
+    .gov-matrix th.mode-active { border-radius: 4px 4px 0 0; padding: 4px 10px; font-weight: 700; }
+    .gov-matrix th.mode-idle  { color: var(--green); }
+    .gov-matrix th.mode-quiet { color: var(--blue); }
+    .gov-matrix th.mode-busy  { color: var(--yellow); }
+    .gov-matrix th.mode-surge { color: var(--red); }
+    .gov-matrix th.mode-active.mode-idle  { background: color-mix(in srgb, var(--green) 15%, transparent); }
+    .gov-matrix th.mode-active.mode-quiet { background: color-mix(in srgb, var(--blue) 15%, transparent); }
+    .gov-matrix th.mode-active.mode-busy  { background: color-mix(in srgb, var(--yellow) 15%, transparent); }
+    .gov-matrix th.mode-active.mode-surge { background: color-mix(in srgb, var(--red) 15%, transparent); }
+    .gov-matrix td { padding: 3px 8px; text-align: center; color: var(--muted); border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+    .gov-matrix td[data-tab="Cadences"], .gov-matrix .gov-agent-name-link { cursor: pointer; }
+    .gov-matrix .gov-agent-name-link { background: none; border: 0; padding: var(--sp-0); color: inherit; font: inherit; font-weight: inherit; text-align: left; }
+    .gov-matrix .gov-agent-name-link:hover { color: var(--accent); text-decoration: underline; }
+    .gov-matrix td.name-col { text-align: left; color: var(--text); font-weight: 600; min-width: 72px; }
+    .gov-matrix .power-col { width: 64px; white-space: nowrap; }
+    .gov-matrix td.power-col { vertical-align: middle; }
+    .gov-matrix tr.agent-disabled td { opacity: 0.58; }
+    .gov-matrix tr.agent-disabled td.power-col { opacity: 1; }
+    .gov-matrix tr.agent-disabled td.name-col { color: var(--muted); }
+    .gov-matrix td.cadence-disabled-cell, .gov-matrix td.continuous-cadence-note { color: color-mix(in srgb, var(--muted) 72%, var(--bg)); font-style: italic; cursor: default; }
+    .cadence-mode-row { border:1px solid var(--border);border-radius:8px;padding:10px;display:grid;grid-template-columns:minmax(70px, 0.5fr) minmax(210px, 1.4fr) minmax(160px, 1fr);gap:var(--sp-3);align-items:center; }
+    .cadence-mode-label { font-weight:600;text-transform:uppercase;letter-spacing:0.04em;font-size:0.72rem;color:var(--muted); }
+    .cadence-mode-control { display:inline-flex;gap:var(--sp-1);flex-wrap:wrap; }
+    .cadence-mode-control .hv-btn[aria-checked="true"] { background:var(--accent);color:var(--bg);border-color:var(--accent); }
+    .cadence-mode-inline { display:flex;align-items:center;gap:var(--sp-2);min-width:0; }
+    .cadence-mode-inline input { min-width:90px; }
+    .cadence-mode-help { font-size:0.72rem;color:var(--muted); }
+    .cadence-mode-list { display:grid;gap:var(--sp-3); }
+    .cadence-continuous-fields { display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:flex-end;margin-top:var(--sp-4); }
+    .cadence-mode-presets { display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-2); }
+    .cadence-day-label { display:inline-flex;gap:3px;align-items:center;margin-right:var(--sp-3); }
+    .cadence-legacy-notice { color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--yellow) 8%, transparent);border:1px solid color-mix(in srgb, var(--yellow) 28%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-5); }
+    .cadence-legacy-action { margin-left:var(--sp-3); }
+    @media (max-width: 480px) {
+      .gov-matrix { font-size: 0.65rem; }
+      .gov-matrix th { padding: var(--sp-1) var(--sp-2); }
+      .gov-matrix th.mode-active { padding: var(--sp-1) var(--sp-3); }
+      .gov-matrix td { padding: var(--sp-1) var(--sp-2); }
+      .gov-matrix td.name-col { min-width: 56px; }
+    }
+    .gov-matrix td.col-active { font-weight: 700; color: var(--text); }
+    .gov-matrix td.col-active.mode-idle  { background: color-mix(in srgb, var(--green) 8%, transparent); color: var(--green); }
+    .gov-matrix td.col-active.mode-quiet { background: color-mix(in srgb, var(--blue) 8%, transparent); color: var(--blue); }
+    .gov-matrix td.col-active.mode-busy  { background: color-mix(in srgb, var(--yellow) 8%, transparent); color: var(--yellow); }
+    .gov-matrix td.col-active.mode-surge { background: color-mix(in srgb, var(--red) 8%, transparent); color: var(--red); }
+    .gov-matrix td.paused { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); font-style: italic; }
+    .gov-matrix td.on-demand { color: var(--indigo); font-style: italic; }
+    .gov-matrix td.off { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); font-style: italic; }
+    .gov-matrix .agent-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--green); margin-right: var(--sp-2); vertical-align: middle;
+      box-shadow: 0 0 4px var(--green);
+      animation: green-pulse 6s ease-in-out infinite;
+    }
+
+    /* Timeline strip */
+    .gov-timeline { margin-top: 10px; }
+    .gov-timeline-label { display: flex; justify-content: space-between; font-size: var(--fs-2xs); color: var(--muted); margin-bottom: var(--sp-1); }
+    .gov-timeline-strip { display: flex; height: 6px; border-radius: 3px; overflow: hidden; }
+    .gov-timeline-strip .tick { flex: 1; min-width: 1px; }
+    .tick-idle { background: var(--green); }
+    .tick-quiet { background: var(--blue); }
+    .tick-busy { background: var(--yellow); }
+    .tick-surge { background: var(--red); }
+    .tick-unknown { background: color-mix(in srgb, var(--muted) 60%, var(--bg)); }
+    .gov-timeline-legend { display: flex; gap: var(--sp-5); font-size: var(--fs-2xs); margin-top: 3px; }
+
+    /* Agent indicators */
+    .agent-indicators { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--border); font-size: var(--fs-sm); }
+    .ind-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 3px; }
+    /* .ind-tag family — pill recipe; variants pick --pill-c, hover deepens tint */
+    .ind-tag { --component-status: var(--status-info); --pill-c: var(--status-info); text-decoration: none; }
+    .ind-tag:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
+    .ind-dots { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
+    .ind-dot-item { display: flex; align-items: center; gap: 3px; }
+    .ind-dlabel { font-size: var(--fs-2xs); color: var(--muted); }
+    .ind-group { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: 3px; }
+    .ind-group-label { font-size: var(--fs-2xs); color: var(--muted); font-weight: 600; min-width: 52px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .ind-stat { display: inline-flex; align-items: baseline; gap: 3px; margin-right: 10px; }
+    .ind-num { font-weight: 700; font-size: 0.9rem; color: var(--text); }
+    .ind-err { color: var(--red); }
+    .ind-err .ind-num { color: var(--red); }
+    .ind-warn { color: var(--yellow); }
+    .ind-warn .ind-num { color: var(--yellow); }
+    .ind-ok { color: var(--green); }
+    .ind-ok .ind-num { color: var(--green); }
+    .ind-row { display: flex; flex-wrap: wrap; gap: var(--sp-5); }
+    .ind-summary { font-size: 0.7rem; color: var(--text); margin-bottom: var(--sp-2); line-height: 1.4; opacity: 0.85; }
+

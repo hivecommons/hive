@@ -1,0 +1,1 @@
+- Remove an unreachable cancellation check from the MITM inference proxy; runtime behavior is unchanged, and the HTTP translator retains its caller-cancellation handling ([#15159](https://github.com/hivecommons/hive/pull/15159)).

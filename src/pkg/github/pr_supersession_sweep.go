@@ -3,10 +3,14 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 const (
@@ -22,7 +26,10 @@ const (
 	SupersessionActionDetectedContributor  = "detected-contributor"
 	SupersessionActionKeptOpen             = "kept-open"
 	SupersessionActionCommentedContributor = "commented-contributor"
-	SupersessionActionCommentedGrace       = "commented-grace"
+	// SupersessionActionSuppressedContributor records a detection the
+	// write-back gate kept off GitHub (dashboard only).
+	SupersessionActionSuppressedContributor = "suppressed-contributor"
+	SupersessionActionCommentedGrace        = "commented-grace"
 )
 
 // Supersession outcomes, recorded in the audit detail as reason=… so the
@@ -217,6 +224,24 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		return event, "", nil
 	}
 	reason := ""
+	ownPR := identity.Matches(event.Author)
+	if !ownPR {
+		// Write-back gate: every contributor path below (notice, park,
+		// auto-close, park release) writes on a PR the hive did not open.
+		// Below the level supersession_notice needs, or without the opt-in
+		// label, the detection is audited and nothing else happens.
+		// This is a policy pre-check (no body yet): the content-aware
+		// check runs below, once the notice is rendered.
+		item := c.sentinelWritebackItem(pr)
+		if d := c.WritebackGate().Allowed(prRepo, item, writeback.KindSupersessionNotice); !d.Allowed {
+			if opts.Audit != nil {
+				event.Action = SupersessionActionSuppressedContributor
+				event.Reason = "write-back gate: " + d.Reason
+				opts.Audit(event)
+			}
+			return event, "", nil
+		}
+	}
 	openFiles, closerFiles, err := c.prFileSets(ctx, prOwner, prRepoName, pr.GetNumber(), closer)
 	if err != nil {
 		return SupersessionSweepEvent{}, "", err
@@ -233,7 +258,6 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	if opts.ACMMLevelForRepo != nil {
 		level = opts.ACMMLevelForRepo(prRepo)
 	}
-	ownPR := identity.Matches(event.Author)
 	if ownPR {
 		return c.resolveOwnSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, closerFiles, subset, level, opts.autoCloseSupersededOn())
 	}
@@ -263,7 +287,8 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		}
 		reason = supersessionReasonKeptOpen
 	}
-	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelAutonomous {
+	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelAutonomous &&
+		c.WritebackAllowed(prRepo, c.sentinelWritebackItem(pr), writeback.KindSupersessionClose, "close superseded PR").Allowed {
 		return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod, candidate.Closing)
 	}
 	notice := supersessionDecisionNotice(prOwner, closer, reason)
@@ -286,6 +311,14 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	event.Action = SupersessionActionCommentedContributor
 	body := renderSupersessionComment(event, closer, notice)
+	if !ownPR {
+		// Content-aware gate on the real body: an identical notice already
+		// on this PR, or the same notice just sent to another PR, is held
+		// exactly like a notice that already stands.
+		if d := c.WritebackAllowed(prRepo, c.sentinelWritebackItem(pr), writeback.KindSupersessionNotice, body); !d.Allowed {
+			return c.releaseStaleSupersessionPark(ctx, prRepo, prOwner, prRepoName, pr)
+		}
+	}
 	changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 	if err != nil {
 		return event, "", err
@@ -303,15 +336,43 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 // of its closing claims is still open, no closer resolves, or an earlier
 // pass already rewrote the claim into a reference.
 func (c *Client) detectSupersession(ctx context.Context, prRepo string, pr *gh.PullRequest, identity HiveIdentity, now time.Time) (candidate IssueClaim, closer supersessionCloser, detected bool, err error) {
+	det, err := c.detectSupersessionDetail(ctx, prRepo, pr, identity, now)
+	return det.candidate, det.closer, det.detected, err
+}
+
+// supersessionDetail is detectSupersessionDetail's answer: the merged-closer
+// supersession (candidate/closer/detected) plus what the hive-authored
+// auto-close rule reads when no merged closer resolves — whether every
+// candidate claim is closed (allClosingClosed) and the first closed claim
+// (closedClaim), which names the issue in the close comment.
+type supersessionDetail struct {
+	candidate        IssueClaim
+	closer           supersessionCloser
+	detected         bool
+	allClosingClosed bool
+	closedClaim      IssueClaim
+	// closingClaims: the PR states what it delivers (`Fixes #N`); a
+	// bare-reference PR never reads as "nothing left to deliver".
+	closingClaims bool
+	// allNotPlanned: every candidate issue was closed as not planned
+	// (wontfix) — the one no-closer case where nothing is left to deliver
+	// for certain; a "completed" close whose PR did not resolve may be a
+	// transient lookup failure.
+	allNotPlanned bool
+}
+
+func (c *Client) detectSupersessionDetail(ctx context.Context, prRepo string, pr *gh.PullRequest, identity HiveIdentity, now time.Time) (supersessionDetail, error) {
+	var det supersessionDetail
 	claims := supersessionCandidateClaims(claimsFromPR(pr, prRepo, identity, now))
 	if len(claims) == 0 {
-		return IssueClaim{}, supersessionCloser{}, false, nil
+		return det, nil
 	}
+	det.allNotPlanned = true
 	for _, claim := range claims {
 		issueOwner, issueRepoName := c.splitRepo(claim.Repo)
 		issue, _, err := c.client.Issues.Get(ctx, issueOwner, issueRepoName, claim.Issue)
 		if err != nil {
-			return IssueClaim{}, supersessionCloser{}, false, fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
+			return supersessionDetail{}, fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
 		}
 		if !strings.EqualFold(issue.GetState(), "closed") {
 			// An issue this PR claims to close is still open, so the PR is
@@ -319,27 +380,36 @@ func (c *Client) detectSupersession(ctx context.Context, prRepo string, pr *gh.P
 			// hivecommons/hive#12349 this escalated to needs-human as "also
 			// claims another issue that is still open", which flagged #12322
 			// (Fixes open #12117, Part of closed #12080) as superseded.
-			return IssueClaim{}, supersessionCloser{}, false, nil
+			return supersessionDetail{}, nil
+		}
+		if det.closedClaim.Issue == 0 {
+			det.closedClaim = claim
+		}
+		if !strings.EqualFold(issue.GetStateReason(), issueStateReasonNotPlanned) {
+			det.allNotPlanned = false
 		}
 		resolved, ok, err := c.resolveIssueClosingPR(ctx, claim.Repo, issueOwner, issueRepoName, claim.Issue, pr.GetNumber())
 		if err != nil {
-			return IssueClaim{}, supersessionCloser{}, false, err
+			return supersessionDetail{}, err
 		}
-		if ok && candidate.Issue == 0 {
-			candidate = claim
-			closer = resolved
+		if ok && det.candidate.Issue == 0 {
+			det.candidate = claim
+			det.closer = resolved
 		}
 	}
-	if candidate.Issue == 0 {
-		return IssueClaim{}, supersessionCloser{}, false, nil
+	det.allClosingClosed = true
+	det.closingClaims = claims[0].Closing
+	if det.candidate.Issue == 0 {
+		return det, nil
 	}
-	if supersessionResolvedInBody(pr.GetBody(), candidate.Issue, closer.Number) {
+	if supersessionResolvedInBody(pr.GetBody(), det.candidate.Issue, det.closer.Number) {
 		// An earlier pass already turned this claim into a reference; the
 		// issue stays closed, so without this check the rewrite would read
 		// as a fresh supersession every tick.
-		return IssueClaim{}, supersessionCloser{}, false, nil
+		return supersessionDetail{closedClaim: det.closedClaim, allClosingClosed: true, closingClaims: det.closingClaims, allNotPlanned: det.allNotPlanned}, nil
 	}
-	return candidate, closer, true, nil
+	det.detected = true
+	return det, nil
 }
 
 // supersessionCandidateClaims picks the claims whose closure can supersede
@@ -420,9 +490,25 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		if node.Number == currentPR || !node.Merged {
 			continue
 		}
+		if !sameRepoPullURL(node.URL, owner, repo, node.Number) {
+			continue
+		}
 		return supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}, true
 	}
 	return supersessionCloser{}, false
+}
+
+// sameRepoPullURL reports whether a PR URL from closedByPullRequestsReferences
+// names pull request number in owner/repo. GitHub can list a merged PR from
+// another repository there, so only a same-repo PR may be named by number.
+// The host is ignored so GitHub Enterprise URLs compare the same way.
+func sameRepoPullURL(rawURL, owner, repo string, number int) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	want := "/" + owner + "/" + repo + "/pull/" + strconv.Itoa(number)
+	return strings.EqualFold(strings.TrimSuffix(u.Path, "/"), want)
 }
 
 func (c *Client) issueClosingCommit(ctx context.Context, owner, repo string, issue int) (string, error) {
@@ -514,9 +600,12 @@ func renderSupersessionComment(event SupersessionSweepEvent, closer supersession
 	fmt.Fprintln(&b, "Supersession sweep found that this PR's claimed issue is already closed by another merged PR.")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Claimed issue: %s#%d\n", event.IssueRepo, event.Issue)
-	if closer.URL != "" {
+	switch {
+	case closer.Number <= 0:
+		fmt.Fprintln(&b, "- Closing PR: none (the issue was closed without a merged PR)")
+	case closer.URL != "":
 		fmt.Fprintf(&b, "- Closing PR: [#%d](%s)\n", closer.Number, closer.URL)
-	} else {
+	default:
 		fmt.Fprintf(&b, "- Closing PR: %s#%d\n", closer.Repo, closer.Number)
 	}
 	fmt.Fprintln(&b)

@@ -2,6 +2,7 @@ package worksource_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,7 +13,40 @@ import (
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
+
+func TestGitHubIssuesSourceMutationContainment(t *testing.T) {
+	for _, action := range []string{"add", "remove", "comment"} {
+		t.Run(action, func(t *testing.T) {
+			writes := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					writes++
+				}
+				_, _ = w.Write([]byte(`{"number":42,"user":{"login":"visitor"},"labels":[]}`))
+			}))
+			defer srv.Close()
+			client := github.NewClientForTest(srv.URL, "org", []string{"repo"}, testLogger())
+			gate := writeback.New(writeback.Config{}, writeback.Deps{LevelFor: func(string) int { return 1 }}, "")
+			client.SetWritebackGate(gate)
+			source := worksource.NewGitHubIssuesSource(client)
+			ref := worksource.Ref{Repo: "org/repo", Number: 42}
+			var err error
+			switch action {
+			case "add":
+				err = source.(worksource.LabelMutator).AddLabel(context.Background(), ref, "hive-design")
+			case "remove":
+				err = source.(worksource.LabelMutator).RemoveLabel(context.Background(), ref, "hive-design")
+			case "comment":
+				err = source.(worksource.Commenter).AddComment(context.Background(), ref, "design artifact")
+			}
+			if !errors.Is(err, writeback.ErrSuppressed) || writes != 0 || len(gate.Recent()) != 1 {
+				t.Fatalf("err=%v writes=%d suppressed=%+v", err, writes, gate.Recent())
+			}
+		})
+	}
+}
 
 func newIssuesTestServer(t *testing.T, org, repo, issuesJSON string) *httptest.Server {
 	t.Helper()

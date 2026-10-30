@@ -100,6 +100,13 @@ type Record struct {
 	AdoptCopyRedHeads     []string  `json:"adopt_copy_red_heads,omitempty"`
 	AdoptReopenedAt       time.Time `json:"adopt_reopened_at,omitempty"`
 	AdoptReopenedFrom     int       `json:"adopt_reopened_from,omitempty"`
+	// AdoptCopyConflicting is set when the hive's copy (AdoptedBy) opened
+	// conflicting with its base because the contributor head could not be
+	// replayed onto it and the fixer's rebase-resolve episode owns the
+	// conflict (hivecommons/hive#15307); cleared when the copy reads
+	// mergeable again. The tracker row reads "Adopting · fixer resolving
+	// conflicts" while it is set.
+	AdoptCopyConflicting bool `json:"adopt_copy_conflicting,omitempty"`
 	// SupersederMergedNotedHead is the original's head for which the
 	// "superseder merged but this PR has moved on" note was posted, so a
 	// diverged original is told once per head rather than every poll.
@@ -208,6 +215,16 @@ type Record struct {
 	// (hivecommons/hive#15020); nil when the item is not held or nothing
 	// about the hold could be read.
 	Hold *HoldProvenance `json:"hold,omitempty"`
+	// SoakHead / SoakStartedAt / SoakWindowSeconds record the soak the lane
+	// is holding this PR for: the head that must sit unchanged, when it was
+	// first seen green, and the window it must sit for. Written by the pass
+	// whether the lane admitted the head (095) or trust still blocks it
+	// (060, RouteHuman's "soak Nm remaining"), so the dashboard counts the
+	// same clock down in both places and notices a head that moved on.
+	// Cleared when the head is not soaking.
+	SoakHead          string    `json:"soak_head,omitempty"`
+	SoakStartedAt     time.Time `json:"soak_started_at,omitempty"`
+	SoakWindowSeconds int64     `json:"soak_window_s,omitempty"`
 	// AdoptBlockedHead / AdoptBlockedBy / AdoptBlockedAt record that
 	// adoption came due at this head and the engine held it for a reason a
 	// person must settle (AdoptBlockedAuthorMaintainer: the author
@@ -228,6 +245,24 @@ type Record struct {
 	AdmittedHead string    `json:"admitted_head,omitempty"`
 	AdmittedBy   string    `json:"admitted_by,omitempty"`
 	AdmittedAt   time.Time `json:"admitted_at,omitempty"`
+	// AdoptForcedBy / AdoptForcedAt record an operator's "Adopt now": the
+	// login that forced adoption and when. The next sweep adopts by
+	// supersession at once, regardless of the author's presence and of
+	// maintainer_policy; the attempt clears it (MarkAdopted).
+	AdoptForcedBy string    `json:"adopt_forced_by,omitempty"`
+	AdoptForcedAt time.Time `json:"adopt_forced_at,omitempty"`
+	// RerouteTo / RerouteBy / RerouteAt / RerouteReason record an
+	// operator's "Reroute to another clanker": the PR's follow-up work was
+	// offered to RerouteTo's queue instead of waiting on the author.
+	// RerouteHead is the head the reroute was issued for; a new head (the
+	// target or the author pushed) ends the reroute. RerouteFallbackAt is
+	// when the pickup window lapsed and the hive fell back to Adopt now.
+	RerouteTo         string    `json:"reroute_to,omitempty"`
+	RerouteBy         string    `json:"reroute_by,omitempty"`
+	RerouteAt         time.Time `json:"reroute_at,omitempty"`
+	RerouteReason     string    `json:"reroute_reason,omitempty"`
+	RerouteHead       string    `json:"reroute_head,omitempty"`
+	RerouteFallbackAt time.Time `json:"reroute_fallback_at,omitempty"`
 	// DCORepairHead is the in-place-adopted head whose unsigned hive
 	// commits the hive last rewrote with its sign-off on the contributor
 	// branch (hivecommons/hive#14666); one attempt per head.
@@ -264,6 +299,12 @@ type Record struct {
 	// ForkRehomeRefusedHead is the head of a fork PR the hive declined to
 	// move into a branch of the base repository (supersede / re-home).
 	ForkRehomeRefusedHead string `json:"fork_rehome_refused_head,omitempty"`
+	// TrustAnnouncedAt is set on a TrustPromotionKey record when the
+	// contributor lane posted its one "now trusted for contributor-lane
+	// merging in this hive" comment for the author
+	// (hivecommons/hive#15443). Zero while the author is promoted but no
+	// comment has landed yet.
+	TrustAnnouncedAt time.Time `json:"trust_announced_at,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -1228,7 +1269,10 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
 	r.AdoptMode = AdoptModeSupersede
+	r.AdoptCopyConflicting = false
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
+	r.AdoptForcedBy, r.AdoptForcedAt = "", time.Time{}
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
 	s.items[key] = r
 	s.dirty = true
 }
@@ -1355,6 +1399,12 @@ func (r Record) AdoptionBlocked(head string) string {
 // does not take the PR over (hivecommons/hive#15136).
 const AdoptBlockedOperatorAdmission = "operator-admission"
 
+// AdoptBlockedAuthorPerson is the AdoptBlockedBy reason for an adoption the
+// engine refused because a person pushed the PR themselves (author/human,
+// or one of this hive's owners): there is no contributor hive to be
+// offline, so the hive asks the author instead (hivecommons/hive#15202).
+const AdoptBlockedAuthorPerson = "author-is-person"
+
 // AdmittedByOperatorApprovalPrefix prefixes AdmittedBy when the admission
 // came from a person's Approve: "operator-approval:octocat".
 const AdmittedByOperatorApprovalPrefix = "operator-approval:"
@@ -1404,6 +1454,82 @@ func (r Record) Admission(head string) string {
 		return ""
 	}
 	return r.AdmittedBy
+}
+
+// NoteAdoptionForced records an operator's "Adopt now" by login at now. The
+// pending reroute (if any) is dropped: a forced adoption supersedes it.
+func (s *Store) NoteAdoptionForced(key, login string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || login == "" {
+		return
+	}
+	r.AdoptForcedBy, r.AdoptForcedAt = login, now
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAdoptionForced forgets a forced adoption (it was attempted).
+func (s *Store) ClearAdoptionForced(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptForcedBy == "" {
+		return
+	}
+	r.AdoptForcedBy, r.AdoptForcedAt = "", time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AdoptionForced reports the operator who forced adoption of this PR and
+// whether that force is still pending (no attempt recorded yet).
+func (r Record) AdoptionForced() (string, bool) {
+	return r.AdoptForcedBy, r.AdoptForcedBy != ""
+}
+
+// NoteReroute records that by rerouted the PR's follow-up work at head to
+// login for reason.
+func (s *Store) NoteReroute(key, head, login, by, reason string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || login == "" {
+		return
+	}
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = login, by, now, reason, head
+	r.RerouteFallbackAt = time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearReroute ends a reroute (picked up, head moved, adopted, or fallen
+// back). fallback stamps RerouteFallbackAt so the row can say the pickup
+// window lapsed.
+func (s *Store) ClearReroute(key string, fallback bool, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.RerouteTo == "" {
+		return
+	}
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
+	if fallback {
+		r.RerouteFallbackAt = now
+	}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// Rerouted reports the clanker login the PR's work at head is currently
+// rerouted to, or "" (no reroute, or the head has moved since).
+func (r Record) Rerouted(head string) string {
+	if r.RerouteTo == "" || (head != "" && r.RerouteHead != "" && r.RerouteHead != head) {
+		return ""
+	}
+	return r.RerouteTo
 }
 
 // NoteAdoptReason records why the current adoption happened (the marker's
@@ -1563,6 +1689,22 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptOrphanedBy, r.AdoptOrphanedAt, r.AdoptOrphanCount = 0, time.Time{}, 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	r.SupersededClosedFirst, r.AdoptCopyRedHeads, r.AdoptReopenedFrom = false, nil, 0
+	r.AdoptCopyConflicting = false
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteAdoptCopyConflicting records whether the hive's copy of this
+// adoption is conflicting with its base and in the fixer's hands
+// (hivecommons/hive#15307). No-op when nothing changes.
+func (s *Store) NoteAdoptCopyConflicting(key string, conflicting bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptCopyConflicting == conflicting {
+		return
+	}
+	r.AdoptCopyConflicting = conflicting
 	s.items[key] = r
 	s.dirty = true
 }
@@ -1771,14 +1913,23 @@ func (s *Store) Forget(key string) {
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped
-// listing). Returns how many were dropped.
+// listing). Returns how many were dropped. Author-wide trust-promotion
+// records (TrustPromotionKey) are per contributor, not per item, and
+// dropping one re-announces a promotion, so they outlive maxAge: they are
+// dropped only once unseen for trustPromotionRetention (or maxAge if longer).
 func (s *Store) Prune(maxAge time.Duration) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cutoff := s.now().Add(-maxAge)
+	now := s.now()
+	cutoff := now.Add(-maxAge)
+	trustCutoff := now.Add(-max(maxAge, trustPromotionRetention))
 	n := 0
 	for k, r := range s.items {
-		if r.LastSeen.Before(cutoff) {
+		c := cutoff
+		if strings.HasPrefix(k, trustPromotionKeyPrefix) {
+			c = trustCutoff
+		}
+		if r.LastSeen.Before(c) {
 			delete(s.items, k)
 			n++
 		}
@@ -1787,6 +1938,85 @@ func (s *Store) Prune(maxAge time.Duration) int {
 		s.dirty = true
 	}
 	return n
+}
+
+// trustPromotionKeyPrefix prefixes the per-author records that remember
+// whether the contributor lane announced an author's auto-promotion.
+const trustPromotionKeyPrefix = "trust-promoted:"
+
+// trustPromotionRetention bounds how long an unseen trust-promotion record
+// is kept before Prune drops it.
+const trustPromotionRetention = 180 * 24 * time.Hour
+
+// TrustPromotionKey is the store key for an author's auto-promotion
+// record. Promotion is a property of the author in the hive, not of a PR
+// (hivecommons/hive#15443), so the key carries the login only.
+func TrustPromotionKey(login string) string {
+	return trustPromotionKeyPrefix + strings.ToLower(strings.TrimSpace(login))
+}
+
+// ClaimTrustPromotionAnnouncement records that login is currently
+// auto-promoted and reports whether the caller should post the one
+// author-wide announcement: true exactly once per promotion, for the first
+// caller after the author gained (or regained) it; false when the comment
+// was already posted or another PR of the author claimed it this cycle. The
+// claim is taken before the comment is posted so concurrent PRs by the
+// author cannot both announce; ReleaseTrustPromotionAnnouncement undoes it
+// when the post fails.
+func (s *Store) ClaimTrustPromotionAnnouncement(login string) bool {
+	if s == nil || strings.TrimSpace(login) == "" {
+		return false
+	}
+	key := TrustPromotionKey(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[key]
+	claimed := r.TrustAnnouncedAt.IsZero()
+	now := s.now()
+	if claimed {
+		r.TrustAnnouncedAt = now
+	}
+	r.LastSeen = now
+	s.items[key] = r
+	s.dirty = true
+	return claimed
+}
+
+// ReleaseTrustPromotionAnnouncement forgets a claim whose comment did not
+// land, so the next PR by the author announces instead.
+func (s *Store) ReleaseTrustPromotionAnnouncement(login string) {
+	if s == nil {
+		return
+	}
+	key := TrustPromotionKey(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.TrustAnnouncedAt.IsZero() {
+		return
+	}
+	r.TrustAnnouncedAt = time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearTrustPromotion forgets the author's promotion (revert or sentinel
+// evidence demoted them) so regaining it is announced once more.
+func (s *Store) ClearTrustPromotion(login string) {
+	if s == nil {
+		return
+	}
+	s.Forget(TrustPromotionKey(login))
+}
+
+// TrustPromotionAnnounced reports whether the author's promotion comment
+// was posted (dashboard and tests).
+func (s *Store) TrustPromotionAnnounced(login string) bool {
+	if s == nil {
+		return false
+	}
+	r, ok := s.Get(TrustPromotionKey(login))
+	return ok && !r.TrustAnnouncedAt.IsZero()
 }
 
 // Keys lists the stored keys, sorted (for tests and the dashboard).
@@ -1818,6 +2048,49 @@ func (s *Store) NoteAuthor(key, login string) {
 	r.Author = login
 	s.items[key] = r
 	s.dirty = true
+}
+
+// NoteSoak records the soak the lane holds an existing record's head for:
+// head must sit unchanged from startedAt for window. A head of "" or a
+// window of 0 clears the soak (the PR is not soaking).
+func (s *Store) NoteSoak(key, head string, startedAt time.Time, window time.Duration) {
+	head = strings.TrimSpace(head)
+	if head == "" || window <= 0 {
+		s.ClearSoak(key)
+		return
+	}
+	startedAt = startedAt.Truncate(time.Second)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.SoakHead == head && r.SoakStartedAt.Equal(startedAt) && r.SoakWindowSeconds == int64(window/time.Second)) {
+		return
+	}
+	r.SoakHead, r.SoakStartedAt, r.SoakWindowSeconds = head, startedAt, int64(window/time.Second)
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearSoak forgets a record's soak.
+func (s *Store) ClearSoak(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.SoakHead == "" && r.SoakStartedAt.IsZero() && r.SoakWindowSeconds == 0) {
+		return
+	}
+	r.SoakHead, r.SoakStartedAt, r.SoakWindowSeconds = "", time.Time{}, 0
+	s.items[key] = r
+	s.dirty = true
+}
+
+// Soak reports the recorded soak: the head, when it started, its window.
+// ok is false when none is recorded.
+func (r Record) Soak() (head string, startedAt time.Time, window time.Duration, ok bool) {
+	if r.SoakHead == "" || r.SoakStartedAt.IsZero() || r.SoakWindowSeconds <= 0 {
+		return "", time.Time{}, 0, false
+	}
+	return r.SoakHead, r.SoakStartedAt, time.Duration(r.SoakWindowSeconds) * time.Second, true
 }
 
 // NoteHold records the hold provenance on an existing record; a nil

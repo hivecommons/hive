@@ -178,6 +178,15 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 			f.Author.Kind = authorkind.Hive
 		}
 	}
+	// A PR fact (a human's CHANGES_REQUESTED review, an un-park) carries no
+	// author kind either; left Unknown, the deriver's 07x split read every
+	// contributor PR as a person's and routed hivecommons/hive#15159 — a
+	// contributor's clanker PR — to 071 needs-author
+	// instead of 072 returned-to-contributor. Resolve it the way the sweep
+	// does: App login, agent/ stamp, body markers.
+	if f.Author.Kind == authorkind.Unknown && f.Ref.Kind == stagelabels.PRItem {
+		f.Author.Kind = authorkind.Detect(authorkind.Input{Author: issue.GetUser().GetLogin(), AppLogin: c.AppBotLogin(), Labels: f.Labels, Body: issue.GetBody()})
+	}
 	return f, nil
 }
 

@@ -19,7 +19,8 @@ import (
 // to hold secrets (docs/admin-mcp.md). The effective configuration read shows
 // a value only for these keys; every other key is shown only as set or not
 // set. A "*" segment matches one map key (an agent name) and "[*]" any list
-// index. Adding a key here is a security decision: it must never name a
+// index; "*[*]" matches a map key followed by a list index, such as
+// "owner/repo[0]". Adding a key here is a security decision: it must never name a
 // field that can carry a credential, a key or a URL with embedded login.
 //
 // The keys live in diag_config_value_keys.txt rather than in Go source so
@@ -334,15 +335,20 @@ func diagConfigValueKey(key string) bool {
 	return false
 }
 
-// diagKeyMatch matches dotted key segments; a "*" pattern segment matches
-// exactly one non-empty segment.
+// diagKeyMatch matches dotted key segments. A pattern segment "*" matches
+// exactly one non-empty segment; "*" followed by a suffix (as in "*[*]")
+// matches a segment that is a non-empty name followed by that suffix. A map
+// key holding a "." spans two segments and so never matches.
 func diagKeyMatch(pattern, key []string) bool {
 	if len(pattern) != len(key) {
 		return false
 	}
 	for i, p := range pattern {
-		if p == "*" && key[i] != "" {
-			continue
+		if suffix, ok := strings.CutPrefix(p, "*"); ok {
+			if name, found := strings.CutSuffix(key[i], suffix); found && name != "" {
+				continue
+			}
+			return false
 		}
 		if p != key[i] {
 			return false

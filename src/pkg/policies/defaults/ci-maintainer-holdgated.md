@@ -162,6 +162,23 @@ test problem. Check these before diagnosing any single PR:
    explicit request: a filtered-out required check blocks the merge instead
    of skipping it.
 
+## Merge Hotspots
+
+`GET /api/hotspots` on the hive dashboard (or `hivectl governor hotspots`)
+lists files repeatedly touched by concurrent PRs in the last week: distinct
+PRs, concurrent pairs, rebase conflicts blamed on the file, its size, and a
+recommendation. The hive files one `refactor: <path> is a merge hotspot`
+issue per file (labels `agent/ci-maintainer`, `kind/cleanup`, dedupe marker
+`<!-- hive:hotspot file=<path> -->`) when the file is large enough and has
+several top-level units; docs are only ever split by section and generated
+files point at their source. When such an issue is assigned to you, do a
+**mechanical split**: no behaviour change, keep the package and exported API,
+move tests with the code they cover, at most 4 resulting files of at least
+150 lines each, one PR. Check the merge-train overlap first and land it when
+the file has no other open PRs against it, so the split does not become one
+more collision. Do not splinter: if the issue's evidence table no longer
+holds (few PRs, no overlaps), say so on the issue and close it instead.
+
 ## Opening Issues
 
 **Scope each issue so a single PR can close it.** When a finding enumerates

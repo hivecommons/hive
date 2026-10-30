@@ -75,7 +75,17 @@ type Item struct {
 	// (set by Requeue); NotBefore is when an interrupt may retry it.
 	Attempts  int
 	NotBefore time.Time
+	// RerouteFrom is set when the item is not the queue owner's own PR: an
+	// operator (RerouteBy) rerouted RerouteFrom's returned PR to this
+	// contributor for RerouteReason. The fix prompt says so and tells the
+	// contributor to carry the original commits + sign-off.
+	RerouteFrom   string
+	RerouteBy     string
+	RerouteReason string
 }
+
+// Rerouted reports whether the item is another author's PR rerouted here.
+func (it Item) Rerouted() bool { return it.RerouteFrom != "" }
 
 // Key identifies an item.
 func (it Item) Key() string { return Key(it.Repo, it.Number) }
@@ -129,6 +139,9 @@ type Dispatch struct {
 	ID    string
 	Mode  Mode
 	Items []Item
+	// At is when the dispatch was handed out (the contributor's relay took
+	// the fix task); the stage tracker reads it as when the rework began.
+	At time.Time
 }
 
 // Status is the per-contributor view exposed on the profile API.
@@ -158,6 +171,7 @@ type dispatch struct {
 	id    string
 	mode  Mode
 	items map[string]Item
+	at    time.Time
 }
 
 type contributor struct {
@@ -416,10 +430,12 @@ func (s *Scheduler) DispatchAtBoundary(user string, cap Capacity) *Dispatch {
 // pop takes the queue head plus every queued item sharing its cause.
 func (s *Scheduler) pop(user string, c *contributor, mode Mode) *Dispatch {
 	head := c.queue[0]
-	d := &dispatch{mode: mode, items: map[string]Item{head.Key(): head}}
+	d := &dispatch{mode: mode, items: map[string]Item{head.Key(): head}, at: s.opts.Now()}
 	rest := c.queue[:0:0]
 	for _, q := range c.queue[1:] {
-		if head.Cause.coalescable() && q.Cause == head.Cause {
+		// A rerouted PR (another author's) never shares a task with the
+		// owner's own PRs: its prompt differs.
+		if head.Cause.coalescable() && q.Cause == head.Cause && !head.Rerouted() && !q.Rerouted() {
 			d.items[q.Key()] = q
 			continue
 		}
@@ -443,7 +459,7 @@ func (d *dispatch) public() Dispatch {
 		items = append(items, it)
 	}
 	sortQueue(items)
-	return Dispatch{ID: d.id, Mode: d.mode, Items: items}
+	return Dispatch{ID: d.id, Mode: d.mode, Items: items, At: d.at}
 }
 
 // Overflow removes and returns user's queued items that have waited longer

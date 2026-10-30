@@ -25,6 +25,54 @@ func sameKinds(a, b []ActionKind) bool {
 	return true
 }
 
+func TestCapabilityGapSharedInference(t *testing.T) {
+	for _, report := range []string{
+		"The App cannot push changes to workflow files.",
+		"The App cannot push workflows.",
+		"The App cannot edit the workflow.",
+		"The App cannot push to the upstream repository.",
+		"The App cannot update the protected branch.",
+		"The App cannot set the repository secret.",
+		"The GitHub App lacks the `issues: write` permission.",
+		"App lacks the `administration` permission to edit rulesets",
+		"The installation lacks the required permissions; needs a human.",
+		"The App token is missing the `checks: write` permission.",
+		"The installation has no permission to manage checks.",
+		"The App is without the required permission.",
+		"The App cannot obtain the required permission.",
+		"The App can't obtain the required permission.",
+	} {
+		t.Run(report, func(t *testing.T) {
+			for _, in := range []Input{
+				{Kind: KindIssue, Title: report},
+				{Kind: KindIssue, Question: report},
+				{Kind: KindIssue, Reasons: []string{report}},
+				{Kind: KindIssue, Body: report},
+				{Kind: KindIssue, Body: strings.Repeat("context\n", 11) + report},
+			} {
+				d := Run(in)
+				if !CapabilityGap(in) || d.Rule != RuleCapabilityGap || d.Verdict != VerdictRecommendOnly || !d.KeepsPark || !sameKinds(kinds(d), []ActionKind{ActionRecommendOnly}) {
+					t.Fatalf("capability report must keep the park: input=%+v decision=%+v", in, d)
+				}
+			}
+		})
+	}
+	for _, in := range []Input{
+		{Kind: KindIssue, Title: "The contributor must sign the CLA."},
+		{Kind: KindIssue, Title: "Which workflow retry strategy should we use?"},
+		{Kind: KindIssue, Title: "Which permissions should the GitHub App request?"},
+		{Kind: KindIssue, Title: "The GitHub App has the required permissions."},
+		{Kind: KindIssue, Body: strings.Repeat("context\n", 12) + "The GitHub App lacks the `issues: write` permission."},
+		{Kind: KindPR, Body: "The GitHub App lacks the `issues: write` permission."},
+		{Kind: KindIssue, Body: strings.Repeat("context\n", 12) + "The App cannot push to the repository."},
+		{Kind: KindPR, Body: "The App cannot push to the repository."},
+	} {
+		if CapabilityGap(in) {
+			t.Errorf("unexpected capability gap: %+v", in)
+		}
+	}
+}
+
 func TestDecideIssueRules(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -242,6 +290,14 @@ func TestDecidePRRules(t *testing.T) {
 			verdict: VerdictAdoptSupersede, rule: "contributor-offline",
 		},
 		{
+			// hivecommons/hive#15188: the App cannot publish .github/workflows
+			// edits, so adopt-supersede would be refused by the lane; the
+			// policy must say so instead of promising an adoption.
+			name:    "offline contributor on a workflow path is a capability gap",
+			in:      Input{Kind: KindPR, Number: 54, Title: "CI fix", AdoptionStalled: true, WorkflowPath: true, CIGreen: true},
+			verdict: VerdictRecommendOnly, rule: RuleCapabilityGap, kinds: []ActionKind{ActionRecommendOnly}, keepsPark: true,
+		},
+		{
 			name:    "reporter trust hold cleared when PR sound",
 			in:      Input{Kind: KindPR, Number: 55, Title: "Fix", ReporterTrustHold: true, CIGreen: true, ContributorOnline: true},
 			verdict: VerdictApprove, rule: "reporter-trust", kinds: []ActionKind{ActionCommentDecision, ActionApproveReview, ActionLabelsAdd},
@@ -424,12 +480,12 @@ func TestMarkerAndComment(t *testing.T) {
 
 func TestPolicyTextCoversRules(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"Be decisive", "Duplicate of #N", "needs-owner", "ratchets", "supersede mode", "never merge a PR", "owner to confirm", "keep the hive PR open and parked until adequacy is confirmed", "except for the safety rails"} {
+	for _, want := range []string{"Be decisive", "Duplicate of #N", "needs-owner", "ratchets", "supersede mode", "never merge a PR", "owner to confirm", "keep the hive PR open and parked until adequacy is confirmed", "except for the safety rails", "is not code work", "paid for by evidence"} {
 		if !strings.Contains(PolicyText, want) {
 			t.Errorf("PolicyText lacks %q", want)
 		}
 	}
-	if len(AllowedActions) != 8 {
+	if len(AllowedActions) != 9 {
 		t.Fatalf("allowed set size %d", len(AllowedActions))
 	}
 }

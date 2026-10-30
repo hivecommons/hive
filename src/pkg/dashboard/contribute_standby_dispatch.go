@@ -400,7 +400,7 @@ func (h *ContributeWSHub) applyDonatedHold(prURL string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := h.server.deps.GHClient.AddLabels(ctx, ref.FullName(), ref.Number, []string{"hold"}); err != nil {
+	if err := h.server.deps.GHClient.AddLabels(ctx, ref.FullName(), ref.Number, []string{"hold"}); err != nil { // writeback:solicited donor submitted this PR through the standby donation workflow.
 		return err
 	}
 	// Hive's local record of hold sources (#11564): this hold leaves no

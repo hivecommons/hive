@@ -151,6 +151,15 @@ type Evidence struct {
 	// requires_human verdict and on a manual-merge lane rule: the person
 	// read the reviewer's objection and ruled the head lands as-is.
 	HumanApprover string
+	// HumanChangeRequester is the trusted maintainer whose CHANGES_REQUESTED
+	// review (or `/hive decision <text>`) stands on exactly Head ("" when
+	// none). A person has reviewed this head and asked for a fix: that
+	// answers every "needs a human" park on it — the sentinel alert, a
+	// workflow-path fence, a hold — so the PR is the author's to act on
+	// (071 / 072 / 070), not 085 (hivecommons/hive#15159: a clanker PR
+	// with the owner's changes-requested review kept re-deriving
+	// "Sentinel alert · needs human" over the operator's 072).
+	HumanChangeRequester string
 	// ManualMergeRule is true when CauseReason names a lane rule no
 	// approval can override — the hive never merges the head unattended
 	// (CI workflow / action edits, removed tests, a human-merge path). With
@@ -238,16 +247,37 @@ type Route struct {
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
 const (
-	LaneReasonChangesRequested       = "reviewer-verdict:changes_requested"
+	LaneReasonChangesRequested = "reviewer-verdict:changes_requested"
+	// LaneReasonHumanChangesRequested is a trusted maintainer's standing
+	// change request on the head (prstage.AutoMergeReasonHumanChangesRequested
+	// aliases this constant; prstage imports this package).
+	LaneReasonHumanChangesRequested  = "human-changes-requested"
 	LaneReasonDCOMissing             = "dco-missing"
 	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"
 	LaneReasonConflicting            = "conflicting"
-	laneReasonCheckFailing           = "check-failing:"
+	// LaneReasonReviewerQuestion is the 071 reason when the reviewer's
+	// requires_human verdict lands on a PR a person pushed themselves
+	// (hivecommons/hive#15202): the human the reviewer wants is the author,
+	// so the question goes to them — not to a decision queue, and never to
+	// adoption.
+	LaneReasonReviewerQuestion = "reviewer-verdict:requires_human"
+	laneReasonCheckFailing     = "check-failing:"
+	// LaneReasonSupersededByMerge is the ledger reason when the hive closes
+	// its own PR because a merged PR superseded it (the issue it was for is
+	// closed, or the merged PR declares it) instead of parking it at 085 on
+	// a reviewer's requires_human (hivecommons/hive#15208).
+	LaneReasonSupersededByMerge = "superseded-by-merge"
 	// LaneReasonAdoptionStalledPrefix opens the 085 reason for an adopted
 	// PR (074) whose head sat past the stage dwell with nothing the hive
 	// could push; the suffix is the lane reason it was stuck on
 	// ("adoption-stalled:reviewer-verdict:changes_requested").
 	LaneReasonAdoptionStalledPrefix = "adoption-stalled:"
+	// LaneReasonRebaseFailedTwice is the 085 reason for the hive's copy of
+	// an adopted PR (hive/adopt-<n>) that opened conflicting and stayed
+	// dirty after the fixer's rebase-resolve episode used both attempts
+	// (hivecommons/hive#15104 guard); the same suffix under
+	// LaneReasonAdoptionStalledPrefix parks a still-open original.
+	LaneReasonRebaseFailedTwice = "rebase-failed-twice"
 )
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
@@ -261,6 +291,12 @@ func RouteHuman(e Evidence) Route {
 		if laneReason == "" {
 			laneReason = lane
 		}
+	}
+	if requester := strings.TrimPrefix(strings.TrimSpace(e.HumanChangeRequester), "@"); requester != "" {
+		// A person reviewed this head and asked for changes: the sentinel's
+		// or the lane rule's "needs a human" is answered for it, and the
+		// author acts next (hivecommons/hive#15159). A new head re-asks.
+		note("@"+requester+" requested changes @"+ShortSHA(e.Head), LaneReasonHumanChangesRequested)
 	}
 	if e.Verdict == VerdictChangesRequested {
 		note("verdict changes_requested @"+ShortSHA(e.Head), LaneReasonChangesRequested)
@@ -284,6 +320,25 @@ func RouteHuman(e Evidence) Route {
 	}
 	if len(fix) > 0 {
 		return Route{Stage: fixing, Reasons: fix, LaneReason: laneReason, Summary: summary}
+	}
+	// A person's own PR with a requires_human verdict and nothing else
+	// outstanding: the reviewer's question is the author's to answer. It
+	// routes to 071 Needs author with the question, like a change request
+	// (hivecommons/hive#15202). A hold, sentinel or lane rule still makes it
+	// a decision below; a hive-authored or clanker PR has no human author
+	// to ask, so it keeps the 085 route.
+	if HumanAuthorOwesAnswer(e) {
+		reasons := []string{"the reviewer asked the author a question @" + ShortSHA(e.Head)}
+		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
+			reasons = append(reasons, "reviewer question: "+q)
+		} else {
+			for _, summary := range e.HumanSummaries {
+				if s := strings.TrimSpace(summary); s != "" {
+					reasons = append(reasons, "reviewer summary: "+s)
+				}
+			}
+		}
+		return Route{Stage: fixing, Reasons: reasons, LaneReason: LaneReasonReviewerQuestion, Summary: summary, Head: e.Head, Verdict: e.Verdict}
 	}
 	// A fresh head waits for its verdict — unless the reviewer has already
 	// answered requires_human for this very head, in which case the person
@@ -371,6 +426,18 @@ func RouteHuman(e Evidence) Route {
 		}
 		return route
 	}
+	if e.Cause == CauseTrust && e.ManualMergeRule && strings.TrimSpace(e.CauseReason) != "" {
+		// A manual-merge rule that owes no decision — the breaking-change
+		// title or the needs-owner-merge label (hivecommons/hive#15442):
+		// the head is green and reviewed, and the hive still never merges
+		// it; the owner's merge click is the one step left.
+		route := Route{Stage: ReadyForHumanMerge, ManualMerge: true, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: approver,
+			Reasons: []string{e.CauseReason}, LaneReason: strings.TrimSpace(e.LaneReason)}
+		if approver != "" && route.LaneReason != "" {
+			route.LaneReason += HumanApprovedReasonSuffix + approver
+		}
+		return route
+	}
 	return Route{Stage: ReadyForHumanMerge, Summary: summary, HumanApprover: approver}
 }
 
@@ -411,6 +478,9 @@ func summarize(e Evidence) string {
 	}
 	if approver := strings.TrimSpace(e.HumanApprover); approver != "" {
 		parts = append(parts, "approved by @"+approver)
+	}
+	if requester := strings.TrimPrefix(strings.TrimSpace(e.HumanChangeRequester), "@"); requester != "" {
+		parts = append(parts, "changes requested by @"+requester)
 	}
 	switch {
 	case !e.Checks.Known:
@@ -616,4 +686,26 @@ func DecisionActions(r Route) string {
 		b.WriteString("\n- " + s + ".")
 	}
 	return b.String()
+}
+
+// HumanAuthorOwesAnswer reports whether a requires_human verdict on a PR a
+// person pushed themselves routes to the author (071) rather than to a
+// decision (085): the author is human and not this hive, no trusted merger
+// has approved the head, and nothing else — sentinel, hold label, fork
+// guard, a human-only lane rule — asks a maintainer for a decision.
+func HumanAuthorOwesAnswer(e Evidence) bool {
+	if e.SelfAuthored || e.AuthorKind != authorkind.Human || e.Verdict != VerdictRequiresHuman {
+		return false
+	}
+	if strings.TrimSpace(e.HumanApprover) != "" || e.Sentinel || len(e.Holds) > 0 || len(e.ForkGuard) > 0 {
+		return false
+	}
+	return e.Cause != CauseDecision || strings.TrimSpace(e.CauseReason) == "" || IsDecisionRequestedReason(e.CauseReason)
+}
+
+// IsDecisionRequestedReason matches the lane reason the reviewer's
+// decision-request verdict is recorded under; it names no lane rule of
+// its own, so it never turns a human author's question into a decision.
+func IsDecisionRequestedReason(reason string) bool {
+	return strings.EqualFold(strings.TrimSpace(reason), "contributor-lane:decision-requested")
 }

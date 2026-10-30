@@ -151,7 +151,7 @@ func TestUnparkMenuOffersDoneForOwnerStep(t *testing.T) {
 	if c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", step), help, answered}).ownerStep {
 		t.Fatal("an answered owner step must not offer /hive done again")
 	}
-	labelDrivenAnswer := ghComment("hive[bot]", unparkReplyMarkerPrefix+"8 -->\n"+renderUnparkLabelDrivenAcceptedReply("owner", unparkDoneDecision, nil, nil, "", nil))
+	labelDrivenAnswer := ghComment("hive[bot]", unparkReplyMarkerPrefix+"8 -->\n"+renderUnparkLabelDrivenAcceptedReply("owner", unparkDoneDecision, nil, nil, "", nil, true))
 	if c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", step), labelDrivenAnswer}).ownerStep {
 		t.Fatal("a label-driven acceptance answers the owner step too")
 	}

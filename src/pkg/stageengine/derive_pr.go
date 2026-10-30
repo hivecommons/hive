@@ -307,6 +307,11 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 	if !verdict.Terminal && pass.AdoptionRefusedReason != "" && verdict.Stage == FixingStage(obs) {
 		obs.Reason = pass.AdoptionRefusedReason
 	}
+	if !verdict.Terminal && pass.RebaseFailedTwice && verdict.Stage == FixingStage(obs) {
+		verdict.Stage = stagelabels.NeedsDecision
+		verdict.Rank = stageRankOwned
+		obs.Reason = stagelabels.LaneReasonRebaseFailedTwice
+	}
 	d := Decision{
 		Stage:      verdict.Stage,
 		Role:       role,

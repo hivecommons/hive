@@ -171,6 +171,9 @@
     "EvalIntervalWebhookS": 900,
     "WebhookWakeDebounceS": 10,
     "WebhookWakeMinGapS": 30,
+    "CIFailureWebhookKick": null,
+    "CIFailureKickCooldownS": 0,
+    "MergeTrainStallWarnS": 0,
     "ConserveIntervalMultiplier": 2,
     "OptionalSweepEveryNCycles": 1,
     "ExplainMode": "",
@@ -199,6 +202,7 @@
           "Enabled": null,
           "AfterOffline": "",
           "AfterUnregistered": "",
+          "OfflineGrace": "",
           "InPlace": null,
           "StrictAttribution": null,
           "AutoMerge": null,
@@ -383,6 +387,7 @@
       "StallThresholdS": 0,
       "MaxReplans": 0
     },
+    "reroute": {},
     "AttributionTrailer": null,
     "first_timer_welcome": {},
     "advisory": {
@@ -753,6 +758,9 @@
   },
   "decisions": {
     "delegate": {}
+  },
+  "writeback": {
+    "unsolicited": {}
   },
   "chat": {
     "grounded_answers": {}

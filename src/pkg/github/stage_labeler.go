@@ -2,10 +2,12 @@ package github
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // stageLabeler adapts Client to stagelabels.Labeler so every stage write the
@@ -18,6 +20,11 @@ type stageLabeler struct {
 	c        *Client
 	mu       sync.Mutex
 	observed map[int]string
+	// facts is the write-back gate's view of each item read, keyed by
+	// number; suppressed is set when the gate refused a write on it.
+	facts      map[int]writeback.Item
+	suppressed bool
+	reason     string
 }
 
 func (s *stageLabeler) Labels(ctx context.Context, owner, repo string, number int) ([]string, error) {
@@ -28,10 +35,39 @@ func (s *stageLabeler) Labels(ctx context.Context, owner, repo string, number in
 	if err != nil {
 		return nil, err
 	}
+	labels := extractLabels(issue.Labels)
 	s.mu.Lock()
 	s.observed[number] = issue.GetUpdatedAt().UTC().Format(time.RFC3339Nano)
+	if s.facts == nil {
+		s.facts = map[int]writeback.Item{}
+	}
+	author := issue.GetUser().GetLogin()
+	s.facts[number] = writeback.Item{Number: number, IsPR: issue.IsPullRequest(), Author: author, HiveAuthored: s.c.IsHiveAuthorLogin(author), Labels: labels, CreatedAt: issue.GetCreatedAt().Time}
 	s.mu.Unlock()
-	return extractLabels(issue.Labels), nil
+	return labels, nil
+}
+
+// writeAllowed consults the write-back gate for a label write on number.
+// Only PRs are gated here (writeback.KindStageLabel): an issue's stage
+// labels are the work-intake pipeline the issue filter admits it to, a PR
+// the hive did not open is a contributor's and needs the opt-in label
+// (hivecommons/hive, torch-spyre 2026-10-28). A PR the labeler never read
+// (no facts) is gated with what it knows: number only.
+func (s *stageLabeler) writeAllowed(owner, repo string, number int, preview string) bool {
+	s.mu.Lock()
+	item, ok := s.facts[number]
+	s.mu.Unlock()
+	if !ok || !item.IsPR {
+		return true
+	}
+	d := s.c.WritebackAllowed(owner+"/"+repo, item, writeback.KindStageLabel, preview)
+	if !d.Allowed {
+		s.mu.Lock()
+		s.suppressed = true
+		s.reason = d.Reason
+		s.mu.Unlock()
+	}
+	return d.Allowed
 }
 
 func (s *stageLabeler) observedAt(number int) string {
@@ -41,11 +77,17 @@ func (s *stageLabeler) observedAt(number int) string {
 }
 
 func (s *stageLabeler) AddLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
-	return s.c.addLabelsObserved(ctx, owner+"/"+repo, number, labels, s.observedAt(number))
+	if !s.writeAllowed(owner, repo, number, "add "+strings.Join(labels, ", ")) {
+		return nil
+	}
+	return s.c.addLabelsObserved(ctx, owner+"/"+repo, number, labels, s.observedAt(number)) // writeback:gated
 }
 
 func (s *stageLabeler) RemoveLabel(ctx context.Context, owner, repo string, number int, label string) error {
-	return s.c.removeLabelObserved(ctx, owner+"/"+repo, number, label, s.observedAt(number))
+	if !s.writeAllowed(owner, repo, number, "remove "+label) {
+		return nil
+	}
+	return s.c.removeLabelObserved(ctx, owner+"/"+repo, number, label, s.observedAt(number)) // writeback:gated
 }
 
 // StageLabeler exposes the client as a stagelabels.Labeler. Each call returns

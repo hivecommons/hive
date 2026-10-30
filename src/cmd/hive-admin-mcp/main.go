@@ -348,6 +348,12 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	if adminmcp.DiagTool(tool) {
 		return p.readDiag(ctx, tool, args)
 	}
+	if tool == adminmcp.ToolSettingsRead {
+		// An unknown section or a missing agent is refused with its reason.
+		if _, err := adminmcp.SettingsReadPath(args); err != nil {
+			return nil, err
+		}
+	}
 	path, ok := readPath(tool, args)
 	if !ok {
 		return nil, &unsupportedToolError{tool: tool}
@@ -514,6 +520,10 @@ func diagnoseSelectionError(err error) error {
 }
 
 func readPath(tool string, args map[string]any) (string, bool) {
+	if tool == adminmcp.ToolSettingsRead {
+		path, err := adminmcp.SettingsReadPath(args)
+		return path, err == nil
+	}
 	if tool == adminmcp.ToolAgentNudgeStatus {
 		agent := strings.TrimSpace(stringArg(args, "agent"))
 		if agent == "" {

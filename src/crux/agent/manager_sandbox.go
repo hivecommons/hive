@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -160,10 +159,13 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 		// whether the agent may post through it is the relay's decision.
 		ReviewSpoolDir: crux.SandboxReviewSpoolsDir(m.workDir),
 	}
-	// A kick template's own verify block wins over config so the policy
-	// that asks for a proven result also says how hive checks it.
+	// The verify list comes from config only. A kick message is not a trusted
+	// source for commands: by the time it reaches the manager it carries
+	// text from issue and PR titles, knowledge facts and delegated prompts,
+	// so a directive found in it is reported and ignored rather than run.
 	if cmds, ok := parsePublishVerifyDirective(message); ok {
-		spec.PublishVerify = cmds
+		m.logger.Warn("sandbox kick message carries a hive:publish.verify directive; ignored — publish.verify commands are read from sandbox.publish.verify config only",
+			"name", agent.Name, "commands", len(cmds))
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	agent.cancel = cancel
@@ -184,10 +186,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 }
 
 func (m *Manager) sandboxWorkspaceDirLocked() string {
-	if strings.TrimSpace(m.sandboxConfig.WorkspaceDir) != "" {
-		return m.sandboxConfig.WorkspaceDir
-	}
-	return filepath.Join(m.workDir, "sandbox")
+	return sandbox.WorkspaceRoot(m.sandboxConfig.WorkspaceDir, m.workDir)
 }
 
 func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter {

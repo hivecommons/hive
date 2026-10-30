@@ -42,6 +42,17 @@ type supersessionPRFixture struct {
 	UpdateBranchStatus int
 	// LabelEvents feed the needs-human attribution read (actor per label).
 	LabelEvents []supersessionLabelEventFixture
+	// CrossRefs are the timeline's cross-referenced events from other PRs
+	// (the declared-supersession read, hivecommons/hive#15208).
+	CrossRefs []supersessionCrossRefFixture
+}
+
+type supersessionCrossRefFixture struct {
+	Number int
+	Body   string
+	Merged bool
+	// Repo overrides the source repository ("" = same repo).
+	Repo string
 }
 
 type supersessionLabelEventFixture struct {
@@ -67,6 +78,7 @@ type supersessionThreadFixture struct {
 type supersessionIssueFixture struct {
 	Number          int
 	State           string
+	StateReason     string
 	GraphQLCloserPR int
 	ClosingCommit   string
 }
@@ -286,7 +298,7 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 		switch {
 		case len(parts) == 1 && r.Method == "GET":
 			issue := issueByNumber[n]
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": issue.State})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": issue.State, "state_reason": issue.StateReason})
 		case len(parts) == 1 && r.Method == "PATCH":
 			obs.mu.Lock()
 			obs.closed = append(obs.closed, n)
@@ -345,6 +357,20 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			}
 			for i, ev := range prByNumber[n].LabelEvents {
 				wire = append(wire, map[string]any{"id": i + 1, "event": ev.Event, "label": map[string]any{"name": ev.Label}, "actor": map[string]any{"login": ev.Actor}, "created_at": now})
+			}
+			for _, ref := range prByNumber[n].CrossRefs {
+				srcRepo := ref.Repo
+				if srcRepo == "" {
+					srcRepo = org + "/" + repo
+				}
+				links := map[string]any{"url": fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d", srcRepo, ref.Number)}
+				if ref.Merged {
+					links["merged_at"] = "2026-10-10T11:40:00Z"
+				}
+				wire = append(wire, map[string]any{"event": "cross-referenced", "created_at": now, "source": map[string]any{"type": "issue", "issue": map[string]any{
+					"number": ref.Number, "body": ref.Body, "html_url": fmt.Sprintf("https://github.com/%s/pull/%d", srcRepo, ref.Number),
+					"repository_url": "https://api.github.com/repos/" + srcRepo, "pull_request": links,
+				}}})
 			}
 			_ = json.NewEncoder(w).Encode(wire)
 		default:

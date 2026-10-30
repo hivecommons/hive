@@ -11,6 +11,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Same-issue duplicate-PR resolver (hivecommons/hive#14799). When two open
@@ -22,7 +24,10 @@ import (
 // duplicate-of:<keeper>. Only the genuinely ambiguous case — the earlier PR
 // is red or stale and the later one is green — still goes to the owner. A
 // person's PR is never closed by this sweep: it gets the comment and stays
-// open where it is.
+// open where it is. A registered relay contributor's later PR
+// (hivecommons/hive#15469) is the hive's own agent for the write-back gate
+// yet is also left open: one comment, held out of the merge queue, parked
+// with its author at stage 072 by the stage engine.
 
 const (
 	// DuplicateFixSweepAuditPrefix prefixes the dashboard audit action for
@@ -36,6 +41,9 @@ const (
 	// DuplicateFixActionEscalated: the earlier PR is red or stale while the
 	// later is green; the later PR was parked for the owner.
 	DuplicateFixActionEscalated = "escalated"
+	// DuplicateFixActionSuppressed records a pair the write-back gate kept
+	// off GitHub (dashboard only).
+	DuplicateFixActionSuppressed = "suppressed"
 
 	// DefaultDuplicateFixSweepMaxActions bounds writes per sweep.
 	DefaultDuplicateFixSweepMaxActions = 10
@@ -71,6 +79,12 @@ type DuplicateFixFacts struct {
 	EarlierStale bool
 	// LaterHuman: a person authored the later PR.
 	LaterHuman bool
+	// LaterRelay: a relay contributor registered on this hive authored the
+	// later PR (hivecommons/hive#15469). It is the hive's own agent, so the
+	// notice is never gated as unsolicited — but the PR is left open and
+	// parked with its author (stage 072, "duplicate of #keeper") rather
+	// than closed: the relay's own hive or the delegate decides.
+	LaterRelay bool
 }
 
 // DuplicateFixVerdict is DecideDuplicateFix's outcome.
@@ -94,7 +108,7 @@ func DecideDuplicateFix(f DuplicateFixFacts) DuplicateFixVerdict {
 	if earlierWeak && f.LaterChecks == DuplicateFixChecksGreen {
 		return DuplicateFixVerdictEscalate
 	}
-	if f.LaterHuman {
+	if f.LaterHuman || f.LaterRelay {
 		return DuplicateFixVerdictCommentOnly
 	}
 	return DuplicateFixVerdictClose
@@ -148,6 +162,15 @@ func RenderDuplicateFixComment(keeper, issue int, human bool) string {
 			"close it if #%d covers your change, or comment why both should land.", duplicateFixMarker, keeper, issue, keeper)
 	}
 	return fmt.Sprintf("%s\nSuperseded by #%d (earlier fix for #%d). Closing as duplicate.", duplicateFixMarker, keeper, issue)
+}
+
+// RenderDuplicateFixRelayComment is the one comment a registered relay
+// contributor's later PR receives (hivecommons/hive#15469): held out of the
+// merge queue and returned to its author as superseded, never closed by
+// the sweep.
+func RenderDuplicateFixRelayComment(keeper, issue int) string {
+	return fmt.Sprintf("%s\nSuperseded by #%d (earlier fix for #%d). The merge queue carries one PR per issue, so this PR is held out of it "+
+		"and returned to its author; close it if #%d covers the change, or let the delegate decide.", duplicateFixMarker, keeper, issue, keeper)
 }
 
 // SweepDuplicateFixPRs walks every configured repo's open PRs (the same
@@ -283,11 +306,13 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 		if err != nil {
 			return events, err
 		}
+		laterRelay := c.duplicateFixIsRelay(later)
 		facts := DuplicateFixFacts{
 			EarlierChecks: earlierChecks,
 			LaterChecks:   laterChecks,
 			EarlierStale:  earlierStale,
-			LaterHuman:    c.duplicateFixIsHuman(later),
+			LaterHuman:    !laterRelay && c.duplicateFixIsHuman(later),
+			LaterRelay:    laterRelay,
 		}
 		verdict := DecideDuplicateFix(facts)
 		event := DuplicateFixEvent{
@@ -297,6 +322,17 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 			IssueRepo: link.Repo,
 			Issue:     link.Issue,
 			KeeperPR:  keeper.GetNumber(),
+		}
+		// Write-back gate: the later PR may be a contributor's. Below the
+		// level duplicate_fix_notice needs, or without the opt-in label,
+		// the pair is logged and nothing is written on it.
+		item := c.sentinelWritebackItem(later)
+		item.HiveAuthored = item.HiveAuthored || !facts.LaterHuman
+		if d := c.WritebackAllowed(repo, item, writeback.KindDuplicateFixNotice, RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, true)); !d.Allowed {
+			event.Action = DuplicateFixActionSuppressed
+			event.Reason = "write-back gate: " + d.Reason
+			events = append(events, event)
+			continue
 		}
 		switch verdict {
 		case DuplicateFixVerdictEscalate:
@@ -308,7 +344,7 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 			body := fmt.Sprintf("%s\nBoth this PR and #%d fix #%d. #%d opened first but its checks are %s%s while this PR is green, "+
 				"so the hive is asking the owner to pick rather than closing either.",
 				duplicateFixMarker, keeper.GetNumber(), link.Issue, keeper.GetNumber(), earlierChecks, duplicateFixStaleNote(earlierStale))
-			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), body); err != nil {
+			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), body); err != nil { // writeback:gated
 				return events, fmt.Errorf("commenting on duplicate PR %s#%d: %w", repo, later.GetNumber(), err)
 			}
 			if err := c.parkSupersededPR(ctx, repo, later.GetNumber()); err != nil {
@@ -317,13 +353,17 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 		case DuplicateFixVerdictCommentOnly:
 			event.Action = DuplicateFixActionCommented
 			event.Reason = fmt.Sprintf("duplicate-of:%d", keeper.GetNumber())
-			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, true)); err != nil {
+			body := RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, true)
+			if facts.LaterRelay {
+				body = RenderDuplicateFixRelayComment(keeper.GetNumber(), link.Issue)
+			}
+			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), body); err != nil { // writeback:gated
 				return events, fmt.Errorf("commenting on duplicate PR %s#%d: %w", repo, later.GetNumber(), err)
 			}
 		default:
 			event.Action = DuplicateFixActionClosed
 			event.Reason = fmt.Sprintf("duplicate-of:%d", keeper.GetNumber())
-			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, false)); err != nil {
+			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, false)); err != nil { // writeback:gated
 				return events, fmt.Errorf("commenting on duplicate PR %s#%d: %w", repo, later.GetNumber(), err)
 			}
 			if err := c.labelAndCloseSupersededPR(ctx, owner, repoName, later.GetNumber()); err != nil {
@@ -369,6 +409,18 @@ func duplicateFixStaleNote(stale bool) string {
 // author/* is an agent run under a person's login and may be closed. With
 // no attribution yet, any login that is not the hive's identity or a bot
 // is treated as a person.
+// duplicateFixIsRelay: the author has a contributor profile on this hive
+// (SetRelayKnownFunc) and no author/human attribution says otherwise.
+func (c *Client) duplicateFixIsRelay(pr *gh.PullRequest) bool {
+	for _, l := range pr.Labels {
+		name := strings.ToLower(strings.TrimSpace(l.GetName()))
+		if strings.HasPrefix(name, duplicateFixAuthorLabelPrefix) {
+			return name != duplicateFixHumanLabel && c.IsRelayContributorLogin(pr.GetUser().GetLogin())
+		}
+	}
+	return c.IsRelayContributorLogin(pr.GetUser().GetLogin())
+}
+
 func (c *Client) duplicateFixIsHuman(pr *gh.PullRequest) bool {
 	for _, l := range pr.Labels {
 		name := strings.ToLower(strings.TrimSpace(l.GetName()))

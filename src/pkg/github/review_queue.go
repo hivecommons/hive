@@ -572,12 +572,45 @@ func reviewQueueDispatchReason(e *ReviewQueueEntry, pr PullRequest, full string,
 	if exhausted != "" {
 		return "review dispatch exhausted: " + strings.TrimPrefix(exhausted, review.HoldReasonDispatchExhausted+": ") + "; waiting on a human"
 	}
+	wait, waiting := opts.Dispatch.WaitFor(full, pr.Number, pr.HeadSHA)
+	if !waiting && full != pr.Repo {
+		wait, waiting = opts.Dispatch.WaitFor(pr.Repo, pr.Number, pr.HeadSHA)
+	}
 	if since.IsZero() {
+		if waiting {
+			return reviewQueueWaitReason(wait, now)
+		}
 		return ""
 	}
 	reason := fmt.Sprintf("review dispatched %s ago, no verdict yet", reviewQueueDispatchAge(now.Sub(since)))
 	if count > 0 {
 		reason += fmt.Sprintf(" (re-dispatched %dx after expiry)", count)
+	}
+	if waiting {
+		reason += "; " + reviewQueueWaitReason(wait, now)
+	}
+	return reason
+}
+
+// reviewQueueWaitReason explains a head the planner keeps passing over: the
+// perspectives it still owes have had no reviewer for this many consecutive
+// cycles (hivecommons/hive#15229). Past review.ReviewWaitStarvationCycles the
+// planner walks the head ahead of the queue, and the line says so.
+func reviewQueueWaitReason(w review.ReviewWaitRecord, now time.Time) string {
+	cause := "every eligible reviewer busy"
+	if w.Reason == review.ReviewWaitNoParallelSlot {
+		cause = "max_parallel_reviews spent"
+	}
+	reason := fmt.Sprintf("review waiting for a free reviewer: %d consecutive cycle", w.Cycles)
+	if w.Cycles != 1 {
+		reason += "s"
+	}
+	if !w.FirstAt.IsZero() {
+		reason += fmt.Sprintf(" over %s", reviewQueueDispatchAge(now.Sub(w.FirstAt)))
+	}
+	reason += " (" + cause + ")"
+	if w.Cycles >= review.ReviewWaitStarvationCycles {
+		reason += "; promoted ahead of the queue, takes the next free reviewer"
 	}
 	return reason
 }

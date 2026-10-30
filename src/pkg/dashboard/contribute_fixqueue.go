@@ -67,6 +67,11 @@ type WSFixPR struct {
 	FailingChecks []string `json:"failing_checks,omitempty"`
 	ReviewAsks    []string `json:"review_asks,omitempty"`
 	Reason        string   `json:"reason,omitempty"`
+	// RerouteFrom / RerouteBy / RerouteReason are set when this is another
+	// contributor's PR an operator rerouted to this relay (contribute_reroute.go).
+	RerouteFrom   string `json:"rerouted_from,omitempty"`
+	RerouteBy     string `json:"rerouted_by,omitempty"`
+	RerouteReason string `json:"reroute_reason,omitempty"`
 }
 
 // fixPRInstruction is the prompt shipped with a fix-pr task.
@@ -90,14 +95,38 @@ func fixPRInstruction(prs []WSFixPR, mode fixqueue.Mode) string {
 			fmt.Fprintf(&b, "  - review ask: %s\n", a)
 		}
 	}
-	b.WriteString("\nWork on the EXISTING PR branch: check it out, fix the cause, and push a new head to the same branch with the same DCO sign-off. ")
-	b.WriteString("Do not open a new PR. When the new head is green the PR returns to the normal review → merge path automatically.\n")
+	if len(prs) > 0 && prs[0].RerouteFrom != "" {
+		b.WriteString(fixPRRerouteInstruction(prs[0]))
+	} else {
+		b.WriteString("\nWork on the EXISTING PR branch: check it out, fix the cause, and push a new head to the same branch with the same DCO sign-off. ")
+		b.WriteString("Do not open a new PR. When the new head is green the PR returns to the normal review → merge path automatically.\n")
+	}
 	switch mode {
 	case fixqueue.ModeSpawn:
 		b.WriteString("\nThis task runs in a parallel fix session; your primary session keeps its current task.\n")
 	case fixqueue.ModePreempt:
 		b.WriteString("\nThis task preempts your current work: park it (its claim stays alive), fix the PR, then resume.\n")
 	}
+	return b.String()
+}
+
+// fixPRRerouteInstruction is the work paragraph of a rerouted fix: the PR
+// is another contributor's, whose fork branch this relay most likely cannot
+// push to, so the fix lands as a replacement PR that carries the original
+// commits and sign-off.
+func fixPRRerouteInstruction(pr WSFixPR) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nThis PR is NOT yours: it belongs to @%s, whose hive has not acted on it", pr.RerouteFrom)
+	if pr.RerouteBy != "" {
+		fmt.Fprintf(&b, ", and @%s rerouted the follow-up work to you", pr.RerouteBy)
+	}
+	b.WriteString(".")
+	if pr.RerouteReason != "" {
+		fmt.Fprintf(&b, " Return reason: %s.", pr.RerouteReason)
+	}
+	b.WriteString("\n\nFetch the PR's head and work from it. If you can push to its branch (same-repo head, or maintainer_can_modify), fix the cause there and push a new head with your DCO sign-off added to your commits only. ")
+	fmt.Fprintf(&b, "Otherwise open a replacement PR from a branch that carries @%s's commits UNCHANGED (their authorship and Signed-off-by stay), add your fix commits with your own sign-off on top, and put `Supersedes %s#%d` in the body so the hive links and closes the original when yours merges. ", pr.RerouteFrom, pr.Repo, pr.Number)
+	b.WriteString("Do not rewrite or squash the original author's commits.\n")
 	return b.String()
 }
 
@@ -391,7 +420,8 @@ func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnect
 func (h *ContributeWSHub) sendFixTask(c *ContributorConnection, user string, d *fixqueue.Dispatch) WSMessage {
 	prs := make([]WSFixPR, 0, len(d.Items))
 	for _, it := range d.Items {
-		pr := WSFixPR{Repo: it.Repo, Number: it.Number, URL: it.URL, HeadSHA: it.HeadSHA, Title: it.Title, Reason: it.Cause.Signature}
+		pr := WSFixPR{Repo: it.Repo, Number: it.Number, URL: it.URL, HeadSHA: it.HeadSHA, Title: it.Title, Reason: it.Cause.Signature,
+			RerouteFrom: it.RerouteFrom, RerouteBy: it.RerouteBy, RerouteReason: it.RerouteReason}
 		if it.Cause.Check != "" {
 			pr.FailingChecks = []string{it.Cause.Check}
 		}
@@ -627,6 +657,34 @@ func (h *ContributeWSHub) FixQueueStatus(username string) fixqueue.Status {
 // FixQueueItems returns the contributor's queued red PRs (dispatch order).
 func (h *ContributeWSHub) FixQueueItems(username string) []fixqueue.Item {
 	return h.fixQueue().Queued(username)
+}
+
+// FixWorkFor reports where the fix work for repo#number stands in
+// username's fix queue: waiting behind other fixes (Queued, with how many
+// are ahead) or handed to their relay as a fix-pr task (InFlight, with when
+// and in which mode). The stage tracker reads it as the rework-pickup
+// signal on a waiting-on row (hivecommons/hive#15280). ok is false when the
+// PR is in neither.
+func (h *ContributeWSHub) FixWorkFor(username, repo string, number int) (StageTrackerFixWork, bool) {
+	username = strings.TrimSpace(username)
+	if h == nil || username == "" || repo == "" || number <= 0 {
+		return StageTrackerFixWork{}, false
+	}
+	key := fixqueue.Key(repo, number)
+	sched := h.fixQueue()
+	for _, d := range sched.InFlight(username) {
+		for _, it := range d.Items {
+			if it.Key() == key {
+				return StageTrackerFixWork{InFlight: true, DispatchedAt: d.At, Mode: string(d.Mode)}, true
+			}
+		}
+	}
+	for i, it := range sched.Queued(username) {
+		if it.Key() == key {
+			return StageTrackerFixWork{Queued: true, QueuedAt: it.EnqueuedAt, Ahead: i}, true
+		}
+	}
+	return StageTrackerFixWork{}, false
 }
 
 // ContributorFixQueue is the profile-API view of a contributor's fix budget.

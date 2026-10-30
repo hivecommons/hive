@@ -6,11 +6,14 @@ import (
 )
 
 // The activity monitor row menu's "Accept triage" (Hub Admin request): shown
-// only on an issue the chevron calls "Triage needed" (015, or the
-// needs-triage pill on another stage), never on a PR; it posts to
-// /items/{n}/accept-triage and re-renders the row as 010 Actionable with the
-// 👤 next-move gone before the tracker's next payload confirms it. The pure
-// helpers run under node like the rest of the row-actions suite.
+// only on an issue the chevron calls "Triage needed" (015, the needs-triage
+// pill on another stage, or a label-less 000-new issue the reporter-trust
+// gate holds for a maintainer — hivecommons/hive#15215), never on a PR; it
+// heads the menu, its hint says what it writes and as whom, it posts to
+// /items/{n}/accept-triage and re-renders the row as 010 Actionable (a
+// 000-new row: waiting on the hive) with the 👤 next-move gone before the
+// tracker's next payload confirms it. The pure helpers run under node like
+// the rest of the row-actions suite.
 
 func TestStageTrackerAcceptTriageMenuVisibility(t *testing.T) {
 	html := indexHTML(t)
@@ -25,19 +28,49 @@ func TestStageTrackerAcceptTriageMenuVisibility(t *testing.T) {
 	}
 	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
 const ids = as => as.map(a => a.id);
-const ctx = { user: true, canHold: true, canHuman: true };
+const BT = String.fromCharCode(96);
+const NOW = Date.parse('2026-10-28T20:00:00Z');
+const ctx = { user: true, canHold: true, canHuman: true, login: 'octo', nowMs: NOW, governor: { nextKickAt: '2026-10-28T20:13:20Z' } };
 
 // The primary case: an issue at 015 "Triage needed".
 const triage = { repo: 'o/r', kind: 'issue', number: 1, title: 'From an untrusted reporter', url: 'https://github.com/o/r/issues/1', stage: 15, modifiers: [] };
 let as = stageTrackerRowActions(triage, ctx);
-assert.deepStrictEqual(ids(as), ['hold', 'retry', 'accept-triage', 'needs-human', 'open', 'copy'], 'Accept triage sits above Mark needs-human…');
+assert.deepStrictEqual(ids(as), ['accept-triage', 'hold', 'retry', 'needs-human', 'open', 'copy'], 'Accept triage heads the menu');
 const accept = as.find(a => a.id === 'accept-triage');
 assert.strictEqual(accept.label, 'Accept triage');
 assert.strictEqual(accept.enabled, true);
-assert.strictEqual(accept.hint, 'triage/accepted', 'the hint names the label the click applies');
+assert.strictEqual(accept.hint, 'adds ' + BT + 'triage/accepted' + BT + ' as @octo; the hive takes it on its next pass (≈13 min)', 'the hint names the label, the actor and the next pass');
+assert.strictEqual(as.find(a => a.id === 'hold').sep, true, 'a separator parts the lead from the generic items');
+
+// Without a login or a published next kick the hint still reads.
+assert.strictEqual(stageTrackerTriageHint(triage, { user: true, canHold: true }, NOW, null), 'adds ' + BT + 'triage/accepted' + BT + ' as you; the hive takes it on its next pass');
+assert.strictEqual(stageTrackerNextPassWord(-5), 'due now');
+assert.strictEqual(stageTrackerNextPassWord(20000), '≈1 min');
+assert.strictEqual(stageTrackerNextPassWord(null), '');
 
 // The needs-triage pill on another stage (a claimed issue the gate still holds) also offers it.
 assert.ok(ids(stageTrackerRowActions({ ...triage, stage: 20, modifiers: ['needs-triage'] }, ctx)).includes('accept-triage'));
+
+// A label-less 000-new issue the reporter-trust gate holds for a maintainer
+// (hivecommons/hive#15215) offers it too; its hint reads the configured
+// label and the row's own next pass. A 000-new issue the hive moves next
+// (reporter admitted) does not: nothing to accept.
+const fresh = { ...triage, stage: 0, stage_slug: '000-new', actor: 'maintainer', caption: 'Triage needed — accept or close',
+  new: { next_mover: 'maintainer', next_mover_text: 'a maintainer\'s triage (add ' + BT + 'triage/ok' + BT + ')', next_pass_at: '2026-10-28T20:07:00Z', gates: [{ name: 'triage', state: 'next', text: 'a maintainer accepts triage (triage/ok)' }, { name: 'actionable', state: 'later', text: 'the stage-label pass marks it 010 actionable' }, { name: 'claimed', state: 'later', text: 'the scanner claims it (020)' }], text: 'Triage needed — accept or close' } };
+as = stageTrackerRowActions(fresh, ctx);
+assert.strictEqual(ids(as)[0], 'accept-triage', 'a 000-new reporter-trust hold leads with Accept triage');
+assert.strictEqual(as[0].hint, 'adds ' + BT + 'triage/ok' + BT + ' as @octo; the hive takes it on its next pass (≈7 min)');
+assert.ok(!ids(stageTrackerRowActions({ ...fresh, new: { ...fresh.new, next_mover: 'hive' } }, ctx)).includes('accept-triage'), 'an admitted reporter\'s new issue needs no triage');
+assert.ok(!ids(stageTrackerRowActions({ ...fresh, kind: 'pr', new: { next_mover: 'maintainer' } }, ctx)).includes('accept-triage'));
+assert.ok(!ids(stageTrackerRowActions({ ...fresh, new: null }, ctx)).includes('accept-triage'), 'a plain Open row without the narration is not a triage hold');
+const freshAfter = stageTrackerTriageAccepted(fresh);
+assert.strictEqual(freshAfter.stage, 0, 'no stage label to move yet');
+assert.strictEqual(freshAfter.new.next_mover, 'hive'); assert.strictEqual(freshAfter.actor, 'hive');
+assert.strictEqual(freshAfter.caption, 'New · waiting for the stage-label pass (→ 010 actionable), then the scanner');
+assert.deepStrictEqual(freshAfter.new.gates.map(g => g.name + ':' + g.state), ['triage:done', 'actionable:next', 'claimed:later']);
+assert.strictEqual(freshAfter.new.gates[0].text, 'triage accepted (triage/ok)');
+assert.strictEqual(fresh.new.next_mover, 'maintainer', 'the input is not mutated');
+assert.ok(!stageTrackerTriageNeeded(freshAfter), 'once accepted the menu no longer offers it');
 
 // Not on a triaged issue, a parked issue, an open issue, or any PR.
 assert.ok(!ids(stageTrackerRowActions({ ...triage, stage: 10 }, ctx)).includes('accept-triage'), '010 Actionable is already triaged');
@@ -89,7 +122,7 @@ let refreshed = 0; function stageTrackerAfterActions() { refreshed++; }
   assert.strictEqual(_stageTracker.items[1].stage, 15, 'the refused row is left as it was');
   assert.strictEqual(rendered, 1, 'one optimistic re-render for the success');
   assert.strictEqual(refreshed, 1, 'then the usual refetch');
-  assert.strictEqual(toasts[toasts.length - 1], 'done:error:Accept triage: 1/2 done. Failed: o/r#2 — write permission required', 'the failure is toasted, never a native dialog');
+  assert.strictEqual(toasts[toasts.length - 1], 'done:error:Accepted 1 of 2 issues. Failed: o/r#2 — write permission required', 'the failure is toasted, never a native dialog');
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }

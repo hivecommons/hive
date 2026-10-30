@@ -526,14 +526,10 @@ type AgentSandboxConfig struct {
 // commits). A non-zero exit from any command withholds the push and the PR
 // and puts the command's output tail on the agent card.
 //
-// A kick template can declare the same list inline so the policy that asks
-// for a card-proven result also says how hive checks it:
-//
-//	<!-- hive:publish.verify
-//	uv run pytest --collect-only -q
-//	-->
-//
-// A template declaration replaces the configured list for that kick.
+// This config is the only source of verify commands. A
+// `<!-- hive:publish.verify … -->` block in a kick message is recognised and
+// logged but never run: the rendered message carries issue and PR titles and
+// other text the hive did not write.
 type SandboxPublishConfig struct {
 	Verify []string `yaml:"verify,omitempty" json:"verify,omitempty"`
 	// VerifyTimeoutS bounds each verify command. Non-positive uses the

@@ -2,6 +2,23 @@
 
 Status: Accepted
 
+## Current action boundary
+
+| Kind of work | Decision park | How a person answers |
+|---|---|---|
+| Issue | `stage/045-needs-decision` | A human with repo write/maintain/admin permission uses `/hive approve` or `/hive decision <direction>`. The command flow clears decision parking, adds `approved-direction`, and lifts `needs-human` even when a human applied it; it never clears `hold`. Label-driven repositories use their configured acceptance labels instead. |
+| Pull request | `stage/085-needs-decision` | A trusted merger reviews the exact current head. On Hive-authored PRs at 085 or `stage/070-fixing`, `/hive decision <instruction>` routes the full text to the author/fixer; `/hive decision approve <rationale>` records head-bound approval. Bare `/hive approve` is acknowledged only, not a release. Other authors use GitHub reviews/manual merging. |
+
+These are decision signals, not universal merge holds. All other merge gates
+still apply; use `hold` or GitHub branch rules when merging must stop. See
+[Running at Level 6](../running-at-level-6.md#does-the-hive-reviewer-stop-a-merge)
+for the enforcing review gate and trusted-human override.
+
+The current commands are implemented by `SweepIssueUnparkCommands` and
+`tryUnparkPullRequest` in [issue command handling](../../pkg/github/issue_unpark_command.go)
+and [PR decision handling](../../pkg/github/pr_unpark_decision.go).
+The amendments below are migration history, not alternate current instructions.
+
 ## Context
 
 Hive already has several half-present escalation mechanisms: hold labels keep
@@ -22,10 +39,10 @@ per 24 hours.
 Hive agents escalate stalled work instead of silently parking it. Each
 escalation must choose one of four moves:
 
-1. **`stage/085-needs-decision`** (originally `needs-direction`; see the
-   amendment below) — Use when the next step is a maintainer decision,
-   authority grant, risk acceptance, or product/voice choice. Park the item on
-   `stage/085-needs-decision` and post exactly one comment to the maintainer
+1. **Decision park** (originally `needs-direction`) — Use when the next step
+   is a maintainer decision, authority grant, risk acceptance, or product/voice
+   choice. Park an **issue at `stage/045-needs-decision`**, or a **PR at
+   `stage/085-needs-decision`**, and post exactly one comment to the maintainer
    with a short question and concrete options `A`, `B`, and `C`; with
    `hive-open-issue comment … --needs-decision` the relay applies the park
    label as part of the comment, so no separate label step is needed.
@@ -48,7 +65,10 @@ ADR-0010 still governs CI fix-loop counting and `needs-human` authority. This
 ADR defines what the agent should do after recognizing that the item is no
 longer a single reactive fix.
 
-Verified RFC case studies map as follows:
+### Historical case studies
+
+The verified RFC cases below retain the original `needs-direction` spelling.
+For action today, use the kind-specific decision park above.
 
 | Case | Escalation move |
 |---|---|
@@ -76,6 +96,8 @@ records the missing decision or signal that made automation unsafe.
 
 ## Amendment (2026-10, [#12683](https://github.com/hivecommons/hive/issues/12683))
 
+**Historical intermediate state, superseded for issues by the next amendment.**
+
 The `needs-direction` label this ADR introduced, and the `needs-decision`
 label the issue relay later applied, are retired. Both parked an item on a
 maintainer ruling with identical gates — hard-suppressed at enumeration, the
@@ -92,6 +114,10 @@ nothing open carries them. `needs-human` is unchanged: it means a human-held
 identity or consent is required, not that a ruling is owed.
 
 ## Amendment (2026-10-17, owner decision: issue park is `stage/045-needs-decision`)
+
+**Stage migration history.** The stage split remains current; the statement
+below about preserving `needs-human` reflects the old command behavior.
+Current explicit maintainer commands lift it as described at the top.
 
 Issues no longer park at `stage/085-needs-decision`; that stage is PR-only.
 The issue-side park is `stage/045-needs-decision`, which sits between

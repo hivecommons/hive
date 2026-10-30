@@ -1385,16 +1385,15 @@ func TestSweepClosedIssueStageLabelsCap(t *testing.T) {
 }
 
 // hivecommons/hive#14679 (seen on #14628): the owner's `/hive decision
-// approve` followed by numbered instructions must reach the author agent
-// whole, and a bare approve must read as an approval, not an instruction.
+// approve` followed by rationale retains the whole text and reads as approval.
 func TestParseUnparkCommandKeepsDecisionTextAfterFirstLine(t *testing.T) {
 	body := "/hive decision approve\r\n\r\nPlease do the following before merging:\r\n\r\n1. Change `Closes #14605` to `Refs #14605`.\n2. Keep #14605 open.\n3. Merge on green.\n"
 	cmd, ok := parseUnparkCommand(body)
 	if !ok || cmd.Kind != unparkCommandDecision || cmd.Decision != "approve" {
 		t.Fatalf("parseUnparkCommand = %+v, %v", cmd, ok)
 	}
-	if cmd.BareApproval() {
-		t.Fatalf("approve with instructions read as a bare approval: %q", cmd.Text)
+	if !cmd.Approval() {
+		t.Fatalf("approve with rationale did not read as approval: %q", cmd.Text)
 	}
 	for _, want := range []string{"approve\n\n", "1. Change `Closes #14605` to `Refs #14605`.", "2. Keep #14605 open.", "3. Merge on green."} {
 		if !strings.Contains(cmd.DecisionText(), want) {
@@ -1403,12 +1402,12 @@ func TestParseUnparkCommandKeepsDecisionTextAfterFirstLine(t *testing.T) {
 	}
 	for _, bare := range []string{"/hive decision approve", "/hive decision Approved\n", "/hive decision approve.\n\n"} {
 		cmd, ok := parseUnparkCommand(bare)
-		if !ok || !cmd.BareApproval() || cmd.DecisionText() == "" {
+		if !ok || !cmd.Approval() || cmd.DecisionText() == "" {
 			t.Fatalf("parseUnparkCommand(%q) = %+v, %v; want a bare approval", bare, cmd, ok)
 		}
 	}
 	single, _ := parseUnparkCommand("/hive decision keep 10 stable tags")
-	if single.DecisionText() != "keep 10 stable tags" || single.BareApproval() {
+	if single.DecisionText() != "keep 10 stable tags" || single.Approval() {
 		t.Fatalf("single-line decision = %+v", single)
 	}
 }

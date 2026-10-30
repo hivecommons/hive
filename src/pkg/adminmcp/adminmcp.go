@@ -346,7 +346,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolClaimsList, "Read the capped list of issue claims known to this hive."},
 		{ToolPlansList, "Read the capped list of saved plans."},
 		{ToolAuditLog, "Read the capped audit log for this hive."},
-		{ToolSettingsRead, "Read governor settings through the existing dashboard settings endpoint."},
+		{ToolSettingsRead, settingsReadDescription()},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
 		{ToolSpendRead, "Read spend and budget status through the existing cost endpoint."},
 		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
@@ -445,6 +445,8 @@ func inputSchema(name string) map[string]any {
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
 	case ToolReviewQueue:
 		props = reviewQueueSchema()
+	case ToolSettingsRead:
+		props = settingsReadSchema()
 	case ToolGovernorSetup, ToolLogSources:
 		props = map[string]any{}
 	case ToolLogRead:
@@ -724,6 +726,8 @@ func ReadPath(tool string, limit int) (string, bool) {
 	case ToolAuditLog:
 		return "/api/audit", true
 	case ToolSettingsRead, ToolGovernorSetup:
+		// settings_read with arguments goes through SettingsReadPath; this
+		// is its default section.
 		return "/api/config/governor", true
 	case ToolAutonomyReadiness:
 		return "/api/nous/status", true

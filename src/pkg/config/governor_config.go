@@ -21,8 +21,14 @@ type GovernorConfig struct {
 	// cycle. WebhookWakeMinGapS is the minimum gap between two
 	// webhook-triggered cycles. Both default at Load; see
 	// docs/operator-reference.md "Webhook-driven PR cache invalidation".
-	WebhookWakeDebounceS       int `yaml:"webhook_wake_debounce_s,omitempty"`
-	WebhookWakeMinGapS         int `yaml:"webhook_wake_min_gap_s,omitempty"`
+	WebhookWakeDebounceS int `yaml:"webhook_wake_debounce_s,omitempty"`
+	WebhookWakeMinGapS   int `yaml:"webhook_wake_min_gap_s,omitempty"`
+	// CIFailureWebhookKick reacts to webhook CI failures without waiting
+	// for a sweep. Cooldown bounds kicks per PR head (default 600 seconds).
+	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
+	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// MergeTrainStallWarnS is the stalled-train warning threshold in seconds.
+	MergeTrainStallWarnS       int `yaml:"merge_train_stall_warn_s,omitempty"`
 	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
 	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
@@ -49,6 +55,8 @@ type GovernorConfig struct {
 	// (governor) config surface rather than only through HIVE_BACKUP_KEY.
 	Backup BackupConfig `yaml:"backup,omitempty" json:"backup,omitempty"`
 	Replan ReplanConfig `yaml:"replan"`
+	// Reroute tunes redispatching a returned PR to another online clanker.
+	Reroute RerouteConfig `yaml:"reroute,omitempty" json:"reroute,omitempty"`
 	// AttributionTrailer controls the VISIBLE invocation-attribution line
 	// ("— hive: agent=… backend=… model=…") appended at creation time to the
 	// body of PRs the hive opens for agents (the PR-request watcher) and issues
@@ -133,6 +141,15 @@ type GovernorConfig struct {
 	// AutoCloseSuperseded closes only hive-authored PRs superseded by a
 	// different merged PR. A person's PR still needs their decision.
 	AutoCloseSuperseded *bool `yaml:"auto_close_superseded,omitempty" json:"auto_close_superseded,omitempty"`
+
+	// Hotspot* tune the merge-hotspot advisor. Zero values use the defaults;
+	// disabling issues keeps reporting enabled without filing on GitHub.
+	HotspotEnabled     *bool `yaml:"hotspot_enabled,omitempty" json:"hotspot_enabled,omitempty"`
+	HotspotWindowDays  int   `yaml:"hotspot_window_days,omitempty" json:"hotspot_window_days,omitempty"`
+	HotspotMinPRs      int   `yaml:"hotspot_min_prs,omitempty" json:"hotspot_min_prs,omitempty"`
+	HotspotMinOverlaps int   `yaml:"hotspot_min_overlaps,omitempty" json:"hotspot_min_overlaps,omitempty"`
+	HotspotMinLines    int   `yaml:"hotspot_min_lines,omitempty" json:"hotspot_min_lines,omitempty"`
+	HotspotRefileDays  int   `yaml:"hotspot_refile_days,omitempty" json:"hotspot_refile_days,omitempty"`
 
 	// ProjectObservability configures what the telemetry and operations agents
 	// recommend for the MANAGED PROJECT. It is deliberately separate from
@@ -486,6 +503,9 @@ type StageAdoptionConfig struct {
 	// profile on this hive (another hive posted it; default 15m — no
 	// presence reads as offline).
 	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
+	// OfflineGrace retries a failed adoption replay once the author's
+	// clanker remains offline for this duration (default 30m).
+	OfflineGrace string `yaml:"offline_grace,omitempty"`
 	// InPlace lets the hive adopt by pushing to the PR's own branch when
 	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
 	// opening a superseding App PR. nil = true.
@@ -555,7 +575,13 @@ func (c StageAdoptionConfig) StrictAttributionEnabled() bool {
 const (
 	DefaultAdoptAfterOffline      = 15 * time.Minute
 	DefaultAdoptAfterUnregistered = 15 * time.Minute
+	DefaultAdoptOfflineGrace      = 30 * time.Minute
 )
+
+// EffectiveOfflineGrace parses OfflineGrace (default 30m).
+func (c StageAdoptionConfig) EffectiveOfflineGrace() time.Duration {
+	return parseDurationOr(c.OfflineGrace, DefaultAdoptOfflineGrace)
+}
 
 // EffectiveAfterOffline parses AfterOffline (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
@@ -565,6 +591,20 @@ func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
 // EffectiveAfterUnregistered parses AfterUnregistered (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
+}
+
+// RerouteConfig is governor.reroute.
+type RerouteConfig struct {
+	// PickupTimeout bounds how long rerouted work can wait before falling
+	// back to Adopt now. Go duration syntax; default 30m.
+	PickupTimeout string `yaml:"pickup_timeout,omitempty" json:"pickup_timeout,omitempty"`
+}
+
+const DefaultReroutePickupTimeout = 30 * time.Minute
+
+// EffectivePickupTimeout parses PickupTimeout (default 30m).
+func (c RerouteConfig) EffectivePickupTimeout() time.Duration {
+	return parseDurationOr(c.PickupTimeout, DefaultReroutePickupTimeout)
 }
 
 // Default graces before a red contributor PR is adopted (stage 074).

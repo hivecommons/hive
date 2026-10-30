@@ -1,0 +1,1 @@
+- Activity Monitor: a PR whose linked issue is already closed keeps that issue as the row head (struck through, `closed` chip) instead of promoting the PR into the issue slot; when another merged PR closed the issue the chip reads `closed by #N` and links to it (#15232).

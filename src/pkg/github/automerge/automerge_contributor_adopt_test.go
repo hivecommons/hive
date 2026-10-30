@@ -14,6 +14,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -2603,10 +2604,12 @@ func TestAdoptionSupersederMergedCloseRefusedMarksSupersededOpen(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#14471: a `Refs #N` line travels into the superseder body.
+// hivecommons/hive#14471: a `Refs #N` line travels into the superseder body;
+// hivecommons/hive#15499: an annotated `Refs #N — partial` travels as the
+// bare reference, so the copy keeps the issue link its original had.
 func TestAdoptionClosesCarriesRefs(t *testing.T) {
-	got := adoptionCloses("Refs #14389 — addresses root cause 2\nRefs #5\nCloses #12\n")
-	if len(got) != 2 || got[0] != "Refs #5" || got[1] != "Closes #12" {
+	got := adoptionCloses("Refs #14389 — addresses root cause 2\nRefs #5\nCloses #12\nRefs #15395 - partial\nRefs #5 — again\n")
+	if len(got) != 4 || got[0] != "Refs #5" || got[1] != "Closes #12" || got[2] != "Refs #14389" || got[3] != "Refs #15395" {
 		t.Fatalf("adoptionCloses: %v", got)
 	}
 }
@@ -2981,5 +2984,71 @@ func TestAdoptionSupersedeConflictCommentListsFiles(t *testing.T) {
 	}
 	if strings.Contains(AdoptionSupersedeConflictComment(obs, "hive/adopt-7", nil), "both sides") {
 		t.Fatal("empty file list rendered")
+	}
+}
+
+// hivecommons/hive#15202: an owner's / author-human PR parked at 085 with a
+// delegated `adoption/supersede` request is never adopted. The refusal is
+// recorded on the tracker row, the request label is consumed (one attempt,
+// not a standing order) and the PR never reaches 074.
+func TestDelegatedSupersedeRefusesPersonAuthoredPR(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []string
+		human  bool
+		owner  func(string) bool
+	}{
+		{name: "author/human label", labels: []string{"stage/085-needs-decision", "author/human", delegatedecision.LabelAdoptSupersede}, human: true},
+		{name: "hive owner whose hive opened the PR", labels: []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede},
+			owner: func(login string) bool { return login == "mallory" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := adoptPolicy()
+			policy.OwnerAuthor = tc.owner
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+			defer done()
+			pr := adoptPR(7, "aaa", tc.labels...)
+			if tc.human {
+				// No relay trailer: a person pushed it from their own machine.
+				pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\n")
+			}
+			h.observe(pr, contributorLaneReasonNoReviewer)
+			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+				t.Fatalf("adopted a person's PR: pulls=%v refs=%v added=%v", h.adopt.pulls, h.adopt.refs, h.api.added)
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+			if rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedAuthorPerson {
+				t.Fatalf("refusal not recorded for the tracker: %+v", rec)
+			}
+			if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+				t.Fatalf("request label kept after a terminal refusal: removed=%v", h.api.removed)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#15469: a clanker PR the merge queue holds as the
+// duplicate of another open PR for the same issue lands at 072 as
+// superseded — no "fix it" nudge, no adoption after the grace, even though
+// the author is a clanker with a live relay; adopting it would land the
+// issue twice. Its one notice is the duplicate-fix sweep's.
+func TestDuplicateHeldClankerPRParkedAt072WithoutNudgeOrAdoption(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: true}
+	reason := prstage.MergeTrain{State: prstage.MergeTrainStateDuplicateOf, Front: 15470, Position: 15469}.Reason()
+	h.observe(adoptPR(15473, "aaa", "role/contributor", "author/clanker"), reason)
+	if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
+		t.Fatalf("labels added = %v, want 072", h.api.added)
+	}
+	if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
+		t.Fatalf("interrupt fired on a duplicate: comments=%v nudges=%d", h.api.comments, len(h.sink.nudges))
+	}
+	h.api.reset()
+	h.clock.advance(6 * time.Hour)
+	h.observe(adoptPR(15473, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), reason)
+	if len(h.api.comments) != 0 || len(h.adopt.pulls) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+		t.Fatalf("duplicate adopted: added=%v comments=%v pulls=%d", h.api.added, h.api.comments, len(h.adopt.pulls))
 	}
 }

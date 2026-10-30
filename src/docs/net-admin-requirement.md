@@ -1,22 +1,32 @@
 # Self-Hosted Hive and `CAP_NET_ADMIN`
 
-A self-hosted / unmanaged Hive spoke **runs without** the `NET_ADMIN` Linux
-capability — the container starts normally either way. But `NET_ADMIN` is what
-activates the **full forced-proxy-egress security gate**. Grant it to get the
-complete gate; without it the spoke runs in a **degraded (best-effort) egress
-mode** described below.
+**For self-hosted operators:** Hive normally refuses to start if it cannot
+install the traffic rules that force agents through its checking proxy. It
+needs the Linux `NET_ADMIN` capability, working netfilter support, and the
+iptables tools. Merely removing an old binary's file capability does not
+remove that startup requirement.
 
-> Historical note: earlier builds shipped `/usr/local/bin/hive` with a
-> `cap_net_admin+ep` **file capability**. The kernel refuses to `execve()` a
-> binary whose file capabilities it cannot grant from the container's bounding
-> set, and `NET_ADMIN` is not in the default bounding set for docker / podman /
-> containerd / k3s — so those builds **crash-looped** on self-hosted spokes with
-> a bare `exec ... Operation not permitted` (EPERM). That file capability has
-> been **removed** (see #3760/#3794): the binary now carries no
-> `security.capability` xattr and execs everywhere. `NET_ADMIN` is instead raised
-> at runtime as an **ambient** capability by the entrypoint, gated on the
-> bounding set actually having it. The crash-loop is gone; what remains is the
-> choice between the full gate and the degraded mode.
+If you explicitly set `HIVE_PROXY_ADVISORY_OK=true`, startup may continue with
+network enforcement **advisory-only**: agents can bypass the proxy. This is a
+security opt-out, not a way to grant a missing capability, and it does not
+automatically lower your configured ACMM level.
+
+## Full gate vs. degraded mode
+
+| What the runtime can establish | Default result | What to do |
+|---|---|---|
+| Required IPv4 redirect and IPv6 gate, plus the proxy's own connection exemption | Enforced egress: agents' HTTPS traffic passes through the proxy | Use the [full-gate setup](#how-to-get-the-full-gate) for your runtime. |
+| Required traffic rules, but the proxy cannot mark its own connections | Separate **self-exemption degradation**; it relies on the optional owner-UID exemption | Inspect runtime support. Where owner matching is absent, proxy connections may fail; this is not permission to bypass required traffic rules. |
+| Required traffic rules cannot be installed; no explicit opt-out | **Refuses startup**: exit 77 for missing capability or required modules; other rule-install failures generally exit 1 | Match the [error signatures](#which-exit-77-do-i-have-the-check-order-since-6003). |
+| Required traffic rules cannot be installed and `HIVE_PROXY_ADVISORY_OK=true` | Starts with **unenforced, advisory-only egress** and a warning | Accept this loss of enforcement deliberately, or fix the runtime. Never treat it as the full gate. |
+
+**Missing `NET_ADMIN` does not mean “starts in degraded mode.”** Installing
+the redirect also requires that capability, so the default result is refusal
+to start. Rootless Podman is subject to the same decision.
+
+For a failed deployment, go directly to [exit-77 diagnosis](#when-the-container-refuses-to-start-exit-77)
+or [capability grants](#how-to-get-the-full-gate). The kernel explanation below
+is reference, not a prerequisite for choosing a deployment.
 
 ## Why `NET_ADMIN` matters
 
@@ -44,29 +54,31 @@ unavailable.
 > filter — `--security-opt seccomp=unconfined` / `apparmor=unconfined` do not
 > change it.
 
-The **managed fleet** always gets the full gate: its pods are granted
+The **managed fleet** is configured to request the full gate: its pods are granted
 `NET_ADMIN` via an SCC / PodSecurity grant (see
 `src/deploy/k8s/deployment.yaml`), so the entrypoint's ambient raise fires.
 
-## Full gate vs. degraded mode
+### Historical file-capability failure
 
-| Deployment | `NET_ADMIN`? | Behavior |
-|---|---|---|
-| Managed k8s / OpenShift (SCC or `securityContext`) | yes | Entrypoint raises it ambiently → SO_MARK works → **full forced-proxy-egress gate**. |
-| Self-hosted docker / podman **with** `--cap-add NET_ADMIN` | yes | Same as above → **full gate**. |
-| Self-hosted docker / podman **without** the cap | no | Container **runs** (no crash). SO_MARK exemption unavailable → egress gate is **degraded / best-effort**: on OKE the owner-UID exemption still applies, but on OpenShift/OVN the proxy's own dials are not mark-exempted. |
-| Rootless podman | effectively no | Rootless cannot grant `NET_ADMIN` meaningfully, so it runs in the **degraded mode** above. |
+Earlier builds gave `/usr/local/bin/hive` a `cap_net_admin+ep` file capability.
+If the runtime's **bounding set** (the maximum capabilities it can grant) did
+not include it, the kernel refused to execute the binary with `Operation not
+permitted` (EPERM). That file capability was removed (#3760/#3794). The
+entrypoint now raises the capability at runtime only when permitted.
+This fixes that old execute-time failure, **not** the separate fail-closed
+traffic-rule check.
 
-"Degraded" means the proxy's own upstream dials rely solely on the owner-UID
-iptables exemption; where that match is unavailable the proxy dials **unmarked**
-(the Go proxy logs this once and continues — it does not fail). Agents' forced
-egress through the proxy is still installed; only the proxy's *self*-exemption is
-best-effort.
+Reference vocabulary: an **effective** capability is usable now; an **ambient**
+capability survives the controlled privilege drop. `SO_MARK` marks a socket's
+packets so the proxy can exempt its own connections. Netfilter is Linux's
+packet-filtering system. **SCC** is OpenShift's Security Context Constraint;
+**OVN** is its network layer; **OKE** is Oracle Kubernetes Engine; **RHCOS** is
+Red Hat CoreOS. These platform details do not change the startup decision.
 
 ## When the container refuses to start (exit 77)
 
-The degraded mode above is about the **SO_MARK self-exemption** only, and it
-never stops the container from starting. A *separate*, earlier check —
+Self-exemption degradation is about the **SO_MARK self-exemption** only. A
+*separate*, earlier check —
 whether the `iptables` **REDIRECT** that forces agent egress through the proxy
 could be installed at all — is fail-closed: without it, the whole ACMM
 capability model is advisory-only (an agent holding a raw token could bypass
@@ -132,6 +144,10 @@ OpenShift/RHCOS, a MachineConfig writing an `/etc/modules-load.d/` drop-in
 though, which is often unacceptable on a shared or GPU cluster. The no-reboot
 alternative is the node-prep DaemonSet shipped at
 [`src/deploy/k8s/node-prep/hive-netfilter-modules.yaml`](../deploy/k8s/node-prep/hive-netfilter-modules.yaml):
+
+**Who runs this: a cluster administrator**, from the Hive repository root.
+It creates privileged node-level workloads; a hive owner with namespace-only
+access must ask the cluster administrator, not try to grant these privileges.
 
 ```bash
 kubectl apply -f src/deploy/k8s/node-prep/hive-netfilter-modules.yaml
@@ -216,6 +232,10 @@ runners have the modules.
 
 ### Docker / Podman (rootful)
 
+**Who runs this:** the host/container-runtime operator. These are capability
+fragments, not complete installation commands; retain the configuration,
+storage, and authentication options from your runtime quickstart.
+
 ```bash
 docker run --cap-add NET_ADMIN ... ghcr.io/hivecommons/hive:<tag>
 # or
@@ -223,6 +243,9 @@ podman run --cap-add NET_ADMIN ... ghcr.io/hivecommons/hive:<tag>
 ```
 
 ### Kubernetes / k3s
+
+**Who runs this:** the workload operator edits the Deployment; a cluster
+administrator must approve any required admission-policy exception.
 
 Add `NET_ADMIN` to the hive container's `securityContext`:
 
@@ -261,6 +284,10 @@ checks in the provisioning guide.
 
 ### Rootless Podman
 
-Rootless Podman cannot grant `NET_ADMIN` in a way the kernel will honor, so a
-rootless self-hosted spoke runs in the **degraded egress mode** above. The
-container still starts and operates; it simply lacks the SO_MARK self-exemption.
+Rootless Podman cannot grant the host/network capability needed here. If it
+cannot establish the required egress rules, startup is refused by default.
+Only the explicit `HIVE_PROXY_ADVISORY_OK=true` opt-out permits advisory-only
+egress; it does not supply the missing enforcement or merely degrade the
+proxy's self-exemption. Choose rootful execution with the required capability
+for the full gate, or knowingly accept the advisory-only boundary described
+in the [Podman quickstart](quickstart-podman.md).

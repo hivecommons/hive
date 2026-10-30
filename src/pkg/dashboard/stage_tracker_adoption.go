@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 // The 072 adoption state on a tracker row (hivecommons/hive#14524: PR
-// #14524 sat at stage/072 for 26h, nudged twice, its author's hive gone,
+// #14524 sat at stage/072 for 26h, nudged twice, its author's clanker gone,
 // while every cycle logged "author maintains the repository; not
 // adopting" and nothing in the UI said so). A nudged contributor PR
 // carries `adoption`: whether the engine found adoption due, what holds it
@@ -56,6 +57,14 @@ type StageTrackerAdoption struct {
 	Text string `json:"text"`
 }
 
+// BlockerReason is the hold reason, or "policy" when the engine recorded none.
+func (a StageTrackerAdoption) BlockerReason() string {
+	if a.BlockedBy != "" {
+		return a.BlockedBy
+	}
+	return "policy"
+}
+
 // decisionActionAdopt is the row action id for the owner's Adopt, in the
 // context menu's "decide:<verb>" vocabulary (POST …/decision adopt).
 const decisionActionAdopt = "decide:adopt"
@@ -93,7 +102,21 @@ func (s *Server) stageTrackerMaintainerPolicy() string {
 // when the row was never nudged at its current head (nothing to adopt
 // yet) or is already adopted.
 func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(login string) (automerge.ContributorPresence, bool), policy string, now time.Time) *StageTrackerAdoption {
-	if it.Kind != "pr" || !hasRec || rec.NudgeCount == 0 || rec.NudgeStart().IsZero() {
+	if it.Kind != "pr" || !hasRec {
+		return nil
+	}
+	if rec.AdoptionBlocked(it.Head) == stagelabels.AdoptBlockedAuthorPerson {
+		// A person's PR was asked to be adopted and refused: say so on the
+		// row even though no nudge clock ever ran (hivecommons/hive#15202).
+		out := &StageTrackerAdoption{Author: it.Author, Policy: policy, Due: true, BlockedBy: stagelabels.AdoptBlockedAuthorPerson}
+		if !rec.AdoptBlockedAt.IsZero() {
+			since := rec.AdoptBlockedAt
+			out.Since = &since
+		}
+		out.Text = stageTrackerAdoptionText(it.Author, *out, now)
+		return out
+	}
+	if rec.NudgeCount == 0 || rec.NudgeStart().IsZero() {
 		return nil
 	}
 	if it.Head != "" && rec.NudgeHead != "" && rec.NudgeHead != it.Head {
@@ -139,6 +162,9 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 	who := "the author"
 	if author != "" {
 		who = "@" + author
+	}
+	if a.BlockedBy == stagelabels.AdoptBlockedAuthorPerson {
+		return who + " pushed this PR themselves — not adopted: the hive asks them, not adopts"
 	}
 	var facts []string
 	if a.AuthorMaintainer {
@@ -205,4 +231,46 @@ func stageTrackerAdoptionCaption(caption string, a *StageTrackerAdoption) string
 		head = caption[:i]
 	}
 	return head + " — " + a.Text
+}
+
+// stageTrackerSupersedesIndex maps each superseding PR's store key to the
+// closed original it replaced (hivecommons/hive#15135). The original's
+// record carries SupersededBy; the tracker never renders that record as a
+// row (addPR drops it, and a closed PR has no open item), so the live
+// PR's chip is the one trace the tracker keeps. When several originals
+// name the same superseder the lowest-numbered one is kept.
+func stageTrackerSupersedesIndex(store *stagelabels.Store, baseURL string) map[string]StageTrackerSupersedes {
+	out := map[string]StageTrackerSupersedes{}
+	if store == nil {
+		return out
+	}
+	for _, key := range store.Keys() {
+		rec, ok := store.Get(key)
+		if !ok || !rec.Superseded() {
+			continue
+		}
+		repo, numText, found := strings.Cut(key, "#")
+		number, err := strconv.Atoi(numText)
+		if !found || err != nil || number <= 0 || repo == "" {
+			continue
+		}
+		by := stagelabels.Key(repo, rec.SupersededBy)
+		if prev, dup := out[by]; dup && prev.Number <= number {
+			continue
+		}
+		sup := StageTrackerSupersedes{Number: number, URL: overviewItemURL("", repo, number, "pr", baseURL), Open: rec.SupersededOpen}
+		if !rec.SupersededAt.IsZero() {
+			t := rec.SupersededAt
+			sup.ClosedAt = &t
+		}
+		out[by] = sup
+	}
+	return out
+}
+
+// stageTrackerLinkedPRFinished reports whether a PR state the caches
+// resolved (stageTrackerPRStateResolver) means the PR is no longer open
+// work: closed unmerged or merged. Unknown ("") is not finished.
+func stageTrackerLinkedPRFinished(state string) bool {
+	return state == blockedOnPRStateClosed || state == blockedOnPRStateMerged
 }

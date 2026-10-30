@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,9 @@ func TestOperatorActionFromBody(t *testing.T) {
 		{"decision", `{"decision":"merge-now","head":"abc"}`, operatorActionRequest{Action: operatorActionMergeNow, Head: "abc"}, true},
 		{"decision", `{"decision":"queue-merge"}`, operatorActionRequest{Action: operatorActionQueueMerge}, true},
 		{"decision", `{"decision":"re-author"}`, operatorActionRequest{Action: operatorActionReauthor}, true},
+		{"decision", `{"decision":"adopt"}`, operatorActionRequest{Action: operatorActionAdopt}, true},
+		{"decision", `{"decision":"adopt","force":true,"comment":"now"}`, operatorActionRequest{Action: operatorActionAdoptNow, Note: "now"}, true},
+		{"decision", `{"decision":"reroute","to":"@bee2"}`, operatorActionRequest{Action: operatorActionReroute, Target: "bee2"}, true},
 		{"decision", `{"decision":"bogus"}`, operatorActionRequest{}, false},
 		{"decide-delegated", ``, operatorActionRequest{Action: operatorActionLetHiveDecide}, true},
 		{"hold", `{"held":true}`, operatorActionRequest{Action: operatorActionHold}, true},
@@ -98,6 +102,8 @@ func TestOperatorActionOutcome(t *testing.T) {
 		{202, `{"status":"running"}`, operatorActionOutcomePending, "running", "", true, "delegated async"},
 		{409, `{"error":"not parked"}`, operatorActionOutcomeNoOp, "not parked", "", true, "conflict"},
 		{502, `{"error":"github down"}`, operatorActionOutcomeFailed, "github down", "", true, "upstream"},
+		{200, `{"ok":true,"status":"refused","result":{"action":"refused","outcome":"Close refused: repo paused — o/r is paused by the operator."}}`, operatorActionOutcomeFailed, "Close refused: repo paused — o/r is paused by the operator.", "", true, "refused close (#15436)"},
+		{200, `{"ok":true,"status":"closed","result":{"action":"closed"}}`, operatorActionOutcomeApplied, "closed", "", true, "closed"},
 		{400, `{"error":"bad"}`, "", "", "", false, "rejected input"},
 		{403, ``, "", "", "", false, "forbidden"},
 	}
@@ -310,7 +316,8 @@ func TestOperatorActionRecordedByDecisionEndpoint(t *testing.T) {
 }
 
 // stageTrackerActedJS lifts the "did I act on this?" badge helpers the row
-// renderer and the filter call (operator_actions.go payload fields).
+// renderer and the filter call (operator_actions.go payload fields). Callers
+// lift STAGE_TRACKER_ICONS themselves: the history badge draws from it.
 func stageTrackerActedJS(t *testing.T, html string) string {
 	t.Helper()
 	return strings.Join([]string{
@@ -318,6 +325,7 @@ func stageTrackerActedJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STATES"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_FILTERS"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STUCK_DEFAULT_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_HISTORY_ICON"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_GLYPH"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTED_PLAIN"),
 		jsFunc(t, html, "stageTrackerActedLabel"),
@@ -333,4 +341,153 @@ func stageTrackerActedJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerActedBadgeHtml"),
 		jsFunc(t, html, "stageTrackerActedMatches"),
 	}, "\n")
+}
+
+// hivecommons/hive#15188: an adopt-supersede that only queued the request
+// label is `executing`, not `applied`; a dedup no-effect is `no-effect`; a
+// capability-gap recommendation is `blocked`.
+func TestSettledDelegatedOutcomeDistinguishesExecution(t *testing.T) {
+	adopt := &delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede, Rule: "contributor-offline"}
+	cases := []struct {
+		name    string
+		job     *delegatedDecisionJob
+		outcome string
+		detail  string
+	}{
+		{"adopt queued", &delegatedDecisionJob{Status: delegatedJobStatusDone, Decision: adopt, Result: &RowActionResult{Action: "adopt-supersede"}}, operatorActionOutcomeExecuting, "decided: adopt-supersede (contributor-offline) · executing…"},
+		{"adopt no effect", &delegatedDecisionJob{Status: delegatedJobStatusDone, Decision: adopt, Result: &RowActionResult{Action: rowActionNoEffect, Outcome: "Hive decided X but it hasn't taken effect: the copy was closed."}}, operatorActionOutcomeNoEffect, "Hive decided X but it hasn't taken effect: the copy was closed"},
+		{"capability gap", &delegatedDecisionJob{Status: delegatedJobStatusDone, Decision: &delegatedecision.Decision{Verdict: delegatedecision.VerdictRecommendOnly, Rule: delegatedecision.RuleCapabilityGap, KeepsPark: true}}, operatorActionOutcomeBlocked, ""},
+		{"failed", &delegatedDecisionJob{Status: delegatedJobStatusFailed, Error: "boom", Decision: adopt}, operatorActionOutcomeFailed, "boom"},
+		{"approve applied", &delegatedDecisionJob{Status: delegatedJobStatusDone, Decision: &delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "default-release"}}, operatorActionOutcomeApplied, "hive decided: approve (default-release)"},
+	}
+	for _, c := range cases {
+		outcome, detail := settledDelegatedOutcome(c.job)
+		if outcome != c.outcome || (c.detail != "" && detail != c.detail) {
+			t.Errorf("%s: outcome=%q detail=%q, want %q / %q", c.name, outcome, detail, c.outcome, c.detail)
+		}
+		if c.name == "capability gap" && !strings.Contains(detail, "workflows") {
+			t.Errorf("capability gap detail should name the permission: %q", detail)
+		}
+	}
+}
+
+// The ✓ for an `executing` adopt-supersede follows the worker, not the
+// stage: adopted → addressed "adopted as #N"; a workflow-path refusal →
+// blocked on the workflows capability with a human next step; a closed copy
+// → still executing; nothing on record past the window → stuck.
+func TestStageTrackerOperatorActionExecutingFollowsTheWorker(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	window := 30 * time.Minute
+	rec := func(ago time.Duration) []OperatorAction {
+		return []OperatorAction{{Action: operatorActionLetHiveDecide, Actor: "o", At: now.Add(-ago), Outcome: operatorActionOutcomeExecuting, Detail: "decided: adopt-supersede (contributor-offline) · executing…", Stage: 85}}
+	}
+	cases := []struct {
+		name     string
+		actions  []OperatorAction
+		stage    int
+		exec     operatorActionExecution
+		wantSt   string
+		wantOutc string
+		progress string
+		blocker  string
+		human    bool
+	}{
+		{"just decided", rec(2 * time.Minute), 85, operatorActionExecution{}, operatorActionStateExecuting, operatorActionOutcomeExecuting, "", "", false},
+		{"adopted", rec(5 * time.Minute), 74, operatorActionExecution{AdoptedBy: 14977}, operatorActionStateAddressed, operatorActionOutcomeApplied, "adopted as #14977", "", false},
+		{"adopted and superseded", rec(5 * time.Minute), 85, operatorActionExecution{AdoptedBy: 14977, Superseded: true}, operatorActionStateAddressed, operatorActionOutcomeApplied, "closed in its favour", "", false},
+		{"copy closed, reopening", rec(5 * time.Minute), 85, operatorActionExecution{AdoptedBy: 14977, AdoptedByState: stageTrackerAdoptedClosed}, operatorActionStateExecuting, operatorActionOutcomeExecuting, "opening a fresh one", "", false},
+		{"copies closed twice", rec(5 * time.Minute), 85, operatorActionExecution{AdoptedBy: 14977, AdoptedByState: stageTrackerAdoptedClosedTwice}, operatorActionStateFailed, operatorActionOutcomeExecuting, "could not adopt", "", true},
+		{"workflow path refused", rec(5 * time.Minute), 85, operatorActionExecution{Refused: "adoption-stalled:contributor-lane:workflow-path"}, operatorActionStateBlocked, operatorActionOutcomeExecuting, "could not adopt", operatorActionBlockerWorkflows, true},
+		{"other refusal", rec(5 * time.Minute), 85, operatorActionExecution{Refused: "adoption-stalled:contributor-lane:child-closed-twice"}, operatorActionStateFailed, operatorActionOutcomeExecuting, "could not adopt", "", true},
+		{"nothing on record past window", rec(2 * time.Hour), 85, operatorActionExecution{}, operatorActionStateStuck, operatorActionOutcomeExecuting, "no adoption on record 2 h after the decision", "", true},
+	}
+	for _, c := range cases {
+		got := stageTrackerOperatorActionExec(c.actions, c.stage, nil, nil, now, window, c.exec)
+		if got == nil || got.State != c.wantSt || got.Outcome != c.wantOutc {
+			t.Errorf("%s: got %+v, want state=%s outcome=%s", c.name, got, c.wantSt, c.wantOutc)
+			continue
+		}
+		if c.progress != "" && !strings.Contains(got.Progress, c.progress) {
+			t.Errorf("%s: progress %q missing %q", c.name, got.Progress, c.progress)
+		}
+		if got.Blocker != c.blocker {
+			t.Errorf("%s: blocker %q want %q", c.name, got.Blocker, c.blocker)
+		}
+		if (got.Human != "") != c.human {
+			t.Errorf("%s: human %q (want present=%v)", c.name, got.Human, c.human)
+		}
+		if got.Progress != "" && (strings.Contains(got.Progress, "contributor-lane") || strings.Contains(got.Progress, "adoption-stalled")) {
+			t.Errorf("%s: bare slug in progress %q", c.name, got.Progress)
+		}
+	}
+	// A `blocked` ledger record (capability-gap recommendation) carries the
+	// blocker and the human step regardless of exec state.
+	blocked := []OperatorAction{{Action: operatorActionLetHiveDecide, Actor: "o", At: now.Add(-time.Minute), Outcome: operatorActionOutcomeBlocked, Stage: 85}}
+	got := stageTrackerOperatorAction(blocked, 85, nil, nil, now, window)
+	if got == nil || got.State != operatorActionStateBlocked || got.Blocker != operatorActionBlockerWorkflows || got.Human == "" {
+		t.Fatalf("blocked record = %+v", got)
+	}
+	// A no-effect record on the same stage is stuck with its own words; once
+	// the item moved on it reads as superseded by the state change.
+	noEffect := []OperatorAction{{Action: operatorActionLetHiveDecide, Actor: "o", At: now.Add(-time.Minute), Outcome: operatorActionOutcomeNoEffect, Detail: "the copy was closed", Stage: 85}}
+	if got := stageTrackerOperatorAction(noEffect, 85, nil, nil, now, window); got == nil || got.State != operatorActionStateStuck || got.Progress != "the copy was closed" || got.Human == "" {
+		t.Fatalf("no-effect same stage = %+v", got)
+	}
+	if got := stageTrackerOperatorAction(noEffect, 74, nil, nil, now, window); got == nil || got.State != operatorActionStateAddressed || got.Outcome != operatorActionOutcomeSuperseded {
+		t.Fatalf("no-effect moved on = %+v", got)
+	}
+}
+
+// operatorActionExecutionFor reads the adoption off the stage record over
+// the tracker item and surfaces a terminal refusal for the current head.
+func TestOperatorActionExecutionForReadsRecord(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	store := stagelabels.NewStore("", func() time.Time { return now })
+	key := stagelabels.Key("testorg/testrepo", 8)
+	store.Observe(key, stagelabels.NeedsDecision, "test")
+	it := StageTrackerItem{Repo: "testorg/testrepo", Number: 8, Head: "aaa", Reason: "adoption-stalled:contributor-lane:workflow-path"}
+	if got := operatorActionExecutionFor(it, stagelabels.Record{}, false); got.Refused != it.Reason || got.AdoptedBy != 0 {
+		t.Fatalf("no record: %+v", got)
+	}
+	store.MarkAdopted(key, "aaa", 91, now)
+	rec, _ := store.Get(key)
+	if got := operatorActionExecutionFor(StageTrackerItem{Head: "aaa"}, rec, true); got.AdoptedBy != 91 || got.AdoptedByState != "" || got.Refused != "" {
+		t.Fatalf("adopted: %+v", got)
+	}
+	store.MarkAdoptionEscalated(key, "aaa", "adoption-stalled:contributor-lane:workflow-path")
+	rec, _ = store.Get(key)
+	if got := operatorActionExecutionFor(StageTrackerItem{Head: "aaa"}, rec, true); !strings.Contains(got.Refused, "workflow-path") {
+		t.Fatalf("escalated: %+v", got)
+	}
+	if got := operatorActionExecutionFor(StageTrackerItem{Head: "bbb"}, rec, true); got.Refused != "" {
+		t.Fatalf("escalation for another head leaked: %+v", got)
+	}
+}
+
+// An item the operator just closed from the dashboard leaves the tracker
+// at once (hivecommons/hive#15436), for the grace window only, and only
+// when the close actually applied.
+func TestStageTrackerDropOperatorClosed(t *testing.T) {
+	now := time.Date(2026, 10, 29, 17, 20, 0, 0, time.UTC)
+	grace := 15 * time.Minute
+	act := func(action, outcome, detail string, ago time.Duration) *StageTrackerOperatorAction {
+		return &StageTrackerOperatorAction{Action: action, Outcome: outcome, Detail: detail, At: now.Add(-ago)}
+	}
+	items := []StageTrackerItem{
+		{Repo: "o/r", Number: 1, Kind: "issue"},
+		{Repo: "o/r", Number: 2, Kind: "issue", LastOperatorAction: act(operatorActionCloseRead, operatorActionOutcomeApplied, operatorActionClosedDetail, time.Minute)},
+		{Repo: "o/r", Number: 3, Kind: "pr", LastOperatorAction: act(operatorActionCloseSuperseded, operatorActionOutcomeApplied, operatorActionClosedDetail, 2*time.Minute)},
+		{Repo: "o/r", Number: 4, Kind: "issue", LastOperatorAction: act(operatorActionWontFix, operatorActionOutcomeApplied, operatorActionClosedDetail, grace+time.Second)},
+		{Repo: "o/r", Number: 5, Kind: "issue", LastOperatorAction: act(operatorActionCloseRead, operatorActionOutcomeFailed, "Close refused: repo paused", time.Minute)},
+		{Repo: "o/r", Number: 6, Kind: "issue", LastOperatorAction: act(operatorActionApprove, operatorActionOutcomeApplied, "unparked", time.Minute)},
+	}
+	got := stageTrackerDropOperatorClosed(items, now, grace)
+	var nums []int
+	for _, it := range got {
+		nums = append(nums, it.Number)
+	}
+	want := []int{1, 4, 5, 6}
+	if !slices.Equal(nums, want) {
+		t.Fatalf("kept %v, want %v (just-closed rows 2 and 3 must leave; a refused close, an old close and a non-close stay)", nums, want)
+	}
 }

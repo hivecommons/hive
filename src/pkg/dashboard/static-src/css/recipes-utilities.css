@@ -1,0 +1,152 @@
+    /* ══ Input system (Phase 2) ══
+       One recipe for text inputs/selects/textareas (derived from the old
+       .config-field input): --bg-soft field on --line border (the token
+       remap makes this white-on-gray in light mode), var(--radius), and a
+       subtle 2px amber focus ring. Grouped selectors — no renames. */
+    .config-field input[type="text"], .config-field input[type="number"], .config-field input[type="password"], .config-field select,
+    .config-field textarea,
+    .nous-config-section textarea, .nous-config-section input[type="text"], .nous-config-section input[type="number"],
+    .config-list-add input,
+    .rv-perspective-focus, #rv-new-perspective,
+    .kick-prompt, .kb-search-box, .oc-chat-input, .hive-chat-input, .backend-select {
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: var(--fs-base);
+      padding: 8px 10px;
+      outline: none;
+    }
+    .config-field input[type="text"]:focus, .config-field input[type="number"]:focus, .config-field input[type="password"]:focus, .config-field select:focus,
+    .config-field textarea:focus,
+    .nous-config-section textarea:focus, .nous-config-section input[type="text"]:focus, .nous-config-section input[type="number"]:focus,
+    .config-list-add input:focus,
+    .rv-perspective-focus:focus, #rv-new-perspective:focus,
+    .kick-prompt:focus, .kb-search-box:focus, .oc-chat-input:focus, .hive-chat-input:focus, .backend-select:focus,
+    #audit-search:focus {
+      border-color: color-mix(in srgb, var(--amber) 60%, var(--line));
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--amber) 22%, transparent);
+    }
+    .config-field input::placeholder, .config-field textarea::placeholder,
+    .rv-perspective-focus::placeholder, #rv-new-perspective::placeholder,
+    .nous-config-section textarea::placeholder,
+    .nous-config-section input::placeholder, .config-list-add input::placeholder,
+    .kick-prompt::placeholder, .kb-search-box::placeholder,
+    .oc-chat-input::placeholder, .hive-chat-input::placeholder { color: var(--muted); }
+    /* input size steps (compact contexts keep their scale) */
+    .kick-prompt { padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); }
+    .backend-select { padding: 3px 8px; font-size: var(--fs-sm); color: var(--muted); }
+    .kb-search-box { padding: 7px 10px; font-size: var(--fs-sm); }
+    .hive-chat-input { padding: var(--sp-4) var(--sp-5); font-size: var(--fs-sm); }
+    .oc-chat-input { padding: 10px 14px; }
+    .config-stat-row .config-field input,
+    .config-stat-row .config-field select { padding: var(--sp-2) var(--sp-3); font-size: var(--fs-sm); }
+
+    /* ══ Terminal surface (Phase 3) ══
+       Log/pane/audit/activity surfaces read as terminals in both modes:
+       slightly-inset dark bg (--terminal-bg), mono type, subtle border.
+       Surface props were stripped from the #logs-output / #audit-panel /
+       #inception-activity inline styles so these rules can apply. */
+    #logs-output, #audit-panel, #inception-activity, .oc-detail-summary, .doing {
+      background: var(--surface-terminal);
+      color: var(--terminal-fg);
+      border: var(--line-width) solid var(--terminal-line);
+      border-radius: var(--r);
+      font-family: var(--font-mono);
+      box-shadow: var(--shadow-card);
+    }
+    .doing { color: var(--terminal-cyan); padding: var(--sp-4) var(--sp-5); }
+    .oc-detail-summary, #inception-activity { color: var(--terminal-cyan); }
+    /* Children of the always-dark pane capture can't use mode-remapped
+       colors — pin them to the terminal companions. */
+    .oc-detail-summary .sum-text, .oc-detail-summary .sum-tool,
+    .oc-detail-summary .sum-table th { color: var(--terminal-fg); }
+    .oc-detail-summary .sum-cmd, .oc-detail-summary .sum-tree,
+    .oc-detail-summary .sum-table td { color: var(--terminal-muted); }
+    .oc-detail-summary .sum-cmd { border-left-color: var(--terminal-line); }
+    .oc-detail-summary .sum-table-wrap {
+      background: color-mix(in srgb, var(--terminal-fg) 4%, transparent);
+      border-color: var(--terminal-line);
+    }
+    .oc-detail-summary .sum-table th,
+    .oc-detail-summary .sum-table td { border-bottom-color: var(--terminal-line); }
+
+    /* ══ Utility classes (Phase 4) ══
+       Extracted from the repeated inline-style recipes in the JS templates
+       (Knowledge Base + setup instructions, ACMM dialogs). Static literals
+       only — conditional style="...${...}" fragments are never touched. */
+    .stack { display: flex; flex-direction: column; gap: var(--sp-4); }
+    .row { display: flex; align-items: center; gap: var(--sp-4); }
+    .row-end { display: flex; justify-content: flex-end; gap: var(--sp-4); }
+    .row-between { display: flex; align-items: center; justify-content: space-between; }
+    .muted { color: var(--muted); }
+    .advisor-note { color: var(--muted); padding: var(--sp-2) var(--sp-0); }
+    .advisor-rec { font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-0); border-top: 1px solid var(--border); }
+    .advisor-rec-ts { color: var(--muted); float: right; }
+    .advisor-rec-text { margin-top: var(--sp-1); white-space: pre-wrap; }
+    .advisor-set-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-top: var(--sp-4); }
+    .advisor-set-wide { grid-column: 1 / -1; }
+    .advisor-set-label { display: block; font-size: var(--fs-xs); color: var(--muted); margin-bottom: var(--sp-1); }
+    .advisor-set-input { width: 100%; box-sizing: border-box; }
+    .advisor-set-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-4); }
+    .advisor-set-h { font-weight: 600; margin-top: var(--sp-6); }
+    .advisor-set-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); margin-top: var(--sp-3); }
+    .advisor-set-table th, .advisor-set-table td { text-align: left; vertical-align: top; padding: var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0); }
+    .advisor-set-table th { color: var(--muted); font-weight: 600; }
+    .advisor-src { font-size: var(--fs-xs); color: var(--muted); }
+    .advisor-src-agent { color: var(--accent); }
+    .advisor-spend-chip { border-style: dashed; }
+    .muted-note { font-size: 0.78rem; color: var(--muted); }
+    .muted-xs { font-size: 0.72rem; color: var(--muted); }
+    .title-sm { font-size: var(--fs-md); font-weight: 600; color: var(--fg); }
+    .modal-h { font-size: var(--fs-md); margin: var(--sp-0) var(--sp-0) var(--sp-4) var(--sp-0); color: var(--accent); }
+    .summary-label { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--fg); }
+    .card-inset { background: var(--surface-3); padding: var(--sp-5); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); }
+    .empty-dashed { text-align: center; padding: var(--sp-5); color: var(--muted); font-size: var(--fs-sm); border: 1px dashed var(--border); border-radius: var(--r); }
+    .field-input { padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--fg); font-size: 0.78rem; }
+    .field-input-block { width: 100%; margin-top: var(--sp-2); }
+    .code-chip { background: var(--surface); padding: 1px 4px; border-radius: 3px; }
+    .tag-chip { font-size: var(--fs-xs); color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 1px 6px; }
+    /* filled-blue / surface button tints (sit after the button-system ghost
+       recipe so they win ties on .nous-btn etc.) */
+    /* ACMM dialog/card utilities */
+    .dialog-note { font-size: var(--fs-base); color: var(--muted); margin: var(--sp-0) var(--sp-0) var(--sp-5); }
+    .text-base { font-size: var(--fs-base); }
+    .stat-num { font-size: 1.2rem; font-weight: 700; }
+    .dialog-btn { padding: 6px 14px; background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--r); cursor: pointer; color: var(--muted); font-size: 0.78rem; }
+    .card-tile { flex: 1; padding: var(--sp-5); background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); text-align: center; cursor: pointer; }
+    .row-card { cursor: pointer; padding: var(--sp-5); margin-bottom: var(--sp-2); background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); transition: border-color var(--duration-fast); }
+    .error-note { color: var(--red); font-size: var(--fs-base); }
+    .repo-chip-btn { padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); cursor: pointer; font-size: 0.72rem; color: var(--text); }
+    /* ACMM level badges share level tinting and open the level selector. */
+    #acmm-badge, #acmm-main-badge { transition: background 0.15s, border-color 0.15s; }
+    #acmm-badge:hover, #acmm-main-badge:hover {
+      background: color-mix(in srgb, var(--amber) 26%, transparent);
+      border-color: var(--amber);
+      text-decoration: underline;
+    }
+    /* Enlarged dropdown caret on the ACMM badges. The badge label sits at a
+       small font-size; a slightly larger caret makes the "this opens a
+       picker" affordance read clearly without inflating the label text. */
+    .acmm-caret { font-size: 1.15em; line-height: 1; vertical-align: -1px; }
+
+    /* ══ One-shot attention shimmy ══
+       A gentle single-run wiggle applied on page load to draw the eye to an
+       interactive affordance (the ACMM badge, the topbar Guide button). The class
+       is added shortly after load and removed on animationend, so it plays
+       exactly once per page load. Honors prefers-reduced-motion. */
+    @keyframes attn-shimmy {
+      0%   { transform: translateX(0)    rotate(0deg); }
+      15%  { transform: translateX(-2px) rotate(-1.5deg); }
+      30%  { transform: translateX(2px)  rotate(1.5deg); }
+      45%  { transform: translateX(-2px) rotate(-1deg); }
+      60%  { transform: translateX(2px)  rotate(1deg); }
+      75%  { transform: translateX(-1px) rotate(-0.5deg); }
+      100% { transform: translateX(0)    rotate(0deg); }
+    }
+    .attn-shimmy { animation: attn-shimmy 0.7s ease-in-out 1; transform-origin: center; }
+    @media (prefers-reduced-motion: reduce) {
+      .attn-shimmy { animation: none; }
+    }
+

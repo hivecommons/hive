@@ -28,6 +28,9 @@ func TestClassifyWebhookIssue_UnadmittedReporterCarriesTriageRow(t *testing.T) {
 	if p.WorkIssue == nil || p.WorkIssue.Bucket != workBucketReporterTriage || p.WorkIssue.Reason != reporterTriageAwaitingReason || p.WorkIssue.Number != 15092 {
 		t.Fatalf("work row = %+v, want a reporter_triage row for #15092", p.WorkIssue)
 	}
+	if !p.WorkIssue.AuthorIsHuman {
+		t.Fatalf("work row AuthorIsHuman = false, want the reporter's kind carried on the sidelined row")
+	}
 }
 
 // An unknown-bucket read for an item no list carries inserts the row the

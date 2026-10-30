@@ -22,6 +22,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // VerdictBlocker is one blocker reference parsed from a blocked verdict.
@@ -109,6 +111,13 @@ func (c *Client) RecordVerdictBlocker(ctx context.Context, repo string, number i
 	if err := validateRepoRef(bOwner, bRepo); err != nil || number <= 0 || blocker.Number <= 0 {
 		return "", fmt.Errorf("RecordVerdictBlocker: invalid blocker %q for %s/%s#%d", blocker.String(), owner, repoName, number)
 	}
+	item, err := c.WritebackItemForNumber(ctx, owner+"/"+repoName, number)
+	if err != nil {
+		return "", err
+	}
+	if d := c.WritebackAllowed(owner+"/"+repoName, item, writeback.KindGateComment, "blocked on "+blocker.String()); !d.Allowed {
+		return "", fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+	}
 	issue, _, err := c.client.Issues.Get(ctx, bOwner, bRepo, blocker.Number)
 	if err != nil {
 		return "", fmt.Errorf("reading blocker %s/%s#%d: %w", bOwner, bRepo, blocker.Number, err)
@@ -125,7 +134,7 @@ func (c *Client) RecordVerdictBlocker(ctx context.Context, repo string, number i
 		if posted {
 			return VerdictBlockerAlreadyMarked, nil
 		}
-		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, number, verdictBlockerMarkerComment(bOwner+"/"+bRepo, blocker.Number)); err != nil {
+		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, number, verdictBlockerMarkerComment(bOwner+"/"+bRepo, blocker.Number)); err != nil { // writeback:gated
 			return "", err
 		}
 		return VerdictBlockerMarked, nil

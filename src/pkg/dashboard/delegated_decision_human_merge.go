@@ -71,6 +71,9 @@ func (s *Server) delegatedHumanMergeOutcome(repoFull string, number int, itemTyp
 		code = delegatedHumanMergeRule
 	}
 	why := stageTrackerUntrustedAuthorWhy(base, in.Author)
+	if fix := stageTrackerUntrustedAuthorFix(base, in.Author); why != "" && fix != "" {
+		why += ". " + strings.TrimSuffix(fix, ".")
+	}
 	if why == "" {
 		why = decisionPlainReason(base)
 		if base == "" || why == base {
@@ -118,6 +121,7 @@ const (
 	delegatedHumanMergeAdoptCIRedRule  = "human-merge-adopt-ci-red"
 	delegatedHumanMergeAdoptRebaseRule = "human-merge-adopt-conflicting"
 	delegatedHumanMergeAdoptReviewRule = "human-merge-adopt-review"
+	delegatedHumanMergeAdoptDCORule    = "human-merge-adopt-dco"
 )
 
 // delegatedHumanMergeDecidedPath is the chosen path and its reason for a
@@ -133,6 +137,10 @@ func delegatedHumanMergeDecidedPath(rule string) string {
 		return "adopt · conflicting, needs rebase"
 	case delegatedHumanMergeAdoptReviewRule:
 		return "adopt · review not passed"
+	case delegatedHumanMergeAdoptDCORule:
+		return "adopt · DCO sign-off missing"
+	case delegatedecision.RuleReturnToAuthor:
+		return "return to author · a person pushed this PR; the hive asked them, not adopted it"
 	}
 	return ""
 }
@@ -174,6 +182,14 @@ func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input, req dele
 	}
 	ref := "#" + strconv.Itoa(in.Number)
 	adopt := func(rule, why string) (delegatedecision.Decision, []string, bool) {
+		if in.PersonAuthored() {
+			// A person pushed this PR: it is theirs to fix, never the
+			// hive's to adopt (hivecommons/hive#15202).
+			if d, ok := delegatedecision.ReturnToAuthor(in); ok {
+				return d, []string{"hive decided: return to author · " + why}, true
+			}
+			return delegatedecision.Decision{}, nil, false
+		}
 		if !s.stageAdoptionEnabled() {
 			return delegatedecision.Decision{}, nil, false
 		}
@@ -189,6 +205,8 @@ func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input, req dele
 	switch {
 	case in.Conflicting:
 		return adopt(delegatedHumanMergeAdoptRebaseRule, "the branch conflicts with the base and needs a rebase")
+	case in.DCOMissing:
+		return adopt(delegatedHumanMergeAdoptDCORule, "the DCO sign-off is missing from its commits")
 	case !in.CIGreen:
 		return adopt(delegatedHumanMergeAdoptCIRedRule, "CI is not green on its head")
 	case !s.delegatedHumanMergeReviewPassed(in):

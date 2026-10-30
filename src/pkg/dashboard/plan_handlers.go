@@ -358,7 +358,8 @@ func (s *Server) handleDesignFromIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.spektacularDesignEnabled() {
-		epic, runKey, err := s.startDesignSpektacular(r.Context(), store, issue, sanitizeString(body.Body), true)
+		ctx := worksource.WithSolicitedWriteback(r.Context(), issueWorkRef(issue), requestUser(r))
+		epic, runKey, err := s.startDesignSpektacular(ctx, store, issue, sanitizeString(body.Body), true)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return

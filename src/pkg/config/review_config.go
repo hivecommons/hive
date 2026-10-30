@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/hivecommons/hive/pkg/modelfamily"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 func repoListSet(repos []string) map[string]bool {
@@ -553,14 +554,20 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// Unset uses the default owner-merge rule; explicit empty lists disable
+	// their half of the title/label rule.
+	HumanMergeTitlePrefixes []string `yaml:"human_merge_title_prefixes,omitempty" json:"human_merge_title_prefixes,omitempty"`
+	HumanMergeLabels        []string `yaml:"human_merge_labels,omitempty" json:"human_merge_labels,omitempty"`
 	// RequireCurrentBase lists owner/repo names whose automerge sweeps only
-	// merge a PR head that already contains the current base branch tip.
-	// A head that is green but was tested against an older base is updated
-	// (GitHub update-branch, a merge commit) and merged once CI is green on
-	// the new head, so a semantic conflict with anything merged since shows
-	// up as red CI instead of a broken base. Empty (the default) keeps the
-	// previous behavior: a green head merges even if the base has moved.
+	// merge heads containing the current base tip. Explicit entries are
+	// strict: inability to update the branch never bypasses the gate.
 	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
+	// RequireCurrentBaseDefault applies to repos in neither override list.
+	// Unset is off. Default-only gating may fall back to the tested head
+	// when branch updates are unavailable.
+	RequireCurrentBaseDefault *bool `yaml:"require_current_base_default,omitempty" json:"require_current_base_default,omitempty"`
+	// SkipCurrentBase opts repos out of the default; explicit on wins.
+	SkipCurrentBase []string `yaml:"skip_current_base,omitempty" json:"skip_current_base,omitempty"`
 	// MergeForwardTrustedHuman lists owner/repo names where a role/trusted
 	// author/human PR that GitHub reports as conflicting ("dirty") gets the
 	// base merged into its same-repo head branch as a new App-authored,
@@ -592,10 +599,22 @@ type AutoMergeConfig struct {
 
 type MergeTrainAutoMergeConfig struct {
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// MaxRebaseAttempts bounds rebase-resolve tasks before human escalation.
+	MaxRebaseAttempts int `yaml:"max_rebase_attempts,omitempty" json:"max_rebase_attempts,omitempty"`
 }
+
+const DefaultMergeTrainMaxRebaseAttempts = 2
 
 func (m MergeTrainAutoMergeConfig) IsEnabled() bool {
 	return m.Enabled == nil || *m.Enabled
+}
+
+// EffectiveMaxRebaseAttempts applies the default rebase loop guard.
+func (m MergeTrainAutoMergeConfig) EffectiveMaxRebaseAttempts() int {
+	if m.MaxRebaseAttempts <= 0 {
+		return DefaultMergeTrainMaxRebaseAttempts
+	}
+	return m.MaxRebaseAttempts
 }
 
 // CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors
@@ -604,10 +623,98 @@ func (a AutoMergeConfig) CreditIssueAuthorsEnabled() bool {
 	return a.CreditIssueAuthors == nil || *a.CreditIssueAuthors
 }
 
-// RequireCurrentBaseFor reports whether repo (owner/repo, matched
-// case-insensitively) is listed in auto_merge.require_current_base.
+// RequireCurrentBaseFor resolves explicit on, explicit off, then the default.
 func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return false
+	}
+	if v := a.CurrentBaseOverrideFor(key); v != nil {
+		return *v
+	}
+	return a.CurrentBaseDefaultEnabled()
+}
+
+// CurrentBaseDefaultEnabled resolves the hive-wide default (unset is off).
+func (a AutoMergeConfig) CurrentBaseDefaultEnabled() bool {
+	return a.RequireCurrentBaseDefault != nil && *a.RequireCurrentBaseDefault
+}
+
+// CurrentBaseOverrideFor returns explicit on/off, or nil to inherit.
+func (a AutoMergeConfig) CurrentBaseOverrideFor(repo string) *bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return nil
+	}
+	if repoListSet(a.RequireCurrentBase)[key] {
+		v := true
+		return &v
+	}
+	if repoListSet(a.SkipCurrentBase)[key] {
+		v := false
+		return &v
+	}
+	return nil
+}
+
+// SetCurrentBaseOverride records the dashboard's per-repo tri-state,
+// removing the repo from the other list (or both when inheriting).
+func (a *AutoMergeConfig) SetCurrentBaseOverride(repo string, value *bool) {
+	if a == nil {
+		return
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return
+	}
+	drop := func(list []string) []string {
+		out := list[:0:0]
+		for _, r := range list {
+			if !strings.EqualFold(strings.TrimSpace(r), repo) {
+				out = append(out, r)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	a.RequireCurrentBase = drop(a.RequireCurrentBase)
+	a.SkipCurrentBase = drop(a.SkipCurrentBase)
+	switch {
+	case value == nil:
+	case *value:
+		a.RequireCurrentBase = append(a.RequireCurrentBase, repo)
+	default:
+		a.SkipCurrentBase = append(a.SkipCurrentBase, repo)
+	}
+}
+
+// RequireCurrentBaseStrictFor reports explicit on, which must not fall back
+// to an un-updated head when update-branch is unavailable.
+func (a AutoMergeConfig) RequireCurrentBaseStrictFor(repo string) bool {
 	return repoListSet(a.RequireCurrentBase)[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// HumanMergeTitlePrefixesEffective preserves explicit empty lists.
+func (a AutoMergeConfig) HumanMergeTitlePrefixesEffective() []string {
+	if a.HumanMergeTitlePrefixes == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeTitlePrefixes...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeTitlePrefixes)), a.HumanMergeTitlePrefixes...)
+}
+
+// HumanMergeLabelsEffective preserves explicit empty lists.
+func (a AutoMergeConfig) HumanMergeLabelsEffective() []string {
+	if a.HumanMergeLabels == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeLabels...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeLabels)), a.HumanMergeLabels...)
+}
+
+// HumanMergeRule is the shared rule for the automerge lanes and dashboard.
+func (a AutoMergeConfig) HumanMergeRule() prstage.HumanMergeRule {
+	return prstage.HumanMergeRule{TitlePrefixes: a.HumanMergeTitlePrefixesEffective(), Labels: a.HumanMergeLabelsEffective()}
 }
 
 // MergeForwardTrustedHumanFor reports whether repo (owner/repo, matched

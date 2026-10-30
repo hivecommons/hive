@@ -1,6 +1,45 @@
 # Environment variable reference
 
-This reference is compiled by hand from the Go source under `src/`, the deployment manifests, and the top-level helper scripts. The code is authoritative: `hive.yaml` may also expand arbitrary `${NAME}` placeholders through the config resolver, but only the variables below have built-in behavior.
+Use this reference after choosing **which process reads the variable**. Set
+server variables in the deployment's environment/Secret configuration, not in
+an agent terminal. Hosted owners ask the hub/deployment administrator for
+environment changes; dashboard config controls are separate.
+
+Unless a row explicitly describes per-request reads or live reload, arrange a
+service restart after changing its launch environment. Some settings are
+consumed only at boot or agent-session creation; a dashboard reload is not a
+process restart. Never print token or private-key values while diagnosing them.
+
+## Choose the right scope
+
+| Your task / access | Start here |
+|---|---|
+| Operate the spoke or hub process (deployment admin) | [Core runtime](#core-hive-runtime), then [Hub/SaaS/backups](#hub-saas-alerts-and-backups) for hub-only values |
+| Rotate dashboard access (deployment admin and affected clients) | [Token generation/rotation](#generating-and-rotating-hive_dashboard_token) and [precedence](#precedence-dashboardauth_token-dashboard_auth_token-hive_dashboard_token) |
+| Change container/proxy behavior (deployment admin) | [Entrypoint/proxy knobs](#deployment-entrypoint-and-proxy-knobs); read the [credential-injection refusal](#proxy-credential-injection) before enabling it |
+| Configure inference or CLI launch (operator/deployment admin) | [Inference/backends](#inference-cli-backends-and-agents), [launch controls](#backend-launch-controls), [Linear integration](#linear-agent-integration) |
+| Understand a value already present in an agent terminal | [Inside an agent session](#inside-an-agent-session): **Hive-injected metadata, not operator knobs** |
+| Configure a local contributor/client command | [Contributor relay/helper scripts](#contributor-relay-and-top-level-helper-scripts) |
+| Understand platform-provided metadata (cluster admin) | [Kubernetes/platform variables](#kubernetes-downward-api-and-platform-variables): normally injected by the platform |
+| Look up a proposed integration | [Credly](#credly-badge-integration-proposed--not-implemented): **not implemented; setting these does nothing** |
+| Maintain or audit the reference (developer) | [Keeping it current](#keeping-this-reference-current), not deployment instructions |
+
+The same name may be passed from a server into a client or agent, but that does
+not make its meaning global. Follow the row's scope and precedence. In
+particular, `HIVE_DASHBOARD_COOKIE` is client-only and `HIVE_DASHBOARD_BIND`
+belongs to the legacy Node dashboard, not the current Go listener.
+
+**Vocabulary:** PAT = personal access token; JWT = JSON Web Token; OIDC =
+OpenID Connect; JWKS = JSON Web Key Set (public verification keys); CSP =
+Content Security Policy; SSRF = server-side request forgery (making a server
+reach an unintended destination); OCI means Oracle Cloud Infrastructure in
+object-storage settings and Open Container Initiative for image formats;
+OTLP = OpenTelemetry Protocol.
+
+**Provenance:** this reference is maintained from Go source, deployment
+manifests and helper scripts. Code is authoritative. `hive.yaml` can expand
+arbitrary `${NAME}` placeholders, but only the listed variables have built-in
+behavior. [Maintenance limitations](#keeping-this-reference-current) still apply.
 
 ## Core `hive` runtime
 
@@ -50,8 +89,8 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_ADVISORY_ISSUE` | No | none | Passed to launched agents so advisory findings can target a configured issue. |
 | `HIVE_TTYD_PORT` | No | `7681` | Web terminal port used by the entrypoint and terminal proxy. |
 | `HIVE_TTYD_CREDENTIAL` | No | `hive:<HIVE_DASHBOARD_TOKEN>` when a token is set, else none | ttyd basic-auth credential (`user:pass`) the entrypoint starts the web terminal with. The dashboard's `/terminal` proxies (Go and Node) present it to ttyd on every forwarded request, so a browser the dashboard has already authenticated is never shown ttyd's own user/password dialog. Also read by `hivectl tui`'s remote attach ([#5644](https://github.com/hivecommons/hive/issues/5644)), which must present the same credential through the terminal proxy and derives the same default from `HIVE_DASHBOARD_TOKEN` — set it on the client only if the deployment overrode it on the server. |
-| `HIVE_METRICS_ENABLED` | No | disabled | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. Requires `HIVE_METRICS_TOKEN` — enabled-but-tokenless returns 403 ([#3804](https://github.com/hivecommons/hive/pull/3804)). |
-| `HIVE_METRICS_TOKEN` | Yes when metrics enabled | none | Bearer token read by `pkg/dashboard/metrics_prometheus.go` for `/metrics` (`Authorization: Bearer ...`; Prometheus `bearer_token`). `/metrics` bypasses dashboard session auth, so this token is its only guard; enabled-but-tokenless fails closed and the cost/agent series are never served without it. |
+| `HIVE_METRICS_ENABLED` | No | disabled | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. Requires `HIVE_METRICS_TOKEN` — enabled-but-tokenless returns 403 ([#3804](https://github.com/hivecommons/hive/pull/3804)). See [monitoring.md](monitoring.md). |
+| `HIVE_METRICS_TOKEN` | Yes when metrics enabled | none | Bearer token read by `pkg/dashboard/metrics_prometheus.go` for `/metrics` (`Authorization: Bearer ...`; Prometheus `bearer_token`). `/metrics` bypasses dashboard session auth, so this token is its only guard; enabled-but-tokenless fails closed and the cost/agent series are never served without it. See [monitoring.md](monitoring.md). |
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
 | `HIVE_PUBLIC_KNOWLEDGE` | No | disabled | Env fallback for the anonymous, **read-only** MCP knowledge endpoint `POST /mcp/knowledge` (`1`, `true`, `yes`, or `on` — same spelling as `HIVE_METRICS_ENABLED`). The owner dashboard toggle in the Knowledge header and Settings → Knowledge takes precedence once saved; with no saved setting this remains the switch. Off → 404 even for authenticated callers. Resolved on each request so it can be closed without a pod roll. Only operational fact types (pattern, gotcha, regression, test_scaffold, integration, coverage_rule, general) are served; ideation/governance types, sources, and usage data never leave the hive. See [public-knowledge-mcp.md](public-knowledge-mcp.md) ([#10615](https://github.com/hivecommons/hive/issues/10615)). |
 | `HIVE_PUBLIC_KNOWLEDGE_TAGS` | No | none (all public-type facts) | Env fallback comma-separated tag allow-list that further narrows what `/mcp/knowledge` serves to facts carrying at least one listed tag (case-insensitive). A saved dashboard tag list takes precedence. |
@@ -160,7 +199,7 @@ new value at the same time.
 | `HIVE_PROXY_EGRESS_MARK` | No | `0x1112` | Packet mark exempted from the MITM egress redirect. |
 | `HIVE_PROXY_ADVISORY_OK` | No | `false` | Allows the spoke to start when the forced-proxy egress redirect cannot be installed (no `CAP_NET_ADMIN`/iptables). Enforcement becomes advisory-only — agents can bypass the proxy. Also gates whether the Go proxy trusts a self-asserted `Proxy-Authorization` header as agent identity when its UID map is unavailable (N7, #3841) — off by default, an unidentified caller is treated as `ADVISORY` (writes blocked) rather than whatever name it claims. See [security-model.md](security-model.md#5-network-and-credentials). |
 | `HIVE_PROXY_ALLOW_PRIVATE_FORWARD` | No | `false` | Lifts the plain-HTTP forward destination guard ([#14082](https://github.com/hivecommons/hive/issues/14082)). Off by default: a non-CONNECT request through the proxy is dialled only when the resolved address is globally routable, so an agent cannot use the proxy to reach loopback services beside it, the link-local cloud metadata endpoint (`169.254.169.254`), RFC 1918/CGNAT cluster addresses or multicast, and the refusal is a `403` naming the class. Only the exact string `true` turns it on, for deployments that genuinely egress to a private network over plain HTTP (a LAN mirror on a native install). Loopback refusals stay at `DEBUG` and are not counted as violations, because agents are already handed `NO_PROXY` for loopback (#14076). |
-| `HIVE_PROXY_INJECT_GH_AUTH` | No | unset (off; opt-in only on every hive, hosted or not) | Proxy-side GitHub credential injection ([#1861](https://github.com/hivecommons/hive/issues/1861)). Opt-in only: on exclusively when set to `true`; unset, `false` and any other value are off, and the hub renders no value onto newly provisioned spokes (a brief default-on for hosted App spokes from #9597/#9625 was reverted, [#9586](https://github.com/hivecommons/hive/issues/9586)). `true`: the hive keeps each agent's tier-scoped App token in memory, the MITM proxy strips any agent-supplied `Authorization` on GitHub hosts and attaches the UID-identified agent's real token, and the agent's readable token cache (and the `GH_TOKEN`/`GITHUB_TOKEN` derived from it) holds only the inert placeholder `hive-proxy-injected-<agent>`. `false` is the explicit opt-out (same as unset, but recorded on the pod spec). The resolved state is logged once at boot as `proxy GitHub auth injection: on|off (<reason>)` - unset reads `off (opt-in: set HIVE_PROXY_INJECT_GH_AUTH=true)` - and shown in the dashboard Security tab. Under injection the Copilot CLI's `/copilot_internal/` auth exchange keeps the agent's own credential. **`true` together with `HIVE_PROXY_ADVISORY_OK=true` makes the spoke refuse to start** (exit code 19): advisory mode lets a caller self-assert another agent's identity and receive its injected token. Any other value (`1`, `TRUE`, `yes`, ...) is treated as off, as before, but is logged at ERROR on boot and shown in the dashboard Security tab's coherence warnings, because it leaves the real token in the agent's cache. Requires GitHub App auth; on a PAT-only hive there is nothing to inject. See [security-model.md](security-model.md#5-network-and-credentials). |
+| `HIVE_PROXY_INJECT_GH_AUTH` | No | unset (off on every hive, including hosted) | Exact `true` enables proxy-side App-token injection. **Requires GitHub App auth. Refuses startup (exit 19) with `HIVE_PROXY_ADVISORY_OK=true`.** Other spellings do not enable it. Read [behavior and exceptions](#proxy-credential-injection). |
 | `HIVE_DEPLOYMENT_RUNTIME` | No | none (config `deployment.runtime` fallback; hub-registered Kubernetes hives are auto-detected) | Declares the deployment runtime (`kubernetes`, `podman-quadlet`, or `docker-compose`) so the dashboard can offer standalone upgrades. Unset/unrecognized means `unknown` and the upgrade button stays hidden. See [dashboard-standalone-upgrades.md](dashboard-standalone-upgrades.md). |
 | `HIVE_DEPLOYMENT_PODMAN_MODE` | Only when runtime is `podman-quadlet` | none (config `deployment.podman_mode` fallback) | `rootless` (`systemctl --user`) or `rootful` (system manager). Without an explicit mode the Podman/Quadlet upgrade path stays disabled. |
 | `HIVE_DASHBOARD_UPGRADE_HELPER` | No | config `deployment.upgrade_helper` fallback, then `/usr/local/libexec/hive-dashboard-upgrade-helper` | Absolute path to the standalone upgrade helper executable the dashboard invokes. Must be a regular, executable file at an absolute path or the upgrade button stays hidden. See [dashboard-standalone-upgrades.md](dashboard-standalone-upgrades.md). |
@@ -180,6 +219,41 @@ new value at the same time.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | none | OTLP/HTTP exporter endpoint for traces and metrics (`github.*`, `forgestate.*`, `webhook.*`). Both stay disabled while unset; see `operator-reference.md` § OpenTelemetry. |
 | `HIVE_WIKI_GIT_URL` | No | none | Optional wiki vault URL cloned into `/data/vaults/hive-wiki` on first boot. |
 | `HIVE_PROMPT_SOURCE_MAX_BYTES` | No | `98304` (`promptsrc.DefaultMaxPromptBytes`, 96 KiB) | Size cap on a GitHub `prompt_source` kick template ([#12130](https://github.com/hivecommons/hive/issues/12130)). A body over the cap is **rejected whole, never truncated**: the kick falls back to the last successfully fetched copy, then the inline template chain, and logs `prompt from GitHub exceeds size cap; REJECTED whole` with repo, path, size and cap. Accepts a byte count or `KiB`/`MiB` suffix (`128KiB`); unparseable values keep the default. The largest shipped template is ~33 KiB, so the default leaves >2× headroom — raise it only for a real template that outgrows that. |
+
+### Proxy credential injection
+
+**Before enabling:** `HIVE_PROXY_INJECT_GH_AUTH=true` must not be combined with
+`HIVE_PROXY_ADVISORY_OK=true`. The spoke refuses to start with exit code **19**:
+advisory mode permits self-asserted agent identity, which could obtain another
+agent's injected token. A PAT-only hive has no App token to inject.
+
+**Accepted setting:** only exact lowercase `true` enables injection.
+Unset is off; `false` explicitly records the opt-out on the pod spec.
+`1`, `TRUE`, `yes` and every other spelling are off, logged at **ERROR** on
+boot and shown as Security-tab coherence warnings because real tokens remain
+in the agent cache.
+
+<details>
+<summary>Token handling, verification and provisioning history</summary>
+
+- Hive keeps tier-scoped App tokens in memory. The man-in-the-middle (MITM)
+  proxy strips agent-supplied `Authorization` on GitHub hosts and attaches
+  the real token for the Unix-user-ID (UID) identified agent.
+- The readable token cache and derived `GH_TOKEN`/`GITHUB_TOKEN` contain only
+  `hive-proxy-injected-<agent>`, an inert placeholder.
+- **Exception:** Copilot CLI's `/copilot_internal/` authentication exchange
+  keeps the agent's own credential.
+- Check the boot log `proxy GitHub auth injection: on|off (<reason>)` and
+  dashboard Security tab. Unset reports
+  `off (opt-in: set HIVE_PROXY_INJECT_GH_AUTH=true)`.
+- Current provisioning renders no value on newly created spokes. The brief
+  hosted default-on behavior in #9597/#9625 was reverted by
+  [#9586](https://github.com/hivecommons/hive/issues/9586).
+
+Implementation background: [#1861](https://github.com/hivecommons/hive/issues/1861)
+and [network/credential controls](security-model.md#5-network-and-credentials).
+
+</details>
 
 ## Inference, CLI backends, and agents
 

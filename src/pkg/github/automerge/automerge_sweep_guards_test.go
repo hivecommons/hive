@@ -125,6 +125,10 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				files = append(files, map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 0})
 			}
 			json.NewEncoder(w).Encode(files)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/timeline":
+			// The superseded rule looks for a merged PR declaring
+			// `Supersedes #7`; this fixture has none.
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			reviews := fx.reviews
 			if reviews == nil {

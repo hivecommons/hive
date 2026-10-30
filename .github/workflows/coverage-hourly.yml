@@ -91,7 +91,10 @@ jobs:
     # Hard cap so a hung runner / stuck -race build auto-fails instead of
     # blocking PR merges indefinitely (the go test -timeout only bounds the test
     # step, not checkout/setup/build/post-processing or a wedged runner). #3615.
-    timeout-minutes: 20
+    # Two sequential full go test passes now run ~18–20 min on shared runners, so
+    # 20 minutes was cancelling the second pass on green runs; 30 still auto-fails
+    # hung runners. #15266.
+    timeout-minutes: 30
     # Surfaced so create-issue-on-coverage-drop can report WHAT failed and on
     # WHICH commit (#3903). Without these the filed issue could only say
     # "packages below 90%" and quote github.sha — the SHA of the branch that

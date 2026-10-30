@@ -456,7 +456,7 @@ func (s *Server) promoteNousVerdict(ctx context.Context, req nousPromoteRequest,
 		}
 		ctx, cancel := context.WithTimeout(ctx, nousIssueTimeout)
 		defer cancel()
-		created, err := filer.CreateIssue(ctx, ghpkg.CreateIssueRequest{Repo: repo, Title: title, Body: body, Labels: labels, Origin: config.OriginSourceDashboard})
+		created, err := filer.CreateIssue(ctx, ghpkg.CreateIssueRequest{Repo: repo, Title: title, Body: body, Labels: labels, Origin: config.OriginSourceDashboard}) // writeback:solicited authenticated operator explicitly promotes this verdict to an issue.
 		if err != nil {
 			return nousPromoteResult{}, &nousPromoteError{status: http.StatusBadGateway, msg: "create issue: " + err.Error()}
 		}

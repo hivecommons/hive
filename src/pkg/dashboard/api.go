@@ -360,6 +360,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.recordOperatorAction(s.handleRepoItemDecideDelegated))
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/issues/{number}/release", s.recordOperatorAction(s.handleRepoIssueRelease))
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.handleRepoItemDecideDelegatedStatus)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated/plan", s.handleRepoItemDecideDelegatedPlan)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/blocker/recheck", s.handleRepoItemBlockerRecheck)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/blocker/close-partial", s.handleRepoItemBlockerClosePartial)
 
 	s.mux.HandleFunc("GET /api/acmm/evaluation", s.handleACMMEvaluation)
 	s.mux.HandleFunc("POST /api/acmm/issue", s.handleACMMCreateIssue)
@@ -549,6 +552,13 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/runs/{key}/abandon", s.handleRunAbandon)
 	// Settings → Compliance framework picker (#11080, api_compliance_settings.go).
 	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
+	// Write-back containment (api_writeback.go): suppressed-write drill-down
+	// and the sentinel findings held internally, written or not.
+	s.mux.HandleFunc("GET /api/writeback/suppressed", s.handleWritebackSuppressed)
+	s.mux.HandleFunc("GET /api/sentinel", s.handleSentinel)
+	// Merge-hotspot advisor (api_hotspots.go): files repeatedly touched by
+	// concurrent PRs and the modularize issues filed for them.
+	s.mux.HandleFunc("GET /api/hotspots", s.handleHotspots)
 	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
 	s.registerKnowledgeConnectorRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)

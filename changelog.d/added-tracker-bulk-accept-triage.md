@@ -1,0 +1,1 @@
+- Activity monitor: a multi-row selection offers **Accept triage (N selected)** — leading the selection bar and the bulk ⋯ menu when every selected row waits on a maintainer's triage, *Accept triage (k of N)* when some rows are skipped — accepting every selected issue through the existing per-item endpoint with one summary toast ("Accepted 4 issues").

@@ -946,3 +946,21 @@ func TestCalibrationFiveBinsAndDerivedCoverage(t *testing.T) {
 		t.Fatal("invented derived confidence for old bundles")
 	}
 }
+
+func TestLoadEvidenceBundlesDoesNotFallBackToPackageRoot(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "o", "r", "1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "o", "r", "1", "abc1234.json"), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prev := ghpkg.ReviewEvidenceRoot
+	ghpkg.ReviewEvidenceRoot = dir
+	t.Cleanup(func() { ghpkg.ReviewEvidenceRoot = prev })
+
+	bundles, unreadable, err := loadEvidenceBundles("", ghpkg.ReviewEvidenceVerifier{})
+	if err != nil || len(bundles) != 0 || unreadable != 0 {
+		t.Fatalf("empty root must not read the package default: bundles=%d unreadable=%d err=%v", len(bundles), unreadable, err)
+	}
+}

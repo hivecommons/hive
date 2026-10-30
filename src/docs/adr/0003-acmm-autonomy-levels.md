@@ -2,6 +2,14 @@
 
 Status: Accepted (retroactive)
 
+**ACMM** is the **AI Codebase Maturity Model**. Its levels are an operator's
+autonomy choice; a mode is one agent's allowed actions. In operator terms,
+`ADVISORY` means observe, `ISSUES_ONLY` (measured) means file issues,
+`ISSUES_AND_PRS` (holdgated) means propose code without merging, and
+`ISSUES_PRS_MERGE` (full) permits merging subject to the merge gates.
+The [policy matrix](../acmm-policy-matrix.md) is the current per-level roster,
+including the review-only `converse` capability.
+
 ## Context
 
 Hive needs one operator-facing control for how autonomous agents may be. The

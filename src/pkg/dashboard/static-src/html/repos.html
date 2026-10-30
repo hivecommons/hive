@@ -1,0 +1,36 @@
+  <div class="repos" id="repos-section" data-dashboard-section="repos-section">
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Items that are your turn and, after the second dot, the ones to close — the same counts as the Your turn strip below"></span></h2>
+    <div class="section-body">
+      <div class="repos-toolbar" id="repos-toolbar" aria-label="Project actions">
+        <span id="repos-overview-filter-chip" class="repo-filtered-chip" hidden></span>
+        <button class="hv-btn btn-secondary btn" id="repos-clear-pill-filter-btn" data-action="clearRepoPillFilter" data-stop="1" title="Clear the active repository pill filter" hidden>Clear filter</button>
+        <button class="hv-btn btn-secondary btn" id="repos-filter-editor-btn" data-action="hfToggleEditor" data-stop="1" aria-pressed="false" title="Faceted label filter: pick labels, text terms and facets; the matching issues and PRs show in a Filter section inside every project card. Save and name selections to recall them later.">🔎 Filter</button>
+        <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan monitored projects for issue and pull request changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button>
+        <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset project card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button>
+      </div>
+      <div id="repos-legend" class="repo-legend"></div>
+      <!-- Faceted label filter editor (#12172). One global selection, rendered
+           inside every project card as a collapsible "Filter" section; saved
+           filters persist per hive in localStorage (hive-label-filters:<hiveId>). -->
+      <div id="hf-editor" class="hf-editor" hidden aria-label="Project filter editor">
+        <div id="hf-presets" class="hf-row hf-presets"></div>
+        <div id="hf-manage" class="hf-row hf-manage"></div>
+        <div id="hf-facets" class="hf-facets"></div>
+        <div id="hf-terms" class="hf-row hf-text"></div>
+      </div>
+      <!-- Read-only view of project.issue_filter: which issues agents may
+           initiate work on, by label. Hidden unless a filter is configured;
+           populated from /api/config at boot. Enforcement lives server-side
+           at enumeration — this note only surfaces the active policy. -->
+      <div id="repos-issue-filter" style="display:none;font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)"></div>
+      <div id="repos-inbox" class="yt-inbox" role="region" aria-labelledby="yt-inbox-head"></div>
+      <!-- Cross-repo filtered view (#12172): opened from a pinned sidebar
+           filter; replaces the card grid with one list grouped by repo. -->
+      <div id="hf-crossrepo" class="hf-crossrepo" hidden aria-label="Cross-repo filtered view"></div>
+      <!-- Swarm header sits directly above the repo cards it refers to
+           ("start a swarm from any repository card"), below the filtered list. -->
+      <div id="swarm-panel" class="swarm-panel"></div>
+      <div class="repo-grid" id="repos"></div>
+    </div>
+  </div>
+

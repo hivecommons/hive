@@ -66,7 +66,7 @@ else
   echo "$output" | sed 's/^/      | /'
 fi
 
-if printf '%s\n' "$output" | grep -qF 'DRIFT doc:5 GET /api/widgets -> pkg/widget/routes.go:2'; then
+if printf '%s\n' "$output" | grep -qF 'DRIFT api-reference.md:5 GET /api/widgets -> pkg/widget/routes.go:2'; then
   pass "drifted GET /api/widgets citation is reported"
 else
   bad "expected a DRIFT line for the GET /api/widgets citation"
@@ -127,6 +127,58 @@ if printf '%s\n' "$clean_output" | grep -qF 'all pkg/<file>:<line> references ve
   pass "success message is printed"
 else
   bad "expected the success message on a clean doc"
+fi
+
+# Case 4 (hivecommons/hive#15299): with no doc argument the checker walks the
+# index page plus every src/docs/api-reference/*.md area page, and --fix
+# rewrites only the area page that actually drifted.
+AREA_DIR="${FIXTURE_SRC}/docs/api-reference"
+mkdir -p "$AREA_DIR"
+cat > "${AREA_DIR}/widgets.md" <<'EOF'
+# Widgets
+
+| Method | Path | Auth | Purpose | Source |
+|---|---|---|---|---|
+| `GET` | `/api/widgets` | Public | List widgets | `pkg/widget/routes.go:2` |
+EOF
+cat > "${AREA_DIR}/legacy.md" <<'EOF'
+# Legacy
+
+| Method | Path | Auth | Purpose | Source |
+|---|---|---|---|---|
+| `GET` | `/api/widgets/legacy` | Public | Legacy widget list | `pkg/widget/routes.go:7` |
+EOF
+legacy_before="$(cat "${AREA_DIR}/legacy.md")"
+index_before="$(cat "$DOC")"
+
+set +e
+walk_output=$(cd "${FIXTURE_SRC}" && "$CHECKER" 2>&1)
+walk_rc=$?
+set -e
+
+if [ "$walk_rc" -ne 0 ] && printf '%s\n' "$walk_output" | grep -qF 'DRIFT api-reference/widgets.md:5 GET /api/widgets -> pkg/widget/routes.go:2'; then
+  pass "default run walks api-reference/*.md and names the drifted area page"
+else
+  bad "expected a DRIFT line naming api-reference/widgets.md:5 (rc=${walk_rc})"
+  echo "$walk_output" | sed 's/^/      | /'
+fi
+
+set +e
+walk_fix_output=$(cd "${FIXTURE_SRC}" && "$CHECKER" --fix 2>&1)
+walk_fix_rc=$?
+set -e
+
+if [ "$walk_fix_rc" -eq 0 ] && grep -qF 'pkg/widget/routes.go:5' "${AREA_DIR}/widgets.md"; then
+  pass "--fix rewrites the drifted area page"
+else
+  bad "expected --fix to rewrite api-reference/widgets.md to routes.go:5 (rc=${walk_fix_rc})"
+  echo "$walk_fix_output" | sed 's/^/      | /'
+fi
+
+if [ "$(cat "${AREA_DIR}/legacy.md")" = "$legacy_before" ] && [ "$(cat "$DOC")" = "$index_before" ]; then
+  pass "--fix leaves the other area page and the index page untouched"
+else
+  bad "--fix touched a page without drift"
 fi
 
 if [ "$fail" -ne 0 ]; then

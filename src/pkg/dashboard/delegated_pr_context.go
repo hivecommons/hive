@@ -12,6 +12,8 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // errDelegatedNoSnapshot fails a delegated PR decision closed when the
@@ -40,7 +42,9 @@ func delegatedCompetingNumbers(items []StageTrackerItem, repo string, pr *gh.Pul
 	if !found {
 		items = append(items, live)
 	}
-	stageTrackerResolveLinkedPRs(items)
+	// The items are a tracker response already filtered to open PRs; a
+	// link the response kept is kept here too.
+	stageTrackerResolveLinkedPRs(items, func(string, int) bool { return true })
 	seen := map[int]bool{}
 	for _, issue := range items {
 		if issue.Repo != repo || issue.Kind != "issue" {
@@ -71,7 +75,11 @@ func delegatedCompetingNumbers(items []StageTrackerItem, repo string, pr *gh.Pul
 func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *gh.PullRequest, in *delegatedecision.Input) error {
 	owner, name, _ := strings.Cut(repo, "/")
 	now := time.Now().UTC()
-	if !in.HiveAuthored {
+	in.HumanAuthor = s.delegatedHumanAuthor(in.Labels)
+	in.OwnerAuthor = s.isAuthorizedUserLogin(in.Author)
+	// A person's PR is never a contributor with an expected connected hive;
+	// "offline" has no meaning for it (hivecommons/hive#15202).
+	if !in.HiveAuthored && !in.PersonAuthored() {
 		window := config.DefaultPresenceWindow
 		if s.deps.Config != nil {
 			window = s.deps.Config.Governor.Labels.Stage.EffectivePresenceWindow()
@@ -114,13 +122,34 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 			}
 			mergeable = len(summary.Red) == 0 && summary.Pending == 0 && summary.Green > 0
 		}
+		winner, _ := delegatedTrainDuplicate(s.stageStoreOrShared(), repo, number)
 		in.Competing = append(in.Competing, delegatedecision.CompetingPR{
 			Number: number, HiveAuthored: s.deps.GHClient.IsHiveAuthorLogin(other.GetUser().GetLogin()),
-			Mergeable: mergeable,
-			Current:   state != "behind" && state != "unknown" && state != "" && !other.GetDraft(),
+			Mergeable:     mergeable,
+			Current:       state != "behind" && state != "unknown" && state != "" && !other.GetDraft(),
+			HeldDuplicate: winner == pr.GetNumber(),
 		})
 	}
+	in.TrainDuplicateOf, in.TrainDuplicateIssue = delegatedTrainDuplicate(s.stageStoreOrShared(), repo, pr.GetNumber())
 	return nil
+}
+
+// delegatedTrainDuplicate reads the stage store for the one-PR-per-issue
+// hold the merge queue recorded on a PR (hivecommons/hive#15395): the PR
+// it yields to and the shared issue, 0 when it is not held.
+func delegatedTrainDuplicate(store *stagelabels.Store, repo string, number int) (winner, issue int) {
+	if store == nil {
+		return 0, 0
+	}
+	rec, ok := store.Get(stagelabels.Key(repo, number))
+	if !ok {
+		return 0, 0
+	}
+	mt, ok := prstage.ParseMergeTrain(rec.Reason)
+	if !ok || mt.State != prstage.MergeTrainStateDuplicateOf {
+		return 0, 0
+	}
+	return mt.Front, mt.Position
 }
 
 // delegatedActivity is one author-attributed event on a PR.
@@ -132,6 +161,50 @@ type delegatedActivity struct {
 // Only the author's own activity proves presence: bot nudges and other people's
 // reviews must not keep an absent contributor online. Read every page before
 // declaring absence; API failures abort gathering rather than authorizing adoption.
+// delegatedHumanAuthor reads the author-kind label (author/human by default,
+// renamed via governor.labels.author) from the PR's labels. hive beats
+// clanker beats human when labels disagree, as in pkg/authorkind.
+func (s *Server) delegatedHumanAuthor(labels []string) bool {
+	human, clanker, hive := authorKindLabelPfx+authorKindHuman, authorKindLabelPfx+authorKindClanker, authorKindLabelPfx+authorKindHive
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		a := s.deps.Config.Governor.Labels.Author
+		if strings.TrimSpace(a.Human) != "" {
+			human = a.Human
+		}
+		if strings.TrimSpace(a.Clanker) != "" {
+			clanker = a.Clanker
+		}
+		if strings.TrimSpace(a.Hive) != "" {
+			hive = a.Hive
+		}
+	}
+	isHuman := false
+	for _, l := range labels {
+		switch l = strings.TrimSpace(l); {
+		case strings.EqualFold(l, hive), strings.EqualFold(l, clanker):
+			return false
+		case strings.EqualFold(l, human):
+			isHuman = true
+		}
+	}
+	return isHuman
+}
+
+// isAuthorizedUserLogin: login is one of this hive's dashboard.authorized_users.
+func (s *Server) isAuthorizedUserLogin(login string) bool {
+	login = strings.TrimSpace(strings.TrimPrefix(login, "@"))
+	if login == "" || s == nil || s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	for _, entry := range s.deps.Config.Dashboard.AuthorizedUsers {
+		name, _ := dashboardAuthorizedUserEntry(entry)
+		if name != "" && strings.EqualFold(name, login) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) delegatedContributorOnline(ctx context.Context, owner, repo string, pr *gh.PullRequest, cutoff time.Time) (bool, error) {
 	author := pr.GetUser().GetLogin()
 	// Unknown identity is not evidence of absence.

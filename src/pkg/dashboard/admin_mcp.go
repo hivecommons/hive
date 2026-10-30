@@ -119,6 +119,22 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	if adminmcp.DiagTool(tool) {
 		return p.readDiag(tool, args)
 	}
+	if tool == adminmcp.ToolSettingsRead {
+		// An unknown section or a missing agent is refused with its reason.
+		path, err := adminmcp.SettingsReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		// Most Settings endpoints answer a verified owner only, as they do
+		// for the Settings page. The marker is copied onto the inner request
+		// only when this hive verified the outer one (as readDiag does), so a
+		// role claimed in a header still reads only what that role may.
+		data, err := p.getVerified(tool, path, p.ownerVerified)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+	}
 	path, ok := adminMCPReadPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("%w: unsupported admin MCP read tool", adminmcp.ErrForbidden)
@@ -152,6 +168,12 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 // get serves one admin MCP read through the dashboard mux as the caller and
 // decodes the JSON answer.
 func (p dashboardAdminMCPProvider) get(tool, path string) (any, error) {
+	return p.getVerified(tool, path, false)
+}
+
+// getVerified is get with the verified-owner marker set on the inner request
+// when ownerVerified is true; callers pass p.ownerVerified, never a constant.
+func (p dashboardAdminMCPProvider) getVerified(tool, path string, ownerVerified bool) (any, error) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if p.user != "" {
@@ -159,6 +181,9 @@ func (p dashboardAdminMCPProvider) get(tool, path string) (any, error) {
 	}
 	if p.role != "" {
 		req.Header.Set("X-Hive-Role", p.role)
+	}
+	if ownerVerified && isOwnerRole(p.role) {
+		req.Header.Set(ownerRoleVerifiedHeader, "true")
 	}
 	p.server.mux.ServeHTTP(rec, req)
 	if rec.Code < http.StatusOK || rec.Code >= http.StatusMultipleChoices {
@@ -184,6 +209,10 @@ func adminMCPRefusalReason(body []byte) string {
 }
 
 func adminMCPReadPath(tool string, args map[string]any) (string, bool) {
+	if tool == adminmcp.ToolSettingsRead {
+		path, err := adminmcp.SettingsReadPath(args)
+		return path, err == nil
+	}
 	if tool == adminmcp.ToolAgentNudgeStatus {
 		agent := strings.TrimSpace(adminMCPStringArg(args, "agent"))
 		if agent == "" {

@@ -25,15 +25,22 @@ func TestDispatchAgentKicks_OnDeliveredCarriesLaneDeliveryTime(t *testing.T) {
 		defer mu.Unlock()
 		clock = clock.Add(d)
 	}
+	// reviewer's send blocks until the scanner lane has read its delivery
+	// time, so the clock cannot move before that read.
+	scannerSent := make(chan struct{})
+	var scannerAdvanced bool
+	var releaseReviewer sync.Once
 	now := func() time.Time {
 		mu.Lock()
 		defer mu.Unlock()
-		return clock
+		t := clock
+		if scannerAdvanced {
+			releaseReviewer.Do(func() { close(scannerSent) })
+		}
+		return t
 	}
 
-	// reviewer's send blocks until scanner's send has completed and the
-	// clock has moved on, modelling a prompt timeout on the first lane.
-	scannerSent := make(chan struct{})
+	// reviewer's send models a prompt timeout on the first lane.
 	r := newKickDispatchRecorder()
 	deps := r.deps()
 	deps.now = now
@@ -44,8 +51,10 @@ func TestDispatchAgentKicks_OnDeliveredCarriesLaneDeliveryTime(t *testing.T) {
 			advance(4 * time.Minute)
 			return errors.New("agent reviewer CLI did not reach input prompt")
 		case "scanner":
-			advance(30 * time.Second)
-			close(scannerSent)
+			mu.Lock()
+			clock = clock.Add(30 * time.Second)
+			scannerAdvanced = true
+			mu.Unlock()
 		}
 		return nil
 	}

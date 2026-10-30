@@ -30,6 +30,15 @@ type RowActionResult struct {
 	// the popover's shape (hivecommons/hive#14822). Both additive.
 	Why     string                       `json:"why,omitempty"`
 	Options []StageTrackerDecisionOption `json:"options,omitempty"`
+	// Posted lists what the action wrote on GitHub (`/lgtm`, `/approve`,
+	// a label removed) for the toast's muted secondary line; Outcome stays
+	// the plain-words headline. SentinelCleared says the action took the
+	// sentinel alert off, so the toast drops its ⚠ paragraph; SentinelOpen
+	// says the PR still wears the alert after the action and a person must
+	// clear it. Both additive.
+	Posted          []string `json:"posted,omitempty"`
+	SentinelCleared bool     `json:"sentinel_cleared,omitempty"`
+	SentinelOpen    bool     `json:"sentinel_open,omitempty"`
 }
 
 // RowActionTarget names the issue or PR a row action acted on.
@@ -118,6 +127,8 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 	if in.Kind == delegatedecision.KindIssue {
 		parkedAt = "045"
 	}
+	// The ladder's own outcome line names the facts (hivecommons/hive#15289).
+	ladderOutcome, hasLadderOutcome := delegatedLadderOutcome(in, d)
 	switch {
 	case d.Verdict == delegatedecision.VerdictRefused:
 		out.Action = rowActionRefused
@@ -125,13 +136,35 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		out.Next = "Stays at " + parkedAt + " — release the hold or decide it yourself."
 	case d.Verdict == delegatedecision.VerdictAdoptSupersede:
 		out.Action = rowActionAdopted
-		out.Outcome = "Adopted in supersede mode" + ruleTag + "."
-		out.Next = "The adoption engine takes it on its next pass: a hive PR supersedes this one and rebases and merges unattended."
+		// Outcome first, in one line; the head already names the rule, so
+		// it is not repeated here (hivecommons/hive#15126).
+		ref := "#" + strconv.Itoa(in.Number)
+		if actionTarget > 0 {
+			out.Outcome = fmt.Sprintf("Adopted: hive opened #%d with the same commits and will merge it; %s will be closed as superseded.", actionTarget, ref)
+			out.Next = "The hive's copy rebases, soaks and merges unattended; " + ref + " closes when it lands."
+		} else {
+			out.Outcome = "Adopted — hive will re-author " + ref + " as a hive PR with the same commits and merge it next pass; " + ref + " will be closed as superseded."
+			out.Next = "Until the copy opens the row reads Adopted at the merge queue; the copy then carries the chevron and " + ref + " is listed under it as superseded."
+		}
+		if hasLadderOutcome {
+			out.Outcome += " " + ladderOutcome
+		}
+	case d.Verdict == delegatedecision.VerdictNotNow:
+		out.Action = rowActionClosed
+		out.Outcome = "Declined for now" + ruleTag + ": " + strings.TrimSuffix(strings.TrimSpace(d.Text), ".") + "."
+		out.Next = "Closed as not planned; re-propose it with the incident or recurrence it would prevent."
+	case d.Verdict == delegatedecision.VerdictOperatorAction:
+		out.Action = rowActionRecommended
+		out.Outcome = "Operator action" + ruleTag + ": " + strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(d.Text), "."), "operator action — ") + "."
+		out.Next = "Stays at " + parkedAt + " — waiting on the spoke owner; no agent is sent. Closes itself once the report stops recurring."
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate || d.Verdict == delegatedecision.VerdictCloseSuperseded:
 		out.Action = rowActionClosed
-		if actionTarget > 0 {
+		switch {
+		case hasLadderOutcome:
+			out.Outcome = ladderOutcome
+		case actionTarget > 0:
 			out.Outcome = fmt.Sprintf("Closed in favour of #%d%s.", actionTarget, ruleTag)
-		} else {
+		default:
 			out.Outcome = "Closed" + ruleTag + "."
 		}
 		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
@@ -162,9 +195,10 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		case note("queued for auto-merge"):
 			out.Next = "Queued: the auto-merge engine merges per repository settings."
 		case note("/lgtm"):
-			out.Next = "`/lgtm` + `/approve` posted; the merge gate takes it from here."
+			out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
+			out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
 		default:
-			out.Next = "The merge gate takes it from here; the dashboard merges nothing."
+			out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
 		}
 	}
 	return out

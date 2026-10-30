@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -67,6 +69,43 @@ func TestFreshenKickMessages_WithholdsStaleAndClosed(t *testing.T) {
 	}
 	if prChecks.Load() != 1 || issueChecks.Load() != 4 {
 		t.Fatalf("guard calls = %d pr / %d issue, want 1 / 4", prChecks.Load(), issueChecks.Load())
+	}
+}
+
+// A refusal from the API budget or rate-limit caution window is the designed
+// back-off, not a fault: it is withheld but logged below WARN so the fleet
+// self-report feed does not file it as an unclassified repeated error
+// (#15465). Any other refusal still logs at WARN.
+func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantWarn bool
+	}{
+		{"budget critical", github.ErrAPIBudgetCritical, false},
+		{"caution window", github.ErrRateLimitCaution, false},
+		{"stale snapshot", github.ErrSnapshotStaleForDecision, true},
+		{"item closed", github.ErrItemNotOpen, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			guard := github.IrreversibleGuard(func(_ context.Context, repo string, number int, _ bool) error {
+				return fmt.Errorf("confirming %s#%d before irreversible action: %w", repo, number, tc.err)
+			})
+			out := freshenKickMessages(context.Background(), guard, nil, freshKickMsgs([]string{"acme/web#1"}), logger)
+			if len(out) != 0 {
+				t.Fatalf("message not withheld: %+v", out)
+			}
+			log := buf.String()
+			if !strings.Contains(log, "kick ref withheld") {
+				t.Fatalf("withheld ref not logged: %q", log)
+			}
+			if got := strings.Contains(log, "level=WARN"); got != tc.wantWarn {
+				t.Fatalf("WARN logged = %v, want %v: %q", got, tc.wantWarn, log)
+			}
+		})
 	}
 }
 

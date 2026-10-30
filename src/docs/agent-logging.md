@@ -246,19 +246,25 @@ read the logs of the last several runs — not just the latest —
 ([#4296](https://github.com/hivecommons/hive/issues/4296),
 [#4295](https://github.com/hivecommons/hive/issues/4295)):
 
-- **When snapshots happen.** The scrollback is captured to a file *before*
-  it can be destroyed: when the next kick is delivered (the previous kick's
-  output is archived and the tmux history is cleared, so each archive covers
-  exactly one kick), before `kill-session` on an agent restart, and on
-  graceful shutdown (SIGTERM — pod roll or hive upgrade) for every agent
-  with un-archived kick output.
+- **When snapshots happen.** The scrollback is captured to a file as soon
+  as the kick's turn is observed to end (the CLI is back at its idle prompt —
+  the same moment the `kick turn ended` log line and the kick outcome come
+  from), and again *before* it can be destroyed: when the next kick is
+  delivered (the previous kick's output is archived and the tmux history is
+  cleared, so each archive covers exactly one kick), before `kill-session`
+  on an agent restart, and on graceful shutdown (SIGTERM — pod roll or hive
+  upgrade) for every agent with un-archived kick output. There is one
+  archive per kick: the later snapshot of the same kick replaces the
+  turn-end one (latest content wins), so a daily-cadence agent whose
+  container crashes hours after its turn ended — a hard kill that never runs
+  the shutdown snapshot — still has that run under *past kicks*.
 - **Where they live.** `/data/logs/kicks/<agent>/<timestamp>-<reason>.log`
   (override the root with `HIVE_KICK_LOG_DIR`). `/data` is the persistent
   volume on hosted hives, so archives survive agent restarts, pod rolls, and
   hive image upgrades. Each file starts with a small header (agent, archive
   time, snapshot reason, kick start time, prompt snippet, build/backend/model,
-  `source`) followed by the raw scrollback. `<reason>` is `kick`, `restart`,
-  or `shutdown`.
+  `source`) followed by the raw scrollback. `<reason>` is `turn-end`, `kick`,
+  `restart`, or `shutdown` — what wrote the archive, not how the kick ended.
 - **Transcript source.** The scrollback is what the CLI painted, so tool
   output the CLI collapsed (`(N lines hidden)`) is not in it.
   `HIVE_KICK_LOG_SOURCE=transcript` (or `auto`) builds the archive and the
@@ -307,8 +313,11 @@ read the logs of the last several runs — not just the latest —
   then has no log to show.
 - **Limitations.** The archive holds at most the retained scrollback
   (`history-limit`, 50000 lines by default), so an extremely long run
-  self-truncates from the top. A hard kill (SIGKILL, node loss) skips the
-  shutdown snapshot; the previous kicks' archives on `/data` are unaffected.
+  self-truncates from the top. A hard kill (SIGKILL, OOM, node loss) skips the
+  shutdown snapshot, so a turn still running at that moment loses whatever
+  it produced after the last snapshot; turns that had already ended were
+  archived at turn end, and the previous kicks' archives on `/data` are
+  unaffected.
 
 ## Related
 

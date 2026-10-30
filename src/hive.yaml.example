@@ -1383,6 +1383,29 @@ knowledge:
       - decision
     merge_strategy: precedence               # personal > project > org > community
 
+# Write-back containment — what the platform may say on GitHub unasked.
+# Applies to comments/labels/reviews on PRs and issues hive did not open and
+# nobody opted in on (platform sweeps: sentinel, hold-gate notices, stage
+# labels, supersession, duplicate-fix, reporter-trust …). Never gates hive's
+# own PRs/issues, /hive command replies or dashboard-triggered work.
+# See docs/acmm-policy-matrix.md "What hive will say on GitHub at each level".
+# writeback:
+#   unsolicited:
+#     min_level: 5            # raises every per-kind floor below; never lowers one
+#     require_labels: true    # foreign PRs also need review.require_labels (fallback hive-review)
+#     backfill: false         # never touch items created before hive first saw / could write to the repo
+#   per_repo:
+#     torch-spyre/torch-spyre: { mode: issues-only }   # off | issues-only | labels-only | full
+#   kinds:                    # per-kind overrides; defaults in docs/acmm-policy-matrix.md
+#     sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
+#     hold_gate_notice: { min_level: 4 }               # hive-authored PRs only, always
+#   dedupe:                   # content-aware suppression of duplicate / burst comments (comment kinds with a body only)
+#     enabled: true
+#     same_item_ttl: 24h      # identical body on the same item is held this long
+#     burst_items: 2          # distinct items that may get one body inside burst_window; the rest are held
+#     burst_window: 60s
+#     hourly_cap: 60          # comments per repo per kind per hour; merge-path kinds exempt; -1 disables
+
 # Data directories — all persistent state
 data:
   metrics_dir: /data/metrics

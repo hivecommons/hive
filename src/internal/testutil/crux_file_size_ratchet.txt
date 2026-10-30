@@ -1,0 +1,32 @@
+# Line-count baseline for .github/scripts/check-file-size-ratchet.sh (crux#20).
+#
+# Every non-test .go file that was over the 800-line limit when the ratchet
+# landed, with its line count at that time. A listed file may not grow past
+# its number; an unlisted file may not exceed 800 lines.
+#
+# Lowering a number (or removing a line once a file is split under 800) is
+# always allowed, and the gate prints the exact line to edit. Raising one, or
+# adding a new file here, defeats the gate: split the file instead.
+#
+# The Go code is synced from hivecommons/hive src/crux; splits land there and
+# reach this tree through the sync.
+#
+# A PR that (re)generates this file must be rebased on main right before it
+# merges: PR checks run against the merge ref at push time, not at merge time,
+# so syncs that land in between can push files past a baseline captured
+# earlier and turn main red (crux#22 did exactly that).
+1653 agent/manager.go
+952 agent/manager_homes.go
+1386 agent/manager_kick.go
+1202 agent/manager_launch.go
+884 agent/manager_pane_signals.go
+975 agent/manager_tokens.go
+815 agent/permissions_watcher.go
+914 api/client/client.go
+1271 config/agent_runtime.go
+1076 cruxtest/recorder.go
+990 proxy/rules.go
+889 pushbroker/pushbroker.go
+1048 serve/families.go
+810 serve/serve.go
+919 watchdog/reconciler.go

@@ -670,7 +670,13 @@ func stoppedAgentStartErrorIsBenign(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "already running") ||
 		strings.Contains(msg, "launch already in progress") ||
-		strings.Contains(msg, "shared session pool is busy")
+		isSharedPoolBusyErr(err)
+}
+
+// isSharedPoolBusyErr reports the shared CLI session pool refusing a slot.
+// crux/agent does not export its busy sentinel, so match the message.
+func isSharedPoolBusyErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "shared session pool is busy")
 }
 
 // advisoryIngestDeps are the side effects of recording an ioscan canary leak

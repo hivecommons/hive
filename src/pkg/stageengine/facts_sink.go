@@ -59,7 +59,8 @@ type NeedsHumanApplier int
 
 const (
 	// NeedsHumanApplierUnknown: no `labeled` event was found or the timeline
-	// could not be read. Not knowing is never permission to lift it.
+	// could not be read. An authorized ordinary un-park still lifts it;
+	// only the reply's attribution is unknown.
 	NeedsHumanApplierUnknown NeedsHumanApplier = iota
 	// NeedsHumanApplierHive: one of the hive's accounts (an agent's `label
 	// needs-human` + `/unclaim`, the relay, the task-list sweep).

@@ -34,24 +34,28 @@ type eligibleEntry struct {
 }
 
 type failingEntry struct {
-	Number           int      `json:"number"`
-	Repo             string   `json:"repo"`
-	Agent            string   `json:"agent"`
-	HeadSHA          string   `json:"head_sha"`
-	FailingChecks    []string `json:"failing_checks"`
-	Excerpt          string   `json:"excerpt"`
-	Escalated        bool     `json:"escalated"`
-	HeadRef          string   `json:"head_ref"`
-	HeadRepo         string   `json:"head_repo"`
-	FromFork         bool     `json:"from_fork"`
-	ReachableAction  string   `json:"reachable_action"`
-	Held             bool     `json:"held"`
-	Adopted          bool     `json:"adopted"`
-	SentinelAlert    bool     `json:"sentinel_alert"`
-	MergeableState   string   `json:"mergeable_state"`
-	Conflict         bool     `json:"conflict"`
-	ReroutedFrom     string   `json:"rerouted_from"`
-	DeferredIncident int      `json:"deferred_incident"`
+	Number            int      `json:"number"`
+	Repo              string   `json:"repo"`
+	Agent             string   `json:"agent"`
+	HeadSHA           string   `json:"head_sha"`
+	FailingChecks     []string `json:"failing_checks"`
+	Excerpt           string   `json:"excerpt"`
+	Escalated         bool     `json:"escalated"`
+	HeadRef           string   `json:"head_ref"`
+	HeadRepo          string   `json:"head_repo"`
+	FromFork          bool     `json:"from_fork"`
+	ReachableAction   string   `json:"reachable_action"`
+	Held              bool     `json:"held"`
+	Adopted           bool     `json:"adopted"`
+	SentinelAlert     bool     `json:"sentinel_alert"`
+	MergeableState    string   `json:"mergeable_state"`
+	Conflict          bool     `json:"conflict"`
+	ReroutedFrom      string   `json:"rerouted_from"`
+	DeferredIncident  int      `json:"deferred_incident"`
+	RebaseAttempt     int      `json:"rebase_attempt"`
+	RebaseAttemptsMax int      `json:"rebase_attempts_max"`
+	BaseRef           string   `json:"base_ref"`
+	TrustedAuthor     bool     `json:"trusted_author"`
 }
 
 type mergeEligibleInputs struct {

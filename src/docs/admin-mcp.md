@@ -212,7 +212,7 @@ capped at 256 KiB.
 | `claims_list` | Issue claims |
 | `plans_list` | Plans |
 | `audit_log` | Audit entries |
-| `settings_read` | Settings |
+| `settings_read` | A dashboard Settings view, read through the endpoint the Settings page uses, as the caller; optional `section` (default `governor`) and `agent` for the per-agent sections. See [Settings sections](#settings-sections) |
 | `autonomy_readiness` | Autonomy readiness |
 | `spend_read` | Spend |
 | `contributors_list` | Contributors |
@@ -226,6 +226,38 @@ capped at 256 KiB.
 | `governor_setup_proposal` | Proposed governor setup, each setting with a reason and the write operation and args that apply it |
 | `log_sources` | Log sources this hive can read, each available or not with a reason; `hive` is the default, plus `proxy`, `hive-output`, `litellm` and `requests` (see [design/admin-mcp.md](design/admin-mcp.md#output-and-request-log-sources)), and `starts` and `crash` (see [below](#start-records-crash-traces-and-out-of-memory-evidence)) |
 | `log_read` | The hive's own log (or another `log_sources` source), newest matching lines oldest first, scrubbed; optional `source`, `lines` (default 100, max 1000), `since`/`until` (RFC 3339 with offset), `min_level`, `include`, `exclude`, `cursor`. Needs the read-write role. Not capped by `limit`; see [design/admin-mcp.md](design/admin-mcp.md#log-read) |
+
+### Settings sections
+
+`settings_read` reaches every view the Settings dialog shows. It takes a
+section name, never a path. Each section is the endpoint that Settings tab
+reads, so the answer matches the page for the same caller: most sections need a
+verified owner, as the tabs do. Secret values are never returned. Settings name
+the environment variable, file or header that supplies a secret, and the answer
+is scrubbed like every other read.
+
+- Global settings: `governor` (the default: modes, thresholds, labels, repos,
+  budget, notifications, health, sensing, logging, security, features, hub,
+  LiteLLM, watchdog, trajectory, classifier, release sentinel), `project`,
+  `github_apps`, `authorized_users`, `dashboard`, `channels`, `escalation`,
+  `auto_merge`, `review`, `convergence`, `sla`, `advisor`, `advisory`, `replan`,
+  `question_autoclose`, `question_autoclose_schedule`, `fleet_report`,
+  `work_source`, `project_observability`, `general_advanced`, `cadence_scope`,
+  `threshold_scaling`, `backup`, `bob`, `inference_auth`, `gateways`,
+  `backends`, `variables`, `write_surface`, `stat_sources`.
+- Knowledge: `knowledge_pipeline`, `knowledge_connectors`,
+  `knowledge_connectors_status`, `knowledge_agent_scopes`, `knowledge_public`.
+- Panels the tabs load: `upstream_watch`, `linear_agent`, `compliance_status`,
+  `classifier_stats`, `watchdog_activity`.
+- One agent (needs `agent`): `agent`, `agent_prompt`, `agent_variables`. Prompt
+  history is `prompt_history_read`.
+
+Not reachable: the raw configuration download and the full export (they carry
+credentials; `config_effective_read` is the vetted view of the effective
+configuration and its provenance), an agent's export bundle (the `agent` and
+`agent_prompt` sections hold it), and the theme and sidebar, which are purely
+presentational. A test fails when the dashboard serves a new `GET /api/config`
+route that is neither a section nor one of these exclusions.
 
 Meta tools:
 
@@ -280,7 +312,10 @@ the typed forbidden error `ErrOwnerUnverified`.
   `governor.logging.max_age_days`, `governor.logging.max_backups`,
   `governor.logging.compress`, `governor.logging.kick_log_source`,
   `governor.logging.read_scan_max_mb`, `agents.*.backend`, `agents.*.model`,
-  `agents.*.enabled`, `agents.*.paused`
+  `agents.*.enabled`, `agents.*.paused`, and the per-repository merge policy:
+  `auto_merge.squash_only[*]`, `auto_merge.require_current_base[*]` and
+  `auto_merge.human_merge_paths.*[*]` (the path globs listed under each
+  `owner/repo`). A `*` segment is one map key and `[*]` any list index.
 - Environment names: `HIVE_CONFIG`, `HIVE_ADMIN_MCP_ENABLE_WRITES`,
   `HIVE_ADMIN_MCP_PENDING_FILE`, `HOME`, `HOSTNAME`, `LANG`, `PATH`, `TZ`,
   `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`

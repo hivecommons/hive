@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Operator decisions on a pull request parked at stage/085-needs-decision,
@@ -67,9 +70,93 @@ type PullRequestApprovalEvent struct {
 	// sentinel findings.
 	SentinelLabelCleared bool
 	SentinelAcknowledged bool
+	// SentinelLabelOpen is true when the PR wore the sentinel alert label
+	// and this approval could not take it off: the alert is still open and
+	// a person must clear it on GitHub before the merge lanes touch the PR.
+	SentinelLabelOpen bool
+	// ProwManaged is true when the PR wears Prow's plugin labels (`approved`,
+	// `size/*`, `do-not-merge/*`, `ok-to-test`), so the relayed `/approve`
+	// came from the hive's account, which is not in OWNERS: Prow ignores it
+	// ("NOT APPROVED"), and an OWNERS reviewer still has to approve there.
+	ProwManaged bool
 	// Stage is the stage label the engine derived when the approval was
 	// submitted to it, or "" when the stage write was deferred to the sweep.
 	Stage string
+	// CommandsSkipped is set when the `/lgtm` + `/approve` comments were
+	// not posted: PRApprovalCommandsSkippedProw when Prow rejected the
+	// hive's own earlier commands on this PR (the bot is not in OWNERS),
+	// so posting again would only draw the same "NOT APPROVED" reply. The
+	// hive's own approval record is unaffected.
+	CommandsSkipped string
+}
+
+// PRApprovalCommandsSkippedProw is the CommandsSkipped reason for a Prow
+// repo where the hive bot is not an approver.
+const PRApprovalCommandsSkippedProw = "prow-rejects-bot-commands"
+
+// prowCommandRejections are the phrases Prow replies with when the hive
+// bot's `/lgtm` or `/approve` carries no weight on the repo.
+var prowCommandRejections = []string{"restricted to collaborators", "NOT APPROVED"}
+
+// prowRejectedHiveCommands reports whether the Prow bot has replied to one of the hive's earlier dashboard approval commands on the
+// PR with a Prow rejection (dibs#510: `/lgtm` → "changing LGTM is
+// restricted to collaborators", `/approve` → "[APPROVALNOTIFIER] This PR is
+// NOT APPROVED"). Prow quotes the comment it answers as
+// "In response to [this](…#issuecomment-<id>)", so only replies bound to a
+// hive command comment count. Only the Prow instance hivecommons runs
+// (config.DefaultLabelDrivenTrustedBots) is believed: any other installed
+// bot could quote the phrase and suppress the commands
+// (hivecommons/hive#15263).
+func (c *Client) prowRejectedHiveCommands(ctx context.Context, owner, name string, number int) (bool, error) {
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		return false, err
+	}
+	own := map[int64]bool{}
+	for _, comment := range comments {
+		if comment == nil || !c.markerAuthorTrusted(comment.GetUser()) {
+			continue
+		}
+		if _, _, _, ok := ParsePRApprovalCommandComment(comment.GetBody()); ok {
+			own[comment.GetID()] = true
+		}
+	}
+	if len(own) == 0 {
+		return false, nil
+	}
+	for _, comment := range comments {
+		if comment == nil || c.isHiveAccount(comment.GetUser()) {
+			continue
+		}
+		login := strings.TrimSpace(comment.GetUser().GetLogin())
+		prow := false
+		for _, bot := range config.DefaultLabelDrivenTrustedBots {
+			if strings.EqualFold(bot, login) {
+				prow = true
+				break
+			}
+		}
+		if !prow {
+			continue
+		}
+		body := comment.GetBody()
+		rejected := false
+		for _, phrase := range prowCommandRejections {
+			if strings.Contains(body, phrase) {
+				rejected = true
+				break
+			}
+		}
+		if !rejected {
+			continue
+		}
+		for id := range own {
+			if strings.Contains(body, fmt.Sprintf("#issuecomment-%d)", id)) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // PullRequestApprovalOptions is what a person's Approve decision releases
@@ -167,32 +254,63 @@ func ParsePRApprovalCommandComment(body string) (command, actor, head string, ok
 	return command, actor, head, true
 }
 
-// openPullRequestHead returns the PR's head SHA and whether the hive opened
-// it, or ErrPullRequestClosed / a not-found error.
-func (c *Client) openPullRequestHead(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, err error) {
-	head, selfAuthored, _, err = c.openPullRequestHeadLabels(ctx, owner, name, number)
-	return head, selfAuthored, err
+// openPullRequestHeadLabels returns the PR's head SHA, whether the hive
+// opened it, and its labels as read in the same fetch, or
+// ErrPullRequestClosed / a not-found error.
+func (c *Client) openPullRequestHeadLabels(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, labels []string, err error) {
+	t, err := c.openPullRequestDecisionTarget(ctx, owner, name, number)
+	return t.head, t.selfAuthored, t.labels, err
 }
 
-// openPullRequestHeadLabels is openPullRequestHead plus the PR's labels as
-// read in the same fetch.
-func (c *Client) openPullRequestHeadLabels(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, labels []string, err error) {
+// prDecisionTarget is what one open-PR read tells a dashboard decision:
+// the head, whether the hive opened the PR, and — when it did not —
+// whether a contributor's hive did (author/clanker), so a direction has a
+// hive to carry it to.
+type prDecisionTarget struct {
+	head         string
+	selfAuthored bool
+	clanker      bool
+	author       string
+	labels       []string
+}
+
+// SetAuthorKindLabels installs the live governor.labels.author resolver.
+// Nil uses the default names, matching the stage reconciler.
+func (c *Client) SetAuthorKindLabels(fn func() authorkind.Names) {
+	if c != nil {
+		c.authorKindLabels = fn
+	}
+}
+
+func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name string, number int) (prDecisionTarget, error) {
 	pr, resp, err := c.client.PullRequests.Get(ctx, owner, name, number)
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return "", false, nil, fmt.Errorf("pull request %s/%s#%d: %w", owner, name, number, ErrPullRequestNotFound)
+			return prDecisionTarget{}, fmt.Errorf("pull request %s/%s#%d: %w", owner, name, number, ErrPullRequestNotFound)
 		}
-		return "", false, nil, fmt.Errorf("fetching pull request %s/%s#%d: %w", owner, name, number, err)
+		return prDecisionTarget{}, fmt.Errorf("fetching pull request %s/%s#%d: %w", owner, name, number, err)
 	}
 	if strings.EqualFold(pr.GetState(), "closed") {
-		return "", false, nil, ErrPullRequestClosed
+		return prDecisionTarget{}, ErrPullRequestClosed
 	}
+	t := prDecisionTarget{author: strings.TrimSpace(safeGetLogin(pr.GetUser()))}
 	if pr.GetHead() != nil {
-		head = strings.TrimSpace(pr.GetHead().GetSHA())
+		t.head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
-	labels = issueLabelNames(pr.Labels)
-	selfAuthored = c.isHiveAccount(pr.GetUser()) || labelPresent(labels, authorkind.Hive.Label())
-	return head, selfAuthored, labels, nil
+	t.labels = issueLabelNames(pr.Labels)
+	names := authorkind.Names{}
+	if c.authorKindLabels != nil {
+		names = c.authorKindLabels()
+	}
+	kind := authorkind.FromLabels(t.labels, names)
+	t.selfAuthored = c.isHiveAccount(pr.GetUser()) || kind == authorkind.Hive
+	if !t.selfAuthored {
+		// Require the repository's classification stamp here. PR-body
+		// markers are author-controlled hints for the sweep, not sufficient
+		// evidence to accept a dashboard direction on a person's PR.
+		t.clanker = kind == authorkind.Clanker
+	}
+	return t, nil
 }
 
 func (c *Client) operatorPRTarget(repo string, number int, actor, what string) (owner, name string, err error) {
@@ -241,14 +359,25 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		return PullRequestApprovalEvent{}, err
 	}
 	full := owner + "/" + name
-	for _, command := range PRApprovalCommands {
-		if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
-			return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
-		}
+	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: prowManagedLabels(labels)}
+	prowRejected, err := c.prowRejectedHiveCommands(ctx, owner, name, number)
+	if err != nil {
+		return PullRequestApprovalEvent{}, fmt.Errorf("reading comments of %s/%s#%d before posting approval commands: %w", owner, name, number, err)
 	}
-	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor}
-	if c.logger != nil {
-		c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+	if prowRejected {
+		event.CommandsSkipped = PRApprovalCommandsSkippedProw
+		if c.logger != nil {
+			c.logger.Info("pull request approval commands not posted: Prow rejected the hive's earlier commands on this PR (bot is not an approver); the hive's own approval record stands", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+		}
+	} else {
+		for _, command := range PRApprovalCommands {
+			if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
+				return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
+			}
+		}
+		if c.logger != nil {
+			c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+		}
 	}
 	if opts.HumanChangeRequests != nil && head != "" {
 		req := review.HumanChangeRequest{
@@ -266,17 +395,14 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		}
 		event.Recorded = true
 	}
-	if opts.LiftNeedsHuman && labelPresent(labels, issueNeedsHumanLabel) {
-		if err := c.RemoveLabel(ctx, full, number, issueNeedsHumanLabel); err != nil {
-			c.warnOperatorApproval("needs-human not lifted", full, number, head, err)
-		} else {
-			event.NeedsHumanLifted = true
-		}
+	if opts.LiftNeedsHuman {
+		event.NeedsHumanLifted = slices.Contains(c.liftPRDecisionParkLabels(ctx, full, number, head, labels), issueNeedsHumanLabel)
 	}
 	if label := strings.TrimSpace(opts.SentinelLabel); label != "" {
 		if labelPresent(labels, label) {
 			if err := c.RemoveLabel(ctx, full, number, label); err != nil {
 				c.warnOperatorApproval("sentinel label not cleared", full, number, head, err)
+				event.SentinelLabelOpen = true
 			} else {
 				event.SentinelLabelCleared = true
 			}
@@ -294,6 +420,21 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 	return event, nil
 }
 
+// prowManagedLabels reports whether labels carry Prow's plugin markers:
+// the approve plugin's `approved`, size's `size/*`, the `do-not-merge/*`
+// family and trigger's `ok-to-test` / `needs-ok-to-test`.
+func prowManagedLabels(labels []string) bool {
+	for _, l := range labels {
+		l = strings.ToLower(strings.TrimSpace(l))
+		switch {
+		case l == "approved", l == "ok-to-test", l == "needs-ok-to-test",
+			strings.HasPrefix(l, "size/"), strings.HasPrefix(l, "do-not-merge/"), strings.HasPrefix(l, "tide/"):
+			return true
+		}
+	}
+	return false
+}
+
 // prDecisionApproveBody is the decision text a dashboard approval records,
 // the bare form `/hive decision approve` carries.
 const prDecisionApproveBody = "approve"
@@ -304,13 +445,19 @@ func (c *Client) warnOperatorApproval(what, repo string, number int, head string
 	}
 }
 
-// RecordOperatorPullRequestDecision records a maintainer's direction on a
-// hive-authored open pull request made through the dashboard — the same
-// effect as that maintainer commenting `/hive decision <text>` and the
-// un-park sweep answering it: the text is stored against the head as a
-// human change request (the review planner kicks the author agent with it
-// verbatim) and one reply naming the actor is posted. The caller is
-// responsible for having verified actor's write access.
+// RecordOperatorPullRequestDecision records a maintainer's direction on an
+// open pull request made through the dashboard — the same effect as that
+// maintainer commenting `/hive decision <text>` and the un-park sweep
+// answering it: the text is stored against the head as a human change
+// request and one reply naming the actor is posted. On a PR the hive
+// opened the review planner kicks the hive's own author agent with the
+// text verbatim. On a contributor's clanker PR (author/clanker) the
+// direction is carried to that contributor's hive
+// instead: it stands as a changes-requested review on the head, the PR
+// goes to 072 returned-to-contributor and the contributor nudge delivers
+// the text (hivecommons/hive#15159). A PR a person opened has no hive to
+// carry it: ErrPullRequestNotHiveAuthored, leave a review instead. The
+// caller is responsible for having verified actor's write access.
 func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo string, number int, actor, decision string, store review.HumanChangeRequestStore) (PullRequestDecisionEvent, error) {
 	owner, name, err := c.operatorPRTarget(repo, number, actor, "RecordOperatorPullRequestDecision")
 	if err != nil {
@@ -324,17 +471,23 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 	if store == nil {
 		return PullRequestDecisionEvent{}, fmt.Errorf("RecordOperatorPullRequestDecision: no human change request store")
 	}
-	head, selfAuthored, err := c.openPullRequestHead(ctx, owner, name, number)
+	target, err := c.openPullRequestDecisionTarget(ctx, owner, name, number)
 	if err != nil {
 		return PullRequestDecisionEvent{}, err
 	}
-	if !selfAuthored {
+	head, selfAuthored, labels := target.head, target.selfAuthored, target.labels
+	if !selfAuthored && !target.clanker {
 		return PullRequestDecisionEvent{}, ErrPullRequestNotHiveAuthored
 	}
 	if head == "" {
 		return PullRequestDecisionEvent{}, ErrPullRequestHeadUnknown
 	}
 	mode := prDecisionModeFor(unparkCommand{Kind: unparkCommandDecision, Decision: decision, Text: decision})
+	if !selfAuthored && mode == prDecisionApprove {
+		// A bare "approve" is not a direction a contributor's hive can act
+		// on; the dashboard's Approve action is the release for that.
+		return PullRequestDecisionEvent{}, ErrPullRequestNotHiveAuthored
+	}
 	req := review.HumanChangeRequest{
 		Repo:     owner + "/" + name,
 		Number:   number,
@@ -350,12 +503,47 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 	if err := store.Record(req); err != nil {
 		return PullRequestDecisionEvent{}, fmt.Errorf("recording dashboard decision on %s/%s#%d: %w", owner, name, number, err)
 	}
+	event := PullRequestDecisionEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor, Decision: decision, Mode: string(mode), ToContributor: target.author}
+	if selfAuthored {
+		event.ToContributor = ""
+	}
+	// The decision answers the park: the labels that asked for it come off
+	// in the same write, or the next label-derived pass re-parks the row
+	// the person just un-parked.
+	event.ParkLabelsLifted = len(c.liftPRDecisionParkLabels(ctx, event.Repo, number, head, labels))
 	stage := c.applyPRDecisionStage(ctx, owner, name, number, head, actor, mode, selfAuthored)
-	body := renderPRDecisionReply(actor, head, mode) + "\n\n_Recorded from the hive dashboard._"
+	reply := renderPRDecisionReply(actor, head, mode)
+	if !selfAuthored {
+		reply = renderPRDecisionToContributorHiveReply(actor, head, target.author, decision)
+	}
+	body := reply + "\n\n_Recorded from the hive dashboard._"
 	if err := c.postUnparkReply(ctx, owner, name, number, operatorDecisionMarkerID, body); err != nil {
 		return PullRequestDecisionEvent{}, err
 	}
-	event := PullRequestDecisionEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor, Decision: decision, Mode: string(mode)}
 	c.logPRDecision(event.Repo, number, head, actor, mode, stage, false)
 	return event, nil
+}
+
+// prDecisionParkLabels are the labels a recorded decision on a pull
+// request answers: the needs-human ask and the 085 needs-decision stage
+// label (current and legacy). `hold` is never among them.
+var prDecisionParkLabels = []string{issueNeedsHumanLabel, stagelabels.NeedsDecision.Label(), NeedsDecisionStageLabel}
+
+// liftPRDecisionParkLabels removes every prDecisionParkLabels entry present
+// in labels from repo#number and returns the ones it removed. A failed
+// removal is logged, not returned: the decision record stands and the
+// stage engine's park-lift derives the same answer.
+func (c *Client) liftPRDecisionParkLabels(ctx context.Context, repo string, number int, head string, labels []string) []string {
+	var lifted []string
+	for _, label := range prDecisionParkLabels {
+		if !labelPresent(labels, label) {
+			continue
+		}
+		if err := c.RemoveLabel(ctx, repo, number, label); err != nil {
+			c.warnOperatorApproval(label+" not lifted", repo, number, head, err)
+			continue
+		}
+		lifted = append(lifted, label)
+	}
+	return lifted
 }

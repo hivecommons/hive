@@ -321,6 +321,11 @@ type Dependencies struct {
 	// reason names the delivery ("pull_request_review org/repo#12"). Nil
 	// leaves invalidated items waiting for the next cadence tick.
 	WebhookWake func(reason string)
+	// SweepNudge asks the automerge lanes for an early pass over one PR
+	// (repo is "owner/name"). The operator row actions that leave a
+	// durable mark for the sweep (Adopt now) call it so the pass runs now
+	// rather than on cadence. Nil leaves the mark for the next sweep.
+	SweepNudge func(repo string, number int)
 	// ApplyWebhookItems hands the targeted re-reads a webhook delivery
 	// caused (webhook_tracker_refresh.go) to the governor so its cached
 	// actionable snapshot is patched for those items only; the wake cycle
@@ -340,6 +345,12 @@ type Dependencies struct {
 	// repo is the configured slug. It must not block the webhook response.
 	// Nil leaves PRs to the sentinel's reconcile cadence.
 	SentinelPREvent func(repo string, number int)
+	// CIFailureKick reacts to one webhook CI-failure signal on a
+	// hive-authored PR: attributes it to the owning agent and, when the
+	// agent is enabled, unpaused, governor-eligible and outside the per-head
+	// cooldown, kicks it now with the fix-before-new section. It must not
+	// block the webhook response. Nil leaves the signal to the sweep.
+	CIFailureKick func(sig ghpkg.CIFailureSignal) CIFailureKickOutcome
 	// ProjectsV2ItemEvent applies a verified `projects_v2_item` delivery to
 	// the GitHub Projects work source cache as a targeted patch (#13379).
 	// These deliveries are organization-scoped and carry no repository. Nil

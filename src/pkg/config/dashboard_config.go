@@ -524,6 +524,30 @@ func (c *Config) WebhookWakeMinGap() time.Duration {
 	return DefaultWebhookWakeMinGapS * time.Second
 }
 
+// CIFailureWebhookKick is governor.ci_failure_webhook_kick (default true).
+func (c *Config) CIFailureWebhookKick() bool {
+	if c == nil || c.Governor.CIFailureWebhookKick == nil {
+		return true
+	}
+	return *c.Governor.CIFailureWebhookKick
+}
+
+// CIFailureKickCooldown resolves governor.ci_failure_kick_cooldown_s.
+func (c *Config) CIFailureKickCooldown() time.Duration {
+	if c != nil && c.Governor.CIFailureKickCooldownS > 0 {
+		return time.Duration(c.Governor.CIFailureKickCooldownS) * time.Second
+	}
+	return DefaultCIFailureKickCooldownS * time.Second
+}
+
+// MergeTrainStallWarn resolves governor.merge_train_stall_warn_s.
+func (c *Config) MergeTrainStallWarn() time.Duration {
+	if c != nil && c.Governor.MergeTrainStallWarnS > 0 {
+		return time.Duration(c.Governor.MergeTrainStallWarnS) * time.Second
+	}
+	return DefaultMergeTrainStallWarnS * time.Second
+}
+
 // OwnerLogins returns the AuthorizedUsers entries that hold the owner role
 // (the first entry without an explicit role, plus any ":owner" entry), in
 // their raw identity form ("alice", "github:alice"); non-GitHub identities

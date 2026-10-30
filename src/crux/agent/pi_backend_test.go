@@ -59,9 +59,9 @@ func TestPiLaunchCommandPassesModelFlag(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "manager_launch.go"))
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "backend_launch_cmd.go"))
 	if err != nil {
-		t.Fatalf("read manager.go: %v", err)
+		t.Fatalf("read backend_launch_cmd.go: %v", err)
 	}
 	text := string(body)
 	if !strings.Contains(text, "case \"pi\":") || !strings.Contains(text, "launchCmd = fmt.Sprintf(\"%s --model %s\", binary, model)") {

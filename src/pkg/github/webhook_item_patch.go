@@ -54,7 +54,7 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, blockedBy in
 	issueFilter := c.getIssueFilter()
 	author := safeGetLogin(issue.GetUser())
 	sidelined := func(bucket, reason string) WebhookItemPatch {
-		row := c.repoWorkIssue(repo, issue, labels, bucket, reason)
+		row := c.workIssue(repo, issue, labels, bucket, reason)
 		return WebhookItemPatch{Bucket: WebhookBucketSidelined, WorkIssue: &row}
 	}
 	switch standingMetaIssueKindFor(issue.GetTitle(), author, labels) {
@@ -86,7 +86,7 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, blockedBy in
 		return sidelined("filtered", trackingFilterReason)
 	}
 	if hasBlockedLabel(labels) {
-		row := c.repoWorkIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+		row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
 		setBlockedRowFacts(&row, issue.GetBody(), blockedBy)
 		return WebhookItemPatch{Bucket: WebhookBucketSidelined, WorkIssue: &row}
 	}

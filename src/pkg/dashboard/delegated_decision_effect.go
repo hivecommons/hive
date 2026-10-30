@@ -2,11 +2,16 @@ package dashboard
 
 import (
 	"context"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Stuck-decision detection for "Let hive decide" (hivecommons/hive#14822).
@@ -35,10 +40,6 @@ var delegatedDecisionNow = time.Now
 // decisionActionDelegateRerun re-runs the delegate past the "already
 // recorded" dedup (the request carries force=true).
 const decisionActionDelegateRerun = "decide:delegate:rerun"
-
-// decisionActionOpenGitHub is a link-style option: the SPA opens the target
-// on GitHub instead of calling an endpoint (merging stays a human act).
-const decisionActionOpenGitHub = "open:github"
 
 // delegatedPriorState is what the hive already wrote on the item under
 // one rule: when it last recorded the decision, the decision text it
@@ -81,6 +82,65 @@ func (s *Server) delegatedPriorDecisionState(ctx context.Context, repoFull strin
 	return st
 }
 
+// delegatedParkLabelsAsked are the labels whose (re)application after a
+// recorded decision means someone asked a new question: the needs-human
+// ask and the 045 / 085 needs-decision stage labels.
+var delegatedParkLabelsAsked = []string{config.DefaultNeedsHumanLabel, config.DefaultNeedsDecisionLabel, config.PRNeedsDecisionStageLabel}
+
+// delegatedRepark is the latest park label applied after a point in time.
+type delegatedRepark struct {
+	At    time.Time
+	Label string
+}
+
+// delegatedReparkedAfter reads the item's timeline for a park label
+// applied after since. ok is false when none was, or when the timeline
+// cannot be read (the recorded decision then stands as the dedup's
+// answer, the cheaper mistake).
+func (s *Server) delegatedReparkedAfter(ctx context.Context, repoFull string, number int, since time.Time) (delegatedRepark, bool) {
+	if since.IsZero() || s.deps == nil || s.deps.GHClient == nil {
+		return delegatedRepark{}, false
+	}
+	events, err := s.deps.GHClient.IssueTimelineSince(ctx, repoFull, number, since)
+	if err != nil {
+		return delegatedRepark{}, false
+	}
+	return reparkFromEvents(events)
+}
+
+// reparkFromEvents picks the latest "labeled" event naming a park label.
+func reparkFromEvents(events []ghpkg.IssueEvent) (delegatedRepark, bool) {
+	var out delegatedRepark
+	for _, ev := range events {
+		if ev.Event != "labeled" || !slices.ContainsFunc(delegatedParkLabelsAsked, func(l string) bool { return strings.EqualFold(l, ev.Label) }) {
+			continue
+		}
+		if ev.At.After(out.At) {
+			out = delegatedRepark{At: ev.At, Label: ev.Label}
+		}
+	}
+	return out, !out.At.IsZero()
+}
+
+// delegatedCommentTexts lists the item's recent comments as body + time
+// for the blocker ledger; nil when the client is missing or the read
+// fails (the ledger then answers from what it already knows).
+func (s *Server) delegatedCommentTexts(ctx context.Context, repoFull string, number int) []commentText {
+	if s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
+		return nil
+	}
+	owner, repoName, _ := strings.Cut(repoFull, "/")
+	comments, _, err := s.deps.GHClient.GoGitHub().Issues.ListComments(ctx, owner, repoName, number, &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: delegatedDecisionGatherLimit}})
+	if err != nil {
+		return nil
+	}
+	out := make([]commentText, 0, len(comments))
+	for _, c := range comments {
+		out = append(out, commentText{Body: c.GetBody(), At: c.GetCreatedAt().Time})
+	}
+	return out
+}
+
 // delegatedEffectTimeout is decisions.delegate.effect_timeout (default 30m).
 func (s *Server) delegatedEffectTimeout() time.Duration {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
@@ -104,6 +164,9 @@ func (s *Server) delegatedStuckWhy(in delegatedecision.Input, d delegatedecision
 		return false
 	}
 	if d.Verdict == delegatedecision.VerdictAdoptSupersede {
+		if in.WorkflowPath {
+			return delegatedecision.GlossaryWorkflowPath
+		}
 		if in.ContributorOnline {
 			return delegatedecision.GlossaryAuthorOnline
 		}
@@ -137,11 +200,35 @@ func (s *Server) delegatedStuckWhy(in delegatedecision.Input, d delegatedecision
 		return delegatedecision.GlossaryNotClosedYet
 	case d.Verdict == delegatedecision.VerdictDirection:
 		return delegatedecision.GlossaryNoNewCommit
+	case issueParkLabelStuck(in, d):
+		return delegatedecision.GlossaryParkLabelStuck
 	case in.Kind == delegatedecision.KindIssue:
 		return delegatedecision.GlossaryStillParked
 	default:
 		return delegatedecision.GlossaryNotMergedYet
 	}
+}
+
+// issueParkLabelStuck reports an approved issue that still carries both
+// approved-direction and stage/045-needs-decision. The labels alone do not
+// show whether the park was never lifted or was added again. The caller
+// handles later re-parks first (hivecommons/hive#15021: approve lifted 045,
+// then the scanner re-parked), so those become a new ask rather than a
+// stuck-label diagnosis. The toast names the label and offers the lift.
+func issueParkLabelStuck(in delegatedecision.Input, d delegatedecision.Decision) bool {
+	if in.Kind != delegatedecision.KindIssue || d.Verdict != delegatedecision.VerdictApprove {
+		return false
+	}
+	park, ack := false, false
+	for _, l := range in.Labels {
+		switch {
+		case strings.EqualFold(strings.TrimSpace(l), stagelabels.IssueNeedsDecision.Label()):
+			park = true
+		case strings.EqualFold(strings.TrimSpace(l), ghpkg.HumanAckLabel):
+			ack = true
+		}
+	}
+	return park && ack
 }
 
 // isApproveDecisionText reports a bare `/hive decision approve[d]`.
@@ -157,15 +244,21 @@ func isApproveDecisionText(line string) bool {
 
 // delegatedStuckOptions are the concrete next actions for a decision that
 // has not taken effect, in the popover's option shape so the SPA renders
-// them as buttons. Merging is never done by the dashboard: that option
-// opens the PR on GitHub.
-func delegatedStuckOptions(in delegatedecision.Input, d delegatedecision.Decision, mergerRole bool) []StageTrackerDecisionOption {
+// them as buttons. Merging is the in-tracker merge-now action
+// (hivecommons/hive#15087) for a merger, not a link out. When why is the stuck 045 park
+// label, the first option lifts it: `decide:approve` on an issue runs
+// RecordOperatorIssueDecision, the audited path that removes the park
+// label and tells the stage engine the park lifted.
+func delegatedStuckOptions(in delegatedecision.Input, d delegatedecision.Decision, mergerRole bool, why string) []StageTrackerDecisionOption {
 	var opts []StageTrackerDecisionOption
+	if why == delegatedecision.GlossaryParkLabelStuck {
+		opts = append(opts,
+			StageTrackerDecisionOption{Action: decisionActionApprove, Label: "Lift the park (remove " + stagelabels.IssueNeedsDecision.Label() + ")", Enabled: true},
+			StageTrackerDecisionOption{Action: decisionActionRetry, Label: "Re-evaluate now", Enabled: true})
+	}
 	if in.Kind == delegatedecision.KindPR && d.Verdict != delegatedecision.VerdictCloseDuplicate && d.Verdict != delegatedecision.VerdictCloseSuperseded {
-		o := StageTrackerDecisionOption{Action: decisionActionOpenGitHub, Label: "Merge as maintainer (on GitHub)", Enabled: mergerRole}
-		if !mergerRole {
-			o.ReasonIfDisabled = "merger role required"
-		}
+		o := decisionOption(decisionActionMergeNow, "Merge as maintainer", mergerRole, decisionWhyMergerRole)
+		o.Consequence = "merges #" + strconv.Itoa(in.Number) + " now via hive's identity, attributed to you"
 		opts = append(opts, o)
 	}
 	opts = append(opts, StageTrackerDecisionOption{Action: decisionActionDelegateRerun, Label: "Re-run decision", Enabled: true})
@@ -195,7 +288,7 @@ func delegatedDecisionEffectResult(target RowActionTarget, in delegatedecision.I
 	eff := delegatedecision.ExpectedEffect(d, in.Kind)
 	at := prior.UTC().Truncate(time.Second)
 	stamp := at.Format(time.RFC3339)
-	plainAction := delegatedecision.ActionPlain(d)
+	plainAction := delegatedecision.ActionPlainOn(d, in.Kind)
 	out := RowActionResult{Target: target, Rule: d.Rule, AppliedAt: &at, Why: why}
 	if !eff.Waits {
 		out.Action = rowActionNoop
@@ -212,8 +305,11 @@ func delegatedDecisionEffectResult(target RowActionTarget, in delegatedecision.I
 	}
 	out.Action = rowActionNoEffect
 	out.Options = options
-	out.Outcome = "Hive decided " + plainAction + " at " + stamp + ", but it hasn't taken effect: " + delegatedecision.Plain(why) + "."
-	next := "Expected: " + eff.What + ". " + delegatedecision.Detail(why)
+	// The toast headline already says "Hive decided on <item>"; the body
+	// does not say "decided" again. The SPA rewrites the RFC3339 stamp into
+	// the operator's clock (stageTrackerStampWords).
+	out.Outcome = delegatedecision.CapitalizeFirst(plainAction) + " at " + stamp + ", but it hasn't taken effect: " + delegatedecision.PlainOn(why, in.Kind) + "."
+	next := "Expected: " + eff.What + ". " + delegatedecision.DetailOn(why, in.Kind)
 	if labels := optionLabels(options); len(labels) > 0 {
 		next += " Options: " + strings.Join(labels, " · ") + "."
 	}

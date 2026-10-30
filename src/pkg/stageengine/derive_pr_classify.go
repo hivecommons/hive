@@ -31,6 +31,7 @@ const (
 	autoMergeReasonHumanChangesRequested   = prstage.AutoMergeReasonHumanChangesRequested
 	autoMergeReasonHumanMergePath          = prstage.AutoMergeReasonHumanMergePath
 	autoMergeReasonHumanMergePathEvidence  = prstage.AutoMergeReasonHumanMergePathEvidence
+	autoMergeReasonHumanMergeRequired      = prstage.AutoMergeReasonHumanMergeRequired
 	autoMergeReasonIntentEvidence          = prstage.AutoMergeReasonIntentEvidence
 	autoMergeReasonIntentUnauthorized      = prstage.AutoMergeReasonIntentUnauthorized
 	autoMergeReasonMergeQueueRequired      = prstage.AutoMergeReasonMergeQueueRequired
@@ -362,6 +363,22 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if stageHandoffReasons[reason] {
 		return stageVerdict{}
 	}
+	if train, ok := prstage.ParseMergeTrain(reason); ok {
+		// The merge train parked this PR behind an overlapping front
+		// (hivecommons/hive#15117): a hive-side wait at the merge gate,
+		// never a human stage — unless the train gave up rebasing it.
+		if train.State == prstage.MergeTrainStateRebaseExhausted {
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+		}
+		if train.State == prstage.MergeTrainStateDuplicateOf {
+			// Two open PRs fix one issue and the queue kept the other
+			// (hivecommons/hive#15469): this one goes back to its author
+			// — 072 for a relay contributor, 071 for a person, 070 for
+			// the App's own — as superseded, never "waiting its turn".
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
+	}
 	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {
 		if HasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
@@ -389,14 +406,35 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// can take it (hivecommons/hive#14589). The reason keeps the step.
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
-	// An open issue the PR closes is held or parked on a person
-	// (linked-issue:hold:#N:<label> / linked-issue:needs-decision:#N:<label>):
-	// the decision is owed on the issue, and removing its label releases
-	// the PR on the next sweep.
+	if reason == autoMergeReasonHumanMergeRequired {
+		// A breaking-change title or a needs-owner-merge label
+		// (hivecommons/hive#15442): no decision is owed, only the owner's
+		// merge click, so the PR parks at 090 with the manual-merge rule
+		// once the head is green. Owned, so the trusted tier cannot drop it
+		// (ResolveStage keeps only owned 090 opinions for trusted authors).
+		if HasLabelFold(o.Labels, "needs-rebase") {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		if v, ok := HumanChangeRequestStage(o); ok {
+			return v
+		}
+		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: stageRankOwned, Human: true}, humanApprovalReason)
+	}
+	// An open issue the PR closes is held or parked on a person:
+	// removing the issue's label releases the PR on the next sweep.
 	if _, _, _, linked := prstage.ParseLinkedIssueReason(reason); linked ||
 		strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
 		if HasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		if v, ok := HumanChangeRequestStage(o); ok {
+			// The "needs a human" the lane parked on — a sentinel alert, a
+			// workflow-path fence, a hold — is answered for this head: a
+			// trusted maintainer reviewed it and asked for changes, so the
+			// author acts next. Without this the sentinel-blocked
+			// contributor lane re-derived 085 over the owner's 072 every
+			// sweep (hivecommons/hive#15159); a new head re-asks.
+			return v
 		}
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}

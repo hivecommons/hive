@@ -2,6 +2,7 @@ package outcomebench
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,12 +10,9 @@ import (
 	"testing"
 )
 
-// TestCommittedReportMatchesReadme regenerates the newest committed report
-// from its JSON and asserts the README outcomes block, the markdown and the
-// SVG assets are exactly what the generator emits, so none of them can
-// drift from the data. Fix with: src/scripts/outcome-benchmark.sh --readme
-// (or hivectl evidence benchmark … --readme README.md).
-func TestCommittedReportMatchesReadme(t *testing.T) {
+// TestCommittedReportAssets regenerates the benchmark from its JSON.
+// The hand-written root README has separate snapshot and asset checks.
+func TestCommittedReportAssets(t *testing.T) {
 	docDir := filepath.Join("..", "..", "docs", "benchmarks")
 	reports, err := filepath.Glob(filepath.Join(docDir, "outcomes-*.json"))
 	if err != nil || len(reports) == 0 {
@@ -29,23 +27,6 @@ func TestCommittedReportMatchesReadme(t *testing.T) {
 	var rep Report
 	if err := json.Unmarshal(data, &rep); err != nil {
 		t.Fatalf("%s: %v", latest, err)
-	}
-	want := rep.ReadmeBlock("src/docs/benchmarks")
-
-	readme, err := os.ReadFile(filepath.Join("..", "..", "..", "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := ExtractReadmeBlock(string(readme))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Errorf("README outcomes block drifted from %s; regenerate with src/scripts/outcome-benchmark.sh --readme\n--- README\n%s\n--- regenerated\n%s", latest, got, want)
-	}
-	// The ladder card sits outside the generated block but is still generated.
-	if !strings.Contains(string(readme), rep.HowItWorksPicture("src/docs/benchmarks")) {
-		t.Errorf("README does not embed the how-it-works card: expected\n%s", rep.HowItWorksPicture("src/docs/benchmarks"))
 	}
 	base := strings.TrimSuffix(latest, ".json")
 	check := func(path, want string) {
@@ -63,12 +44,34 @@ func TestCommittedReportMatchesReadme(t *testing.T) {
 	check(filepath.Join(docDir, "assets", rep.AssetBase()+"-trend.svg"), rep.TrendSVG())
 	for file, svg := range rep.Cards() {
 		check(filepath.Join(docDir, "assets", file), svg)
+		pngPath := filepath.Join(docDir, "assets", strings.TrimSuffix(file, ".svg")+".png")
+		b, err := os.ReadFile(pngPath)
+		if err != nil {
+			t.Errorf("%s: %v (regenerate with src/scripts/outcome-benchmark.sh)", pngPath, err)
+			continue
+		}
+		if got, want := PNGText(b, PNGSourceKey), SourceHash(svg); got != want {
+			t.Errorf("%s was rendered from a different SVG (source %.12s, want %.12s); regenerate with src/scripts/outcome-benchmark.sh", pngPath, got, want)
+		}
+		w, h, err := PNGSize(b)
+		if err != nil {
+			t.Errorf("%s: %v", pngPath, err)
+		} else if wantW, wantH := svgSize(svg); w != wantW || h != wantH {
+			t.Errorf("%s is %dx%d, SVG declares %dx%d", pngPath, w, h, wantW, wantH)
+		}
 	}
 	// A card the generator no longer emits must not linger as a stale asset.
-	stale, _ := filepath.Glob(filepath.Join(docDir, "assets", rep.AssetBase()+"-card-*.svg"))
+	stale, _ := filepath.Glob(filepath.Join(docDir, "assets", rep.AssetBase()+"-card-*.*"))
 	for _, p := range stale {
-		if _, ok := rep.Cards()[filepath.Base(p)]; !ok {
+		svgName := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)) + ".svg"
+		if _, ok := rep.Cards()[svgName]; !ok {
 			t.Errorf("%s is not emitted by the generator any more; delete it", p)
 		}
 	}
+}
+
+// svgSize reads the declared width/height of a generated card SVG.
+func svgSize(svg string) (w, h int) {
+	fmt.Sscanf(svg[strings.Index(svg, ` width="`):], ` width="%d" height="%d"`, &w, &h)
+	return w, h
 }

@@ -966,6 +966,45 @@ else
   _body_fail "in-body --- rules" "no recorded 'gh issue comment' invocation"
 fi
 
+# A needs-human report naming a capability the App lacks gets the structured
+# blocker marker pkg/blocker reads (hivecommons/hive#15099): the dashboard
+# then parks the item on "App lacks workflows permission" instead of a bare
+# needs-human that "Let hive decide" un-parks and the scanner re-parks.
+BLOCKER_BODY_FILE="${WORK_DIR}/blocker-body.md"
+printf '%s\n' 'Verified: the Dockerfile wrappers are gone.' '' 'The remaining retry wrappers live in `.github/workflows/v2-ci.yml`, which the App token cannot push (no `workflows` permission); needs a human.' >"$BLOCKER_BODY_FILE"
+_capture_run /dev/null issue comment 42 --repo test/repo -F "$BLOCKER_BODY_FILE"
+if inv="$(_capture_invocation issue comment)" && body="$(_capture_body "$inv")"; then
+  desc="issue comment -F <needs-human: App lacks workflows permission>: gets <!-- hive:blocker kind=capability:workflows-permission --> before the footer"
+  if [[ "$body" == *$'needs a human.\n<!-- hive:blocker kind=capability:workflows-permission -->\n\n---\n'* ]]; then
+    echo "PASS: $desc"; PASSED=$((PASSED + 1))
+  else
+    _body_fail "$desc" "marker missing or misplaced" "body: ${body}"
+  fi
+else
+  _body_fail "blocker marker" "no recorded 'gh issue comment' invocation"
+fi
+
+# A body that already carries a marker, and a needs-human that names no
+# capability, are left exactly as written: a wrong kind is worse than none.
+_capture_run /dev/null issue comment 42 --repo test/repo --body 'The App cannot push workflow files; needs a human. <!-- hive:blocker kind=capability:repo-write -->'
+if inv="$(_capture_invocation issue comment)" && body="$(_capture_body "$inv")"; then
+  desc="issue comment --body <already marked>: no second blocker marker"
+  if [[ "$(printf '%s' "$body" | grep -c 'hive:blocker')" == "1" ]]; then
+    echo "PASS: $desc"; PASSED=$((PASSED + 1))
+  else
+    _body_fail "$desc" "expected exactly one marker" "body: ${body}"
+  fi
+fi
+_capture_run /dev/null issue comment 42 --repo test/repo --body 'needs-human: the flaky test touches workflows and a maintainer should look.'
+if inv="$(_capture_invocation issue comment)" && body="$(_capture_body "$inv")"; then
+  desc="issue comment --body <needs-human without a capability gap>: no blocker marker"
+  if [[ "$body" != *'hive:blocker'* ]]; then
+    echo "PASS: $desc"; PASSED=$((PASSED + 1))
+  else
+    _body_fail "$desc" "unexpected marker" "body: ${body}"
+  fi
+fi
+
 # No body at all used to get `--body <footer>`, which posted the footer alone
 # (projectbluefin/testsuite#838). It is refused now; see the empty_body cases.
 _capture_run /dev/null pr comment 42 --repo test/repo

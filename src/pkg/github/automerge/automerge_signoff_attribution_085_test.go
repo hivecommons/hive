@@ -9,6 +9,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -38,6 +39,11 @@ type signoffCase struct {
 	files  []string
 	labels []string
 	setup  func(*Engine)
+	// display is the sweep's display name for acme/widget: "acme/widget"
+	// when empty, "widget" as in a single-org hive. squashOnlyList, when
+	// set, is auto_merge.squash_only matched by the real SquashOnlyFor.
+	display        string
+	squashOnlyList []string
 }
 
 func runSignoffCase(t *testing.T, tc signoffCase) (*stageAPI, stagelabels.Record, *Engine, func()) {
@@ -70,6 +76,9 @@ func runSignoffCase(t *testing.T, tc signoffCase) (*stageAPI, stagelabels.Record
 		if tc.squashOnly {
 			p.SquashOnly = func(string) bool { return true }
 		}
+		if tc.squashOnlyList != nil {
+			p.SquashOnly = config.AutoMergeConfig{SquashOnly: tc.squashOnlyList}.SquashOnlyFor
+		}
 		return p
 	}
 	if tc.setup != nil {
@@ -77,7 +86,11 @@ func runSignoffCase(t *testing.T, tc signoffCase) (*stageAPI, stagelabels.Record
 	}
 	pr := stagePR(n, append([]string{"role/contributor", "author/clanker"}, tc.labels...)...)
 	pr.User = &gh.User{Login: gh.Ptr("j1mc")}
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, tc.reason, false, nil)
+	display := tc.display
+	if display == "" {
+		display = "acme/widget"
+	}
+	e.recordStage(stageLaneContributor, display, "acme", "widget", pr, tc.reason, false, nil)
 	e.noteStageRole("acme", "widget", n, stagelabels.RoleContributor)
 	if tc.squashGate {
 		e.noteStageDCOGate("acme", "widget", n, pr.GetHead().GetSHA(), nil, map[string]bool{squashSignoffCheck: true})
@@ -92,7 +105,7 @@ func runSignoffCase(t *testing.T, tc signoffCase) (*stageAPI, stagelabels.Record
 		before := len(api.comments)
 		pr = stagePR(n, append(append([]string{"role/contributor", "author/clanker"}, tc.labels...), addedAll(api)...)...)
 		pr.User = &gh.User{Login: gh.Ptr("j1mc")}
-		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, tc.reason, false, nil)
+		e.recordStage(stageLaneContributor, display, "acme", "widget", pr, tc.reason, false, nil)
 		e.noteStageRole("acme", "widget", n, stagelabels.RoleContributor)
 		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 			t.Fatal(err)
@@ -303,4 +316,82 @@ func TestAuthorsOwnAppSignedCommitStillReturnsToAuthor(t *testing.T) {
 		t.Fatalf("maintainer note on an author-fixable head: %q", api.comments)
 	}
 	again()
+}
+
+// projectbluefin/utah#1005 (2026-10-29): utah is in auto_merge.squash_only as
+// the dashboard stores it, "projectbluefin/utah", but a single-org hive's
+// sweep displays the bare name, and the election matched the policy on the
+// display. It never matched: the PR was labelled merge-method/merge and every
+// merge attempt was refused as method-not-allowed. With a bare display and an
+// owner/repo entry the election is refused as squash-only, approved head or
+// not, and the PR parks once at 085 with the squash-only note. The tests
+// above pass "acme/widget" as the display, which is why they never saw it.
+func TestBareDisplaySquashOnlyOwnerRepoRefusesMergeCommit(t *testing.T) {
+	for _, approvedHead := range []string{"", "sha"} {
+		t.Run("approved="+approvedHead, func(t *testing.T) {
+			api, rec, _, again := runSignoffCase(t, signoffCase{commits: testsuite991Commits, reason: contributorLaneReasonNoVerdict, approvedHead: approvedHead, display: "widget", squashOnlyList: []string{"acme/widget"}})
+			if rec.Stage != stagelabels.NeedsDecision || rec.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
+				t.Fatalf("record %+v, want 085", rec)
+			}
+			if containsLabel(addedAll(api), stagelabels.MergeCommitLabel) {
+				t.Fatalf("merge commit elected in a squash-only repo: %v", api.added)
+			}
+			notes := commentsWith(api, SignoffAttributionDecisionMarkerPrefix)
+			if len(notes) != 1 || !strings.Contains(notes[0], "auto_merge.squash_only") || strings.Contains(notes[0], "--merge") {
+				t.Fatalf("squash-only note: %q", api.comments)
+			}
+			again()
+		})
+	}
+}
+
+// A repo not on the list keeps electing a merge commit for an approved
+// mixed-authorship head under a bare display.
+func TestBareDisplayNotSquashOnlyElectsMergeCommit(t *testing.T) {
+	api, rec, _, again := runSignoffCase(t, signoffCase{commits: testsuite991Commits, reason: contributorLaneReasonNoVerdict, approvedHead: "sha", display: "widget", squashOnlyList: []string{"acme/other"}})
+	if rec.Stage == stagelabels.NeedsDecision || rec.Reason == stagelabels.LaneReasonHiveSignoffAttribution {
+		t.Fatalf("approved head still held on attribution: %+v", rec)
+	}
+	if !containsLabel(addedAll(api), stagelabels.MergeCommitLabel) {
+		t.Fatalf("merge-method label not written: %v", api.added)
+	}
+	again()
+}
+
+// governor.labels.stage.dco.required has the same shape: RequiredFor tries the
+// exact key, then the bare name, then "*", so a bare display never reached an
+// "owner/repo" key. Resolved on the owner/repo name, every key form applies.
+func TestDCORequiredResolvesOwnerRepoKeyForBareDisplay(t *testing.T) {
+	obs := stageObservation{Display: "widget", Owner: "acme", Repo: "widget", HeadSHA: "h1"}
+	detected := obs
+	detected.Detail.DCOGate, detected.Detail.DCOGateHead = true, "h1"
+	for _, tc := range []struct {
+		name     string
+		required map[string]bool
+		obs      stageObservation
+		want     bool
+	}{
+		{"owner/repo key requires", map[string]bool{"acme/widget": true}, obs, true},
+		{"owner/repo key waives a detected gate", map[string]bool{"Acme/Widget": false}, detected, false},
+		{"bare key still applies", map[string]bool{"widget": true}, obs, true},
+		{"wildcard still applies", map[string]bool{"*": true}, obs, true},
+		{"another repo's key falls back to detection", map[string]bool{"acme/other": false}, detected, true},
+		{"no key and no gate", map[string]bool{"acme/other": true}, obs, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := StageLabelPolicy{DCORequired: config.StageDCOConfig{Required: tc.required}.RequiredFor}
+			if got := dcoRequired(policy, tc.obs); got != tc.want {
+				t.Fatalf("dcoRequired = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStageRepoFullName(t *testing.T) {
+	if got := stageRepoFullName(stageObservation{Display: "widget", Owner: "acme", Repo: "widget"}); got != "acme/widget" {
+		t.Fatalf("bare display = %q", got)
+	}
+	if got := stageRepoFullName(stageObservation{Display: "acme/widget"}); got != "acme/widget" {
+		t.Fatalf("no owner/repo falls back to the display: %q", got)
+	}
 }

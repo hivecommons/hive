@@ -1,5 +1,12 @@
 # Hive Reference Architecture
 
+**Developer reference, not an installation prerequisite.** Start with the
+[introduction](README.md) or [first-session guide](getting-started.md).
+For a concrete example, skip to [an issue becoming a merged PR](#11-end-to-end-an-issue-becomes-a-merged-pr):
+Hive checks a reported problem, assigns an agent, and applies the configured
+review and merge gates. That example describes a permitted workflow, not what
+every ACMM level allows.
+
 Hive is AI-agent orchestration for open-source projects. A single Go binary
 enumerates GitHub issues and PRs, classifies them, and dispatches work to AI
 coding agents (Claude, Copilot, Codex, Antigravity, Goose) on adaptive cadences governed by
@@ -10,6 +17,19 @@ The design separates **deterministic decisions** (filtering, classification,
 merge-gating, permission enforcement) from **judgment calls** (reading code,
 reasoning about a fix, writing a PR). Deterministic work runs in Go and shell
 before any LLM sees the task; agents only handle the judgment.
+
+### Reading the diagrams
+
+- **PR:** pull request; **CI:** automated build/test checks; **LLM:** language model.
+- **K8s:** Kubernetes; **UID:** operating-system user ID.
+- **MITM:** the checking proxy between agents and remote services; **CA:** certificate authority used to trust its certificates.
+- **SSE:** server-sent events, the dashboard's live event stream.
+
+The word **mode** names three independent settings here: governor **load modes**
+(`SURGE`, `BUSY`, `QUIET`, `IDLE`) select scheduling cadences; per-agent
+**permission modes** select allowed actions; `HIVE_MODE` selects the process's
+deployment role (for example hub or contributor). Changing one is not changing
+the other two.
 
 > Goal decomposition, plan review, and stall-triggered re-planning are **not**
 > covered on this page — they are the planning-intelligence lane. Plan review and
@@ -184,6 +204,12 @@ flowchart LR
 
 ## Archetypes for long-running work
 
+<details>
+<summary>Optional advanced branch: long-running stages, receipts, and convergence contracts</summary>
+
+The numbered walkthrough continues at [Layered guardrails](#5-layered-guardrails-defense-in-depth).
+This branch is for implementers of stage-based work, not first-time operators.
+
 Long-running runs use the settled archetype vocabulary recorded in
 [#7620](https://github.com/hivecommons/hive/issues/7620) and implemented through
 the #8290 runs work. The names describe roles in the existing architecture, not
@@ -219,6 +245,8 @@ it is wired.
 | Spec | `pkg/worksource` identifies the run item and current stage. | Spec interview or external workflow emits the spec artifact. | Admission reads stage/generation state; missing or stale evidence is `Unknown`. | None unless the approved spec records an external effect. |
 | Plan | `pkg/worksource` exposes the same run key with `Stage=plan`. | Planner emits a revisioned plan, allowed scope, effects, and assumptions. | Proof receipts and outcome observations bind the plan revision and approved scope. | Mutation executor journals any approved issue/comment/metadata effects. |
 | Implement | `pkg/worksource` exposes `Stage=implement` for the lease generation. | Agent or external runner performs an implementation or report-only campaign. | Gate evaluates proof and outcome evidence before publication or stage completion. | Mutation executor applies authorized effects; a report-only audit campaign may exercise the path without opening a PR. |
+
+</details>
 
 ---
 
@@ -282,9 +310,12 @@ removed so the dependency surface only shrinks.
 
 ## 6. ACMM — controlling agent autonomy
 
-The **AI Codebase Maturity Model** is the single dial an operator turns.
-The level maps deterministically to per-agent modes via `DefaultAgentMode`, which
-in turn sets the guardrails in §5. Raising the level is always a human decision.
+The **AI Codebase Maturity Model** connects a codebase's tests, coverage,
+review practice, and security safeguards to agent autonomy. It is not a
+mandatory progression or a rule that every work item must become a PR.
+`DefaultAgentMode` supplies defaults; ACMM packs set explicit per-agent modes,
+and narrower repository policy still applies. These modes set the guardrails
+in §5. Raising the level is always a human decision.
 
 ```mermaid
 flowchart LR
@@ -292,7 +323,7 @@ flowchart LR
     L2["L2 Advisory<br/>observe + report"]
     L3["L3 Quality-Gated<br/>quality opens PRs"]
     L4["L4 Security-Aware<br/>more agents file/PR"]
-    L5["L5 Semi-Autonomous<br/>all PRs, hold gated"]
+    L5["L5 Semi-Autonomous<br/>delivery PRs, hold gated"]
     L6["L6 Autonomous<br/>auto-merge switches on"]
     L1 --> L2 --> L3 --> L4 --> L5 --> L6
 ```
@@ -300,13 +331,17 @@ flowchart LR
 | Level | Name | Effect on agents |
 |-------|------|------------------|
 | L1 | Inception (Assisted) | Advisory beads + project inception only |
-| L2 | Advisory (Instructed) | Observe and report findings as beads; no GitHub writes |
+| L2 | Advisory (Instructed) | Workers observe and report beads; reviewer can post COMMENT-only reviews. No new issues, PRs, approvals, or merges |
 | L3 | Quality-Gated (Measured) | `quality` opens PRs gated by literal `hold` about testing gaps, coverage, and CI health; others advisory. This measurement foundation is what earns automation at higher levels |
-| L4 | Security-Aware (Adaptive) | All agents file issues; quality, ci-maintainer, and sec-check can open PRs gated by literal `hold` |
-| L5 | Semi-Autonomous (Semi-Automated) | All agents open PRs — every PR carries literal `hold` for human review |
-| L6 | Autonomous | Agents open PRs and **auto-merge on green CI**; switching to L6 enables auto-merge for every active repo, owners may toggle repos afterward, no level hold, except cross-repo outreach PRs (target repo not managed by this hive) remain held |
+| L4 | Security-Aware (Adaptive) | Scanner and guide file issues; quality, ci-maintainer, and sec-check can open PRs gated by literal `hold`. Supervisor and brainstorm stay advisory; reviewer comments |
+| L5 | Semi-Autonomous (Semi-Automated) | Delivery lanes propose issues and held PRs for human review; specialist lanes retain their narrower rights |
+| L6 | Autonomous | Scanner gets merge capability; most delivery agents still propose PRs. Hive's separate auto-merge path can merge eligible PRs after checks/gates pass. Switching to L6 enables auto-merge for active repos, owners may toggle afterward, and cross-repo outreach remains held |
 
-`supervisor` is always advisory. The full matrix is in
+`supervisor` and `brainstorm` stay advisory. Reviewer never merges;
+adjudicator never merges; dedupe remains recommendation-only. Telemetry and
+operations are paused opt-ins at L5/L6 and never merge their own PRs.
+Existing level holds are not automatically removed by a level change.
+The full matrix is in
 [`acmm-policy-matrix.md`](acmm-policy-matrix.md).
 
 ---

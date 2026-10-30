@@ -1,16 +1,10 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -31,74 +25,6 @@ func deadSessionRecoveryOwner(ownedElsewhere bool) string {
 		return "watchdog"
 	}
 	return "crash-loop"
-}
-
-// crashPaneTailLines bounds the pane excerpt attached to a bare-shell crash
-// log line: enough for the CLI's exit message plus the shell prompt that
-// replaced it, small enough to stay one log record.
-const crashPaneTailLines = 8
-
-// crashPaneTail is the last pane lines attached to a crash log line, with any
-// launch credential scrubbed. The pane holds the typed launch command, and
-// for Claude that command carries the task MCP launch token in its URL query
-// (taskmcp.TokenQueryParam); a log line must not republish it.
-func crashPaneTail(pane string) string {
-	return redactTokenQueryValues(paneTail(pane, crashPaneTailLines))
-}
-
-// crashExitCode reads the CLI's exit status back out of the pane: the value
-// bash printed after cliExitMarker when the process returned (withCLIExitEcho).
-// The typed launch line also contains the marker, followed by the literal
-// `$?`, so only a marker followed by digits counts and the LAST one wins —
-// the pane may hold several launches' worth of scrollback. "unknown" when the
-// pane shows no status: the launch predates the echo, the operator's
-// LaunchCmd swallowed it, or the shell itself is gone.
-func crashExitCode(pane string) string {
-	rest := pane
-	code := "unknown"
-	for {
-		i := strings.Index(rest, cliExitMarker)
-		if i < 0 {
-			return code
-		}
-		rest = rest[i+len(cliExitMarker):]
-		// Every marker resets the answer: the latest one is the truth. If
-		// it is a typed launch line (literal `$?`), a status printed by an
-		// OLDER launch above it must not be reported as this launch's.
-		code = "unknown"
-		end := 0
-		for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-			end++
-		}
-		if end > 0 {
-			code = rest[:end]
-		}
-	}
-}
-
-// redactTokenQueryValues replaces the value of every `token=` URL query
-// parameter in s with "<redacted>". The value runs to the next `&`, quote,
-// closing brace or whitespace — the characters that can follow a query value
-// in a typed launch line.
-func redactTokenQueryValues(s string) string {
-	const key = "token="
-	var b strings.Builder
-	for {
-		i := strings.Index(s, key)
-		if i < 0 {
-			b.WriteString(s)
-			return b.String()
-		}
-		i += len(key)
-		b.WriteString(s[:i])
-		b.WriteString("<redacted>")
-		s = s[i:]
-		end := strings.IndexAny(s, "&'\"}` \t\r\n")
-		if end < 0 {
-			return b.String()
-		}
-		s = s[end:]
-	}
 }
 
 // SetDeadSessionRecoveryOwner declares whether some other component owns
@@ -331,144 +257,6 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	return restarted
 }
 
-// RelaunchBobAgentsAwaitingKey restarts the bob-backend agents that
-// launchInTmux parked in StateFailed because no API key was configured, and
-// returns their names. It is the "absent → present" half of the key lifecycle:
-// the resolver makes a newly-saved key visible to the NEXT launch, but nothing
-// carries it into a session whose shell already exists, so an agent parked for
-// a missing key would otherwise sit at bob's key prompt until someone
-// intervened.
-//
-// Each relaunch RECREATES the tmux session rather than just re-typing the
-// launch command — see killSessionForRelaunch for why that is required and not
-// merely tidy.
-//
-// Call it after a key is stored. It is a no-op — returning nil — when the key
-// still does not resolve, so a clear (or a failed save) never launches
-// anything.
-//
-// Selection is deliberately narrow: awaitingBobKey is set on exactly one
-// branch of launchInTmux and cleared on every launch attempt, so a running
-// agent, a non-bob agent, and an agent failed for any other reason are all
-// skipped. An operator-paused agent is skipped too — a key save must not
-// override a deliberate pause. That also makes a double save harmless: the
-// first relaunch clears the flag, so the second finds nothing to do.
-//
-// Locking: candidates are collected under RLock, the lock is RELEASED, and
-// only then is Start called — Start takes m.mu.Lock() itself, and m.mu is a
-// non-reentrant RWMutex, so calling it under the read lock would deadlock
-// (incident #1980→#1988). This mirrors CheckAndRestartCrashedAgents.
-func (m *Manager) RelaunchBobAgentsAwaitingKey(ctx context.Context) []string {
-	// The key must actually resolve now; otherwise every relaunch would just
-	// re-park on the same branch. Read lock-free via the atomic resolver, and
-	// never bind or log the value — only its presence matters here.
-	if m.bobAPIKey() == "" {
-		return nil
-	}
-
-	candidates := m.bobAgentsAwaitingKey()
-
-	var relaunched []string
-	for _, name := range candidates {
-		m.logger.Info("relaunching bob agent parked for missing API key", "name", name)
-		// Kill the stale tmux session FIRST. This is load-bearing, not
-		// hygiene: BOBSHELL_API_KEY is Secret, so buildEnvPrefix omits it from
-		// the typed command line and it is delivered ONLY by tmux
-		// set-environment — which updates the SESSION environment and is
-		// inherited just by shells created afterwards. The pane's bash was
-		// started before the key existed, so it does not have the variable and
-		// never will; reapAgentCLI kills the bob CLI but leaves that bash
-		// alive, so a plain relaunch retypes the command into the same
-		// key-less shell and bob prompts for a key again (observed on
-		// hosted-available-vllmd-01: BOBSHELL_API_KEY present in the tmux
-		// session env, absent from every bob /proc/<pid>/environ).
-		// Killing the session makes ensureTmuxSession build a new one and
-		// re-run set-environment before any shell exists, so the fresh bash —
-		// and the bob it spawns — inherit the key.
-		if err := m.killSessionForRelaunch(name); err != nil {
-			m.logger.Warn("could not kill stale session before bob relaunch; launching anyway",
-				"name", name, "error", err)
-		}
-		// The saved key is new information about the exact condition that
-		// parked this agent, so the backoff must not hold the retry (#5958).
-		m.mu.Lock()
-		m.clearStartFailureLocked(m.agents[name])
-		m.mu.Unlock()
-		if err := m.Start(ctx, name); err != nil {
-			// One agent's failure must never abort the rest of the fleet,
-			// exactly as in the crash-restart loop above.
-			m.logger.Error("failed to relaunch bob agent after key save", "name", name, "error", err)
-			continue
-		}
-		relaunched = append(relaunched, name)
-	}
-	return relaunched
-}
-
-// killSessionForRelaunch tears down an agent's tmux session so the next
-// ensureTmuxSession creates a fresh one whose shell inherits the current
-// set-environment values (including a newly-saved BOBSHELL_API_KEY).
-//
-// This is KillSession's behaviour, but it deliberately does not call
-// KillSession: that method takes m.mu.Lock() and is a public entry point.
-// Keeping a private helper with the same lock discipline (acquire, act,
-// release — never held across Start) keeps the relaunch loop's locking
-// obvious and avoids any temptation to hold a lock across the launch, which
-// is the deadlock class from incident #1980→#1988.
-func (m *Manager) killSessionForRelaunch(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	agent, ok := m.agents[name]
-	if !ok {
-		return fmt.Errorf("agent %s not found", name)
-	}
-	// Not an error if the session is already gone — the goal is "no stale
-	// shell", which a missing session already satisfies.
-	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
-	// State must not stay Running: Start refuses to launch a running agent,
-	// and the session backing that state no longer exists.
-	if agent.State == StateRunning {
-		agent.State = StateStopped
-	}
-	m.logger.Info("killed stale tmux session so the fresh shell inherits the bob key",
-		"name", name, "session", agent.tmuxSession)
-	return nil
-}
-
-// bobAgentsAwaitingKey returns the names of agents parked by launchInTmux for a
-// missing bob API key and eligible to be started now. Split out from
-// RelaunchBobAgentsAwaitingKey so the selection rules can be tested without
-// tmux: this is the part that must never pick up a running, paused, or non-bob
-// agent.
-//
-// Takes m.mu.RLock and releases it before returning; the caller must NOT hold
-// m.mu (non-reentrant RWMutex).
-func (m *Manager) bobAgentsAwaitingKey() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var candidates []string
-	for name, agent := range m.agents {
-		if agent == nil || !agent.awaitingBobKey {
-			continue
-		}
-		// Defensive: awaitingBobKey is only ever set on the bob branch, but
-		// re-check the effective backend so a backend override applied after
-		// parking cannot smuggle a non-bob agent into this path.
-		if effectiveBackend(agent) != bobBackend {
-			continue
-		}
-		// Never disturb a healthy agent, and never override a pause — a key
-		// save is not a resume.
-		if agent.State == StateRunning || agent.Paused {
-			continue
-		}
-		candidates = append(candidates, name)
-	}
-	return candidates
-}
-
 func (m *Manager) KillSession(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -649,167 +437,6 @@ var cliProcessMarkers = []string{
 // and nothing on the launch path mutates it.
 var procRoot = "/proc"
 
-func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
-	procPath := procRoot
-	marker := "HIVE_AGENT=" + agent.Name
-
-	entries, err := os.ReadDir(procPath)
-	if err != nil {
-		m.logger.Warn("reapAgentCLI: failed to read /proc", "agent", agent.Name, "error", err)
-		return 0
-	}
-
-	killed := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil {
-			continue
-		}
-		if pid == os.Getpid() {
-			continue
-		}
-
-		// cmdline is NUL-separated; read it raw and check for a CLI binary.
-		cmdlineRaw, err := os.ReadFile(filepath.Join(procPath, entry.Name(), "cmdline"))
-		if err != nil || len(cmdlineRaw) == 0 {
-			continue
-		}
-		cmdline := strings.ReplaceAll(string(cmdlineRaw), "\x00", " ")
-		if !containsCLIMarker(cmdline) {
-			continue
-		}
-
-		// environ is NUL-separated KEY=VALUE pairs. Match the exact agent so we
-		// never kill another agent's CLI when UIDs are shared.
-		environRaw, err := os.ReadFile(filepath.Join(procPath, entry.Name(), "environ"))
-		if err != nil {
-			continue
-		}
-		if !environHasMarker(string(environRaw), marker) {
-			continue
-		}
-
-		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
-			killed++
-			m.logger.Info("reaped agent CLI process",
-				"agent", agent.Name, "pid", pid, "cmdline", truncateStr(cmdline, 120))
-		}
-	}
-	if killed > 0 {
-		m.logger.Info("reapAgentCLI complete", "agent", agent.Name, "killed", killed)
-	}
-	return killed
-}
-
-// containsCLIMarker reports whether a /proc cmdline names a known CLI binary.
-func containsCLIMarker(cmdline string) bool {
-	for _, marker := range cliProcessMarkers {
-		if strings.Contains(cmdline, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-// environHasMarker reports whether a raw NUL-separated /proc environ blob
-// contains the exact HIVE_AGENT=<name> pair. Splitting on NUL and comparing
-// whole entries avoids a prefix collision between "scanner" and "scanner-2".
-func environHasMarker(environ, marker string) bool {
-	for _, pair := range strings.Split(environ, "\x00") {
-		if pair == marker {
-			return true
-		}
-	}
-	return false
-}
-
-// minAgentUID is the lowest UID killAgentProcesses will ever target. Per-agent
-// UIDs are allocated from baseAgentUID (2001) upward, so any uid below this
-// belongs to the system (root=0, the proxy user, etc.). Refusing to match on a
-// sub-range UID guarantees that a stray killAgentProcesses(0) — which happens
-// when UID isolation is off or an agent is missing from the UID map — can never
-// SIGKILL root-owned processes (hive itself, PID 1, the shared tmux server).
-const minAgentUID = baseAgentUID
-
-// killAgentProcesses finds all processes owned by the given UID via /proc and
-// sends SIGKILL to each. Hung copilot binaries ignore SIGINT, so brute-force
-// cleanup is needed to prevent orphan accumulation on the shared SQLite store.
-//
-// The function is EPERM-safe only for unprivileged callers; hive runs as root,
-// so it is NOT inherently a no-op for shared/system UIDs. A floor guard
-// (uid >= minAgentUID) plus a self-skip (never SIGKILL our own PID) are the
-// real defenses that keep uid < minAgentUID from touching system processes.
-func killAgentProcesses(uid int, logger *slog.Logger) int {
-	// Floor guard: refuse to sweep by a system-range UID. uid==0 (root) reaches
-	// here when UID isolation is disabled or LookupByName missed the agent; as
-	// root, matching ownerUID==0 would SIGKILL every root process. This is a real
-	// bug signal, so warn loudly and kill nothing.
-	if uid < minAgentUID {
-		if logger != nil {
-			logger.Warn("refusing to kill by uid, would target system/root processes",
-				"uid", uid, "min_agent_uid", minAgentUID)
-		}
-		return 0
-	}
-
-	procPath := procRoot
-	entries, err := os.ReadDir(procPath)
-	if err != nil {
-		logger.Warn("failed to read /proc for process cleanup", "uid", uid, "error", err)
-		return 0
-	}
-
-	killed := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil {
-			continue
-		}
-		// Belt-and-suspenders: never SIGKILL the hive process itself, mirroring
-		// reapAgentCLI's self-skip.
-		if pid == os.Getpid() {
-			continue
-		}
-
-		statusPath := filepath.Join(procPath, entry.Name(), "status")
-		f, err := os.Open(statusPath)
-		if err != nil {
-			continue
-		}
-
-		ownerUID := -1
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "Uid:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					if parsed, err := strconv.Atoi(fields[1]); err == nil {
-						ownerUID = parsed
-					}
-				}
-				break
-			}
-		}
-		_ = f.Close() // read-only /proc status fd; nothing to lose on close error
-
-		if ownerUID != uid {
-			continue
-		}
-
-		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
-			killed++
-		}
-	}
-	return killed
-}
-
 func (m *Manager) Restart(ctx context.Context, name string) error {
 	return m.RestartWithReason(ctx, name, "operator")
 }
@@ -887,9 +514,25 @@ func (m *Manager) RestartMissingSessionWithReason(ctx context.Context, name, rea
 // deliverKickAsync). It still invalidates every OTHER pending kick for the
 // agent, but it neither fails the caller's dispatch record nor arms the
 // restart/kick breaker: the caller captures the new kick epoch after this
-// returns and is the intended next delivery, not a replay (#7363).
+// returns and is the intended next delivery, not a replay (#7363). Recovery is
+// still automatic: use the shared storm budget rather than treating each kick
+// as an operator retry that can restart an unbootable CLI indefinitely.
 func (m *Manager) restartForKick(ctx context.Context, name string) error {
-	return m.restartWithReason(ctx, name, "operator", true)
+	const reason = "kick CLI recovery"
+	plan := m.planAutomaticRestart(name, reason, "CLI crashed or stuck on consent screen before kick", time.Now())
+	_, restarted, err := m.applyRestartStormPlan(name, reason, plan, func() error {
+		return m.restartWithReason(ctx, name, reason, true)
+	})
+	if err != nil {
+		return err
+	}
+	if !restarted {
+		if plan.backoff > 0 {
+			return fmt.Errorf("agent %s kick recovery suppressed by restart-storm breaker; retry in %v", name, plan.backoff.Round(time.Second))
+		}
+		return fmt.Errorf("agent %s kick recovery suppressed by restart-storm breaker", name)
+	}
+	return nil
 }
 
 // restartWithReason is RestartWithReason's body. kickInitiated marks a

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/github"
@@ -189,11 +190,7 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 	if message == "" || !s.isPRCapableAgent(agentName) {
 		return message
 	}
-	data, err := os.ReadFile(ciFailingPath)
-	if err != nil {
-		return message
-	}
-	section := formatRedPRFixData(data, s.cfg.BaseAgentName(agentName))
+	section := s.redPRFixSection(agentName)
 	if section == "" {
 		return message
 	}
@@ -207,6 +204,38 @@ var markAdoptedFixerAttempt = func(repo string, number int, head string) {
 	if head != "" {
 		stagelabels.Shared().MarkFixerAttempted(stagelabels.Key(repo, number), head)
 	}
+}
+
+// redPRFixSection renders the agent's fix-before-new section from
+// ci-failing.json merged with the webhook CI-failure signals attributed to
+// it (github.CIFailureSignals), so a check that went red seconds ago is
+// listed — with its name and log pointer — before the next eval tick
+// rewrites the file. Empty when the agent has nothing to repair.
+func (s *Scheduler) redPRFixSection(agentName string) string {
+	base := s.cfg.BaseAgentName(agentName)
+	data, err := os.ReadFile(ciFailingPath)
+	if err != nil {
+		data = nil
+	}
+	return formatRedPRFixDataWithSignals(data, base, github.CIFailureSignals().ForAgent(base))
+}
+
+// CIFailureKickMessage is the targeted kick a webhook CI-failure signal
+// sends to the owning agent: the same fix-before-new section a regular kick
+// would carry, under a one-line header naming the trigger. Empty when the
+// agent is not PR-capable or has no red PR to repair (e.g. every failing
+// check is red on the base branch too).
+func (s *Scheduler) CIFailureKickMessage(agentName string, sig github.CIFailureSignal) string {
+	if s == nil || !s.isPRCapableAgent(agentName) {
+		return ""
+	}
+	section := s.redPRFixSection(agentName)
+	if section == "" {
+		return ""
+	}
+	header := fmt.Sprintf("CI failed on %s#%d (%s) — repair it now. Detection was out-of-band (webhook); do not watch or poll CI yourself.\n",
+		sig.Repo, sig.Number, sig.Check)
+	return header + section
 }
 
 // heldRedPRNote is appended to a held PR's entry in the fix-before-new
@@ -234,6 +263,30 @@ const heldRedPRExemptAgent = "outreach"
 // and when every red PR the agent owns is deferred there is no section — and
 // no banner — at all.
 func formatRedPRFixData(data []byte, agent string) string {
+	return formatRedPRFixDataWithSignals(data, agent, nil)
+}
+
+// ciFailureSignalEvidence is the evidence line a webhook signal contributes:
+// the check name plus the log pointer, so the agent can open the run
+// without listing checks itself.
+func ciFailureSignalEvidence(sig github.CIFailureSignal) string {
+	line := "webhook: " + sig.Check + " failed"
+	if sig.Conclusion != "" && sig.Conclusion != "failure" {
+		line += " (" + sig.Conclusion + ")"
+	}
+	if sig.DetailsURL != "" {
+		line += " — log: " + sig.DetailsURL
+	}
+	return line
+}
+
+// formatRedPRFixDataWithSignals is formatRedPRFixData with the agent's
+// webhook CI-failure signals folded in: a signal for a PR the file already
+// lists adds its check and log pointer to that row; a signal for a PR the
+// file does not know yet (the file is rewritten per eval tick) becomes its
+// own row. A signal whose check the file reports red on the base branch is
+// dropped like any other base-red failure.
+func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.CIFailureSignal) string {
 	type ciFailingRow struct {
 		Number           int      `json:"number"`
 		Repo             string   `json:"repo"`
@@ -256,12 +309,54 @@ func formatRedPRFixData(data []byte, agent string) string {
 		DeferredExternal bool     `json:"deferred_external"`
 		BaseRedChecks    []string `json:"base_red_checks"`
 		BaseRed          bool     `json:"base_red"`
+		RebaseAttempt    int      `json:"rebase_attempt"`
+		RebaseMax        int      `json:"rebase_attempts_max"`
+		BaseRef          string   `json:"base_ref"`
+		TrustedAuthor    bool     `json:"trusted_author"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
 	}
-	if json.Unmarshal(data, &payload) != nil {
+	if len(data) > 0 && json.Unmarshal(data, &payload) != nil {
 		return ""
+	}
+	if len(signals) > 0 {
+		known := map[string]int{}
+		for i, r := range payload.Items {
+			known[fmt.Sprintf("%s#%d", strings.ToLower(r.Repo), r.Number)] = i
+		}
+		for _, sig := range signals {
+			key := fmt.Sprintf("%s#%d", strings.ToLower(sig.Repo), sig.Number)
+			if i, ok := known[key]; ok {
+				r := &payload.Items[i]
+				if slices.Contains(r.BaseRedChecks, sig.Check) {
+					continue
+				}
+				if r.BaseRed {
+					// The file says every failing check is base-red; a new
+					// check the file has not seen yet changes that.
+					r.BaseRed = false
+				}
+				if !slices.Contains(r.FailingChecks, sig.Check) {
+					r.FailingChecks = append(r.FailingChecks, sig.Check)
+				}
+				r.Excerpt = strings.TrimSpace(r.Excerpt + "\n" + ciFailureSignalEvidence(sig))
+				continue
+			}
+			row := ciFailingRow{
+				Number:        sig.Number,
+				Repo:          sig.Repo,
+				Title:         sig.Title,
+				Agent:         sig.Agent,
+				FailingChecks: []string{sig.Check},
+				Excerpt:       ciFailureSignalEvidence(sig),
+			}
+			if row.Title == "" {
+				row.Title = "(title pending)"
+			}
+			payload.Items = append(payload.Items, row)
+			known[key] = len(payload.Items) - 1
+		}
 	}
 	var mine, deferred, external, baseRed []ciFailingRow
 	forks := 0
@@ -365,6 +460,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 				state = "dirty"
 			}
 			b.WriteString("    conflict: mergeable_state=" + state + " — merge the base branch or rebase the PR branch\n")
+			b.WriteString("    " + rebaseResolveInstructions(pr.BaseRef, pr.RebaseAttempt, pr.RebaseMax, pr.TrustedAuthor) + "\n")
 			if from := strings.TrimSpace(pr.ReroutedFrom); from != "" {
 				b.WriteString("    rerouted from paused/unavailable lane: " + from + "\n")
 			}
@@ -716,3 +812,32 @@ const adoptedSentinelNote = "sentinel-alert: repair CI / rebase as usual, but do
 // pending `tide` or a missing lgtm is never the hive's blocker below stage
 // 080 (hivecommons/hive#12858).
 const adoptedPRStatusRule = "    ADOPTED BRANCH: when needs-rebase/conflicting, fetch the contributor's actual fork branch and the PR base, rebase onto the base, preserve original authors and Signed-off-by trailers (never --reset-author), and push back to that fork with --force-with-lease against the observed head. Stop if the contributor moved it; never overwrite their new work. Sign only your own new commits.\n    STATUS RULE: green CI is not done on a 074 PR. Read the stage comment/lane reason: an open review-swarm finding (reviewer-verdict:changes_requested) is YOUR blocker — fix it and let the swarm re-review. Never report \"only tide remains\" or \"needs maintainer lgtm/approve\" unless the stage label is already >= stage/080; below that, a pending tide check means the lane has not admitted the head yet, not that a person owes an approval.\n"
+
+// rebaseResolveInstructions is the fixer's rebase-resolve task for a
+// conflicting PR (hivecommons/hive#15103): rebase onto the base branch,
+// resolve, force-with-lease to the PR's own branch, never open a new PR.
+// attempt/max is the loop guard the fixer sees so it knows a second dirty
+// head ends the hive's attempts.
+func rebaseResolveInstructions(baseRef string, attempt, max int, trustedAuthor bool) string {
+	base := strings.TrimSpace(baseRef)
+	if base == "" {
+		base = "the base branch"
+	} else {
+		base = "origin/" + base
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	if max < attempt {
+		max = attempt
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "rebase-resolve (attempt %d/%d): `gh pr checkout`, `git rebase %s`, resolve every conflict keeping both sides' intent, re-run the build and tests, then `git push --force-with-lease` to the PR's OWN branch. Do not open a new PR; do not squash away the author's commits.", attempt, max, base)
+	if trustedAuthor {
+		b.WriteString(" This is a trusted author's PR the hive carries on their behalf — keep their authorship and sign-off intact.")
+	}
+	if attempt >= max {
+		b.WriteString(" Last attempt: if the head is still conflicting after this push the hive stops and asks a person.")
+	}
+	return b.String()
+}

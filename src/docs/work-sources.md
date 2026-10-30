@@ -1,13 +1,55 @@
 # Work sources (`governor.work_source`)
 
-`work_source` selects where a hive reads actionable work items from (Step 01
-of the governor loop — see [Architecture](architecture.md)). It accepts seven
-primary `type` values: `github` (default), `github_projects`, `linear`,
-`jira`, `gitea`, `gitlab`, and `external`. A further item kind, `type: run`, is additive rather than a primary
-adapter: enable it with `run_stages: true` to append pending long-running run
-stages as work items without fabricating GitHub issues. A second additive
-kind, `wavefront`, lists the ready nodes of an imported migration graph the
-same way (see below).
+`work_source` chooses where Hive reads tasks. Most hives need no change:
+the default is GitHub Issues on their configured repositories.
+Reading tasks from a tracker does not grant agents permission to change code
+or merge it; ACMM, lane permissions, and merge gates still apply.
+
+## Choose and configure a source
+
+**Prerequisites:** a running hive, access to change its settings, a GitHub
+repository agents can work on, and read credentials for the chosen tracker.
+Writing review follow-ups can require additional permissions documented below.
+
+| Where your tasks live | Setting | Start here |
+|---|---|---|
+| GitHub repository issues | `github` (default) | No new block or credentials are needed beyond working GitHub access. |
+| A GitHub Projects board | `github_projects` | [Board setup and token scopes](#type-github_projects--github-projects-projects-v2) |
+| Linear teams/projects | `linear` | [Team-to-repository mapping](#type-linear) |
+| Jira Cloud or Jira Data Center | `jira` | [Jira deployment and credentials](#type-jira--jira-cloud-or-jira-data-center) |
+| Gitea or Forgejo issues | `gitea` | [Gitea/Forgejo setup](#type-gitea--gitea--forgejo-issues) |
+| GitLab issues | `gitlab` | [GitLab setup](#type-gitlab--gitlab-issues) |
+| An external provider | `external` | [External provider](integrations/work-source-providers.md#external-provider) |
+
+Hosted and dashboard-managed hives configure the block from **Settings → Work
+source**. Self-hosted operators can also set `governor.work_source` in their
+effective `hive.yaml`; on Kubernetes, a ConfigMap is only the first-boot seed
+([config layering](config-layering.md)).
+
+### Confirm that work is being read
+
+1. Save your source and credentials using the chosen source's instructions.
+   Never commit literal credentials; use the documented environment references.
+2. Pick a known open task that matches the configured repository, team/project,
+   state/query, and hold-label filters.
+3. Wait for a governor enumeration cycle and check the dashboard work list and
+   logs for that task. A listed task is confirmation of reading, not a promise
+   that an agent is eligible to act on it.
+4. An empty list can mean no matching tasks or filtered/held work. Check the
+   query and mappings. Authentication, TLS, or API errors in logs mean the
+   source failed; they are not evidence of an empty backlog. Correct the
+   credentials/connection and check the next cycle.
+
+Optional [run stages](#run-stages-run_stages-true) and
+[Wavefront](#wavefront-migration-graph-wavefrontenabled-true) append work
+to the primary source. They are advanced integrations, not extra first-run steps.
+
+## Source reference
+
+The seven primary `type` values are `github`, `github_projects`, `linear`,
+`jira`, `gitea`, `gitlab`, and `external`. Run stages (`type: run`) and
+Wavefront (`type: wavefront`) are additive: they append pending run stages or
+ready migration-graph nodes without fabricating GitHub issues.
 Absent or `type: ""` behaves exactly like existing hives with no
 `work_source` block — GitHub Issues on the configured `project.repos`
 (`pkg/config/work_sources.go:12-32`, `pkg/worksource/factory.go:15-89`).
@@ -16,7 +58,7 @@ This page documents all seven. Linear has its own deeper guide —
 [Linear agent integration](linear-agent.md) — for the two-way agent-session
 integration (webhooks, session acknowledgement, writing back to Linear);
 this page covers only the read side (`work_source.linear`) for parity with
-the other three.
+the other sources.
 
 ## Design signals
 
@@ -41,7 +83,9 @@ to a source transition/state; otherwise design mode stays label-based. Gitea and
 GitLab support source-native labels, comments/notes, and close/reopen status
 updates through their work-source adapters.
 
-Hosted and dashboard-managed hives can configure the same block from **Settings → Work source**; self-hosted operators can also edit `governor.work_source` in `hive.yaml`. Custom CA bundles and TLS trust overrides for Jira Data Center are not documented here because they are still in progress and are not part of v5.
+Jira Data Center supports an internal **CA bundle** (the certificates used to
+trust your server) and optional client-certificate authentication in current
+v5 code. See [TLS for Data Center](#tls-for-data-center).
 
 ## Trackers and forges
 
@@ -65,6 +109,9 @@ Forgejo](integrations/forges.md) for the operation list and what runs through
 the adapters today, and [Forge setup](forge-app-setup.md) for the reasons.
 
 ## Run stages (`run_stages: true`)
+
+<details>
+<summary>Advanced additive source: run stages and their implementation contract</summary>
 
 Run stages let the governor offer a pending run stage such as `spec`, `plan`,
 or `implement` as a non-issue-shaped work item. The primary source remains the
@@ -92,7 +139,12 @@ dashboard boot; if the accessor is unavailable, the additive source fails
 closed by listing no run stages. The Spektacular (Spek) stage runner that advances the
 lease is described in [spektacular.md](spektacular.md).
 
+</details>
+
 ## Wavefront migration graph (`wavefront.enabled: true`)
+
+<details>
+<summary>Advanced additive source: migration graph, receipts, and plan-import reference</summary>
 
 The second additive item kind is a versioned code-migration graph such as
 Crustify's C/C++ to Rust migration driven by Wavefront (#8362, the second
@@ -181,6 +233,8 @@ before anything is written.
 listed node to an agent worktree, the mid-node crash reconciling to Unknown,
 and the burndown counts on `/api/runs/{key}` are follow-ups on the #8290
 umbrella; the adapter's `Receipts()` and `Ready()` are the seams they read.
+
+</details>
 
 ## `type: github` (default)
 
@@ -314,6 +368,13 @@ Jira Cloud rich text comments/descriptions use ADF JSON
 ([Atlassian Document Format](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/));
 Data Center accepts plain text / wiki-markup string bodies.
 
+Terms in the examples: **PAT** is a personal access token; **JQL** is Jira
+Query Language, used to select issues; **ADF** is Atlassian Document Format
+for rich text. **TLS** protects the connection, a **CA** is a certificate
+authority, and **PEM** is the text format used for certificates and keys.
+**mTLS** means mutual TLS: the client presents a certificate as well as
+verifying the server.
+
 ```yaml
 governor:
   work_source:
@@ -386,7 +447,9 @@ Supply secrets via `${JIRA_API_TOKEN}` / `${JIRA_DATACENTER_PAT}` /
 `${JIRA_DATACENTER_PASSWORD}` environment-variable substitution in `hive.yaml`
 — never inline literal credentials in committed config.
 
-**TLS for Data Center.** If Jira is signed by an internal CA, set
+### TLS for Data Center
+
+If Jira is signed by an internal CA, set
 `ca_bundle` to a PEM bundle (or `${JIRA_DATACENTER_CA_BUNDLE}`) and Hive
 appends those roots to the system trust store. mTLS is optional: provide both
 `client_cert` and `client_key` as PEM values or environment references. The
@@ -394,6 +457,8 @@ dashboard's Work Source tab shows these Data Center-only fields as write-only
 set/unset indicators. `insecure_skip_verify` remains off by default; when
 enabled it bypasses TLS verification, should be limited to testing, and emits a
 warning every time the Jira client is built.
+
+### Jira data and failure reference
 
 **Data model differences.** Cloud users expose `accountId` and rich-text
 description/comment bodies as ADF JSON. Data Center commonly exposes users by
@@ -419,17 +484,20 @@ the governor — the same shape as GitHub's `hold` label, but Jira has no
 built-in "hold" concept so this is opt-in and additive
 (`jira.go:143-175`).
 
-**Pagination and endpoints.** Cloud uses `/rest/api/3/search`; Data Center
-uses `/rest/api/2/search`. Both are paged with `startAt`/`maxResults`, and the
-adapter requests 100 issues at a time until it has walked the full result set.
+**Pagination and endpoints.** Cloud posts to `/rest/api/3/search/jql` with an
+explicit field list and follows `nextPageToken` until `isLast` or no next token.
+Data Center uses `/rest/api/2/search` with `startAt`/`maxResults` and a total.
+Both request 100 issues per page until the result set is exhausted.
 Issue fetch, comment, and transition helper paths use the same API-version
 switch (`/issue/{key}`, `/issue/{key}/comment`, and
 `/issue/{key}/transitions`).
 
 **Failure mode.** A bad `base_url`, invalid credentials, or non-2xx Jira
-response returns `worksource/jira: search returned <status>: <body>` on
-every governor cycle, logged but not fatal — the hive keeps running with an
-empty work-item list from this source until the misconfiguration is fixed.
+response causes a `worksource/jira: search: ...` error on every governor
+cycle. For an HTTP rejection, the message is
+`worksource/jira: search: returned <status>: <body>`. It is logged but not
+fatal — the hive keeps running with an empty work-item list from this source
+until the misconfiguration is fixed.
 
 ## `type: gitea` — Gitea / Forgejo issues
 

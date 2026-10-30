@@ -2,6 +2,9 @@
 
 Status: Accepted (back-filled)
 
+**BYO** means **bring your own** agent. A **kick** is the work prompt Hive
+delivers to that agent. The API names below define a maintainer contract.
+
 > **Operator guide:** [Skill registry](../skills.md) covers the on-disk format
 > and the current wiring status. This ADR records the decision; it is not an
 > operator guide.

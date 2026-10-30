@@ -1,0 +1,131 @@
+    /* GitHub API rate limit alert bar */
+    /* z-index 9500: a global system alert sits above page content/FABs (9000–9001)
+       but BELOW modal overlays (.config-overlay 10000, .hive-dialog-overlay 20000)
+       so an open modal — e.g. the Getting Started checklist — is never punched
+       through by this banner. Do not raise to/above the modal layer. */
+    .gh-auth-alert {
+      display: none; position: relative; z-index: 9500;
+      background: color-mix(in srgb, var(--red) 15%, var(--panel)); border-bottom: 2px solid var(--red); color: var(--text);
+      padding: 10px 20px; font-size: 0.85rem; text-align: center;
+    }
+    .gh-auth-alert.active { display: block; }
+    .gh-auth-alert a { color: var(--blue); text-decoration: underline; }
+    .gh-rate-alert {
+      background: color-mix(in srgb, var(--yellow) 14%, var(--panel)); border: 1px solid var(--yellow);
+      border-radius: 8px; padding: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-6);
+      display: none; /* hidden by default, shown via JS */
+    }
+    .gh-rate-alert.active { display: block; }
+    .gh-rate-alert-title {
+      font-size: 0.85rem; font-weight: 700; color: var(--text); margin-bottom: var(--sp-3);
+    }
+    .gh-rate-alert-item {
+      font-size: var(--fs-sm); color: var(--text); padding: 3px 0;
+      display: flex; align-items: baseline; gap: var(--sp-4);
+    }
+    .gh-rate-alert-agent {
+      font-weight: 700; color: var(--text); min-width: 70px;
+    }
+    .gh-rate-alert-age {
+      color: var(--muted); font-size: 0.65rem; white-space: nowrap;
+    }
+    .gh-rate-alert-msg {
+      color: var(--text); opacity: 0.85; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; flex: 1;
+    }
+    /* NPS feedback card (#9610). Bottom-left, past the sidebar, so it never
+       covers the chat FAB/panel (bottom-right, z 9000/9001); below modal
+       overlays and toasts. Tokens only, per the style ratchet. */
+    .nps-card {
+      position: fixed; bottom: var(--sp-7); left: calc(var(--sidebar-w) + var(--sp-7)); z-index: 8999;
+      width: 320px; max-width: calc(100vw - 2 * var(--sp-6));
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow-raised);
+      padding: var(--sp-5); animation: toast-in 0.25s ease-out;
+    }
+    .nps-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
+    .nps-card-title { font-size: var(--fs-sm); font-weight: 600; }
+    .nps-card-scale { display: flex; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-4); }
+    .nps-card-option {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1);
+      padding: var(--sp-2); background: transparent; color: var(--text);
+      border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer;
+    }
+    .nps-card-option:hover, .nps-card-option:focus-visible { border-color: var(--line); }
+    .nps-card-option[aria-pressed="true"] { border-color: var(--accent); background: var(--bg-soft); }
+    .nps-card-emoji { font-size: var(--fs-2xl); line-height: 1; }
+    .nps-card-option-label { font-size: var(--fs-xs); color: var(--muted); }
+    .nps-card-follow { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-4); }
+    .nps-card-follow[hidden] { display: none; }
+    .nps-card-prompt { font-size: var(--fs-xs); color: var(--muted); }
+    .nps-card-text {
+      width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: var(--fs-sm);
+      background: var(--bg); color: var(--text); border: 1px solid var(--line);
+      border-radius: var(--radius-sm); padding: var(--sp-2);
+    }
+    .nps-card-follow .hv-btn { align-self: flex-end; }
+    .nps-card-consent { display: flex; align-items: flex-start; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--text); }
+    .nps-card-consent[hidden] { display: none; }
+    .nps-card-analytics {
+      display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
+      margin-top: var(--sp-4); font-size: var(--fs-xs); color: var(--muted);
+    }
+    @media (max-width: 768px) {
+      .nps-card { left: var(--sp-4); right: var(--sp-4); width: auto; }
+    }
+    #toast-container { position: fixed; top: 16px; right: 16px; z-index: 10001; display: flex; flex-direction: column; gap: var(--sp-4); pointer-events: none; }
+    /* Toasts — neutral --text copy (Phase 0 rule); severity lives in the
+       tint, the subtle border, and a 3px colored left edge. */
+    .toast {
+      pointer-events: auto; padding: 10px 16px;
+      border-radius: var(--radius); font-size: 0.78rem; color: var(--text);
+      border: 1px solid var(--line); border-left: 3px solid var(--muted);
+      background: var(--panel);
+      box-shadow: var(--shadow-raised); animation: toast-in 0.25s ease-out; max-width: 360px;
+      position: relative; overflow: hidden;
+    }
+    /* Countdown bar: a timed toast's remaining life, drained along the bottom
+       edge from right to left (origin left, scaleX 1 -> 0) over --toast-ttl,
+       which toastCountdownBar sets on the toast from the same ms the dismiss
+       timer uses; hover or focus-within pauses both together (inline
+       animation-play-state). Absolutely positioned so it never shifts the
+       toast's layout; clipped to the toast radius by the parent's overflow.
+       Subtle: the severity token at 40% over transparent, no track. Sticky/
+       persistent toasts carry no bar. Reduced motion keeps it: a linear
+       countdown is information, not decoration. */
+    .toast-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; pointer-events: none; transform-origin: left center; background: color-mix(in srgb, currentColor 35%, transparent); animation: toast-bar-drain var(--toast-ttl, 3000ms) linear forwards; }
+    .toast.success .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
+    .toast.error .toast-bar { background: color-mix(in srgb, var(--red) 40%, transparent); }
+    .toast.info .toast-bar { background: color-mix(in srgb, var(--blue) 40%, transparent); }
+    .toast.warning .toast-bar { background: color-mix(in srgb, var(--status-warn) 40%, transparent); }
+    @keyframes toast-bar-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+    @media (prefers-reduced-motion: reduce) { .toast-bar { animation-timing-function: linear; } }
+    .toast.success { background: color-mix(in srgb, var(--green) 14%, var(--panel)); border-color: color-mix(in srgb, var(--green) 35%, var(--line)); border-left-color: var(--green); }
+    .toast.error { background: color-mix(in srgb, var(--red) 14%, var(--panel)); border-color: color-mix(in srgb, var(--red) 35%, var(--line)); border-left-color: var(--red); }
+    .toast.info { background: color-mix(in srgb, var(--blue) 14%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); border-left-color: var(--blue); }
+    .toast.warning { background: color-mix(in srgb, var(--status-warn) 14%, var(--panel)); border-color: color-mix(in srgb, var(--status-warn) 35%, var(--line)); border-left-color: var(--status-warn); }
+    .toast-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid color-mix(in srgb, var(--text) 30%, transparent); border-top-color: var(--text); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: var(--sp-4); vertical-align: middle; }
+    /* Error toasts never auto-dismiss (a failed save must stay readable), so
+       they carry an explicit close affordance and a click-anywhere target. */
+    .toast.sticky { cursor: pointer; padding-right: 30px; position: relative; }
+    .toast-close { position: absolute; top: 4px; right: 8px; font-size: 0.9rem; line-height: 1; color: var(--muted); background: none; border: none; padding: var(--sp-1) var(--sp-2); cursor: pointer; }
+    .toast-close:hover { color: var(--text); }
+    /* An action inside a sticky toast (e.g. "Sign in" on the session-expired
+       toast, #7405). It must stay clickable without the click-anywhere
+       dismissal swallowing it — see showSessionExpiredToast. */
+    .toast-action { margin-left: 10px; vertical-align: middle; }
+    /* Row-action result toast (runRowAction): sticky until the target row
+       changes state in the tracker, or ×. Headline, outcome, what happens
+       next, a muted "Posted:" line, a ⚠ sentinel line while the head is
+       still flagged after the action, and a link to the
+       item acted on (which may be a nested PR, not the clicked row). */
+    .ham-result-toast { display: grid; gap: var(--sp-2); }
+    .ham-result-head { font-weight: var(--fw-medium); }
+    .ham-result-next { color: var(--muted); }
+    .ham-result-posted { color: var(--text-faint); font-size: var(--fs-xs); }
+    .ham-result-warn { color: var(--status-error); white-space: pre-line; }
+    .ham-result-options { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+    .ham-result-link { color: var(--accent); text-decoration: none; justify-self: start; }
+    .ham-result-link:hover { text-decoration: underline; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+

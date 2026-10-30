@@ -1451,7 +1451,7 @@ func (s *Server) approveRunDesign(ctx context.Context, store *beads.Store, epicI
 	if s.deps == nil || s.deps.GHClient == nil {
 		return nil
 	}
-	if err := s.applyDesignSignal(ctx, issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault(), s.designApprovedStatus()); err != nil {
+	if err := s.applyDesignSignal(designWritebackContext(ctx, epic), issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault(), s.designApprovedStatus()); err != nil {
 		s.logger.Warn("[runs] design approved but forge signal failed", "run", runKey, "epic", epicID, "error", err)
 		s.audit.Log(actor, "design_signal_failed", auditDetail("epic", epicID, "run", runKey, "error", err.Error()), planning.ArchitectAgentName)
 		s.LifecycleTimeline().Record(timeline.Event{

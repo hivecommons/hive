@@ -244,7 +244,7 @@ func (c *Client) EditIssueComment(ctx context.Context, repo string, id int64, bo
 	}
 	owner, repoName := c.splitRepo(repo)
 	body = logscrub.ScrubString(body)
-	_, _, err := c.client.Issues.EditComment(ctx, owner, repoName, id, &gh.IssueComment{Body: gh.Ptr(body)})
+	_, _, err := c.client.Issues.EditComment(ctx, owner, repoName, id, &gh.IssueComment{Body: gh.Ptr(body)}) // writeback:gated: StageCommenter.Post checks target policy before its only edit call.
 	return err
 }
 

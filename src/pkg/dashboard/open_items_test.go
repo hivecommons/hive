@@ -278,6 +278,7 @@ func TestOpenItemsPillAndTrackerHeaderDerivation(t *testing.T) {
 	}
 	script := overviewKPIRenderPrelude(t, html) + `
 ` + jsFunc(t, html, "stageTrackerCountsText") + `
+` + jsFunc(t, html, "stageTrackerRowBreakdown") + `
 ` + jsFunc(t, html, "stageTrackerOpenCounts") + `
 const status = ` + string(statusJSON) + `;
 const tracker = ` + string(trackerJSON) + `;
@@ -300,10 +301,12 @@ const page = { total: tracker.items.length, from: 1, to: tracker.items.length };
 const counts = stageTrackerCountsText(page, tracker.items.length, 2, open, 3);
 // Owner: the tracker counts ROWS. With every item on its own row the pill,
 // the header lead and the tile agree on the same number.
-assert.strictEqual(counts.header, tracker.items.length + ' rows · 2 need attention');
+const issuesN = tile.issues.forge, prsN = tile.prs.forge;
+const breakdown = issuesN + ' issues + ' + prsN + ' PRs on their own row';
+assert.strictEqual(counts.header, tracker.items.length + ' rows (' + breakdown + ') · 2 need attention');
 assert.strictEqual(counts.badge, tracker.items.length, 'activity-monitor pill is the row count of the default view');
 assert.strictEqual(counts.badge, tile.issues.forge + tile.prs.forge, 'no PR shares an issue row here, so rows = the tile total');
-assert.strictEqual(counts.badgeTitle, tracker.items.length + ' rows open · 3 need attention', 'attention moves to the pill tooltip');
+assert.strictEqual(counts.badgeTitle, tracker.items.length + ' rows (' + breakdown + ')' + ' · 3 need attention', 'attention moves to the pill tooltip; the row make-up is named');
 assert.strictEqual(counts.note, '', 'nothing to footnote when rows = items');
 // A PR drawn on its issue's row shrinks the row count; the pill follows the
 // rows and the gap to the item total is a footnote, never a second total.
@@ -312,9 +315,10 @@ const nested = stageTrackerCountsText({ total: rows, from: 1, to: rows }, rows, 
 assert.strictEqual(nested.badge, rows, 'pill = rows, not items');
 assert.strictEqual(nested.showing, 'showing 1–' + rows + ' of ' + rows, 'no filter → no "filtered out", no items total');
 assert.strictEqual(nested.note, "1 PR shown on its issue's row");
+assert.strictEqual(nested.breakdown, issuesN + ' issues + ' + (prsN - 1) + ' PRs on their own row', 'rows − issues = PRs on their own row');
 assert.ok(nested.badgeTitle.endsWith(" · 1 PR shown on its issue's row"), nested.badgeTitle);
 const filtered = stageTrackerCountsText({ total: 4, from: 1, to: 4 }, tracker.items.length, 0, open).header;
-assert.strictEqual(filtered, '4 of ' + tracker.items.length + ' rows · nothing needs attention');
+assert.strictEqual(filtered, '4 of ' + tracker.items.length + ' rows (' + breakdown + ') · nothing needs attention');
 assert.deepStrictEqual(stageTrackerOpenCounts({ items: [{ kind: 'issue' }, { kind: 'pr' }, { kind: 'issue' }] }), { issues: 2, prs: 1 }, 'falls back to counting items');
 console.log('ok');
 `

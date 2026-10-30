@@ -11,6 +11,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/sentinel"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Sentinel sweep: evaluates open PRs in the watched repos with pkg/sentinel
@@ -148,6 +149,12 @@ type SentinelSweepEvent struct {
 	Findings      []sentinel.Finding
 	Blocked       bool
 	TrustedReason string
+	// Suppressed is set when the write-back gate refused the comment and
+	// label: the finding is real and is recorded for the dashboard and
+	// /api/sentinel, but nothing was written to GitHub.
+	Suppressed bool
+	// SuppressedReason is the gate's reason when Suppressed.
+	SuppressedReason string
 }
 
 // Rules lists the triggered rule names.
@@ -159,6 +166,9 @@ type SentinelSweepResult struct {
 	Flagged    []SentinelSweepEvent
 	Notified   []SentinelSweepEvent
 	Remediated []SentinelSweepEvent
+	// Suppressed lists findings the write-back gate kept off GitHub
+	// (dashboard/API only).
+	Suppressed []SentinelSweepEvent
 	Skipped    int
 	Errors     []string
 	ReposHit   map[string]int
@@ -250,6 +260,7 @@ func (c *Client) SweepSentinel(ctx context.Context, opts SentinelSweepOptions) (
 			if snap, ok := cache.Snapshot(repo); ok && snap.Ready {
 				result.CachedRepos++
 				c.sweepSentinelCached(ctx, result, repo, owner, repoName, snap, label, maxActions, opts)
+				c.writebackSweepSummary(repo)
 				continue
 			}
 		}
@@ -269,6 +280,7 @@ func (c *Client) SweepSentinel(ctx context.Context, opts SentinelSweepOptions) (
 			result.Seen++
 			c.sentinelEvaluatePR(ctx, result, repo, owner, repoName, pr, label, opts)
 		}
+		c.writebackSweepSummary(repo)
 	}
 	return result, nil
 }
@@ -376,7 +388,9 @@ func (c *Client) sentinelEvaluatePR(ctx context.Context, result *SentinelSweepRe
 	}
 	event.Repo = repo
 	c.recordReviewEvidenceSentinel(repo, pr, event.Findings, event.Blocked, time.Now())
-	if event.Blocked {
+	if event.Suppressed {
+		result.Suppressed = append(result.Suppressed, event)
+	} else if event.Blocked {
 		result.Flagged = append(result.Flagged, event)
 	} else if prHasLabel(pr, label) {
 		result.Remediated = append(result.Remediated, event)
@@ -426,6 +440,15 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		markerBody += sentinelAdoptedNote(origin, codeAuthor)
 	}
 	markerBody = sentinelWithDigest(markerBody, digest)
+	// The write-back gate: a finding on a PR nobody opted in, below the
+	// level the sentinel kind needs, is recorded (dashboard, /api/sentinel,
+	// review evidence) but never commented or labelled (torch-spyre,
+	// 2026-10-28). The marker-comment read is skipped too — no GitHub call.
+	if d := c.WritebackAllowed(displayRepo, c.sentinelWritebackItem(pr), writeback.KindSentinel, markerBody); !d.Allowed {
+		event.Suppressed = true
+		event.SuppressedReason = d.Reason
+		return event, true, nil
+	}
 	marker := SentinelMarker + " " + head
 	comment, posted, err := c.findOwnMarkerComment(ctx, owner, repo, number, marker)
 	if err != nil {
@@ -456,12 +479,14 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		// maintainer's review, and the maintainer removed the label with
 		// this head already in place. The second case is a clearance of
 		// this head, not of the one the marker names (#13602); re-alerting
-		// would make the maintainer remove the same label twice.
+		// would make the maintainer remove the same label twice. A
+		// dashboard Approve bound to this head is the same clearance made
+		// through the hive, which took the label off as itself.
 		cleared, clearedBy, err := c.sentinelClearedAfterLatestPush(ctx, owner, repo, number, head, label)
 		if err != nil {
 			return SentinelSweepEvent{}, false, err
 		}
-		note := sentinelClearedNote
+		note := fmt.Sprintf(sentinelClearedNote, clearedBy, label)
 		if !cleared {
 			// The removal came before this head, but a push that leaves
 			// every flagged change as reviewed (a merge of the base branch,
@@ -471,10 +496,17 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 			if err != nil {
 				return SentinelSweepEvent{}, false, err
 			}
-			note = sentinelCarriedNote
+			note = fmt.Sprintf(sentinelCarriedNote, clearedBy, label)
+		}
+		if !cleared {
+			releasedBy, err := c.sentinelReleasedByDashboardApproval(ctx, owner, repo, number, head)
+			if err != nil {
+				return SentinelSweepEvent{}, false, err
+			}
+			cleared, note = releasedBy != "", fmt.Sprintf(sentinelReleasedNote, releasedBy, label)
 		}
 		if cleared {
-			if err := c.recordSentinelClearance(ctx, owner, repo, number, fmt.Sprintf(note, clearedBy, label), markerBody); err != nil {
+			if err := c.recordSentinelClearance(ctx, owner, repo, number, note, markerBody); err != nil {
 				return SentinelSweepEvent{}, false, err
 			}
 			return SentinelSweepEvent{}, false, nil
@@ -486,16 +518,20 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 			if !posted {
 				return SentinelSweepEvent{}, false, nil
 			}
-			if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, label); err != nil {
+			resp, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, label) // writeback:gated
+			c.noteWritebackOutcome(displayRepo, resp, err)
+			if err != nil {
 				return SentinelSweepEvent{}, false, fmt.Errorf("removing %s label from trusted author PR: %w", label, err)
 			}
-			if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, comment.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+			if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, comment.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 				return SentinelSweepEvent{}, false, fmt.Errorf("updating sentinel notice: %w", err)
 			}
 			return event, true, nil
 		}
 		if !posted {
-			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+			_, resp, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}) // writeback:gated
+			c.noteWritebackOutcome(displayRepo, resp, err)
+			if err != nil {
 				return SentinelSweepEvent{}, false, fmt.Errorf("posting sentinel notice: %w", err)
 			}
 		}
@@ -504,20 +540,33 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if err := c.EnsureIssueLabel(ctx, owner+"/"+repo, label, opts.LabelColor, opts.LabelDescription); err != nil {
 		return SentinelSweepEvent{}, false, fmt.Errorf("ensuring %s label: %w", label, err)
 	}
-	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{label}); err != nil {
+	_, resp, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{label}) // writeback:gated
+	c.noteWritebackOutcome(displayRepo, resp, err)
+	if err != nil {
 		return SentinelSweepEvent{}, false, fmt.Errorf("adding %s label: %w", label, err)
 	}
 	body := markerBody
 	if posted {
-		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, comment.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, comment.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 			return SentinelSweepEvent{}, false, fmt.Errorf("updating sentinel alert: %w", err)
 		}
 	} else {
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 			return SentinelSweepEvent{}, false, fmt.Errorf("posting sentinel comment: %w", err)
 		}
 	}
 	return event, true, nil
+}
+
+// sentinelWritebackItem is the gate's view of a PR read from GitHub.
+func (c *Client) sentinelWritebackItem(pr *gh.PullRequest) writeback.Item {
+	author := pr.GetUser().GetLogin()
+	labels := make([]string, 0, len(pr.Labels))
+	for _, l := range pr.Labels {
+		labels = append(labels, l.GetName())
+	}
+	hive := c.IsHiveAuthorLogin(author)
+	return writeback.Item{Number: pr.GetNumber(), IsPR: true, Author: author, HiveAuthored: hive, Labels: labels, CreatedAt: pr.GetCreatedAt().Time}
 }
 
 // sentinelClearedByMaintainer reports whether the marker comment found for

@@ -30688,11 +30688,26 @@
                             "applied",
                             "no-op",
                             "failed",
-                            "superseded-by-state-change"
+                            "superseded-by-state-change",
+                            "executing",
+                            "no-effect",
+                            "blocked"
                           ]
                         },
                         "detail": {
                           "type": "string"
+                        },
+                        "progress": {
+                          "type": "string",
+                          "description": "for an executing/blocked decision: what the worker has done so far or why it could not (e.g. \"adopted as #N\", \"could not adopt: …\")"
+                        },
+                        "blocker": {
+                          "type": "string",
+                          "description": "capability-blocker slug holding the decision (e.g. capability:workflows-permission)"
+                        },
+                        "human": {
+                          "type": "string",
+                          "description": "what, if anything, a person can do now"
                         },
                         "head_sha": {
                           "type": "string"
@@ -30707,7 +30722,9 @@
                             "addressed",
                             "stuck",
                             "pending",
-                            "failed"
+                            "failed",
+                            "executing",
+                            "blocked"
                           ]
                         },
                         "stuck_after_seconds": {
@@ -36026,600 +36043,1321 @@
       }
     },
     "/api/advisor/records": {
-        "get": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "GET advisor records",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "GET advisor records",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
+              }
             }
+          }
         }
+      }
     },
     "/api/advisor/spend": {
-        "get": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "GET advisor spend",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "GET advisor spend",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
+              }
             }
+          }
         }
+      }
     },
     "/api/chat/messages": {
-        "get": {
-            "tags": [
-                "Agents"
-            ],
-            "summary": "GET chat messages",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "GET chat messages",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
+              }
             }
+          }
         }
+      }
     },
     "/api/classifier/stats": {
-        "get": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "GET classifier stats",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "GET classifier stats",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
+              }
             }
+          }
         }
+      }
     },
     "/api/config/advisor": {
-        "get": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "GET config advisor",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "GET config advisor",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
+              }
             }
-        },
-        "put": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "PUT config advisor",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
-                }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
-            }
+          }
         }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "PUT config advisor",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
     },
     "/api/runs/{key}/detail": {
-        "get": {
-            "tags": [
-                "Plan"
-            ],
-            "summary": "GET runs run detail",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "GET runs run detail",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "parameters": [
-                {
-                    "name": "key",
-                    "in": "path",
-                    "required": true,
-                    "schema": {
-                        "type": "string"
-                    }
-                }
-            ]
-        }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
     },
     "/api/runs/{key}/interview": {
-        "get": {
-            "tags": [
-                "Plan"
-            ],
-            "summary": "GET runs run interview",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "GET runs run interview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "parameters": [
-                {
-                    "name": "key",
-                    "in": "path",
-                    "required": true,
-                    "schema": {
-                        "type": "string"
-                    }
-                }
-            ]
-        },
-        "post": {
-            "tags": [
-                "Plan"
-            ],
-            "summary": "POST runs run interview",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
-                }
-            },
-            "parameters": [
-                {
-                    "name": "key",
-                    "in": "path",
-                    "required": true,
-                    "schema": {
-                        "type": "string"
-                    }
-                }
-            ],
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "POST runs run interview",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/runs/{key}/log": {
-        "get": {
-            "tags": [
-                "Plan"
-            ],
-            "summary": "GET runs run log",
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "get": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "GET runs run log",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "parameters": [
-                {
-                    "name": "key",
-                    "in": "path",
-                    "required": true,
-                    "schema": {
-                        "type": "string"
-                    }
-                }
-            ]
-        }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
     },
     "/api/admin/mcp": {
-        "post": {
-            "tags": [
-                "System"
-            ],
-            "summary": "POST admin mcp",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "POST admin mcp",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/contribute/actions/dispatch": {
-        "post": {
-            "tags": [
-                "Contribute"
-            ],
-            "summary": "POST contribute actions dispatch",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "POST contribute actions dispatch",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/contribute/mcp": {
-        "post": {
-            "tags": [
-                "Contribute"
-            ],
-            "summary": "POST contribute mcp",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "POST contribute mcp",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/contribute/standby/clear": {
-        "post": {
-            "tags": [
-                "Contribute"
-            ],
-            "summary": "POST contribute standby clear",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "POST contribute standby clear",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/contribute/standby/dispatch": {
-        "post": {
-            "tags": [
-                "Contribute"
-            ],
-            "summary": "POST contribute standby dispatch",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "POST contribute standby dispatch",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/feedback/nps/issue": {
-        "post": {
-            "tags": [
-                "System"
-            ],
-            "summary": "POST feedback nps issue",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "POST feedback nps issue",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/github/mentions/webhook": {
-        "post": {
-            "tags": [
-                "System"
-            ],
-            "summary": "POST github mentions webhook",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "POST github mentions webhook",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/runs/spec": {
-        "post": {
-            "tags": [
-                "Plan"
-            ],
-            "summary": "POST runs spec",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "post": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "POST runs spec",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/config/advisor/agent/{name}": {
-        "put": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "PUT config advisor agent agent",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "PUT config advisor agent agent",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "parameters": [
-                {
-                    "name": "name",
-                    "in": "path",
-                    "required": true,
-                    "schema": {
-                        "type": "string"
-                    }
-                }
-            ],
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/config/advisor/roles": {
-        "put": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "PUT config advisor roles",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "PUT config advisor roles",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
     },
     "/api/config/governor/classifier": {
-        "put": {
-            "tags": [
-                "Governor"
-            ],
-            "summary": "PUT config governor classifier",
-            "responses": {
-                "200": {
-                    "description": "Operation accepted",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object"
-                            }
-                        }
-                    }
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "PUT config governor classifier",
+        "responses": {
+          "200": {
+            "description": "Operation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
-            },
-            "requestBody": {
-                "required": false,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                }
+              }
             }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/decide-delegated/plan": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Preview what *Let hive decide* would do on one parked item (dry run, no side effects)",
+        "description": "Backs the activity monitor's *Let hive decide* confirm popover. Runs the same owner-delegate policy as decide-delegated but writes nothing — no comment, no labels, no ledger entry, no job — and answers the decision the hive WOULD record in plain words (\"Hive would: re-author #15029 as a hive PR with the same commits and merge it; #15029 will be closed as superseded. Why: author @Karibhou is untrusted and their clanker is offline.\"), its consequences and the operator's alternatives (Approve & merge as-is when the requester may merge). The SPA shows Let hive do that / Approve & merge as-is / Cancel and only then posts decide-delegated with `chosen` naming the button. Same authorisation and feature gate as decide-delegated.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "pr"
+                    ],
+                    "description": "What the number names; defaults to issue"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "The row's park reason code (why the hive stopped), read by the policy"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "description": "The row's lit-chevron caption"
+                  },
+                  "sentinel_reason": {
+                    "type": "string",
+                    "description": "The sentinel finding summary when the PR is flagged"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "issue",
+                        "pr"
+                      ]
+                    },
+                    "would": {
+                      "type": "string",
+                      "description": "The verdict the hive would record (adopt-supersede, approve, direction, recommend-only, …)"
+                    },
+                    "rule": {
+                      "type": "string",
+                      "description": "The policy rule behind it"
+                    },
+                    "acting": {
+                      "type": "string",
+                      "description": "The pill / progress vocabulary for the verdict while it runs"
+                    },
+                    "summary": {
+                      "type": "string",
+                      "description": "One line: what hive would do"
+                    },
+                    "why": {
+                      "type": "string",
+                      "description": "The plain reason"
+                    },
+                    "consequences": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "alternatives": {
+                      "type": "array",
+                      "description": "The other buttons, in the needs-human popover's option shape",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "writes": {
+                      "type": "boolean",
+                      "description": "Always false: the plan has no side effects"
+                    },
+                    "prior": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Set when the hive already recorded this decision"
+                    },
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad owner/repo/number or body"
+          },
+          "401": {
+            "description": "No signed-in GitHub user"
+          },
+          "403": {
+            "description": "Not permitted, or decisions.delegate disabled for the repository"
+          }
+        }
+      }
+    },
+    "/api/writeback/suppressed": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "List write-backs the containment gate suppressed (last 24h)",
+        "description": "Drill-down for the Features → Write-back containment counter: every unsolicited GitHub comment/label/review the central gate (pkg/writeback) refused in the last 24 hours, with what it would have written and where. Filter with ?repo=owner/name, ?kind=<write-back kind>, ?limit=N (default 200).",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one owner/name"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one write-back kind (e.g. sentinel_comment, stage_label)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000
+            },
+            "description": "Maximum entries returned, newest first"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suppressed write-backs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when the hive booted without the gate"
+                    },
+                    "total_24h": {
+                      "type": "integer",
+                      "description": "Suppressed writes in the 24h window before filtering"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "is_pr": {
+                            "type": "boolean"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          },
+                          "preview": {
+                            "type": "string",
+                            "description": "What hive would have written, when the caller supplied it"
+                          }
+                        }
+                      }
+                    },
+                    "status": {
+                      "type": "object",
+                      "description": "The same block /api/status serves under writeback (knobs, per-repo state, kind matrix, banners)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sentinel": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Sentinel findings, including ones never written to GitHub",
+        "description": "Every PR the sentinel sweep flagged this process lifetime (max 1000, newest first, one per repo#number@head). Findings the write-back gate suppressed (ACMM level below the sentinel floor, no opt-in label, or pre-existing before the repo became writable) carry suppressed=true and appear only here and in the Security tab. Filter with ?repo=owner/name and ?suppressed=true|false.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one owner/name"
+          },
+          {
+            "name": "suppressed",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "Only findings the gate suppressed (true) or wrote to GitHub (false)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sentinel findings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "suppressed": {
+                      "type": "integer"
+                    },
+                    "writeback": {
+                      "type": "object",
+                      "description": "The same block /api/status serves under writeback"
+                    },
+                    "findings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "rules": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "blocked": {
+                            "type": "boolean"
+                          },
+                          "trusted_reason": {
+                            "type": "string"
+                          },
+                          "suppressed": {
+                            "type": "boolean"
+                          },
+                          "suppressed_reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/blocker/recheck": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Re-check the GitHub App's permissions for an issue parked on a capability blocker",
+        "description": "Backs the *Re-check permissions* option on an issue the tracker shows as *Blocked · App lacks <permission> permission* (hivecommons/hive#15099). Probes the App installation's permissions now: when the missing permission (for example `workflows: write`) is granted, every ledger entry blocked on it is cleared, the issue is un-parked and the result reads `released`; otherwise the result is `no-effect` with the plain-words reason and the same options the popover lists. 404 when the item has no recorded blocker, 409 when its blocker is not a capability gap (a human-only step no permission grant clears), 502 when the installation lookup fails. Same authorisation as the hold toggle plus a signed-in GitHub user; audited as repo_item_blocker_recheck.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Probe completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "permission": {
+                      "type": "string",
+                      "description": "The permission the blocker names"
+                    },
+                    "granted": {
+                      "type": "boolean",
+                      "description": "True when the installation now has it"
+                    },
+                    "released": {
+                      "type": "integer",
+                      "description": "Items un-blocked by this grant"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "description": "Fleet-wide missing permissions after the probe (same shape as /api/status.capabilities)"
+                    },
+                    "result": {
+                      "type": "object",
+                      "description": "RowActionResult the activity monitor's result toast renders",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "object"
+                        },
+                        "outcome": {
+                          "type": "string"
+                        },
+                        "next": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "options": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Dashboard session or GitHub user sign-in required"
+          },
+          "403": {
+            "description": "Not permitted for this repository"
+          },
+          "404": {
+            "description": "No blocker is recorded on this item"
+          },
+          "409": {
+            "description": "The blocker is not a capability gap"
+          },
+          "502": {
+            "description": "Installation permission probe failed"
+          }
+        }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/blocker/close-partial": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Mark an issue parked on a blocker partially addressed and close it",
+        "description": "Backs the *Mark partially addressed and close* option on a blocked issue (hivecommons/hive#15099): adds `hive/partially-addressed`, posts the operator's comment naming what remains (the blocker in plain words when the comment is empty), closes the issue as completed and clears the blocker ledger entry. 404 when the item has no recorded blocker; 409 when the issue is on hold. Same authorisation as the hold toggle plus a signed-in GitHub user; audited as repo_item_blocker_close_partial.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "comment": {
+                    "type": "string",
+                    "description": "What remains for a person, posted on the issue"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Issue closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "decision": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "object",
+                      "description": "RowActionResult the activity monitor's result toast renders",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "object"
+                        },
+                        "outcome": {
+                          "type": "string"
+                        },
+                        "next": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "options": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Dashboard session or GitHub user sign-in required"
+          },
+          "403": {
+            "description": "Not permitted for this repository"
+          },
+          "404": {
+            "description": "No blocker is recorded on this item"
+          },
+          "409": {
+            "description": "The issue is on hold"
+          },
+          "502": {
+            "description": "GitHub write failed"
+          }
+        }
+      }
+    },
+    "/api/hotspots": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "List merge hotspots: files repeatedly touched by concurrent PRs",
+        "description": "The merge-hotspot advisor's cached report, derived from the merge train's PR file lists and the rebase follow-through's conflict records (no extra GitHub polling). A file is listed when at least governor.hotspot_min_prs distinct PRs touched it in the last governor.hotspot_window_days and at least governor.hotspot_min_overlaps pairs of them were open concurrently. Code files at or above governor.hotspot_min_lines with two or more top-level symbol groups get a split-code recommendation and one modularize issue for the ci-maintainer lane (labels agent/ci-maintainer, kind/cleanup) through the writeback gate; docs are reported and only recommended for a by-section split above 1500 lines; generated files point at their source; lock/data files are report-only. Filter with ?repo=owner/name.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one owner/name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hotspots, highest score first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Files at or above the thresholds across all repos"
+                    },
+                    "actionable": {
+                      "type": "integer",
+                      "description": "Files with a split recommendation"
+                    },
+                    "filed": {
+                      "type": "integer",
+                      "description": "Files with a modularize issue filed"
+                    },
+                    "hotspots": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "file": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "code",
+                              "doc",
+                              "lock",
+                              "generated",
+                              "data"
+                            ]
+                          },
+                          "prs": {
+                            "type": "integer",
+                            "description": "Distinct PRs that touched the file in the window"
+                          },
+                          "pr_numbers": {
+                            "type": "array",
+                            "items": {
+                              "type": "integer"
+                            }
+                          },
+                          "overlaps": {
+                            "type": "integer",
+                            "description": "PR pairs open at the same time that both touched the file"
+                          },
+                          "conflicts": {
+                            "type": "integer",
+                            "description": "Rebase/merge conflicts attributed to the file"
+                          },
+                          "lines": {
+                            "type": "integer",
+                            "description": "Current line count (0 when unreadable)"
+                          },
+                          "score": {
+                            "type": "number",
+                            "description": "overlaps × size weight + 2 × conflicts"
+                          },
+                          "symbol_groups": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Top-level funcs/types (Go), declarations (JS/TS/py) or ## headings (md)"
+                          },
+                          "recommendation": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "split-code",
+                              "split-doc",
+                              "split-source",
+                              "report-only"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "generated_from": {
+                            "type": "string",
+                            "description": "Source tree for a generated file"
+                          },
+                          "issue_number": {
+                            "type": "integer"
+                          },
+                          "issue_url": {
+                            "type": "string"
+                          },
+                          "last_updated": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

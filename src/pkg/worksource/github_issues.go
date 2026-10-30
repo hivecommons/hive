@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // githubIssuesSource is the default WorkSource: it delegates to the existing
@@ -58,7 +59,10 @@ func (s *githubIssuesSource) AddLabel(ctx context.Context, ref Ref, label string
 	if !ref.IsGitHubIssue() {
 		return fmt.Errorf("worksource/github: labels require a GitHub issue ref")
 	}
-	return s.client.AddLabels(ctx, ref.Repo, ref.Number, []string{label})
+	if err := s.allowWriteback(ctx, ref, writeback.KindStageLabel, label); err != nil {
+		return err
+	}
+	return s.client.AddLabels(ctx, ref.Repo, ref.Number, []string{label}) // writeback:gated
 }
 
 func (s *githubIssuesSource) RemoveLabel(ctx context.Context, ref Ref, label string) error {
@@ -68,7 +72,10 @@ func (s *githubIssuesSource) RemoveLabel(ctx context.Context, ref Ref, label str
 	if !ref.IsGitHubIssue() {
 		return fmt.Errorf("worksource/github: labels require a GitHub issue ref")
 	}
-	return s.client.RemoveLabel(ctx, ref.Repo, ref.Number, label)
+	if err := s.allowWriteback(ctx, ref, writeback.KindStageLabel, label); err != nil {
+		return err
+	}
+	return s.client.RemoveLabel(ctx, ref.Repo, ref.Number, label) // writeback:gated
 }
 
 func (s *githubIssuesSource) AddComment(ctx context.Context, ref Ref, body string) error {
@@ -78,5 +85,29 @@ func (s *githubIssuesSource) AddComment(ctx context.Context, ref Ref, body strin
 	if !ref.IsGitHubIssue() {
 		return fmt.Errorf("worksource/github: comments require a GitHub issue ref")
 	}
-	return s.client.CreateIssueComment(ctx, ref.Repo, ref.Number, body)
+	if err := s.allowWriteback(ctx, ref, writeback.KindGateComment, body); err != nil {
+		return err
+	}
+	return s.client.CreateIssueComment(ctx, ref.Repo, ref.Number, body) // writeback:gated
+}
+
+func (s *githubIssuesSource) allowWriteback(ctx context.Context, ref Ref, kind writeback.Kind, preview string) error {
+	if SolicitedWritebackActor(ctx, ref) != "" {
+		if _, paused := s.client.WritebackGate().RepoPaused(ref.Repo); paused {
+			d := s.client.WritebackAllowed(ref.Repo, writeback.Item{Number: ref.Number}, kind, preview)
+			return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+		}
+		if s.client.RepoIsPaused(ref.Repo) {
+			return fmt.Errorf("%w: %s is paused by the operator", writeback.ErrSuppressed, ref.Repo)
+		}
+		return nil
+	}
+	item, err := s.client.WritebackItemForNumber(ctx, ref.Repo, ref.Number)
+	if err != nil {
+		return err
+	}
+	if d := s.client.WritebackAllowed(ref.Repo, item, kind, preview); !d.Allowed {
+		return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+	}
+	return nil
 }

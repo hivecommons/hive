@@ -176,7 +176,7 @@ The header carries repo, item number, item kind (issue / PR), comment id and
 URL as structured context — the same shape the review swarm already hands its
 reviewers (`pkg/review`). The body is the human's text with the leading
 mention and any `ask <agent>` selector stripped, after the ioscan pass below.
-Delivery is `agent.Manager.SendKick` (`src/crux/agent/manager_kick.go:110`),
+Delivery is `agent.Manager.SendKick` (`src/crux/agent/manager_kick.go:102`),
 recorded in the kick history with `source=mention` so the dashboard's kick
 outcome classifier (#7421) and the agent card can say where the turn came
 from.

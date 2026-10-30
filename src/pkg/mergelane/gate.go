@@ -11,6 +11,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // mergeMethodKey carries the calling path's merge method from Merge to the
@@ -20,6 +21,7 @@ type mergeMethodKey struct{}
 type mergeMethod struct {
 	requested string
 	used      string
+	solicited bool
 }
 
 // NativeMergeQueueReason is the refusal for a target branch that has GitHub's
@@ -58,7 +60,10 @@ func (l *Lane) Merge(ctx context.Context, req ghub.LaneMergeRequest) (ghub.LaneM
 	if err != nil || dec.Outcome == OutcomeDeferred {
 		return ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason}, err
 	}
-	method := &mergeMethod{requested: req.Method}
+	method := &mergeMethod{
+		requested: req.Method,
+		solicited: req.Path == ghub.PRAuditPathQueue || req.Path == ghub.PRAuditPathRelay || req.Path == ghub.PRAuditPathDashboard,
+	}
 	ctx = context.WithValue(ctx, mergeMethodKey{}, method)
 	dec, err = l.Advance(ctx, req.Repo, branch, req.Number, Authorizer(req.Authorize))
 	res := ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason, SHA: dec.MergeSHA, MergeError: dec.MergeError}
@@ -268,6 +273,10 @@ func (g *RESTGitHub) UpdateBranch(ctx context.Context, repo string, number int, 
 	if err != nil {
 		return err
 	}
+	// Mutations have no comment body: never reserve comment dedupe on a retry.
+	if err := g.allowWriteback(ctx, c, repo, number, writeback.KindContributorAdopt, ""); err != nil {
+		return err
+	}
 	var apiErr error
 	_, err = effects.Execute(ctx, c.MutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + name,
@@ -276,7 +285,7 @@ func (g *RESTGitHub) UpdateBranch(ctx context.Context, repo string, number int, 
 		Actor:  "mergelane",
 		Inputs: map[string]string{"expected_head_sha": expectedHead, "lane": "serialized"},
 	}, func(ctx context.Context) (effects.Result, error) {
-		_, _, apiErr = api.PullRequests.UpdateBranch(ctx, owner, name, number, &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHead)})
+		_, _, apiErr = api.PullRequests.UpdateBranch(ctx, owner, name, number, &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHead)}) // writeback:gated
 		var accepted *gh.AcceptedError
 		if errors.As(apiErr, &accepted) {
 			apiErr = nil
@@ -310,7 +319,30 @@ func (g *RESTGitHub) CreateIssueComment(ctx context.Context, repo string, number
 	if err != nil {
 		return err
 	}
-	return c.CreateIssueComment(ctx, repo, number, body)
+	if err := g.allowWriteback(ctx, c, repo, number, writeback.KindNeedsDecisionComment, body); err != nil {
+		return err
+	}
+	return c.CreateIssueComment(ctx, repo, number, body) // writeback:gated
+}
+
+func (g *RESTGitHub) allowWriteback(ctx context.Context, c *ghub.Client, repo string, number int, kind writeback.Kind, preview string) error {
+	if method, _ := ctx.Value(mergeMethodKey{}).(*mergeMethod); method != nil && method.solicited {
+		// Queue and relay paths carry a per-head explicit merge request, not
+		// merely an agent-authored PR. An operator pause still silences them.
+		if _, paused := c.WritebackGate().RepoPaused(repo); paused {
+			d := c.WritebackAllowed(repo, writeback.Item{Number: number, IsPR: true}, kind, preview)
+			return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+		}
+		return nil
+	}
+	item, err := c.WritebackItemForNumber(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	if d := c.WritebackAllowed(repo, item, kind, preview); !d.Allowed {
+		return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+	}
+	return nil
 }
 
 // Merge is the REST merge with head pinned. The method is the calling path's;
@@ -319,6 +351,10 @@ func (g *RESTGitHub) CreateIssueComment(ctx context.Context, repo string, number
 func (g *RESTGitHub) Merge(ctx context.Context, repo string, number int, head string) (string, error) {
 	c, api, owner, name, err := g.rest(repo)
 	if err != nil {
+		return "", err
+	}
+	// The mutation journal, not comment-content dedupe, reconciles merge attempts.
+	if err := g.allowWriteback(ctx, c, repo, number, writeback.KindContributorAdopt, ""); err != nil {
 		return "", err
 	}
 	method, _ := ctx.Value(mergeMethodKey{}).(*mergeMethod)
@@ -343,7 +379,7 @@ func (g *RESTGitHub) Merge(ctx context.Context, repo string, number int, head st
 		Actor:  "mergelane",
 		Inputs: map[string]string{"method": used, "expect_sha": head, "lane": "serialized"},
 	}, func(ctx context.Context) (effects.Result, error) {
-		res, _, apiErr = api.PullRequests.Merge(ctx, owner, name, number, "", &gh.PullRequestOptions{SHA: head, MergeMethod: used})
+		res, _, apiErr = api.PullRequests.Merge(ctx, owner, name, number, "", &gh.PullRequestOptions{SHA: head, MergeMethod: used}) // writeback:gated
 		if apiErr != nil {
 			return effects.Result{}, ghub.MergeAPIErrorNotApplied(apiErr)
 		}

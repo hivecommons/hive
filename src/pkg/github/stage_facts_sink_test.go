@@ -25,6 +25,7 @@ type stageFactsServer struct {
 	labels  []string
 	state   string
 	isPR    bool
+	body    string
 	added   []string
 	removed []string
 	// prState / prMerged answer GET /pulls/N (the covering-PR re-read);
@@ -56,7 +57,7 @@ func newStageFactsServer(t *testing.T, labels ...string) *stageFactsServer {
 			}
 			_ = json.NewEncoder(w).Encode(body)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/"):
-			body := map[string]any{"number": 7, "state": s.state, "labels": wireLabelsOf(s.labels), "user": map[string]any{"login": "dev"}}
+			body := map[string]any{"number": 7, "state": s.state, "labels": wireLabelsOf(s.labels), "user": map[string]any{"login": "dev"}, "body": s.body}
 			if s.isPR {
 				body["pull_request"] = map[string]any{"url": "https://api.github.com/repos/o/r/pulls/7"}
 			}
@@ -274,6 +275,28 @@ func TestEnrichStageFacts(t *testing.T) {
 	if f.Author.Kind != authorkind.Hive {
 		t.Fatalf("author kind = %q, want the fact's own kind kept", f.Author.Kind)
 	}
+
+	// hivecommons/hive#15159: a PR fact resolves the author kind too, so a
+	// human's CHANGES_REQUESTED on a contributor's clanker PR derives 072
+	// returned-to-contributor, not 071 needs-author.
+	srv.isPR = true
+	srv.body = "Fixes it.\n\n— hive: thatguywob-hive"
+	pf, err := c.enrichStageFacts(context.Background(), stageengine.Facts{Ref: c.PRStageRef("o/r", 7), PR: &stageengine.PRFacts{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pf.Author.Kind != authorkind.Clanker {
+		t.Fatalf("PR author kind = %q, want clanker from the attribution trailer", pf.Author.Kind)
+	}
+	srv.body = "Hand written."
+	pf, err = c.enrichStageFacts(context.Background(), stageengine.Facts{Ref: c.PRStageRef("o/r", 7), PR: &stageengine.PRFacts{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pf.Author.Kind != authorkind.Human {
+		t.Fatalf("PR author kind = %q, want human for a plain PR", pf.Author.Kind)
+	}
+	srv.isPR = false
 
 	var nilClient *Client
 	if _, err := nilClient.enrichStageFacts(context.Background(), stageengine.Facts{}); err == nil {

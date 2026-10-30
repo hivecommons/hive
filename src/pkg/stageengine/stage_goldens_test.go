@@ -35,7 +35,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
-	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -254,6 +253,7 @@ func runStageGoldenWithFacts(in stageGoldenInput) (stageGoldenWant, Facts) {
 	if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
 		verdict.Stage = FixingStage(obs)
 	}
+	obs.LaneReason = obs.Reason
 	if verdict.Reason != "" {
 		obs.Reason = verdict.Reason
 	}
@@ -335,7 +335,7 @@ func goldenHumanEvidence(obs stageObservation, stage stagelabels.Stage, r *stage
 	e := stagelabels.Evidence{
 		Head:             obs.HeadSHA,
 		Verdict:          humanVerdict(contributorVerdict),
-		Conflict:         humanConflictReasons[obs.Reason] || HasLabelFold(obs.Labels, "needs-rebase"),
+		Conflict:         humanConflict(obs),
 		Holds:            stagelabels.Holds(obs.Labels),
 		Cause:            cause,
 		CauseReason:      decisionCause(obs.Reason),
@@ -740,6 +740,7 @@ func generateStageGoldens() map[string][]stageGoldenCase {
 	}
 
 	// 8. Hand-picked regressions.
+	humanDecisionRequested := &stageGoldenVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "@clubanderson should this land before the freeze?"}
 	requiresHumanConcrete := &stageGoldenVerdict{Configured: true, Verdict: "requires_human", HumanSummaries: []string{goldenConcreteSummary}}
 	for _, c := range []stageGoldenCase{
 		{
@@ -821,6 +822,18 @@ func generateStageGoldens() map[string][]stageGoldenCase {
 			Note: "hivecommons/hive#12417/#12438: a requires_human verdict folded into no-verdict by the lane still hands the PR to a person.",
 			Input: stageGoldenInput{Observations: single(stageLaneTrusted, contributorLaneReasonNoVerdict, stageGoldenVerdicts[4].detail("")), AuthorKind: string(authorkind.Human),
 				Route: &stageGoldenRoute{Checks: green, Verdict: stageGoldenVerdicts[4].verdict}},
+		},
+		{
+			Name: "regression/15202-human-author-decision-requested-conflicting-is-071",
+			Note: "hivecommons/hive#15202 (seen on #15157): a decision-requested verdict on a conflicting head a person pushed themselves goes to 071 Needs author with the rebase, not to 085 and never to adoption.",
+			Input: stageGoldenInput{Observations: single(stageLaneContributor, "conflicting", stageGoldenDetail{Verdict: humanDecisionRequested, Role: "trusted"}), AuthorKind: string(authorkind.Human),
+				Route: &stageGoldenRoute{Checks: green, Verdict: humanDecisionRequested}},
+		},
+		{
+			Name: "regression/15202-human-author-decision-requested-green-is-071-with-question",
+			Note: "hivecommons/hive#15202: the same verdict on a green head routes the reviewer's question to the author (071), not to the decision queue (085).",
+			Input: stageGoldenInput{Observations: single(stageLaneContributor, contributorLaneReasonNoVerdict, stageGoldenDetail{Verdict: humanDecisionRequested, Role: "trusted"}), AuthorKind: string(authorkind.Human),
+				Route: &stageGoldenRoute{Checks: green, Verdict: humanDecisionRequested}},
 		},
 		{
 			Name:  "regression/concrete-requires-human-normalizes-to-changes-requested",
@@ -1078,30 +1091,30 @@ func decisionCause(reason string) string {
 		strings.HasPrefix(reason, "excluded-label:"), reason == "sentinel", reason == contributorLaneReasonSentinelBlocked:
 		return ""
 	case reason == contributorLaneReasonWorkflowPath:
-		return "the PR edits CI workflow / action files, which the lane never merges unattended"
+		return prstage.CauseWorkflowPathManual
 	case reason == contributorLaneReasonTestsRemoved:
-		return "the PR removes tests, which the lane never merges unattended"
+		return prstage.CauseTestsRemoved
 	case reason == contributorLaneReasonNoReviewer, reason == StageReasonVerdictRequiresHuman, reason == StageReasonDecisionRequested:
 		// RouteHuman renders the verdict itself from the evidence.
 		return ""
 	case reason == contributorLaneReasonReporterTrustHold:
-		return "the reporter-trust hold is in place"
+		return prstage.CauseReporterTrustHold
 	case reason == autoMergeReasonHumanMergePath, reason == autoMergeReasonHumanMergePathEvidence:
-		return "the PR touches a human-merge path (auto_merge.human_merge_paths)"
+		return prstage.CauseHumanMergePath
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
-		return "the merge intent could not be authorized"
+		return prstage.CauseIntentUnauthorized
 	case reason == autoMergeReasonWorkflowPermission:
 		return "GitHub refused to bring the branch up to date: the base changed `.github/workflows/` files and the token the hive used lacks the Workflows permission, so no hive agent can push that update. A person must merge or rebase the base into the branch and push, or grant the App Workflows: write if the installation lacks it"
 	case reason == autoMergeReasonForkWorkflowUpdate:
 		return "GitHub refused to bring the branch up to date: the head branch is in a fork and the base changed `.github/workflows/` files, which the Hive App cannot push to a fork. The author, or a maintainer with push access when \"Allow edits by maintainers\" is on, must run `gh pr update-branch` on this PR or merge the base into the branch and push"
 	case strings.HasPrefix(reason, workflowApprovalUntrustedPrefix):
-		return "GitHub Actions is holding the workflow runs for approval and Hive cannot start them: `" + workflowApprovalCommand + "` on this repository belongs to Prow, which does not trust the Hive App. A maintainer must comment `" + workflowApprovalCommand + "` (and `/lgtm` + `/approve` for tide), or install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) so the repository GITHUB_TOKEN approves trusted same-repo bot runs on Hive's command."
+		return prstage.CauseWorkflowApprovalUntrusted()
 	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
-		return "GitHub Actions is still waiting after Hive posted `" + workflowApprovalCommand + "`. Install the self-contained `" + oktotest.WorkflowPath + "` below (or render it with `hivectl ok-to-test-template`) so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
+		return prstage.CauseWorkflowApprovalWorkflowMissing()
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
-		return "GitHub Actions is waiting for workflow approval. Hive posted `" + workflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
+		return prstage.CauseWorkflowApprovalRequired()
 	case reason == "approval-desk-withheld":
-		return "the approval desk withheld this merge"
+		return prstage.CauseApprovalDeskWithheld
 	case strings.HasPrefix(reason, "linked-issue:"):
 		if kind, issue, label, ok := prstage.ParseLinkedIssueReason(reason); ok {
 			ref := "#" + strconv.Itoa(issue)
@@ -1113,10 +1126,18 @@ func decisionCause(reason string) string {
 	case reason == "":
 		return ""
 	}
-	return "the lane reported `" + reason + "`"
+	return prstage.CauseLaneReported(reason)
 }
 
 var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable": true, "label:needs-rebase": true}
+
+// humanConflict mirrors automerge's: the lane's own conflict reason counts
+// for a person's PR even when a decision-requested verdict took the stage
+// reason (hivecommons/hive#15202).
+func humanConflict(obs stageObservation) bool {
+	return humanConflictReasons[obs.Reason] || HasLabelFold(obs.Labels, "needs-rebase") ||
+		obs.AuthorKind == authorkind.Human && humanConflictReasons[obs.LaneReason]
+}
 
 const defaultSentinelLabel = "sentinel-alert"
 
@@ -1133,4 +1154,3 @@ func dcoState(total, unsigned int) stagelabels.DCOState {
 const contributorLaneReasonRegistryTrusted = "contributor-lane:" + "registry-trusted"
 const workflowApprovalUntrustedPrefix = "workflow-approval-required:untrusted-commenter:"
 const workflowApprovalWorkflowMissingPrefix = "workflow-approval-required:missing-workflow:"
-const workflowApprovalCommand = "/ok-to-test"
