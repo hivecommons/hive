@@ -1,0 +1,1 @@
+- The duplicate-PR guard no longer drops a PR claim the webhook recorded after the claim scan's listing began; the issue stayed covered until the next scan re-listed the PR instead of being re-offered and getting a second PR ([#15559](https://github.com/hivecommons/hive/issues/15559) saw #15561 and #15567).

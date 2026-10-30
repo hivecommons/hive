@@ -168,6 +168,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		if c := stageTrackerSoakCaption(rec, now); c != "" {
+			it.Caption = c
+		}
 		if hasAttempt && (attempt.InFlight() || attempt.Merged) {
 			it.Caption, it.Actor = stageTrackerMergingCaption(attempt), StageActorHive
 		}
