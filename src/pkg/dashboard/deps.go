@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -282,6 +283,8 @@ type Dependencies struct {
 	// durable mark for the sweep (Adopt now) call it so the pass runs now
 	// rather than on cadence. Nil leaves the mark for the next sweep.
 	SweepNudge func(repo string, number int)
+	// BasePreparation reads durable preparation tickets, never merge readiness.
+	BasePreparation func(repo, base string) (automerge.BasePreparationSnapshot, error)
 	// ApplyWebhookItems hands the targeted re-reads a webhook delivery
 	// caused (webhook_tracker_refresh.go) to the governor so its cached
 	// actionable snapshot is patched for those items only; the wake cycle

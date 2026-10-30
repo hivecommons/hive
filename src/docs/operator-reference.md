@@ -13,6 +13,8 @@ The reference is organized into the sections below. Existing links to this page 
 
 <a id="agent-go-toolchain-shim"></a>
 - [Agent Go toolchain shim](operator-reference/README.md#agent-go-toolchain-shim)
+<a id="abandoned-contributor-prs"></a>
+- [Abandoned contributor PRs](operator-reference/README.md#abandoned-contributor-prs)
 <a id="minimum-required-configuration"></a>
 - [Minimum required configuration](operator-reference/README.md#minimum-required-configuration)
 <a id="github-api-quota--who-is-spending-it"></a>

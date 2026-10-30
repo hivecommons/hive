@@ -138,8 +138,8 @@ func (s *BasePreparationStore) change(key string, fn func(*basePreparation) erro
 		s.mu.Unlock()
 		return nil
 	}
-	const directoryMode = 0o775
-	const fileMode = 0o664
+	const directoryMode = 0o755
+	const fileMode = 0o644
 	if err := os.MkdirAll(s.dir, directoryMode); err != nil {
 		return err
 	}

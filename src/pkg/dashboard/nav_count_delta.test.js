@@ -78,7 +78,7 @@ function load() {
     for (const name of names) vm.runInContext(fn(file, name), ctx);
   }
   for (const name of ['STAGE_TRACKER_AGE_MS', 'STAGE_TRACKER_SORTS', 'STAGE_TRACKER_ACTED_FILTERS', 'STAGE_TRACKER_PAGE_SIZES', 'STAGE_TRACKER_DEFAULT_PAGE_SIZE', 'STAGE_TRACKER_ATTENTION_STAGES']) {
-    const declaration = source(name === 'STAGE_TRACKER_ACTED_FILTERS' ? 'tracker-row' : 'tracker-words-stage').match(new RegExp('const ' + name + ' = [^\\n]+'));
+    const declaration = source(name === 'STAGE_TRACKER_ACTED_FILTERS' ? 'tracker-row-acted' : 'tracker-words-stage').match(new RegExp('const ' + name + ' = [^\\n]+'));
     assert.ok(declaration, name);
     vm.runInContext(declaration[0], ctx);
   }

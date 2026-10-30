@@ -251,6 +251,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// (#4263 off/shadow/enforce rollout). The soak endpoint is the
 	// fixed-commit telemetry read path (convergence_soak.go).
 	s.mux.HandleFunc("GET /api/config/convergence", s.handleConvergenceConfigGet)
+	s.registerIntegrationRoutes()
 	s.mux.HandleFunc("PUT /api/config/convergence", s.handleConvergenceConfigPut)
 	s.mux.HandleFunc("GET /api/config/sla", s.handleSLAConfigGet)
 	s.mux.HandleFunc("PUT /api/config/sla", s.handleSLAConfigPut)

@@ -275,6 +275,15 @@
       });
     }
 
+    function contributorAbandonedBadge(c) {
+      const count = Number(c.abandoned) || 0;
+      if (count <= 0) return '';
+      const recent = (Array.isArray(c.abandoned_prs) ? c.abandoned_prs : []).slice()
+        .sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
+      const tooltip = recent.map(r => `${r.repo}#${r.pr} → ${r.adopted_into_pr ? '#' + r.adopted_into_pr : 'in-place'} · ${r.reason || 'unknown'} · ${r.at || 'unknown time'}`).join('\n') || 'PRs adopted by the hive';
+      return `<span class="contrib-abandoned" title="${esc(tooltip)}">Abandoned ${count}</span>`;
+    }
+
     function renderContributors(contributors) {
       refreshSectionCardShell('contributors-section');
       setSectionSummary('contributors-section', contributorsSectionSummary(contributors, null));
@@ -348,8 +357,9 @@
             </div>
             ${tierProv ? `<div class="fs-sm text-muted mb-3 contrib-tier-provenance">${esc(tierProv)}</div>` : ''}
             ${cliLine ? `<div class="fs-sm text-muted mb-3">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div class="fs-sm text-muted mb-3">${roleLine}</div>` : '')}
-            <div style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
+            <div style="display:flex;flex-wrap:wrap;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
               <span>Completed: <strong class="text-default">${c.total_tasks_completed || 0}</strong></span>
+              ${contributorAbandonedBadge(c)}
               <span>Failed: <strong style="color:${(c.total_tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--fg)'}">${c.total_tasks_failed || 0}</strong></span>
             </div>
             ${(c.active_tasks && c.active_tasks.length > 0) ? '<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current tasks</div>' + c.active_tasks.map(t => `<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-2);padding:6px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(t.kind)}</span> <a href="https://github.com/${esc(t.repo)}/issues/${t.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(t.repo)}#${t.number} ↗</a> — ${esc(t.title)}</div>`).join('') : (c.current_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current task</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:8px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(c.current_task.kind)}</span> <a href="https://github.com/${esc(c.current_task.repo)}/issues/${c.current_task.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(c.current_task.repo)}#${c.current_task.number} ↗</a> — ${esc(c.current_task.title)}</div>` : (c.last_completed_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Last completed</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:6px 10px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-success">${esc(c.last_completed_task.kind)}</span> <a href="https://github.com/${esc(c.last_completed_task.repo)}/issues/${c.last_completed_task.number}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:underline">${esc(c.last_completed_task.repo)}#${c.last_completed_task.number} ↗</a> — ${esc(c.last_completed_task.title)}</div>` : (c.active ? '<div style="font-size:var(--fs-sm);color:var(--green);margin-bottom:10px">Idle — waiting for task</div>' : '')))}

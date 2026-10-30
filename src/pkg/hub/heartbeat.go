@@ -167,6 +167,7 @@ type LeaderboardEntry struct {
 	TrustTier      string `json:"trust_tier"`
 	TasksCompleted int    `json:"tasks_completed"`
 	TasksFailed    int    `json:"tasks_failed"`
+	Abandoned      int    `json:"abandoned"`
 	Active         bool   `json:"active"`
 	CurrentTask    string `json:"current_task,omitempty"`
 	HiveName       string `json:"hive_name,omitempty"`

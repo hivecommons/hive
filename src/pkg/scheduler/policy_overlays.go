@@ -223,6 +223,16 @@ func (s *Scheduler) CIFailureKickMessage(agentName string, sig github.CIFailureS
 	}
 	header := fmt.Sprintf("CI failed on %s#%d (%s) — repair it now. Detection was out-of-band (webhook); do not watch or poll CI yourself.\n",
 		sig.Repo, sig.Number, sig.Check)
+	if context := sig.Integration; context != nil && context.CandidateID != "" {
+		header = fmt.Sprintf("Integration CI failed on candidate %s, tested commit %s tree %s, base %s, workflow policy %s, producer %s, attempt %d. Ordered PR:head members: %s. Existing ownership routes %s#%d at exact head %s to you first; this is NOT attribution of blame. Inspect the failed job %s (%s), coordinate shared prerequisite repair once, and retain every normal CI/review/trust/hold/current-base gate. Do not copy green statuses, cancel shared jobs, poll CI, or modify other members without their owner.\n",
+			context.CandidateID, context.TestedSHA, context.TestedTree, context.BaseSHA, context.Policy, context.Producer, context.Attempt,
+			strings.Join(context.Members, ", "), sig.Repo, sig.Number, sig.HeadSHA, sig.Check, sig.DetailsURL)
+		if context.RunID > 0 && context.SuiteID > 0 {
+			header += fmt.Sprintf("Evidence source %s; workflow run %d, suite %d.\n", context.Source, context.RunID, context.SuiteID)
+		} else {
+			header += "Workflow run/suite binding unavailable; membership observation is not passing policy proof.\n"
+		}
+	}
 	return header + section
 }
 
