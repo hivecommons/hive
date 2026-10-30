@@ -335,7 +335,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
 				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
-				lp.MergeTrain = pr.MergeTrain
+				lp.MergeTrain, lp.LeftTrain = pr.MergeTrain, pr.LeftTrain
 				lp.Soak = pr.Soak
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				lp.Decided, lp.AdoptedFrom = pr.Decided, pr.AdoptedFrom
@@ -396,6 +396,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			items[i].ClosedIssue = stageTrackerClosedIssueAnchor(items[i])
 		}
 	}
+	stageTrackerFoldReviewNotes(items)
 }
 
 // Link evidence arrives after the issue's stage/new narration, including

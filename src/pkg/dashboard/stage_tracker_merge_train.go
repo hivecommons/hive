@@ -241,11 +241,17 @@ type StageTrackerLeftTrain struct {
 
 // stageTrackerTrainUnderRepair names why a PR at stage, with reason, is
 // not a train member right now — "" when it may ride. A PR being fixed
-// (070), waiting on its author (071) or contributor (072), parked on a
-// human decision (085), or whose required checks are red is somebody's
-// to repair first; the planner may still have ordered it, but the view
-// never seats it (hivecommons/hive#15581 admits 050/060 provisionally
-// only while nothing is red).
+// (070), waiting on its author (071) or contributor (072), freshly
+// adopted (074), parked on a human decision (085), or whose required
+// checks are red is somebody's to repair first; the planner may still
+// have ordered it, but the view never seats it (hivecommons/hive#15581
+// admits 050/060 provisionally only while nothing is red).
+//
+// stageTrackerItemColumn reads the same predicate for the chevron
+// column, and stageTrackerUnderRepair in the SPA mirrors it: membership
+// and column can never disagree (hive's own #15574 sat at 070 "Fixing"
+// under Merge queue because its stale merge-failed gate still promoted
+// the column after the train rule had already dropped it).
 func stageTrackerTrainUnderRepair(stage int, reason string) string {
 	switch stage {
 	case stagelabels.Fixing.Number():
@@ -254,6 +260,8 @@ func stageTrackerTrainUnderRepair(stage int, reason string) string {
 		return stagelabels.NeedsAuthor.Slug()
 	case stagelabels.ReturnedToContributor.Number():
 		return stagelabels.ReturnedToContributor.Slug()
+	case stagelabels.AdoptedByHive.Number():
+		return stagelabels.AdoptedByHive.Slug()
 	case stagelabels.NeedsDecision.Number():
 		return stagelabels.NeedsDecision.Slug()
 	}

@@ -1579,7 +1579,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <div id="invite-banner" class="invite-banner" hidden role="status"></div>
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
 <p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:var(--sp-4)">Powered by <strong style="color:var(--text)">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
-<p class="subtitle-discord">Questions? <a class="discord-link" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a> and we'll help you get to your first PR.</p>
+<p class="subtitle-discord">Questions? <a class="discord-link" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a> and we'll help you get to your first PR. Or <a class="discord-link" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">watch the hive live on Twitch</a>.</p>
 <div class="stat-row">
 <div class="stat"><div class="stat-num" style="color:var(--cc-accent)">%d</div><div class="stat-label">Total</div></div>
 %s

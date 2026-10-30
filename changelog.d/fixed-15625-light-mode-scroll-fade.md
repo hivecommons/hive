@@ -1,0 +1,1 @@
+- Dashboard: the scroll-edge fade at the bottom of scrollable dialog bodies (Settings and other long modals) now follows the theme — in light mode it fades to the light panel surface instead of painting a dark band over the last visible row; dark mode is unchanged ([#15625](https://github.com/hivecommons/hive/issues/15625)).

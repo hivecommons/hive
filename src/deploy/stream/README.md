@@ -7,7 +7,7 @@ Twitch stream. Operator guide, Twitch-side setup, and troubleshooting:
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | `debian:bookworm-slim` + Xvfb, Chromium, ffmpeg, xdotool, tini; builds `authproxy` in a `golang` stage. Build context is the **repo root**. Published as `ghcr.io/hivecommons/hive-stream:<sha>` / `:v5-latest` by `.github/workflows/stream-image.yml`. |
-| `entrypoint.sh` | Supervisor: Xvfb → authproxy → Chromium `--kiosk` (restart with backoff) → periodic reload (`RELOAD_EVERY`) → ffmpeg `x11grab` + `anullsrc` → libx264 CBR → RTMP. Masks the stream key in ffmpeg output. |
+| `entrypoint.sh` | Supervisor: Xvfb → authproxy → Chromium `--kiosk` (restart with backoff) → periodic reload (`RELOAD_EVERY`) → PulseAudio null sink `hive` → ffmpeg `x11grab` + `pulse hive.monitor` (or `anullsrc` with `STREAM_AUDIO=silent`) → libx264 CBR + AAC → RTMP. Masks the stream key in ffmpeg output. |
 | `authproxy/` | Loopback reverse proxy (stdlib Go) that adds `Authorization: Bearer $DASHBOARD_TOKEN` to every dashboard request so the token is never in a URL, in Chromium's history, or on screen. Logs when the upstream answers with a login redirect. |
 | `healthcheck.sh` | Chromium alive + ffmpeg progress file fresher than 20 s with `frame>0`. Used by the image `HEALTHCHECK` and the Deployment's probes. |
 | `docker-compose.yaml`, `.env.example` | Run the same image from a laptop. |
@@ -20,7 +20,8 @@ Twitch stream. Operator guide, Twitch-side setup, and troubleshooting:
 | --- | --- | --- |
 | `DASHBOARD_URL` | required | Dashboard origin (`http://hive.<ns>.svc.cluster.local:3002` in-cluster, or the public route). |
 | `DASHBOARD_TOKEN` | — | Spoke `dashboard.auth_token` (in-cluster) or a GitHub token of a hub user with access (public route). |
-| `DASHBOARD_PATH` | `/?kiosk=1#section-activity-monitor-section` | Path Chromium opens. `?kiosk=1` is the dashboard's unattended display mode. |
+| `DASHBOARD_PATH` | `/?kiosk=1#section-activity-monitor-section` | Path Chromium opens. `?kiosk=1` is the dashboard's unattended display mode; tracker sounds are on there unless `&sound=off` is added. |
+| `STREAM_AUDIO` | `pulse` | `pulse` captures the tracker sounds via a PulseAudio null sink; `silent` mutes Chromium and streams `anullsrc` silence. |
 | `TWITCH_STREAM_KEY` | — | Primary Stream key. |
 | `TWITCH_INGEST` | `rtmp://live.twitch.tv/app` | Ingest; pick a closer one from Twitch's ingest list if needed. |
 | `VIDEO_SIZE` / `FPS` / `BITRATE` / `X264_PRESET` | `1920x1080` / `30` / `4500k` / `veryfast` | Encode settings. Keyframe interval is `2×FPS`. |
