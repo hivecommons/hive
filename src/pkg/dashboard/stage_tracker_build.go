@@ -449,6 +449,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	applyRebaseAttempts(resp.Items)
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
+	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)

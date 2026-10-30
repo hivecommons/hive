@@ -30,6 +30,7 @@
     .ham-chips { display: inline-flex; gap: var(--sp-1); }
     .ham-chip { border: var(--line-width) solid var(--line); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); font-size: var(--fs-xs); cursor: pointer; }
     .ham-chip[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+    .ham-chip--waiting[aria-pressed="true"] { color: var(--status-attention); border-color: var(--status-attention); }
     .ham-chip:hover { color: var(--text); border-color: var(--line-strong); }
     .ham-chip[hidden] { display: none; }
     .ham-chip .ham-chip-n { color: var(--text-faint); margin-left: var(--sp-1); }

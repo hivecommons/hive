@@ -147,6 +147,7 @@
       f.labels = Array.isArray(f.labels) ? f.labels.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : [];
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
+      f.waitingOnYou = !!f.waitingOnYou;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -160,7 +161,7 @@
 
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
-      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.waitingOnYou || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -168,6 +169,7 @@
     function stageTrackerMatches(item, f, ctx) {
       ctx = ctx || {};
       if (f.kind !== 'all' && item.kind !== f.kind) return false;
+      if (f.waitingOnYou && !item.waiting_on_you) return false;
       if (f.repo && item.repo !== f.repo) return false;
       if (f.q) {
         const q = f.q.trim().toLowerCase();
@@ -427,6 +429,7 @@
         case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
         case 'needsHuman': f.needsHuman = value === 'toggle' ? !f.needsHuman : !!value; break;
         case 'onHold': f.onHold = value === 'toggle' ? !f.onHold : !!value; break;
+        case 'waitingOnYou': f.waitingOnYou = value === 'toggle' ? !f.waitingOnYou : !!value; break;
         case 'labelsClear': f.labels = []; f.needsHuman = false; f.onHold = false; break;
         case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
         case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
@@ -451,6 +454,8 @@
       setVal('activity-monitor-size', f.size);
       const att = document.getElementById('activity-monitor-attention');
       if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const wait = document.getElementById('activity-monitor-waiting');
+      if (wait) wait.setAttribute('aria-pressed', f.waitingOnYou ? 'true' : 'false');
       const dir = document.getElementById('activity-monitor-dir');
       if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
@@ -654,6 +659,7 @@
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      stageTrackerRenderWaiting(d, nowMs);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
@@ -756,6 +762,7 @@
       try {
         if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadGrouping();
         if (!_stageTrackerSig && !_stageTrackerEtag) { stageTrackerLoadFilter(); stageTrackerSoundInit(); }
+        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerApplyUrlFilter();
         const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
         if (r.status === 304) {
           // A 304 carries no body, so take generated_at/source from the headers or the "updated" chip goes amber on a quiet hive.

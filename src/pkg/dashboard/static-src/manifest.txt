@@ -71,6 +71,7 @@ js/tracker-actions.js
 js/tracker-merged.js
 js/tracker-queue.js
 js/tracker-sound.js
+js/tracker-waiting.js
 js/agent-cards.js
 js/banners.js
 js/governor-view.js
