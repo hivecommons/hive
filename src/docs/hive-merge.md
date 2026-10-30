@@ -775,10 +775,27 @@ then), so the issue list and the PR list read the same
 ([#12436](https://github.com/hivecommons/hive/issues/12436)).
 
 An adoption pair is one logical PR everywhere a person might otherwise be
-asked to pick between PRs (hivecommons/hive#15495). When the write-back gate
-keeps the contributor's original open after supersession (`needs-opt-in-label`,
-a fork the hive cannot edit), it sits at 072 "superseded by #N" and the
-issue's caption, open-PR count, parked-PR check and "Let hive decide — all N
+asked to pick between PRs (hivecommons/hive#15495). A clanker- or
+hive-authored original closes in the adopting pass by policy
+(`governor.labels.stage.adoption.close_superseded: on_adopt`, the default;
+`on_merge` keeps it open until the copy merges): the write-back gate admits
+the close as `superseded-agent-pr` without the repo opt-in label the
+`contributor_adopt` kind otherwise wants, because the copy carries the same
+commits and sign-off (hivecommons/hive#15526 sat open beside hive's #15574
+as "Adopted → #15574 · superseded" with the gate saying
+`needs-opt-in-label`). A human-authored original still needs that opt-in
+label to close in the adopting pass; without it the gate keeps it open after
+supersession (`needs-opt-in-label`, or a fork the hive cannot edit) and it
+sits at 072 "superseded by #N" until the copy merges. Either way the
+superseded original draws in the Activity Monitor as one muted,
+chevron-less line under the issue (greyed title, no stage strip) whose
+trailing note reads "superseded · hive adopted → #M" — or "superseded ·
+closed · hive adopted → #M" once it is closed — on a single line (the title
+ellipsizes first); the hover carries the long form ("Hive re-authored this
+PR as #M with the same commits and sign-off. This PR closes as superseded
+when #M merges." / "…is closed as superseded."). The tracker marks it
+`superseded_by: M`; the line stays only while #M is open and listed and
+drops once #M merges or closes. The issue's caption, open-PR count, parked-PR check and "Let hive decide — all N
 PRs" fan-out all see only the hive's copy: the original's review verdict never
 gates the issue, and the copy's body carries every `Fixes #N` / `Refs #N` line
 of the original (an annotated `Refs #N — partial` travels as the bare
@@ -812,6 +829,46 @@ the train, an open PR's webhook that covers an issue also releases any
 contributor task already dispatched on it (see
 [operator-reference.md § Open-PR dispatch guard](operator-reference.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner)),
 so the hive does not open the second PR in the first place.
+
+### Empty-diff PRs of the hive's own
+
+A PR of the hive's own (the App's, or an adoption it opened) whose diff
+against its base is **empty** — GitHub reports zero changed files, and the
+`base...head` compare agrees — carries nothing the base does not already
+have. This is what an adoption looks like once the original's fix landed
+through another PR. The hive closes it itself, through the writeback gate,
+with the sweep's edited-in-place comment naming the PR that carries the
+change (`<!-- hive-redundant-of: #N -->`, the marker the reviewer's verdict
+set) and the `hive/superseded` label, and raises **no** human decision. The
+same guards as the superseded rule hold: `governor.auto_close_superseded` on,
+ACMM L6, not held / keep-open / draft / parked by a person, and a head at
+least 15 minutes old so a branch mid-push is not read as empty. A *person's*
+empty PR is never closed by the hive; it gets the decision prompt as before.
+Code: `src/pkg/github/pr_empty_diff_hive_autoclose.go`, hooked from the
+self-authored sweep and from the 085 route
+([#15499](https://github.com/hivecommons/hive/pull/15499)).
+
+Three things made #15499 sit a day at 085 instead:
+
+- The adoption's dispatch records carried no `author_agent`, so the relay
+  judged the App's own PR non-hive and its decision question went down the
+  **contributor** lane (`contributor-lane:decision-requested`) to a person.
+  Dispatch records now carry `hive_authored`, and the relay falls back to
+  the PR author's login against the hive identity; an adoption routes
+  through the self lane.
+- Every merge-from-base pushed by the hive's own `update-branch` was a new
+  head with no verdict, so the swarm re-reviewed and re-asked the same
+  question (six heads, ~16 "Decision needed" reviews and 085 comments). A
+  PR with no diff against its base now re-stamps its prior verdict on each
+  head (`review.delta_rereview`); a decision question is identified by its
+  `hive-redundant-of` PR (else its normalised words), and a second ask with
+  the same identity refreshes the standing review in place and posts no
+  second 085 entry comment.
+- The tracker's *Decision needed* popover read the verdict at the current
+  head only, so during a re-review it fell back to "a reviewer handed this
+  PR to a person without a specific question". A row parked on a reviewer
+  decision now quotes the newest decision-requested verdict on any head,
+  shows a *redundant of #N* chip, and leads with **Close as superseded**.
 
 ## Usage
 

@@ -931,7 +931,13 @@ type PullRequest struct {
 	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
-	CIStatus       string `json:"ci_status"`
+	// BaseDiffEmpty is true when the per-PR detail fetch reported zero
+	// changed files, additions and deletions against the base: the PR
+	// carries nothing the base does not already have (an adoption whose
+	// original landed another way, hivecommons/hive#15499). Only the
+	// single-PR GET carries these counts; false until EnrichCIStatus ran.
+	BaseDiffEmpty bool   `json:"base_diff_empty,omitempty"`
+	CIStatus      string `json:"ci_status"`
 	// CIRealCheckRuns is the count of non-meta check runs observed on the head.
 	// CIRealCheckRunsKnown distinguishes an observed metadata-only head from
 	// older/test payloads that did not collect this evidence.
@@ -2543,6 +2549,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
 		pr.MergeableState = full.GetMergeableState()
 		pr.MaintainerCanModify = full.GetMaintainerCanModify()
+		pr.BaseDiffEmpty = PRChangedFilesClaimsEmpty(full)
 		if base := full.GetBase().GetSHA(); base != "" {
 			pr.BaseSHA = base
 		}

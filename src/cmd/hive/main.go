@@ -11023,7 +11023,8 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
 			// The compare from the last judged head, for the delta
 			// re-review and its trivial skip (review.delta_rereview).
-			DeltaDiff: reviewDeltaDiffFor(ctx, cfg, ghr, artifact, state, fullRepo, pr.Number, pr.HeadSHA, pr.BodyDigest),
+			DeltaDiff:     reviewDeltaDiffFor(ctx, cfg, ghr, artifact, state, fullRepo, pr.Number, pr.HeadSHA, pr.BodyDigest),
+			BaseDiffEmpty: pr.BaseDiffEmpty,
 		}
 		// The linked Linear issue's text for the scope contract, read here
 		// so reviewers never need a Linear token (hivecommons/hive#14906);

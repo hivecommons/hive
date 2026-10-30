@@ -27,6 +27,16 @@ type Item struct {
 	// an attributed relay PR, or an issue the hive filed. Own items are
 	// never gated (except per-repo mode off).
 	HiveAuthored bool
+	// AgentAuthored is true when the author is an agent rather than a
+	// person: a contributor's clanker (author/clanker) or another hive.
+	// With SupersededBy it lets the adoption kind close the item by
+	// policy (ReasonSupersededAgentPR).
+	AgentAuthored bool
+	// SupersededBy is the hive's own pull request that carries this item's
+	// commits (the supersede adoption's copy), 0 when none. Set only by a
+	// caller whose policy closes superseded originals on adopt
+	// (governor.labels.stage.adoption.close_superseded: on_adopt).
+	SupersededBy int
 	// Labels is the item's current label set.
 	Labels []string
 	// CreatedAt is the item's creation time; the backfill guard compares it
@@ -65,6 +75,13 @@ const (
 	// quiet on the repo, and the advisory digest edit that kept landing on
 	// a paused torch-spyre showed that "unsolicited only" was not enough.
 	ReasonRepoPaused = "repo-paused"
+	// ReasonSupersededAgentPR allows the adoption kind on an agent-authored
+	// PR the hive has re-authored as its own copy (hivecommons/hive#15526
+	// stayed open at "superseded" for want of an opt-in label): the pair
+	// is one logical PR and the copy carries the author's commits and
+	// sign-off, so the close is the hive's own housekeeping, not an
+	// unsolicited write on a person's work.
+	ReasonSupersededAgentPR = "superseded-agent-pr"
 )
 
 // RepoPauseInfo is the provenance of an operator pause, as config records
@@ -424,6 +441,13 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	p := cfg.Policy(kind)
 	if p.OwnOnly {
 		return Decision{Reason: ReasonOwnOnly, Detail: fmt.Sprintf("%s only ever writes on hive-authored items; #%d is by %s", kind, item.Number, item.Author)}
+	}
+	// An agent's PR the hive re-authored as its own copy: the close is
+	// housekeeping on one logical PR of the hive's, so neither the level
+	// nor the opt-in label applies (an operator's own_only / repo mode /
+	// pause above still do).
+	if kind == KindContributorAdopt && item.AgentAuthored && item.SupersededBy > 0 {
+		return Decision{Allowed: true, Reason: ReasonSupersededAgentPR, Detail: fmt.Sprintf("#%d is agent-authored and the hive's copy #%d carries its commits; close_superseded is on_adopt", item.Number, item.SupersededBy)}
 	}
 	level := 0
 	if g.deps.LevelFor != nil {

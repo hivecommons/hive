@@ -2928,9 +2928,44 @@ type StageAdoptionConfig struct {
 	// AdoptionMaintainerPolicyNever is the pre-#14524 rule: the hive never
 	// takes a maintainer's PR over and releases any adoption of one.
 	MaintainerPolicy string `yaml:"maintainer_policy,omitempty"`
+	// CloseSuperseded says when a supersede adoption closes a clanker- or
+	// hive-authored original once the hive's copy carries its commits
+	// (hivecommons/hive#15526 sat open as "Adopted → #15574 · superseded"
+	// because the write-back gate wanted a repo opt-in label the
+	// contributor_adopt kind requires on items the hive did not author):
+	// AdoptionCloseSupersededOnAdopt (default) closes it in the adopting
+	// pass by policy — an agent's PR the hive re-authored is one logical PR,
+	// so no opt-in label is asked for; AdoptionCloseSupersededOnMerge keeps
+	// it open until the copy merges. Human-authored originals are not
+	// governed here: they close in the adopting pass only when they carry
+	// a writeback opt-in label (writeback.kinds.contributor_adopt), else
+	// when the copy merges.
+	CloseSuperseded string `yaml:"close_superseded,omitempty"`
 	// Supersede tunes supersede-mode adoption (the hive-authored copy from
 	// hive/adopt-<n>).
 	Supersede StageAdoptionSupersedeConfig `yaml:"supersede,omitempty"`
+}
+
+// Values for governor.labels.stage.adoption.close_superseded.
+const (
+	AdoptionCloseSupersededOnAdopt = "on_adopt"
+	AdoptionCloseSupersededOnMerge = "on_merge"
+	DefaultAdoptionCloseSuperseded = AdoptionCloseSupersededOnAdopt
+)
+
+// AdoptionCloseSupersededValues lists the accepted close_superseded values.
+var AdoptionCloseSupersededValues = []string{AdoptionCloseSupersededOnAdopt, AdoptionCloseSupersededOnMerge}
+
+// EffectiveCloseSuperseded normalises CloseSuperseded; empty or unknown
+// reads as the default (on_adopt).
+func (c StageAdoptionConfig) EffectiveCloseSuperseded() string {
+	v := strings.ToLower(strings.TrimSpace(c.CloseSuperseded))
+	for _, p := range AdoptionCloseSupersededValues {
+		if v == p {
+			return p
+		}
+	}
+	return DefaultAdoptionCloseSuperseded
 }
 
 // StageAdoptionSupersedeConfig is governor.labels.stage.adoption.supersede.

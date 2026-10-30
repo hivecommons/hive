@@ -207,6 +207,7 @@
           "StrictAttribution": null,
           "AutoMerge": null,
           "MaintainerPolicy": "",
+          "CloseSuperseded": "",
           "Supersede": {
             "CloseFirst": null
           }
