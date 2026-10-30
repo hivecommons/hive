@@ -59,9 +59,10 @@ func TestWebhookIssueCommentRecordsBlocker(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#15273: closing an issue through GitHub (not only the
-// dashboard's recheck/close-partial handlers) clears its ledger row, so
-// capabilities.blocked_items stops counting it.
+// hivecommons/hive#15273: an issue whose blocker was recorded from a live
+// issue_comment delivery is forgotten when GitHub later closes it, so
+// capabilities.blocked_items stops counting it. Payloads carry issue.state
+// as real deliveries do; the close is keyed on state, not action.
 func TestWebhookIssueClosedClearsBlocker(t *testing.T) {
 	l := swapSharedLedger(t)
 	c, _ := setupWebhookCacheTest(t)
@@ -77,8 +78,8 @@ func TestWebhookIssueClosedClearsBlocker(t *testing.T) {
 	}
 	// A labeled event leaves the row; a PR close is not an issue close.
 	for _, payload := range []string{
-		`{"action":"labeled","issue":{"number":21},"repository":{"full_name":"org/repo"}}`,
-		`{"action":"closed","issue":{"number":21,"pull_request":{"url":"x"}},"repository":{"full_name":"org/repo"}}`,
+		`{"action":"labeled","issue":{"number":21,"state":"open"},"repository":{"full_name":"org/repo"}}`,
+		`{"action":"closed","issue":{"number":21,"state":"closed","pull_request":{"url":"x"}},"repository":{"full_name":"org/repo"}}`,
 	} {
 		if _, err := c.HandleWebhookEvent("issues", []byte(payload)); err != nil {
 			t.Fatal(err)
@@ -87,7 +88,7 @@ func TestWebhookIssueClosedClearsBlocker(t *testing.T) {
 			t.Fatalf("payload %s cleared the ledger row", payload)
 		}
 	}
-	if _, err := c.HandleWebhookEvent("issues", []byte(`{"action":"closed","issue":{"number":21},"repository":{"full_name":"org/repo"}}`)); err != nil {
+	if _, err := c.HandleWebhookEvent("issues", []byte(`{"action":"closed","issue":{"number":21,"state":"closed"},"repository":{"full_name":"org/repo"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := l.Get(repo, 21); ok {

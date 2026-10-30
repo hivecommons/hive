@@ -529,17 +529,6 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 				res.BlockerKind = string(e.Blocker.Kind)
 			}
 		}
-		// A closed issue is no longer blocked: forget its ledger row so
-		// capabilities.blocked_items stops counting it, the same as the
-		// dashboard's recheck and close-partial paths do
-		// (hivecommons/hive#15273).
-		if webhookIssueClosed(event, p) {
-			if l := itemblocker.Shared(); l != nil {
-				if _, ok := l.Get(configured, n); ok {
-					l.Clear(configured, n)
-				}
-			}
-		}
 	}
 	if reviewRequestWakeEvent(event, p) {
 		c.reviewWake.wake()
@@ -673,11 +662,6 @@ func webhookIssueCommentBody(event string, p webhookEventPayload) (string, time.
 		at = *p.Comment.CreatedAt
 	}
 	return p.Comment.Body, at, true
-}
-
-// webhookIssueClosed reports whether an `issues` delivery closed an issue.
-func webhookIssueClosed(event string, p webhookEventPayload) bool {
-	return event == "issues" && p.Action == "closed"
 }
 
 // webhookIssueReopenedTarget returns the issue number of an `issues` event
