@@ -426,6 +426,9 @@
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-lineage:hover { color: var(--text); }
+    .ham-also-closes { color: var(--muted); }
+    .ham-also-closes a { color: inherit; text-decoration: none; }
+    .ham-also-closes a:hover { color: var(--text); text-decoration: underline; }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
     .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
