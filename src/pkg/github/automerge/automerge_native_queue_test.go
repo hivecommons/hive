@@ -469,6 +469,15 @@ func TestNativeQueueCurrentBaseGateIsExplicit(t *testing.T) {
 					updates := 0
 					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, baseRef: "main", baseSHA: "base1", mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
 						switch {
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+							_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
+							_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+							w.WriteHeader(http.StatusNotFound)
+							_ = json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/main":
+							_ = json.NewEncoder(w).Encode([]any{})
 						case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
 							updates++
 							w.WriteHeader(http.StatusAccepted)
