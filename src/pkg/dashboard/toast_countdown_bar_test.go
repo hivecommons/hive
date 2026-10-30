@@ -87,13 +87,17 @@ func TestToastCountdownBarWiredToDismissTimer(t *testing.T) {
 	}
 
 	// Stage-tracker action-result toasts: informational ones close after
-	// STAGE_TRACKER_RESULT_TOAST_MS on the same countdown; errors and
-	// toasts offering next actions stay sticky.
-	if !strings.Contains(html, "const STAGE_TRACKER_RESULT_TOAST_MS = 15000;") {
-		t.Error("result toasts need a named 15s lifetime constant")
+	// the info toast duration and errors after the error toast duration
+	// (dashboard.stage_tracker.toast_info_s / toast_error_s, #15813) on
+	// the same countdown; toasts offering next actions stay sticky.
+	if !strings.Contains(html, "const STAGE_TRACKER_TOAST_DEFAULT_S = Object.freeze({ info: 15, error: 30 });") {
+		t.Error("tracker toasts need named 15 s / 30 s default lifetimes")
 	}
 	result := extractJSFunction(t, html, "stageTrackerResultToast")
-	if !strings.Contains(result, "if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));") {
+	if !strings.Contains(result, "if (text.type === 'error') toastCountdownBar(el, stageTrackerToastMs('error'), () => dismissToast(el, null, null, true));") {
+		t.Error("stageTrackerResultToast must arm the shared countdown for errors with the error toast duration")
+	}
+	if !strings.Contains(result, "else if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, stageTrackerToastMs('info'), () => dismissToast(el, null, null, true));") {
 		t.Error("stageTrackerResultToast must arm the shared countdown for timed results, dismissing through the sticky guard")
 	}
 	timed := extractJSFunction(t, html, "stageTrackerResultToastTimed")

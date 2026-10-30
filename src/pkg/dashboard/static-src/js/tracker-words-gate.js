@@ -139,6 +139,15 @@
       // kept one and holds this one — "Duplicate of #15402 · needs a
       // pick"; no clock, no train. Let hive decide on either row closes
       // the held one as superseded.
+      // Two open PRs for one issue in different lanes (hivecommons/hive#15810):
+      // the queue admits neither until a person keeps one and closes the
+      // other; the row's decision options name both PRs.
+      const conflictWith = typeof stageTrackerGateClaimConflictOf === 'function' ? stageTrackerGateClaimConflictOf(state) : 0;
+      if (conflictWith) {
+        const issue = Number(mg.duplicate_issue) || 0;
+        const tip = 'This PR and #' + conflictWith + ' both claim' + (issue ? ' #' + issue : ' the same issue') + " from different merge lanes. Hive's merge queue admits neither until one is closed or approved, so two implementations of one fix never both land. Keep this one (Approve) or close it as superseded by #" + conflictWith + '.' + lastSeen;
+        return { state, word: word, detail: 'needs decision', tip, cue: 'waiting', until: 0, duplicateOf: conflictWith };
+      }
       const dupOf = stageTrackerGateDuplicateOf(state);
       if (dupOf) {
         const issue = Number(mg.duplicate_issue) || 0;

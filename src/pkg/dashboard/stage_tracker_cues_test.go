@@ -316,6 +316,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS"),
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_EXIT_PAD"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_MS"),
+		"function stageTrackerMergeBannerMs() { return STAGE_TRACKER_MERGE_BANNER_MS; }",
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MAX_PLAYS"),
 		jsFunc(t, html, "stageTrackerCelebrateSetting"),
