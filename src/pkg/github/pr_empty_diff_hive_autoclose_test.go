@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -58,6 +59,23 @@ func TestDecideHiveEmptyDiffAutoClose(t *testing.T) {
 			f.TreeMatchesBase = true
 			f.HiveAuthored = false
 		}), hiveEmptyDiffVerdictHumanNote, hiveEmptyDiffReasonNotHive},
+		// hivecommons/hive#15732: a person's empty PR whose landing is
+		// proven closes like the hive's own; a real diff still keeps it.
+		{"person's empty PR with a proven landing closes", with(func(f *HiveEmptyDiffAutoCloseFacts) {
+			f.HiveAuthored = false
+			f.LandingProven = true
+			f.ReviewerConfirmed = true
+		}), hiveEmptyDiffVerdictClose, SupersessionActionClosedEmptyDiff},
+		{"person's PR with a real diff keeps even with a landing", with(func(f *HiveEmptyDiffAutoCloseFacts) {
+			f.HiveAuthored = false
+			f.LandingProven = true
+			f.DiffFiles = 1
+		}), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonHasDiff},
+		{"person's proven-landed PR parked by a person keeps", with(func(f *HiveEmptyDiffAutoCloseFacts) {
+			f.HiveAuthored = false
+			f.LandingProven = true
+			f.ParkedByPerson = true
+		}), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonPerson},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,7 +188,7 @@ func TestPRDiffAgainstBaseHeadOnBaseUsesMergeBaseDate(t *testing.T) {
 
 	c := NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, slog.Default())
 	pr := &gh.PullRequest{Base: &gh.PullRequestBranch{Ref: gh.Ptr("v5")}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("head999")}}
-	files, headAt, known := c.prDiffAgainstBase(context.Background(), "hivecommons", "hive", pr)
+	files, headAt, known, _ := c.prDiffAgainstBase(context.Background(), "hivecommons", "hive", pr)
 	if !known || len(files) != 0 {
 		t.Fatalf("diff = %d files, known=%v; want empty and known", len(files), known)
 	}
@@ -207,7 +225,7 @@ func TestCloseIssuesAlreadyLandedNotesOnlyClosedIssues(t *testing.T) {
 	c := testClient(t, srv.URL)
 	pr := &gh.PullRequest{Number: gh.Ptr(7), Body: gh.Ptr("Closes #1\nCloses #2"), Base: &gh.PullRequestBranch{Ref: gh.Ptr("v5")}}
 
-	got := c.closeIssuesAlreadyLanded(context.Background(), "o", "r", pr, 5)
+	got := c.closeIssuesAlreadyLanded(context.Background(), "o", "r", pr, 5, true)
 	if !reflect.DeepEqual(got, []int{2}) {
 		t.Fatalf("closed = %v, want [2]", got)
 	}
@@ -216,5 +234,151 @@ func TestCloseIssuesAlreadyLandedNotesOnlyClosedIssues(t *testing.T) {
 	}
 	if want := []string{"/repos/o/r/issues/2/comments"}; !reflect.DeepEqual(comments, want) {
 		t.Fatalf("done notes = %v, want only on the closed issue %v", comments, want)
+	}
+}
+
+// alreadyLandedAnyAuthorServer is a GitHub stand-in for the any-author
+// already-landed close (hivecommons/hive#15732): PR 15544 by a person,
+// compare base...head as given, PR 15545 merged or not.
+type alreadyLandedAnyAuthorServer struct {
+	mu       sync.Mutex
+	compare  map[string]any
+	landedOK bool
+	closed   bool
+	comments []string
+	labels   []string
+}
+
+func (s *alreadyLandedAnyAuthorServer) handler(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/compare/"):
+		_ = json.NewEncoder(w).Encode(s.compare)
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/15545":
+		pr := map[string]any{"number": 15545, "state": "closed", "user": map[string]any{"login": "clubanderson"}}
+		if s.landedOK {
+			pr["merged"] = true
+			pr["merged_at"] = "2026-10-20T01:00:00Z"
+		}
+		_ = json.NewEncoder(w).Encode(pr)
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/15544/comments":
+		_ = json.NewEncoder(w).Encode([]map[string]any{})
+	case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/15544/comments":
+		var c struct{ Body string }
+		_ = json.NewDecoder(r.Body).Decode(&c)
+		s.comments = append(s.comments, c.Body)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/15544/labels":
+		var names []string
+		_ = json.NewDecoder(r.Body).Decode(&names)
+		s.labels = append(s.labels, names...)
+		_ = json.NewEncoder(w).Encode([]map[string]any{})
+	case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/15544":
+		s.closed = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 15544, "state": "closed"})
+	case strings.HasPrefix(r.URL.Path, "/repos/o/r/labels"):
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": SupersededLabel})
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/contents/"):
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": "base-blob", "type": "file"})
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func alreadyLandedContributorPR(login string, changed int) *gh.PullRequest {
+	return &gh.PullRequest{Number: gh.Ptr(15544), State: gh.Ptr("open"), Title: gh.Ptr("fix: thing"), Body: gh.Ptr("No closing refs."),
+		User: &gh.User{Login: gh.Ptr(login)}, ChangedFiles: gh.Ptr(changed), Additions: gh.Ptr(0), Deletions: gh.Ptr(0),
+		Head: &gh.PullRequestBranch{SHA: gh.Ptr("k1k1k1k1k1")}, Base: &gh.PullRequestBranch{Ref: gh.Ptr("v5")},
+		CreatedAt: &gh.Timestamp{Time: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}}
+}
+
+// TestCloseAlreadyLandedAnyAuthorClosesOnProvenLanding is
+// hivecommons/hive#15732: #15544 by a contributor was +0/−0 against v5
+// because #15545 (merged) carried the same change, and sat at 085 for 9h.
+// With the empty diff and the named PR merged the hive closes it as
+// superseded, thanking the author; trust is not consulted.
+func TestCloseAlreadyLandedAnyAuthorClosesOnProvenLanding(t *testing.T) {
+	for _, login := range []string{"karibhou", "trusted-maintainer"} {
+		t.Run(login, func(t *testing.T) {
+			api := &alreadyLandedAnyAuthorServer{landedOK: true, compare: map[string]any{"files": []any{}, "commits": []any{}, "status": "identical"}}
+			srv := httptest.NewServer(http.HandlerFunc(api.handler))
+			defer srv.Close()
+			c := testClient(t, srv.URL)
+			res, err := c.CloseAlreadyLandedHivePRIfEligible(context.Background(), "o/r", alreadyLandedContributorPR(login, 0), 15545)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.Closed || !res.Empty || res.RedundantOf != 15545 || res.Reason != SupersessionActionClosedEmptyDiff {
+				t.Fatalf("res = %+v, want closed empty redundant_of=15545", res)
+			}
+			if !api.closed || !slices.Contains(api.labels, SupersededLabel) {
+				t.Fatalf("closed=%v labels=%v", api.closed, api.labels)
+			}
+			if len(api.comments) != 1 || !strings.Contains(api.comments[0], "Already landed via #15545 — closing as superseded; thank you @"+login+".") || strings.Contains(api.comments[0], "hive-authored") {
+				t.Fatalf("comment = %q", api.comments)
+			}
+		})
+	}
+}
+
+// TestCloseAlreadyLandedAnyAuthorKeepsRealDiff: a contributor PR whose
+// compare lists a file that differs on the base tip is not closed; the
+// reviewer's question stands as before.
+func TestCloseAlreadyLandedAnyAuthorKeepsRealDiff(t *testing.T) {
+	api := &alreadyLandedAnyAuthorServer{landedOK: true, compare: map[string]any{
+		"files":   []map[string]any{{"filename": "pkg/a.go", "status": "modified", "sha": "head-blob"}},
+		"commits": []map[string]any{{"sha": "k1k1k1k1k1"}},
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	res, err := c.CloseAlreadyLandedHivePRIfEligible(context.Background(), "o/r", alreadyLandedContributorPR("karibhou", 1), 15545)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Closed || res.Empty || res.Verdict != hiveEmptyDiffVerdictKeep || res.Reason != hiveEmptyDiffReasonHasDiff {
+		t.Fatalf("res = %+v, want kept has-diff", res)
+	}
+	if api.closed || len(api.comments) != 0 {
+		t.Fatalf("a real diff must not be touched: closed=%v comments=%v", api.closed, api.comments)
+	}
+}
+
+// TestCloseAlreadyLandedAnyAuthorNeedsProof: an empty contributor PR whose
+// named PR is not merged (and whose head is not on the base) keeps the
+// reviewer's question — the empty compare alone could be a branch
+// mid-push. With the head on the base the proof is the compare itself.
+func TestCloseAlreadyLandedAnyAuthorNeedsProof(t *testing.T) {
+	api := &alreadyLandedAnyAuthorServer{landedOK: false, compare: map[string]any{"files": []any{}, "commits": []map[string]any{{"sha": "k1k1k1k1k1"}}}}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	res, err := c.CloseAlreadyLandedHivePRIfEligible(context.Background(), "o/r", alreadyLandedContributorPR("karibhou", 0), 15545)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Closed || !res.Empty || res.Verdict != hiveEmptyDiffVerdictHumanNote || res.Reason != hiveEmptyDiffReasonNotHive {
+		t.Fatalf("res = %+v, want human/not-hive (unproven landing)", res)
+	}
+
+	api.mu.Lock()
+	api.compare = map[string]any{"files": []any{}, "commits": []any{}, "merge_base_commit": map[string]any{"sha": "k1k1k1k1k1"}}
+	api.mu.Unlock()
+	res, err = c.CloseAlreadyLandedHivePRIfEligible(context.Background(), "o/r", alreadyLandedContributorPR("karibhou", 0), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Closed || res.RedundantOf != 0 || len(api.comments) != 1 || !strings.Contains(api.comments[0], "Already landed on `v5` — closing as superseded; thank you @karibhou.") {
+		t.Fatalf("res = %+v comments=%q, want closed on head-on-base proof", res, api.comments)
+	}
+}
+
+func TestAlreadyLandedIssueNoteNamesWhosePR(t *testing.T) {
+	if got := alreadyLandedIssueNote(15544, 15545, "v5", false); strings.Contains(got, "its own") || !strings.Contains(got, "closed #15544 as superseded") {
+		t.Fatalf("contributor note = %q", got)
+	}
+	if got := alreadyLandedIssueNote(15647, 15506, "v5", true); !strings.Contains(got, "its own #15647") {
+		t.Fatalf("hive note = %q", got)
 	}
 }

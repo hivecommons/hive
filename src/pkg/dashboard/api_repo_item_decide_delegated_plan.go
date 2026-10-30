@@ -253,6 +253,9 @@ func delegatedPlanInstruction(in delegatedecision.Input, d delegatedecision.Deci
 // what decided it, otherwise the head's blockers, otherwise the first
 // clause of the rule's rationale with its issue references removed.
 func delegatedPlanWhy(in delegatedecision.Input, d delegatedecision.Decision) string {
+	if why := delegatedPlanLandedWhy(in, d); why != "" {
+		return why
+	}
 	var parts []string
 	if in.Kind == delegatedecision.KindPR && !in.TrustedAuthor && !in.HiveAuthored && d.Verdict != delegatedecision.VerdictDirection {
 		who := "the author"
@@ -278,6 +281,23 @@ func delegatedPlanWhy(in delegatedecision.Input, d delegatedecision.Decision) st
 		return ""
 	}
 	return strings.ToUpper(why[:1]) + why[1:] + "."
+}
+
+// delegatedPlanLandedWhy is the reason when a merged PR already carries
+// the change (hivecommons/hive#15732): the preview for #15544 said "Close
+// #15544 as superseded by #15545" and then "Author @Karibhou is untrusted
+// and their clanker is offline" — the right action for the wrong reason.
+// The evidence is the empty diff and the merged landing; the author's
+// standing never enters it. Empty for any other decision.
+func delegatedPlanLandedWhy(in delegatedecision.Input, d delegatedecision.Decision) string {
+	if d.Rule != delegatedecision.RuleAlreadyFixed || in.SupersededBy == nil || in.SupersededBy.PR <= 0 {
+		return ""
+	}
+	landed := "the change already landed via #" + strconv.Itoa(in.SupersededBy.PR) + " (merged)"
+	if in.DiffEmpty {
+		return "Diff is empty — " + landed + "."
+	}
+	return strings.ToUpper(landed[:1]) + landed[1:] + "."
 }
 
 // delegatedPlanBlockers names what keeps a head from merging, in plain

@@ -29,6 +29,11 @@ var (
 	// landing PR from a lineage mention.
 	alreadyLandedRefRE     = regexp.MustCompile(`(?i)\b(via|through|in|by|since|landed in|merged (?:in|as|via|through))\s+(?:[\w.-]+/[\w.-]+)?#(\d+)\b`)
 	alreadyLandedPullURLRE = regexp.MustCompile(`(?i)\b(via|through|in|by|since)\s+https?://[^\s/]+/[\w.-]+/[\w.-]+/pull/(\d+)\b`)
+	// alreadyLandedMergedRefRE captures "#N (merged)" — the reviewer
+	// annotating the reference with its state names the landing PR as
+	// surely as a preposition does (hivecommons/hive#15732: "now that
+	// #15545 (merged) carries this change").
+	alreadyLandedMergedRefRE = regexp.MustCompile(`(?i)(?:[\w.-]+/[\w.-]+)?#(\d+)\s*\((?:already |now )?(?:merged|landed)\)`)
 )
 
 // AlreadyLandedClaim reports whether any of texts says the change is
@@ -70,6 +75,16 @@ func AlreadyLandedPR(redundantOf int, texts ...string) int {
 		}
 		for _, m := range alreadyLandedPullURLRE.FindAllStringSubmatch(t, -1) {
 			n, err := strconv.Atoi(m[2])
+			if err != nil || n <= 0 {
+				continue
+			}
+			if found != 0 && found != n {
+				return 0
+			}
+			found = n
+		}
+		for _, m := range alreadyLandedMergedRefRE.FindAllStringSubmatch(t, -1) {
+			n, err := strconv.Atoi(m[1])
 			if err != nil || n <= 0 {
 				continue
 			}
