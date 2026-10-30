@@ -2233,6 +2233,20 @@
     /* planning-alert: plans awaiting human review — amber, to draw the eye like
        the "N Issues" / on-hold indicators. */
     .gov-stat .val.planning-alert { color: var(--yellow); }
+    /* RUNNING tile cost rotor (#15614): the four window phrases share one
+       grid cell, so the tile is always as wide as its widest phrase and the
+       amount + window crossfades in place while the agent count stays put.
+       nowrap + ellipsis is the fallback when the tile is narrower still. */
+    .fleet-run-stat .val, .fleet-run-stat .gm-val { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .fleet-run-count { color: var(--text); }
+    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; vertical-align: bottom; max-width: 100%; overflow: hidden; color: var(--text); }
+    .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
+    .fleet-cost-rotor .fcr-phrase.is-cur { opacity: 1; transform: translateY(0); }
+    .fleet-cost-rotor .fcr-phrase.is-out { opacity: 0; transform: translateY(-0.5em); }
+    .fleet-cost-rotor .fcr-window { color: var(--amber); font-weight: 600; }
+    @media (prefers-reduced-motion: reduce) {
+      .fleet-cost-rotor .fcr-phrase { transition: none; transform: none; }
+    }
     .governor-subsection { margin: var(--sp-5) 0 0; }
     .governor-subsection .section-body { overflow: hidden; }
     .gov-pr-models-subheader { width: 100%; display: grid !important; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-3); cursor: pointer; user-select: none; }
@@ -2252,7 +2266,9 @@
     .gov-pr-model-sub { overflow-wrap:anywhere; color:var(--muted); font-size:var(--fs-xs); font-weight:400; }
     @container (max-width: 42rem) {
       .gov-pr-model-row { grid-template-columns: minmax(0, 1fr); }
+      .gov-pr-model-head { display: none; }
       .gov-pr-model-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .gov-pr-model-row:not(.gov-pr-model-head) .gov-pr-model-metric::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; }
       .gov-pr-model-share { justify-self: start; }
     }
     .gov-pr-model-sub-spaced { margin-top:var(--sp-2); }
@@ -2263,7 +2279,16 @@
     .gov-pr-model-seg.closed { background:var(--yellow); }
     .gov-pr-model-metrics { display:grid; grid-template-columns:repeat(5, minmax(42px, 1fr)); gap:5px; }
     .gov-pr-model-metric { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
-    .gov-pr-model-metric span { display:block; color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; }
+    /* Column labels live once in the sticky header row; per-cell data-label is
+       surfaced only at the narrow breakpoint where the header is hidden. */
+    .gov-pr-model-head { position:sticky; top:0; z-index:1; margin:0 0 var(--sp-1); padding-block:var(--sp-1); background:var(--surface-3); border-bottom:1px solid var(--border); color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; font-weight:700; }
+    .gov-pr-model-head .gov-pr-model-metric, .gov-pr-model-head .gov-pr-model-share { color:var(--muted); }
+    .gov-pr-model-col { cursor:help; white-space:nowrap; }
+    .gov-pr-model-help { display:inline-flex; align-items:center; justify-content:center; width:11px; height:11px; margin-left:3px; border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); line-height:1; text-transform:none; letter-spacing:0; vertical-align:middle; }
+    .gov-pr-model-row.unattributed { opacity:0.6; }
+    .gov-pr-model-row.unattributed .gov-pr-model-name { color:var(--muted); font-weight:500; }
+    .gov-pr-model-rank.unattributed { background:transparent; color:var(--muted); border:1px solid var(--border); text-transform:uppercase; letter-spacing:0.06em; font-size:var(--fs-2xs); font-weight:600; }
+    .gov-pr-model-backend { display:inline-block; margin:2px 4px 0 0; padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); color:var(--muted); font-size:var(--fs-2xs); }
     .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; }
     .gov-pr-model-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.72rem; }
     .gov-pr-model-table th, .gov-pr-model-table td { padding:5px 6px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; }
@@ -2300,8 +2325,10 @@
         min-width: 0 !important;
       }
       .gov-pr-model-row { grid-template-columns:minmax(0, 1fr) !important; gap:var(--sp-2); }
+      .gov-pr-model-head { display: none; }
       .gov-pr-model-metrics { grid-template-columns:repeat(2, minmax(90px, 1fr)); }
       .gov-pr-model-metric { text-align: left; }
+      .gov-pr-model-row:not(.gov-pr-model-head) .gov-pr-model-metric::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; }
       .gov-pr-model-share { justify-self:start; }
       .gov-pr-model-table {
         width: 100% !important;
@@ -6716,6 +6743,9 @@
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
   if(m==='classic')m='dark';
+  // A kiosk (#15594) is a broadcast surface with no operator to flip the
+  // toggle; it always renders dark unless the URL says otherwise.
+  if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
   document.body.style.opacity='0';
@@ -8813,7 +8843,7 @@
     const DASHBOARD_SECTION_HELP = Object.freeze({
       'overview-section': { heading: 'Overview', help: 'How many issues and pull requests Hive is tracking right now, and how many of them it can work on.' },
       'governor': { heading: 'Governor', help: 'How busy Hive thinks your projects are right now, and how often it wakes its workers as a result.' },
-      'governor-pr-models-section': { heading: 'PRs by model', help: "Which AI models wrote the pull requests Hive opened, and how often each model's work was merged without extra fixes." },
+      'governor-pr-models-section': { heading: 'PRs by model', help: "Which AI models wrote the pull requests Hive opened, how well each model's work landed, and how the models rank against each other." },
       'advisory-section': { heading: 'Advisory', help: 'Reports, advice and suggestions Hive has written about your projects and about how it is running.' },
       'advisory-digest-section': { heading: 'Advisory Digest', help: "The open findings Hive's workers have written down, such as bugs, ideas and advice, grouped by who wrote them." },
       'hive-advice-section': { heading: 'Hive Advice', help: 'A short weekly list of things Hive recommends you do to keep work moving on your projects.' },
@@ -10478,6 +10508,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const LAYOUT_TITLES = { dark: 'Switch to Light Mode', light: 'Switch to Dark Mode' };
     function getLayout() {
       let stored = localStorage.getItem(LAYOUT_KEY) || 'light';
+      if (window.hiveKioskMode && window.hiveKioskMode()) { let kt = null; try { kt = new URL(window.location.href).searchParams.get('theme'); } catch (e) {} stored = kt === 'light' ? 'light' : 'dark'; }
       if (stored === 'openclaw') { stored = 'light'; setLayout(stored); }
       if (stored === 'classic') { stored = 'dark'; setLayout(stored); }
       return LAYOUT_MODES.includes(stored) ? stored : 'light';
@@ -14150,6 +14181,82 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? `${r.filesChanged} file${r.filesChanged === 1 ? '' : 's'}` : '– files';
       return `<div class="oc-run-line" data-agent-run="${esc(a.name)}" title="${esc(RUN_LINE_HELP)}"><span class="rl-cost">${cost}</span>${sep}<span class="rl-tokens">${toks}</span>${sep}<span class="rl-elapsed">${fmtRunElapsed(r.elapsedS)}</span>${sep}${tests}${sep}<span class="rl-files">${files}</span></div>`;
     }
+    // --- fleet cost rotor (begin) ---
+    // The RUNNING tile rotates its cost window — this hour → today → this
+    // week → this month — one phrase at a time (#15614). The agent count
+    // stays put; only the amount + window phrase crossfades. All four
+    // phrases are rendered into the same grid cell so the tile is always as
+    // wide as its widest phrase and never shifts or wraps. The rotation
+    // index is module state so a status repaint keeps the current phrase.
+    const FLEET_COST_WINDOWS = [
+      { key: 'hour', label: 'this hour', usd: 'hourUSD', priced: 'hourPriced' },
+      { key: 'day', label: 'today', usd: 'dayUSD', priced: 'windowsPriced' },
+      { key: 'week', label: 'this week', usd: 'weekUSD', priced: 'windowsPriced' },
+      { key: 'month', label: 'this month', usd: 'monthUSD', priced: 'windowsPriced' },
+    ];
+    const FLEET_COST_DWELL_MS = 4000;
+    const FLEET_COST_WINDOWS_HELP = 'today / this week / this month are the cost ledger summed from 00:00 UTC today, Monday 00:00 UTC (ISO week) and the 1st 00:00 UTC, plus the rise since its last reading.';
+    const _fleetCost = { idx: 0, started: false, hover: false, lastAdvance: -Infinity, clock: () => Date.now() };
+    function fleetCostPhrases(f) {
+      return FLEET_COST_WINDOWS.map(w => {
+        const amount = f && f[w.priced] ? fmtUSD(f[w.usd] || 0) : '$–';
+        return { key: w.key, label: w.label, amount, text: `${amount} ${w.label}` };
+      });
+    }
+    function fleetCostTooltipLines(f) {
+      return fleetCostPhrases(f).map(p => p.text).join(' · ');
+    }
+    function fleetCostReducedMotion() {
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+    function fleetCostRotorHtml(f) {
+      const phrases = fleetCostPhrases(f);
+      const idx = _fleetCost.idx % phrases.length;
+      const spans = phrases.map((p, i) => `<span class="fcr-phrase${i === idx ? ' is-cur' : ''}" data-fleet-cost-window="${p.key}"${i === idx ? '' : ' aria-hidden="true"'}><span class="fcr-amount">${esc(p.amount)}</span> <span class="fcr-window">${esc(p.label)}</span></span>`).join('');
+      return `<span class="fleet-cost-rotor" data-fleet-cost-rotor aria-live="off">${spans}</span>`;
+    }
+    // fleetCostApply moves one rotor from prevIdx to idx. Under reduced
+    // motion the outgoing phrase is never marked, so the swap is instant.
+    function fleetCostApply(el, prevIdx, idx) {
+      const reduced = fleetCostReducedMotion();
+      el.querySelectorAll('.fcr-phrase').forEach((p, i) => {
+        const cur = i === idx;
+        p.classList.toggle('is-cur', cur);
+        p.classList.toggle('is-out', !reduced && i === prevIdx && !cur);
+        if (cur) p.removeAttribute('aria-hidden'); else p.setAttribute('aria-hidden', 'true');
+      });
+    }
+    function fleetCostPaused() {
+      return _fleetCost.hover || document.hidden === true;
+    }
+    // fleetCostTick advances every rotor on the page by one window; while
+    // hovered or hidden it leaves the index alone so the cadence resumes in
+    // step instead of jumping.
+    function fleetCostTick() {
+      if (fleetCostPaused()) return;
+      // dashboardSetInterval re-fires the callback the moment the tab is
+      // visible again; hold that early call so the cadence resumes in step.
+      const t = _fleetCost.clock();
+      if (t - _fleetCost.lastAdvance < FLEET_COST_DWELL_MS / 2) return;
+      _fleetCost.lastAdvance = t;
+      const prev = _fleetCost.idx;
+      _fleetCost.idx = (prev + 1) % FLEET_COST_WINDOWS.length;
+      document.querySelectorAll('[data-fleet-cost-rotor]').forEach(el => fleetCostApply(el, prev, _fleetCost.idx));
+    }
+    function fleetCostHostOf(node) {
+      return node && node.closest ? node.closest('[data-fleet-cost-host]') : null;
+    }
+    // The rotor rides the shared dashboard interval registry (paused while
+    // the tab is hidden) rather than adding a bare setInterval.
+    function fleetCostRotorStart() {
+      if (_fleetCost.started) return;
+      _fleetCost.started = true;
+      dashboardSetInterval('fleetCostRotor', fleetCostTick, FLEET_COST_DWELL_MS);
+      document.addEventListener('pointerover', e => { _fleetCost.hover = !!fleetCostHostOf(e.target); });
+      document.addEventListener('pointerout', e => { _fleetCost.hover = !!fleetCostHostOf(e.relatedTarget); });
+    }
+    // --- fleet cost rotor (end) ---
+
     // fleetRunStatHtml is the Governor-section twin of fleetRunStripHtml: the
     // compact strip it first landed in is display:none while the full
     // Governor section stays visible in focus mode, so without this stat the
@@ -14157,14 +14264,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function fleetRunStatHtml() {
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
-      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
-      return `<div class="gov-stat" title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price; $– when a running agent's model is unpriced).&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run">${f.running || 0} · ${hour} this hour</div></div>`;
+      fleetCostRotorStart();
+      return `<div class="gov-stat fleet-run-stat" data-fleet-cost-host title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price; $– when a running agent's model is unpriced).&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</div></div>`;
     }
     function fleetRunStripHtml() {
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
-      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
-      return `<div class="gov-metric" title="Agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price)"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run">${f.running || 0} · ${hour} this hour</span></div>`;
+      fleetCostRotorStart();
+      return `<div class="gov-metric fleet-run-stat" data-fleet-cost-host title="Agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price)&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</span></div>`;
     }
 
     // Repaints every "Now:" line in place so "ago" keeps counting up (and
@@ -14712,10 +14819,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else if (why) tip += ' · no estimate until #' + p.head + ' moves';
       return tip + '.' + order;
     }
-    // Tooltip lines: the queue ahead and the overlapping files.
+    // The muted hover note on a PR the server took out of its merge train
+    // while it is under repair (left_train: {why, note} — fixing, needs
+    // author, needs decision, red checks). The row rides no train and
+    // wears no ordinal; this line is the only trace.
+    const STAGE_TRACKER_LEFT_TRAIN_NOTE = 'left the merge train while being fixed; rejoins when green';
+    // Pure: the left-train note for a row, '' when it rides or never rode.
+    function stageTrackerLeftTrainNote(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.note || STAGE_TRACKER_LEFT_TRAIN_NOTE);
+    }
+    // Tooltip lines: the queue ahead and the overlapping files — or, for a
+    // PR that left its train, the one muted note.
     function stageTrackerTrainLines(item) {
       const mt = stageTrackerTrain(item);
-      if (!mt) return [];
+      if (!mt) { const left = stageTrackerLeftTrainNote(item); return left ? ['Merge train: ' + left] : []; }
       const ahead = Array.isArray(mt.ahead) ? mt.ahead.filter(n => Number(n) > 0) : [];
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
       const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
@@ -15378,6 +15497,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return { state, word, detail: 'retrying', tip: sentence + ' hive is retrying it now.' + lastSeen + details, cue: 'running', until: 0 };
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
+    }
+    // Pure: the hover note for a refusal that belongs to an earlier head
+    // (merge_gate.prior_head_merge_failed*): the PR's head moved, or the
+    // record fell back below 080 to wait on CI, after GitHub refused the
+    // merge. The chevron reads the live stage; this line is the history —
+    // "merge attempt on previous head failed: branch protection". '' when
+    // there is none. Never a chevron word.
+    function stageTrackerPriorHeadMergeFailedNote(item) {
+      const mg = item && item.merge_gate;
+      if (!mg || (!mg.prior_head_merge_failed && !mg.prior_head_merge_failed_kind)) return '';
+      const why = String(mg.prior_head_merge_failed || '').trim();
+      const fallback = why && !mg.prior_head_merge_failed_kind ? stageTrackerMergeRefusalFromRaw(why) : null;
+      const kind = mg.prior_head_merge_failed_kind || (fallback && fallback.kind) || '';
+      const detail = kind === 'checks-pending' ? 'required checks had not reported' : (STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || stageTrackerMergeFailedShort(why));
+      const head = String(mg.prior_head_merge_failed_head || '').slice(0, 7);
+      return 'merge attempt on previous head' + (head ? ' ' + head : '') + ' failed: ' + detail;
     }
     // Pure: a refusal's first line, cut to STAGE_TRACKER_MERGE_FAILED_SHORT_MAX
     // (tooltips and toasts; the pill detail comes from the refusal kind).
@@ -16302,6 +16437,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
           // The reason is the whole story; the stage description would only repeat it (hivecommons/hive#15394).
           else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim();
+          // A refusal on an earlier head is history, not the word: the
+          // chevron reads the live stage and the hover keeps "merge attempt
+          // on previous head failed: branch protection".
+          const priorNote = !sg.cap && typeof stageTrackerPriorHeadMergeFailedNote === 'function' ? stageTrackerPriorHeadMergeFailedNote(item) : '';
+          if (priorNote) tip += ' — ' + priorNote;
           if (actorTip && !sg.cap) tip += actorTip;
           if (claimant && !sg.cap) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
           // The sentinel's reason leads the lane tooltip so the security
@@ -24737,6 +24877,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     window.setGovernorPRModelsSort = setGovernorPRModelsSort;
 
+    function governorPRModelUnattributed(b) {
+      return !!(b?.effectiveness?.unattributed) || !b?.model || String(b.model).toLowerCase() === 'unknown';
+    }
+
+    // Column definitions for the PRs-by-model table; rendered once as a sticky
+    // header (with the ? tooltips) and repeated per cell only as data-label for
+    // the narrow breakpoint.
+    const GOV_PR_MODEL_COLUMNS = [
+      ['merged', 'Merged', 'Merged PRs in the window. Rank requires at least the minimum shown in the subtitle.'],
+      ['first_pass', '1st pass', 'Share of merged PRs that merged without any review-requested fix round. Rank uses the Wilson 95% lower bound of this rate, so a perfect score on a handful of PRs scores below a near-perfect score on many.'],
+      ['pr_runs', 'PR runs', 'Share of recorded task runs (from the contributor run log) that ended with a verified pull request.'],
+      ['fail', 'Fail', 'Share of recorded task runs that failed (crashed, timed out, or exited non-zero). Multiplies the rank score by (1 − fail).'],
+      ['no_ship', 'No ship', 'Share of recorded task runs that completed but produced no pull request. Multiplies the rank score by (1 − no ship).'],
+    ];
+
     function governorPRModelRows(data) {
       const rows = [...(data?.buckets || [])];
       if (govPRModelsSort === 'count') {
@@ -24744,6 +24899,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return rows.sort((a, b) => {
         const ae = a.effectiveness || {}, be = b.effectiveness || {};
+        // Unattributed ("unknown" model) rows are listed, never ranked: pin them last.
+        const au = governorPRModelUnattributed(a), bu = governorPRModelUnattributed(b);
+        if (au !== bu) return au ? 1 : -1;
         const ar = ae.rank || Number.MAX_SAFE_INTEGER, br = be.rank || Number.MAX_SAFE_INTEGER;
         if (ar !== br) return ar - br;
         if (!!be.eligible !== !!ae.eligible) return be.eligible ? 1 : -1;
@@ -24835,18 +24993,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               const rw = b.rework || {};
               const eff = b.effectiveness || {};
               const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
-              const rank = eff.rank ? `<span class="gov-pr-model-rank">#${eff.rank}</span>` : '';
-              const metrics = `<div class="gov-pr-model-metrics" aria-label="Model effectiveness metrics">
-                <div class="gov-pr-model-metric"><span>Merged</span>${eff.merged_prs ?? b.merged ?? 0}</div>
-                <div class="gov-pr-model-metric"><span>1st pass</span>${pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate)}</div>
-                <div class="gov-pr-model-metric"><span>PR runs</span>${pct(eff.verified_pr_run_rate)}</div>
-                <div class="gov-pr-model-metric"><span>Fail</span>${pct(eff.failure_rate)}</div>
-                <div class="gov-pr-model-metric"><span>No ship</span>${pct(eff.nothing_to_ship_rate)}</div>
-              </div>`;
+              const unattributed = governorPRModelUnattributed(b);
+              const rank = eff.rank ? `<span class="gov-pr-model-rank">#${eff.rank}</span>` : (unattributed ? '<span class="gov-pr-model-rank unattributed" title="No model recorded on these PRs; listed but not ranked">unattributed</span>' : '');
+              const values = {
+                merged: String(eff.merged_prs ?? b.merged ?? 0),
+                first_pass: pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate),
+                pr_runs: pct(eff.verified_pr_run_rate),
+                fail: pct(eff.failure_rate),
+                no_ship: pct(eff.nothing_to_ship_rate),
+              };
+              const metrics = `<div class="gov-pr-model-metrics" role="group" aria-label="Model effectiveness metrics">${GOV_PR_MODEL_COLUMNS.map(([key, label]) => `<div class="gov-pr-model-metric" data-label="${label}">${values[key]}</div>`).join('')}</div>`;
+              const backends = Array.isArray(b.backends) && b.backends.length ? b.backends : String(b.backend || 'unknown').split(',').map(x => x.trim()).filter(Boolean);
+              const backendChips = backends.map(x => `<span class="gov-pr-model-backend">${escapeHtml(x)}</span>`).join('');
+              const sources = (b.sources || []).map(src => `${src.model || 'unknown'} / ${src.backend || 'unknown'}: ${src.prs || 0} PRs (${src.merged || 0} merged)`).join('\n');
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
-              const tip = `${b.model || 'unknown'} via ${b.backend || 'unknown'}${eff.rank ? '\nEffectiveness rank #' + eff.rank + ' (min ' + (data.min_merged_prs || 5) + ' merged PRs)' : ''}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate)} · PR run rate ${pct(eff.verified_pr_run_rate)} · failure ${pct(eff.failure_rate)} · nothing-to-ship ${pct(eff.nothing_to_ship_rate)}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
-              return `<div class="gov-pr-model-row" title="${escapeHtml(tip)}">
-                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${escapeHtml(b.backend || 'unknown')}</div></div>
+              const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass) × (1 − fail) × (1 − no ship)` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
+              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass} · PR run rate ${values.pr_runs} · failure ${values.fail} · nothing-to-ship ${values.no_ship}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
+              return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
+                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
                   <div class="gov-pr-model-seg merged" style="width:${mergedPct}%"></div>
                   <div class="gov-pr-model-seg open" style="width:${openPct}%"></div>
@@ -24880,6 +25044,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return `<li><a${href}>${escapeHtml(label)}</a> ${escapeHtml(pr.model || 'unknown')} · ${pr.review_rounds || 0} rounds · ${pr.fix_attempts || 0} fixes · ${pr.follow_up_commits || 0} follow-up commits${fixers}</li>`;
         }).join('')}</ol>
       </div>` : '';
+      const header = data && total > 0 ? `<div class="gov-pr-model-row gov-pr-model-head" aria-hidden="false">
+          <div>Model</div>
+          <div>Outcome</div>
+          <div class="gov-pr-model-metrics">${GOV_PR_MODEL_COLUMNS.map(([, label, help]) => `<div class="gov-pr-model-metric"><span class="gov-pr-model-col" title="${escapeHtml(help)}">${label}<span class="gov-pr-model-help" aria-hidden="true">?</span></span></div>`).join('')}</div>
+          <div class="gov-pr-model-share">PRs · share</div>
+        </div>` : '';
       return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection">
         <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="true" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
           <span class="section-chevron" aria-hidden="true">▼</span>
@@ -24888,6 +25058,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
         <div class="section-body" id="governor-pr-models-section-body"><div class="gov-pr-models">
+          ${header}
           ${rows}
           ${reworkTable}
           ${mostReworked}

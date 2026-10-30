@@ -26,6 +26,9 @@
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
   if(m==='classic')m='dark';
+  // A kiosk (#15594) is a broadcast surface with no operator to flip the
+  // toggle; it always renders dark unless the URL says otherwise.
+  if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
   document.body.style.opacity='0';

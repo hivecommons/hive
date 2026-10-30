@@ -397,10 +397,22 @@
       else if (why) tip += ' · no estimate until #' + p.head + ' moves';
       return tip + '.' + order;
     }
-    // Tooltip lines: the queue ahead and the overlapping files.
+    // The muted hover note on a PR the server took out of its merge train
+    // while it is under repair (left_train: {why, note} — fixing, needs
+    // author, needs decision, red checks). The row rides no train and
+    // wears no ordinal; this line is the only trace.
+    const STAGE_TRACKER_LEFT_TRAIN_NOTE = 'left the merge train while being fixed; rejoins when green';
+    // Pure: the left-train note for a row, '' when it rides or never rode.
+    function stageTrackerLeftTrainNote(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.note || STAGE_TRACKER_LEFT_TRAIN_NOTE);
+    }
+    // Tooltip lines: the queue ahead and the overlapping files — or, for a
+    // PR that left its train, the one muted note.
     function stageTrackerTrainLines(item) {
       const mt = stageTrackerTrain(item);
-      if (!mt) return [];
+      if (!mt) { const left = stageTrackerLeftTrainNote(item); return left ? ['Merge train: ' + left] : []; }
       const ahead = Array.isArray(mt.ahead) ? mt.ahead.filter(n => Number(n) > 0) : [];
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
       const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
@@ -1063,6 +1075,22 @@
         return { state, word, detail: 'retrying', tip: sentence + ' hive is retrying it now.' + lastSeen + details, cue: 'running', until: 0 };
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
+    }
+    // Pure: the hover note for a refusal that belongs to an earlier head
+    // (merge_gate.prior_head_merge_failed*): the PR's head moved, or the
+    // record fell back below 080 to wait on CI, after GitHub refused the
+    // merge. The chevron reads the live stage; this line is the history —
+    // "merge attempt on previous head failed: branch protection". '' when
+    // there is none. Never a chevron word.
+    function stageTrackerPriorHeadMergeFailedNote(item) {
+      const mg = item && item.merge_gate;
+      if (!mg || (!mg.prior_head_merge_failed && !mg.prior_head_merge_failed_kind)) return '';
+      const why = String(mg.prior_head_merge_failed || '').trim();
+      const fallback = why && !mg.prior_head_merge_failed_kind ? stageTrackerMergeRefusalFromRaw(why) : null;
+      const kind = mg.prior_head_merge_failed_kind || (fallback && fallback.kind) || '';
+      const detail = kind === 'checks-pending' ? 'required checks had not reported' : (STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || stageTrackerMergeFailedShort(why));
+      const head = String(mg.prior_head_merge_failed_head || '').slice(0, 7);
+      return 'merge attempt on previous head' + (head ? ' ' + head : '') + ' failed: ' + detail;
     }
     // Pure: a refusal's first line, cut to STAGE_TRACKER_MERGE_FAILED_SHORT_MAX
     // (tooltips and toasts; the pill detail comes from the refusal kind).

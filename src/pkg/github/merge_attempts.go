@@ -31,6 +31,12 @@ type MergeAttempt struct {
 	Merged  bool      `json:"merged,omitempty"`
 	// Error is the refusal, in words, when the attempt ended unmerged.
 	Error string `json:"error,omitempty"`
+	// Head is the head SHA the merge call targeted ("" when the caller did
+	// not know it). A refusal belongs to that head: once the PR's head
+	// moves (merge-from-base, new push) the tracker drops the "Merge
+	// failed" word and keeps the refusal as history
+	// (hivecommons/hive#15245 follow-up).
+	Head string `json:"head,omitempty"`
 }
 
 // InFlight reports whether the merge call has not returned yet.
@@ -78,13 +84,19 @@ func (m *MergeAttempts) SetOnChange(fn func()) {
 // Begin records that a merge of repo#number is being attempted now by
 // path, replacing any earlier attempt on the PR.
 func (m *MergeAttempts) Begin(repo string, number int, path string) {
+	m.BeginOnHead(repo, number, path, "")
+}
+
+// BeginOnHead is Begin for a merge call aimed at head (the PR head SHA
+// the caller verified or asked GitHub to expect).
+func (m *MergeAttempts) BeginOnHead(repo string, number int, path, head string) {
 	if m == nil || number <= 0 || strings.TrimSpace(repo) == "" {
 		return
 	}
 	m.mu.Lock()
 	now := m.now()
 	m.purgeLocked(now)
-	m.items[mergeAttemptKey(repo, number)] = MergeAttempt{Repo: strings.TrimSpace(repo), Number: number, Path: path, StartedAt: now}
+	m.items[mergeAttemptKey(repo, number)] = MergeAttempt{Repo: strings.TrimSpace(repo), Number: number, Path: path, StartedAt: now, Head: strings.TrimSpace(head)}
 	fn := m.onChange
 	m.mu.Unlock()
 	if fn != nil {
@@ -169,6 +181,12 @@ func DefaultMergeAttempts() *MergeAttempts { return defaultMergeAttempts }
 // process-wide registry.
 func BeginMergeAttempt(repo string, number int, path string) {
 	defaultMergeAttempts.Begin(repo, number, path)
+}
+
+// BeginMergeAttemptOnHead is BeginMergeAttempt with the head SHA the merge
+// call targets.
+func BeginMergeAttemptOnHead(repo string, number int, path, head string) {
+	defaultMergeAttempts.BeginOnHead(repo, number, path, head)
 }
 
 func EndMergeAttempt(repo string, number int, merged bool, err error) {
