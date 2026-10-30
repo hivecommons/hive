@@ -41,6 +41,18 @@ container mode by default; local mode needs an explicit opt-in.
 <tr><td><img src="assets/logos/omnigent-badge.svg" height="40" alt="Omnigent"></td><td>Omnigent</td><td>Opt-in</td><td>T3</td><td><a href="backend-support-tiers.md#the-three-tiers">backend-support-tiers.md</a></td></tr>
 </table>
 
+## Local contributor inference
+
+| Integration | Status | Execution and limitations | Docs |
+| --- | --- | --- | --- |
+| Apple MLX / MLX-LM through Pi | **Opt-in** | ClankeR on Apple Silicon macOS 14+, native Python 3.10+, Pi 1.4.0+; user-managed tool-capable models. MLX-LM runs on the Mac; Pi executes tools inside the contributor container with Docker Desktop host networking. No cloud fallback. Live Apple GPU inference remains unverified. | [Install and use with just](contributor-relay.md#apple-mlx-local-inference) |
+
+Apple MLX is a first-class inference-engine choice on `/contribute`, mapped to
+the actual `pi` coding backend and `mlx/<model>` provider selection. It is not
+a standalone coding CLI, hosted gateway, identity provider, or Apple endorsement.
+`KNOWN_BACKENDS` correctly continues to list coding executors, not inference
+frameworks.
+
 ## Work sources and trackers
 
 The governor reads work through one provider contract. The adapters live in

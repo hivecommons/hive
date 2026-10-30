@@ -469,7 +469,7 @@ func TestContributeLitellmFlavorsMapToLitellmSetup(t *testing.T) {
 
 	for _, want := range []string{
 		// Flavor → real Justfile backend map, and its two consumers.
-		`var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm'};`,
+		`var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm',mlx:'pi'};`,
 		`function setupBackend(v){return SETUP_BACKEND[v]||v;}`,
 		`var backend=setupBackend(cli);`,
 		`'  4. just contribute-setup '+setupBackend(v)+'\n'+`,

@@ -8,7 +8,7 @@
         const raw = localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY);
         if (!raw) return null;
         const st = JSON.parse(raw);
-        if (!st || !st.target || st.target === 'latest' || !st.startedAt) {
+        if (!st || (!st.target && st.source !== 'roll') || st.target === 'latest' || !st.startedAt) {
           versionClearUpgradeProgress();
           return null;
         }
@@ -31,15 +31,25 @@
     }
 
     function versionWriteUpgradeProgress(st) {
-      if (!st || !st.target || st.target === 'latest') return null;
+      if (!st || (!st.target && st.source !== 'roll') || st.target === 'latest') return null;
       const next = {
-        target: String(st.target),
+        target: String(st.target || ''),
         targetShort: versionShortSHA(st.targetShort || st.target),
         startedFrom: String(st.startedFrom || ''),
         startedAt: Number(st.startedAt || versionNowMs()),
         completedAt: st.completedAt ? Number(st.completedAt) : 0
       };
       if (st.source) next.source = String(st.source);
+      // Roll records (#15788): a pod roll announced by the hub/operator or
+      // caught at SIGTERM, tracked by process identity rather than target.
+      if (st.source === 'roll') {
+        next.phase = String(st.phase || 'announced');
+        next.rollSource = String(st.rollSource || '');
+        next.fromStartedAt = String(st.fromStartedAt || '');
+        next.reason = String(st.reason || '');
+        if (st.outcome) next.outcome = String(st.outcome);
+        if (st.toasted) next.toasted = true;
+      }
       try { localStorage.setItem(VERSION_UPGRADE_STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
       return next;
     }
@@ -71,6 +81,7 @@
     function versionReconcileUpgradeProgress(v, now) {
       const st = versionReadUpgradeProgress(now);
       if (!st) return null;
+      if (st.source === 'roll') return versionRollReconcile(st, v, now);
       const running = v && (v.hash || v.short);
       const target = v && v.target || {};
       const policy = versionPolicy(v) || {};
@@ -111,6 +122,247 @@
         _upgradeTargetHash = st.target;
       }
       return st;
+    }
+
+    // roll upgrade state begin
+    // Pod rolls (#15788). Self-upgrades drive the bee through a target SHA;
+    // a roll started by the hub's kubectl, an operator's `rollout restart` or
+    // a bare SIGTERM may have no target at all, so these records are keyed on
+    // process identity instead: the build hash and /api/version startedAt the
+    // old pod had. On reconnect a changed hash means "Upgraded", a changed
+    // startedAt on the same hash means "Restarted". The records render through
+    // the same surfaces (chip, navbar indicator, version card) as self-upgrades.
+
+    function versionRollPhaseActive(phase) {
+      return phase === 'announced' || phase === 'restarting';
+    }
+
+    function versionRollRecordFromEvent(ev, current, now) {
+      ev = ev || {};
+      current = current || {};
+      now = now || versionNowMs();
+      if (!versionRollPhaseActive(ev.phase)) return null;
+      const prev = versionReadUpgradeProgress(now);
+      // A self-upgrade (or adopted hub marker) already animating keeps its
+      // record: the SIGTERM it causes is the roll it was waiting for.
+      if (prev && prev.source !== 'roll' && !prev.completedAt) return prev;
+      let target = String(ev.target || '');
+      const prevRoll = prev && prev.source === 'roll' && !prev.completedAt ? prev : null;
+      // A bare SIGTERM after an announce is that announce's kill: keep its target.
+      if (!target && prevRoll) target = prevRoll.target || '';
+      let startedAt = Date.parse(ev.startedAt || '');
+      if (!isFinite(startedAt) || startedAt <= 0 || now - startedAt > VERSION_UPGRADE_LONG_MS) startedAt = now;
+      if (prevRoll && versionSameRollTarget(prevRoll.target, target)) startedAt = prevRoll.startedAt;
+      const st = versionWriteUpgradeProgress({
+        source: 'roll',
+        phase: ev.phase,
+        rollSource: ev.source || (prevRoll && prevRoll.rollSource) || '',
+        target: target,
+        targetShort: versionShortSHA(target),
+        startedFrom: current.hash || current.short || ev.from || '',
+        fromStartedAt: ev.processStartedAt || current.startedAt || '',
+        reason: ev.reason || (prevRoll && prevRoll.reason) || '',
+        startedAt: startedAt
+      });
+      if (st) {
+        _upgradeInProgress = true;
+        _upgradeTargetHash = st.target || null;
+      }
+      return st;
+    }
+
+    function versionSameRollTarget(a, b) {
+      a = String(a || ''); b = String(b || '');
+      if (!a || !b) return a === b;
+      return versionSameCommit(a, b) || a.toLowerCase() === b.toLowerCase();
+    }
+
+    // The server's own view of an announced/restarting roll reaches the page
+    // as v.upgradeProgress (a tab opened after the announce, or an SSE frame
+    // that was missed). Mirror it into the record once.
+    function versionAdoptServerRollProgress(v, now) {
+      const sp = v && v.upgradeProgress;
+      if (!sp || !versionRollPhaseActive(sp.phase)) return null;
+      return versionRollRecordFromEvent({
+        phase: sp.phase, source: sp.source, target: sp.target, from: sp.from,
+        reason: sp.reason, startedAt: sp.startedAt, processStartedAt: v.startedAt
+      }, v, now);
+    }
+
+    function versionRollComplete(st, outcome, v, now) {
+      now = now || versionNowMs();
+      const running = v && (v.hash || v.short) || '';
+      const next = versionWriteUpgradeProgress({
+        source: 'roll', phase: st.phase, rollSource: st.rollSource, reason: st.reason,
+        target: outcome === 'upgraded' ? (running || st.target) : (st.target || running),
+        targetShort: versionShortSHA(outcome === 'upgraded' ? (running || st.target) : (st.target || running)),
+        startedFrom: st.startedFrom, fromStartedAt: st.fromStartedAt,
+        startedAt: st.startedAt, completedAt: now, outcome: outcome
+      });
+      _upgradeInProgress = false;
+      _upgradeTargetHash = null;
+      return next;
+    }
+
+    // Outcome of one fresh /api/version read against a roll record:
+    // 'upgraded' | 'restarted' | 'pending' | 'aborted'.
+    function versionRollOutcome(st, v) {
+      if (!st || st.completedAt) return st && st.outcome || 'pending';
+      if (st.rollSource === 'demo') return 'pending';
+      if (!v) return 'pending';
+      const running = v.hash || v.short || '';
+      if (st.startedFrom && running && !versionSameCommit(running, st.startedFrom)) return 'upgraded';
+      if (st.fromStartedAt && v.startedAt && String(v.startedAt) !== String(st.fromStartedAt)) return 'restarted';
+      const sp = v.upgradeProgress;
+      if (sp && versionRollPhaseActive(sp.phase)) return 'pending';
+      if (st.phase === 'restarting') return 'pending';
+      return 'aborted';
+    }
+
+    function versionRollReconcile(st, v, now) {
+      now = now || versionNowMs();
+      if (st.completedAt) {
+        _upgradeInProgress = false;
+        return st;
+      }
+      const outcome = versionRollOutcome(st, v);
+      if (outcome === 'aborted') {
+        versionClearUpgradeProgress();
+        return null;
+      }
+      if (outcome === 'pending') {
+        const sp = v && v.upgradeProgress;
+        if (sp && versionRollPhaseActive(sp.phase) && sp.phase !== st.phase) {
+          st = versionWriteUpgradeProgress(Object.assign({}, st, { phase: sp.phase, target: st.target || sp.target || '', targetShort: versionShortSHA(st.target || sp.target) })) || st;
+        }
+        _upgradeInProgress = true;
+        _upgradeTargetHash = st.target || null;
+        return st;
+      }
+      const done = versionRollComplete(st, outcome, v, now);
+      versionRollNotify(done);
+      return done;
+    }
+
+    function versionRollNotify(st) {
+      if (!st || !st.outcome || st.toasted) return st;
+      const marked = versionWriteUpgradeProgress(Object.assign({}, st, { toasted: true })) || st;
+      if (typeof showToast === 'function') {
+        const ver = st.targetShort || versionShortSHA(st.target) || '';
+        showToast(st.outcome === 'upgraded' ? 'Upgraded to ' + ver + ' ✓' : 'Hive restarted' + (ver ? ' · still on ' + ver : '') + ' ✓', 'success', false, VERSION_ROLL_TOAST_MS);
+      }
+      return marked;
+    }
+
+    function versionRollWho(st) {
+      const who = String(st && st.rollSource || '');
+      if (who === 'hub' || who === 'operator') return 'the ' + who;
+      if (who === 'signal') return 'SIGTERM';
+      if (who === 'demo') return 'preview';
+      return who;
+    }
+
+    function versionRollTitle(st) {
+      if (!st) return '';
+      if (st.outcome === 'upgraded') return 'Upgraded ✓';
+      if (st.outcome === 'restarted') return 'Restarted ✓';
+      if (st.phase === 'restarting') return st.target ? 'Upgrading hive…' : 'Restarting hive…';
+      return st.target ? 'Upgrading hive…' : 'Restart announced…';
+    }
+
+    function versionRollStartupLabel(v) {
+      if (!v) return '';
+      const label = v.startupPhaseLabel || v.startupPhase || '';
+      return label ? 'starting: ' + String(label) : '';
+    }
+
+    function versionRollStatusText(st, v, now) {
+      if (!st) return '';
+      now = now || versionNowMs();
+      const target = st.targetShort || versionShortSHA(st.target || '');
+      const elapsed = versionElapsedText(st.startedAt, now);
+      if (st.outcome === 'upgraded') return '✅ Upgraded to ' + target + (elapsed ? ' · ' + elapsed : '');
+      if (st.outcome === 'restarted') return '↻ Restarted' + (target ? ' · still on ' + target : '') + (elapsed ? ' · ' + elapsed : '');
+      if (st.phase === 'restarting') {
+        const startup = versionRollStartupLabel(v);
+        return 'restarting' + (target ? ' → ' + target : '') + ' · ' + (startup || 'reconnecting') + (elapsed ? ' · ' + elapsed : '');
+      }
+      const who = versionRollWho(st);
+      return 'roll announced' + (who ? ' by ' + who : '') + (target ? ' → ' + target : '') + (st.reason ? ' — ' + st.reason : '') + (elapsed ? ' · ' + elapsed : '');
+    }
+
+    function versionRollStatusHTML(st, v, now) {
+      return escapeHtml(versionRollStatusText(st, v, now));
+    }
+
+    function versionRollNavbarStatus(st, v, now) {
+      if (!st) return '';
+      const target = st.targetShort || versionShortSHA(st.target || '');
+      if (st.outcome) return target || '';
+      if (st.phase === 'restarting') return (target ? '→ ' + target + ' · ' : '') + (versionRollStartupLabel(v) || 'reconnecting');
+      return target ? '→ ' + target : 'queued';
+    }
+
+    // The silent reload on hash change must wait for the banner to say
+    // "Upgraded ✓" first, else the operator never sees the outcome.
+    function versionRollReloadDeferred(st, now) {
+      if (!st || st.source !== 'roll') return false;
+      now = now || versionNowMs();
+      if (!st.completedAt) return true;
+      return now - Number(st.completedAt) < VERSION_ROLL_TOAST_MS;
+    }
+
+    function versionDemoRequested(search) {
+      return /[?&]demo=upgrade(?:&|$)/.test(String(search || ''));
+    }
+    // roll upgrade state end
+
+    function versionHandleUpgradingEvent(ev) {
+      const current = window._lastVersionData || {};
+      const st = versionRollRecordFromEvent(ev, current, versionNowMs());
+      if (!st) return null;
+      const conn = document.getElementById('conn');
+      if (conn && st.phase === 'restarting') {
+        conn.className = 'connection';
+        conn.innerHTML = '<span class="dot-dead">●</span> ' + escapeHtml(st.target ? 'upgrading · reconnecting…' : 'restarting · reconnecting…');
+      }
+      const ctx = window._lastVersionContext;
+      if (ctx) {
+        ctx.upgradeProgress = st;
+        ctx.hasUpgrade = false;
+        renderVersionSurfaces(current, ctx);
+      }
+      versionScheduleUpgradePoll(st);
+      return st;
+    }
+
+    // Settings → Diagnostics "Preview upgrade animation" and ?demo=upgrade:
+    // walks the roll record through announced → restarting → upgraded with
+    // timers, so the operator can see what a roll looks like without rolling.
+    function versionPreviewUpgradeDemo() {
+      const current = window._lastVersionData || {};
+      const running = current.hash || current.short || '';
+      const target = running || 'preview';
+      const base = { phase: 'announced', source: 'demo', target: target, from: running, reason: 'preview', processStartedAt: current.startedAt || '' };
+      versionClearUpgradeProgress();
+      const step = function(patch) {
+        const st = versionHandleUpgradingEvent(Object.assign({}, base, patch || {}));
+        return st;
+      };
+      step();
+      setTimeout(function() { step({ phase: 'restarting' }); }, VERSION_ROLL_DEMO_STEP_MS);
+      setTimeout(function() {
+        const st = versionReadUpgradeProgress();
+        if (!st || st.rollSource !== 'demo') return;
+        const done = versionRollNotify(versionRollComplete(st, 'upgraded', current, versionNowMs()));
+        const ctx = window._lastVersionContext;
+        if (ctx) {
+          ctx.upgradeProgress = done;
+          renderVersionSurfaces(current, ctx);
+        }
+        versionScheduleUpgradePoll(done);
+      }, VERSION_ROLL_DEMO_STEP_MS * 2);
+      if (typeof showToast === 'function') showToast('Previewing the upgrade animation — nothing is being rolled', 'info');
     }
 
     function versionHubUpgradeAttemptKey(um) {
@@ -163,6 +415,9 @@
       }
       if (!state) return;
       let delay = VERSION_UPGRADE_POLL_MS;
+      if (state !== true && state.source === 'roll' && !state.completedAt && state.phase === 'restarting') {
+        delay = VERSION_ROLL_POLL_MS;
+      }
       if (state !== true && state.completedAt) {
         delay = Math.max(500, VERSION_UPGRADE_DONE_MS - (versionNowMs() - Number(state.completedAt)) + 100);
       }
@@ -394,6 +649,7 @@
 
     function versionUpgradeProgressStatus(v, st) {
       if (!st) return '';
+      if (st.source === 'roll') return versionRollStatusHTML(st, v);
       const target = escapeHtml(st.targetShort || versionShortSHA(st.target || 'target'));
       const elapsed = versionElapsedText(st.startedAt);
       if (st.completedAt) return '✅ Upgraded to ' + target + (elapsed ? ' · ' + elapsed : '');
@@ -414,9 +670,15 @@
       return [st.target || st.targetShort || 'target', st.startedAt || '0'].map(function(part) { return String(part || '').trim(); }).join('|');
     }
 
+    function versionUpgradeTitle(st, compact) {
+      if (st && st.source === 'roll') return versionRollTitle(st);
+      if (st && st.completedAt) return compact ? 'Upgrade complete ✓' : 'Upgrade complete';
+      return 'Upgrading…';
+    }
+
     function versionBeeProgressHTML(st, v) {
       if (!st) return '';
-      const title = st.completedAt ? 'Upgrade complete' : 'Upgrading…';
+      const title = versionUpgradeTitle(st, false);
       const key = versionUpgradeKey(st);
       return '<div class="oc-version-upgrade-progress" data-upgrade-key="' + escapeHtml(key) + '" role="status" aria-live="polite">' +
         versionUpgradeHiveHTML(key) + '<div class="oc-version-progress-copy"><div class="oc-version-progress-title" data-upgrade-title="1">' + escapeHtml(title) + '</div>' +
@@ -449,8 +711,9 @@
       const target = st.targetShort || versionShortSHA(st.target || '');
       const elapsed = versionElapsedText(st.startedAt);
       const complete = !!st.completedAt;
-      const title = complete ? 'Upgrade complete ✓' : 'Upgrading…';
-      const status = complete ? (target || '') : ((target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : ''));
+      const title = versionUpgradeTitle(st, true);
+      const status = st.source === 'roll' ? versionRollNavbarStatus(st, v || {}) :
+        complete ? (target || '') : ((target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : ''));
       const key = versionUpgradeKey(st);
       return '<span class="oc-version-navbar-upgrade" data-upgrade-key="' + escapeHtml(key) + '" role="status" aria-live="polite">' +
         versionUpgradeHiveHTML(key) + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title" data-upgrade-title="1">' + escapeHtml(title) + (complete ? '' : ' ') + '</span>' +
@@ -732,6 +995,7 @@
           _upgradeTargetHash = null;
         }
         let upgradeProgress = versionReconcileUpgradeProgress(v);
+        if (!upgradeProgress) upgradeProgress = versionAdoptServerRollProgress(v);
         if (!upgradeProgress) upgradeProgress = versionAdoptHubUpgradeProgress(v);
         const upgradeCurrentHash = String(v.hash || '').toLowerCase();
         const upgradeTargetHash = String(_upgradeTargetHash || '').toLowerCase();
@@ -1419,11 +1683,15 @@
       dashboardSetInterval('version-reload-check', function() {
         fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
           var current = d.hash || d.short || '';
+          if (versionRollReloadDeferred(versionReadUpgradeProgress())) return;
           if (_initialVersionHash && current && current !== _initialVersionHash) {
             console.log('[hive] version changed from', _initialVersionHash, 'to', current, '— reloading');
             reloadForNewVersion();
           }
         }).catch(function() {});
       }, VERSION_CHECK_INTERVAL_MS);
+      if (versionDemoRequested(window.location && window.location.search)) {
+        setTimeout(versionPreviewUpgradeDemo, VERSION_ROLL_DEMO_START_MS);
+      }
     }
     // startVersionCheck() — deferred to _deferredInit

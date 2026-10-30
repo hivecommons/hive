@@ -89,6 +89,11 @@ pr.merged
 comment.created
 ```
 
+`issue.opened` and `pr.opened` are edge-triggered: the eval cycle emits them
+once per issue/PR (keyed `repo#number`) per hive process, the first time the
+item is enumerated, not on every cycle while it stays actionable. The seen-set
+is in memory, so a hive restart re-emits currently actionable items once.
+
 ### Available functions
 
 Besides the standard CEL string/list operators (`in`, `.contains(...)`,

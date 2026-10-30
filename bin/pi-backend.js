@@ -66,7 +66,8 @@ function parsePiModelSelection(raw) {
   // This token is also used by the interactive shell launcher. Restrict it to
   // model-ID punctuation so a contributor preference can never become shell
   // syntax while retaining paths (OpenRouter), tags (Ollama), and revisions.
-  if (!/^[A-Za-z0-9][A-Za-z0-9._/+:@~-]*$/.test(model)) {
+  const modelPattern = provider === 'mlx' ? /^(?:[A-Za-z0-9]|\/)[A-Za-z0-9._/+:@~-]*$/ : /^[A-Za-z0-9][A-Za-z0-9._/+:@~-]*$/;
+  if (!modelPattern.test(model)) {
     return { valid: false, state: 'invalid', error: 'invalid Pi model in AGENT_MODEL' };
   }
   return { valid: true, state: 'configured', provider, model, canonical: raw };

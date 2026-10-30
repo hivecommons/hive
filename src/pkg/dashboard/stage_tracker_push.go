@@ -58,7 +58,7 @@ func stageTrackerPushFor(it StageTrackerItem, stage stagelabels.Stage, rec stage
 		return nil
 	}
 	login := strings.TrimSpace(it.Author)
-	if rec.PushedSinceWaiting() && stageTrackerPushSettling(stage, rec) {
+	if rec.PushedSinceWaiting() && stageTrackerPushOnHead(it, rec) && stageTrackerPushSettling(stage, rec) {
 		at := rec.LastPushAt
 		if at.After(now) {
 			at = now
@@ -166,4 +166,14 @@ func (s *Server) stageTrackerWaitingPushStale() time.Duration {
 		return s.deps.Config.StageTrackerWaitingPushStale()
 	}
 	return (*config.Config)(nil).StageTrackerWaitingPushStale()
+}
+
+// stageTrackerPushOnHead reports whether the row's head is still the pushed
+// one; once the head moves on, the push is old news (hivecommons/hive#15797).
+// A row that carries no head cannot say, so the push stands; so does one
+// whose listed head is the one the enumerate last booked — the webhook
+// re-read books the push ahead of the list, which still shows the head
+// the author pushed over.
+func stageTrackerPushOnHead(it StageTrackerItem, rec stagelabels.Record) bool {
+	return it.Head == "" || strings.EqualFold(it.Head, rec.LastPushSha) || strings.EqualFold(it.Head, rec.ActivityHead)
 }

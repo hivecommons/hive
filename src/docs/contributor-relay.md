@@ -200,6 +200,170 @@ The first-task route ends above. The following sections cover custom launch sett
 
 Operators can publish a short **Help & community** list with `contribute.help_links` (Governor → Hub and `/contribute` Management). Onboarding and Operations show it, and `auth_ok` sends it for the relay to print once. Use joinable community links: Discord `https://discord.com/channels/<server>/<channel>` URLs require existing server membership; `https://hivecommons.dev/discord` lets newcomers join.
 
+## Apple MLX local inference
+
+This optional **local contributor** route uses the existing **Pi coding agent**
+with a custom `mlx` provider. MLX is the inference framework; **MLX-LM is not a
+coding agent**. Pi owns file edits, shell/test tools, streamed tool execution
+and conversation history; ClankeR retains assignment, GitHub credentials,
+cancellation, progress and PR-result reporting. There is no hosted-provider
+fallback, no new hub backend, and no change to other Pi providers.
+The bundled `mlx-pi-extension.js` delegates to Pi's existing OpenAI-compatible
+stream implementation with a loopback-only, redirect-rejecting fetch transport.
+The private `hive-mlx` API name intentionally cannot run without this extension,
+so a missing/failed extension cannot silently bypass the transport boundary.
+
+### Supported machines and boundaries
+
+- **Apple Silicon Macs only**, macOS **14+**, native arm64 Node and **Python
+  3.10+**. Intel Macs, Rosetta processes and Linux inference hosts are not
+  supported by this integration. See the [MLX installation requirements](https://ml-explore.github.io/mlx/build/html/install.html).
+- The protocol was checked against **MLX-LM v0.32.2**'s
+  [server implementation](https://github.com/ml-explore/mlx-lm/blob/v0.32.2/mlx_lm/server.py)
+  and Pi's [custom model configuration](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/models.md).
+  The contributor image pins Pi 1.4.0; this route requires **Pi 1.4.0+** for its
+  guarded inference transport. Other MLX-LM versions must pass the same
+  streaming tool-call/result check; older text-only servers will fail it.
+- MLX-LM runs **natively on the Mac**, outside the Linux relay container.
+  The container does not install MLX or access the Apple GPU. Use **Docker
+  Desktop 4.34+** with **Settings → Resources → Network → Enable host
+  networking** enabled by you. See [Docker's host networking limitations](https://docs.docker.com/engine/network/drivers/host/#docker-desktop),
+  including incompatibility with Enhanced Container Isolation. This reuses Pi's
+  existing `--network host` exception and exposes host-local services to the
+  agent container; filesystem/config staging isolation remains unchanged.
+- **Podman machine and Kubernetes are not supported** for this Mac loopback
+  route: their `localhost` is not the Mac. Do not solve that by making MLX-LM
+  listen on `0.0.0.0`. Only literal loopback HTTP URLs ending in `/v1` are
+  accepted; endpoint redirects, credentials in URLs and hosted URLs are refused.
+- Host execution (`just contribute-hive pi local`) retains Pi's existing
+  refusal without `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED=1`. Pi has **no host
+  sandbox** on that path; the container is the recommended coding boundary.
+
+### Explicit setup (source checkout)
+
+On your chosen hive's `/contribute` page, select **Apple MLX**, macOS and
+Containerized mode, then enter your already-downloaded model's exact ID or
+absolute path. The page generates these actual `just` commands; the public
+hub's `/contribute#apple-mlx` section links here too.
+
+Install `just`, `gh`, native Node **22.19+**, and Pi using
+[its official instructions](https://pi.dev), and prepare a **separate native
+Python virtualenv** yourself. These are instructions, not automatic setup:
+ClankeR never installs packages, downloads weights, automatically starts a
+server, or adjusts system memory limits.
+
+```bash
+npm install -g @earendil-works/pi-coding-agent@1.4.0
+python3 -m venv .venv-mlx
+.venv-mlx/bin/python -m pip install 'mlx-lm==0.32.2'
+export HIVE_MLX_PYTHON="$PWD/.venv-mlx/bin/python"
+export HIVE_MLX_ENDPOINT=http://127.0.0.1:8080/v1
+```
+
+Choose and download your model **yourself**, within your available RAM budget.
+Use a model whose tokenizer/chat template and MLX-LM parser support structured
+function calling and tool-result messages. **Not every MLX model can do coding
+tasks**, and passing the small protocol probe is not a coding-quality benchmark.
+Weights, KV cache, long prompts and generation all consume the Mac's **shared
+RAM**. The relay container's 4-GiB limit does **not** cap MLX on the host. Leave
+headroom for macOS and other workloads; do not increase wired-memory limits.
+The [MLX-LM README](https://github.com/ml-explore/mlx-lm#long-prompts-and-generations)
+discusses prompt/cache memory trade-offs.
+
+In a separate terminal, from the checkout, start the server explicitly with
+an **already downloaded** model directory (or fully cached Hub ID).
+`contribute-mlx-serve` validates the native runtime, forces Hugging Face
+offline, and runs MLX-LM in the foreground on the configured loopback endpoint:
+
+```bash
+HIVE_MLX_PYTHON="$PWD/.venv-mlx/bin/python" \
+  just contribute-mlx-serve /Users/YOU/models/tool-coder
+```
+
+Stop it with Ctrl-C when finished; stopping the relay does not unload this
+separately managed host server. A missing cached model fails rather than
+downloading. The equivalent direct command is
+`HF_HUB_OFFLINE=1 "$HIVE_MLX_PYTHON" -m mlx_lm.server --model /Users/YOU/models/tool-coder --host 127.0.0.1 --port 8080`.
+
+Use the **exact ID** returned by
+`curl --fail http://127.0.0.1:8080/v1/models`: for a local directory this is its
+resolved absolute path; a cached Hub model may instead be listed as
+`mlx-community/<model>`. Paths containing whitespace are not supported by Pi's
+contributor model-token contract. Do not select MLX-LM's `default_model` alias:
+ClankeR must declare the actual chosen model to the hive's Model Filter.
+
+The following command **explicitly opts in to two bounded inference requests**
+(up to 256 output tokens and two minutes each). It checks a streamed function
+call and a tool-result round trip; its dummy tool never edits files or runs a
+shell command. Run it only when you have chosen to load the model:
+
+```bash
+just contribute-mlx-setup /Users/YOU/models/tool-coder --verify-tools
+export AGENT_MODEL=mlx//Users/YOU/models/tool-coder
+# Use the URL of the public hive you chose, not the hub directory itself.
+export HIVE_HUB=https://YOUR-CHOSEN-HIVE
+just contribute-check pi
+just contribute-setup pi
+just contribute-mlx
+```
+
+`just contribute-mlx` is the MLX-specific launch entrypoint. It requires an
+`mlx/...` selection and delegates to the existing `just contribute-hive pi`
+coding workflow using Docker; it cannot silently launch another Pi provider.
+An explicitly exported `AGENT_MODEL=mlx/...` wins over a saved model for this
+MLX launch only; otherwise the saved selection must already be `mlx/...`.
+Other Pi launch commands retain their existing profile precedence.
+`just contribute-mlx local` preserves the existing native Pi unconfined
+opt-in gate; it does not set that dangerous flag for you.
+
+For a Hub model ID, the corresponding selection is
+`AGENT_MODEL=mlx/mlx-community/<model>`. Setup preserves unrelated providers
+but replaces Pi's `mlx` provider in `~/.pi/agent/models.json`, and writes a
+matching `hive-mlx.json` receipt there. No provider credentials are needed:
+Pi's `mlx-local` key is an inert availability marker, not a cloud key.
+`PI_CODING_AGENT_DIR` is supported for native/direct invocation; the Justfile
+container staging path uses the standard `~/.pi/agent` directory, so leave
+that override unset for the commands above.
+
+To persist the selection, add your `AGENT_MODEL=mlx/...` line to the existing
+private `~/.config/hive/contributor.env` **after** registration; do not replace
+its hub/token profiles. Keep `HIVE_MLX_PYTHON` pointing to the server's
+virtualenv on subsequent host launches. Optional setup variables
+`HIVE_MLX_CONTEXT_WINDOW` (default `8192`) and `HIVE_MLX_MAX_TOKENS` (default
+`2048`) set Pi's model metadata; choose limits your model/runtime actually
+supports, with output tokens smaller than context. They are not host RAM caps.
+The endpoint and budgets persist in Pi's provider configuration, not the hub.
+Use a contributor image containing this integration; an older pinned image
+does not acquire it just because the host checkout was updated.
+
+In the onboarding UI, choose **Apple MLX** and enter only the model ID/path;
+the generated commands add the `mlx/` provider prefix. Advanced users can
+still select **Pi** and supply the full `mlx/...` selection themselves.
+Registration reports backend `pi`, provider `mlx` and that exact model through
+the existing protocol. The hive may still reject it under its Model Filter or
+trust policy; MLX setup never changes those policies. Both existing interactive
+and headless Pi execution paths are retained.
+
+### Troubleshooting and verification limits
+
+Startup and task launches perform bounded **model-list checks only**, not
+inference probes. Missing runtime, unsupported platforms, missing models,
+changed provider configuration and unreachable endpoints fail explicitly;
+reconfigure with `--verify-tools` after changing the endpoint, model, tokenizer
+or runtime. A receipt records a successful probe, not proof that future weights
+or responses are unchanged. If it works on the host but not in the container,
+verify Docker Desktop host networking, not a bridge-container `localhost`.
+If Pi reports tool/parser errors or context exhaustion, use a supported
+tool-capable model, check its chat template and lower your chosen budgets.
+Task errors and cancellation use the normal Pi failure/revocation paths;
+ClankeR never substitutes a hosted model.
+
+CI exercises mocked streaming HTTP, model/config persistence, platform failures
+and the Pi task lifecycle without a GPU or weights. Actual Apple Silicon model
+inference and Docker Desktop connectivity were **not exercised** while
+implementing this integration; validate your chosen model on your own Mac
+before lending it to a hive.
+
 ## Docker Compose workflow
 
 <details>

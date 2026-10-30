@@ -1378,6 +1378,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onBreaker BreakerCallback
 	var freshCollect FreshStatusCollector
 	var onUpgradePolicy UpgradePolicyCallback
+	var onUpgradeAnnounce UpgradeAnnounceCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -1408,6 +1409,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			freshCollect = fn
 		case UpgradePolicyCallback:
 			onUpgradePolicy = fn
+		case UpgradeAnnounceCallback:
+			onUpgradeAnnounce = fn
 		}
 	}
 
@@ -1463,6 +1466,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		}
 		// Descriptive only (#7262): the hub's upgrade posture for this spoke,
 		// rendered by the dashboard. nil means the hub does not manage us.
+		if resp.UpgradeAnnounce != nil && onUpgradeAnnounce != nil {
+			onUpgradeAnnounce(resp.UpgradeAnnounce)
+		}
 		if resp.UpgradePolicy != nil && onUpgradePolicy != nil {
 			onUpgradePolicy(resp.UpgradePolicy)
 		}
@@ -2833,6 +2839,12 @@ type HeartbeatResponse struct {
 	// on every beat for any hive the hub has an upgrade opinion about; nil
 	// means "the hub does not manage this hive's upgrades".
 	UpgradePolicy *HeartbeatUpgradePolicy `json:"upgrade_policy,omitempty"`
+	// UpgradeAnnounce rides on every beat while the hub holds an open
+	// upgrade latch for a hub-managed hive it is about to roll (or has
+	// rolled) itself, so the spoke dashboard shows the upgrade animation
+	// before the kill instead of a bare "reconnecting" (#15788). Absent on
+	// the self-upgrade path, where UpgradeTo already says it.
+	UpgradeAnnounce *UpgradeAnnounce `json:"upgrade_announce,omitempty"`
 	// SigHiveID / SigSeq / SigSignedAt are authenticated by the detached
 	// hub->spoke heartbeat response signature. They bind the response to this
 	// hive and a monotonic sequence so signed responses cannot be replayed
@@ -2951,6 +2963,10 @@ const (
 // UpgradePolicyCallback is called on every beat whose response carries an
 // UpgradePolicy. nil is never delivered.
 type UpgradePolicyCallback func(p *HeartbeatUpgradePolicy)
+
+// UpgradeAnnounceCallback is called on every beat whose response carries an
+// UpgradeAnnounce (#15788). nil is never delivered.
+type UpgradeAnnounceCallback func(a *UpgradeAnnounce)
 
 // taskPushInterval is how often the spoke pushes task status to the hub. A var
 // (not a const) so tests can drive a single push quickly; production keeps the

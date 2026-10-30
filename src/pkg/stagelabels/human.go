@@ -163,6 +163,63 @@ type Evidence struct {
 	// ("contributor-lane:workflow-path"); the 090 route for an approved
 	// manual-merge rule records it suffixed with the approver.
 	LaneReason string
+	// HiveSuperseder is true for the hive App's own superseding copy of
+	// another PR ("Supersedes #N") under the owner's rule that such a PR
+	// auto-merges with no operator decision: a reviewer's requires_human
+	// is the fixer's, never 085. HiveSupersederHardStop is the one
+	// exception that does park it (a HiveSupersederHardStop* token, ""
+	// when none): the sentinel's unacknowledged finding, or an emergent
+	// problem with the PR itself.
+	HiveSuperseder         bool
+	HiveSupersederHardStop string
+}
+
+// Hard-stop tokens for a hive-authored superseding PR: the only reasons
+// such a PR parks at 085 (owner refinement: "the only exception would be if
+// this is sentinel or some other emergent problem with the pr"). Recorded
+// as the 085 lane reason under LaneReasonHiveSupersederHardStopPrefix so
+// the tracker pill and the delegated plan can name the reason.
+const (
+	HiveSupersederHardStopSentinel         = "sentinel-unacknowledged"
+	HiveSupersederHardStopHold             = "hold"
+	HiveSupersederHardStopFixExhausted     = "fix-attempts-exhausted"
+	HiveSupersederHardStopCIRed            = "ci-red-after-fixes"
+	HiveSupersederHardStopConflict         = "base-conflict-unresolved"
+	LaneReasonHiveSupersederHardStopPrefix = "hive-superseder-hard-stop:"
+	// LaneReasonHiveSupersederFix is the fixing-stage reason when the
+	// reviewer's requires_human on a hive superseding PR goes to the fixer.
+	LaneReasonHiveSupersederFix = "hive-superseder:fixer"
+	// HiveSupersederAutoMergeCaption is the tracker / plan wording for a
+	// hive superseding PR that is not parked.
+	HiveSupersederAutoMergeCaption = "hive-authored superseding PR — auto-merging once CI/review are clean"
+)
+
+// HiveSupersederHardStopProse renders a hard-stop token for the 085
+// comment and tracker ("" for an unknown token).
+func HiveSupersederHardStopProse(token string) string {
+	switch strings.TrimSpace(token) {
+	case HiveSupersederHardStopSentinel:
+		return "the sentinel has an open finding on this PR that nobody has acknowledged"
+	case HiveSupersederHardStopHold:
+		return "a hold is set on this PR"
+	case HiveSupersederHardStopFixExhausted:
+		return "the fixer used all its attempts on the reviewer's findings"
+	case HiveSupersederHardStopCIRed:
+		return "CI is still red after the fixer's attempts"
+	case HiveSupersederHardStopConflict:
+		return "the head conflicts with the base and the hive could not resolve it"
+	}
+	return ""
+}
+
+// HiveSupersederHardStopReason splits a 085 lane reason into its hard-stop
+// token ("" when the reason is not one).
+func HiveSupersederHardStopReason(reason string) string {
+	token, ok := strings.CutPrefix(strings.TrimSpace(reason), LaneReasonHiveSupersederHardStopPrefix)
+	if !ok {
+		return ""
+	}
+	return token
 }
 
 // HumanApprovedReasonSuffix joins a lane reason to the trusted merger who
@@ -211,6 +268,9 @@ type Route struct {
 	Actions []string
 	// ManualMerge means this lane has no unattended way past its rule.
 	ManualMerge bool
+	// ActionsHeading replaces the "How to release it" heading over Actions
+	// when the list is a choice between outcomes, not release steps.
+	ActionsHeading string
 	// Reasons explains the stage: what the author must fix (072/070), what
 	// a person must decide (085), what is still running (060). Empty for a
 	// trust-blocked 090; an approved manual-merge 090 names the rule and
@@ -275,7 +335,33 @@ const (
 	// (hivecommons/hive#15104 guard); the same suffix under
 	// LaneReasonAdoptionStalledPrefix parks a still-open original.
 	LaneReasonRebaseFailedTwice = "rebase-failed-twice"
+	// LaneReasonFixerExhaustedPrefix opens the 085 reason for a hive-authored
+	// PR whose fix dispatcher refused to kick another fix because the
+	// re-engagement cap is spent ("fixer-exhausted:6"); the suffix is the
+	// attempt count (hivecommons/hive#15744). Before this the PR sat at 070
+	// reading "Fixing" with nobody on it (#15308, 13h).
+	LaneReasonFixerExhaustedPrefix = "fixer-exhausted:"
 )
+
+// FixerExhaustedReason renders the 085 reason for a PR whose fixer gave up
+// after attempts tries.
+func FixerExhaustedReason(attempts int) string {
+	return LaneReasonFixerExhaustedPrefix + strconv.Itoa(attempts)
+}
+
+// ParseFixerExhausted reads the attempt count out of a fixer-exhausted
+// reason; ok is false for any other reason.
+func ParseFixerExhausted(reason string) (attempts int, ok bool) {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, LaneReasonFixerExhaustedPrefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(reason, LaneReasonFixerExhaustedPrefix))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
 func RouteHuman(e Evidence) Route {
@@ -294,6 +380,26 @@ func RouteHuman(e Evidence) Route {
 		// or the lane rule's "needs a human" is answered for it, and the
 		// author acts next (hivecommons/hive#15159). A new head re-asks.
 		note("@"+requester+" requested changes @"+ShortSHA(e.Head), LaneReasonHumanChangesRequested)
+	} else if e.HiveSuperseder {
+		if token := strings.TrimSpace(e.HiveSupersederHardStop); token != "" {
+			// The one exception to the superseder rule: an emergent
+			// problem with the PR itself parks it, and the caption names it.
+			reasons := []string{"hive-authored superseding PR parked: " + HiveSupersederHardStopProse(token)}
+			if e.Verdict == VerdictRequiresHuman {
+				reasons = append(reasons, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
+				if f := strings.TrimSpace(e.DecisionFinding); f != "" {
+					reasons = append(reasons, "the review found: "+f)
+				}
+			}
+			return Route{Stage: NeedsDecision, Reasons: reasons, LaneReason: LaneReasonHiveSupersederHardStopPrefix + token, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: strings.TrimSpace(e.HumanApprover), Hold: e.Hold}
+		}
+		if e.Verdict == VerdictRequiresHuman && strings.TrimSpace(e.HumanApprover) == "" {
+			// Owner rule: the reviewer's finding — security-sensitive
+			// included — is the fixer's to address, not a person's to rule
+			// on. The aggregate routes it as changes_requested; the stage
+			// says so rather than "needs your decision".
+			note(HiveSupersederAutoMergeCaption+": the reviewer's finding @"+ShortSHA(e.Head)+" goes to the fixer", LaneReasonHiveSupersederFix)
+		}
 	}
 	if e.Verdict == VerdictChangesRequested {
 		note("verdict changes_requested @"+ShortSHA(e.Head), LaneReasonChangesRequested)
@@ -378,7 +484,9 @@ func RouteHuman(e Evidence) Route {
 			}
 		}
 	}
-	if e.Sentinel {
+	if e.Sentinel && !(e.HiveSuperseder && strings.TrimSpace(e.HiveSupersederHardStop) == "") {
+		// A hive superseding PR with no hard-stop has an acknowledged
+		// sentinel finding: the person already ruled on it.
 		decide = append(decide, "a sentinel alert is open on this PR")
 	}
 	for _, h := range e.Holds {
@@ -612,13 +720,42 @@ func DecisionComment(r Route) string {
 		b.WriteString(actions)
 	}
 	if len(r.Actions) > 0 {
-		b.WriteString("\n\n**How to release it:**\n\n")
+		heading := r.ActionsHeading
+		if heading == "" {
+			heading = "How to release it:"
+		}
+		b.WriteString("\n\n**" + heading + "**\n\n")
 		for _, action := range r.Actions {
 			b.WriteString("- " + action + "\n")
 		}
 	}
 	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "`, `" + PreMergeSoak.Label() + "` or the merge queue on its own. Approval does not bypass CI, hold labels or other merge gates.</sub>")
 	return b.String()
+}
+
+// FixerExhaustedRoute is the 085 route for a hive-authored PR whose fix
+// dispatcher refused another fix because the re-engagement cap is spent
+// (hivecommons/hive#15744). summary is the reviewer's one-line finding the
+// fixer never cleared ("" when unknown). The comment lists the three
+// answers the tracker offers: re-author from scratch (the lead action),
+// hand it to a person, or close it as not planned.
+func FixerExhaustedRoute(head string, attempts int, summary string) Route {
+	reasons := []string{"the hive's fixer gave up after " + strconv.Itoa(attempts) + " attempts on `" + ShortSHA(head) + "`; no fix job is running"}
+	if summary = strings.TrimSpace(summary); summary != "" {
+		reasons = append(reasons, "last reviewer finding: "+summary)
+	}
+	return Route{
+		Stage:          NeedsDecision,
+		Reasons:        reasons,
+		Head:           head,
+		SelfAuthored:   true,
+		ActionsHeading: "Your options:",
+		Actions: []string{
+			"**Re-author from scratch** — *Re-author* in the tracker (or add the `adoption/supersede` label): the hive opens a fresh PR for the same issue from the current base and closes this one as superseded.",
+			"**Hand it to a person** — reply `/hive decision <who or what to change>` or push to the branch yourself; the hive steps back while a human owns it.",
+			"**Close as not planned** — close the PR (or *Close as not planned* under Decide… in the tracker) when the change is no longer wanted.",
+		},
+	}
 }
 
 // DecisionActions names the two things a maintainer can do with a
