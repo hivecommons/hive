@@ -530,6 +530,7 @@
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
+      renderOnboardingGuideChip(data);
       renderIssuesDisabledBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
