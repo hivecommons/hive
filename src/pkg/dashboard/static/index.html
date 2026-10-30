@@ -1508,16 +1508,24 @@
        order under one header line, joined by a thin rail on the left. Muted,
        hairline weights: the rail says "these move together", nothing more. */
     .ham-train-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) 0 var(--sp-5); margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); min-width: 0; position: relative; }
-    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
-    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--line-strong); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
+    /* One rail colour per train (--ham-train-accent, cycled by .ham-train-k0..k3
+       from stageTrackerTrainIndex) runs from the header through every member
+       row, so two trains on one page tell apart at a glance. */
+    .ham-train-head, .ham-row.ham-train { --ham-train-accent: var(--line-strong); }
+    .ham-train-head.ham-train-k0, .ham-row.ham-train.ham-train-k0 { --ham-train-accent: var(--blue); }
+    .ham-train-head.ham-train-k1, .ham-row.ham-train.ham-train-k1 { --ham-train-accent: var(--purple); }
+    .ham-train-head.ham-train-k2, .ham-row.ham-train.ham-train-k2 { --ham-train-accent: var(--cyan); }
+    .ham-train-head.ham-train-k3, .ham-row.ham-train.ham-train-k3 { --ham-train-accent: var(--amber); }
+    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--ham-train-accent, var(--line-strong)); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
     /* The train icon (hivecommons/hive issue 15395): 14px, currentColor, so it reads at chip size. */
     .ham-train-icon { width: 14px; height: 14px; flex: 0 0 auto; vertical-align: -2px; }
     .ham-seg-t .ham-col-ico { display: inline-block; margin-right: 0.3em; }
     .ham-train-files { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ham-row.ham-train { padding-left: var(--sp-5); position: relative; }
-    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
+    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
     .ham-row.ham-train-last::before { bottom: 50%; }
-    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--line-strong); }
+    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
@@ -1616,6 +1624,9 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
     .ham-holder { font-weight: normal; }
+    /* The holder's offline / not-registered state is muted: a flag, not an alarm. */
+    .ham-holder-presence { margin-right: 0; color: var(--text-faint); font-weight: normal; }
+    .ham-holder-presence.ham-presence-offline { --ham-presence-color: var(--text-faint); }
     /* A word with a holder ("PR in progress · @bob's clanker") stays on one
        line: the stage word keeps its width and the name gives way with an
        ellipsis before anything wraps (hivecommons/hive#15541). */
@@ -1752,6 +1763,24 @@
     .cue-event.cue-event-fading { opacity: 0.55; }
     .cue-setback .cue-event-who { color: var(--status-error); }
     .cue-merged .cue-event-who { color: var(--green); }
+    /* Hive note, show then tuck: with auto-collapse on the line is
+       [icon][body]; tucking wipes the body away from its right edge
+       (clip-path) while the text slides a few px left and fades, so it
+       reads as sliding into the ⬡-i icon. The line keeps one fixed height
+       either way so the chevrons above never shift. The icon is the only
+       click target; hover shows its tooltip (the whole note and its age).
+       Reduced motion: an instant toggle. */
+    .cue-event.cue-event-tuckable { display: flex; align-items: center; gap: 0; height: 1.6em; line-height: 1.6em; overflow: hidden; }
+    .cue-event-ico { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 1.6em; height: 1.6em; margin: 0 var(--sp-1) 0 0; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; transition: color 200ms ease-in-out, background 200ms ease-in-out; }
+    .cue-event-ico:hover, .cue-event-ico:focus-visible { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+    .cue-event-ico:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: 1px; }
+    .cue-event-ico-svg { width: 1em; height: 1em; }
+    .cue-event-tucked .cue-event-ico { color: var(--text); }
+    .cue-event-body { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: 1; transform: none; clip-path: inset(0 0 0 0); transition: clip-path 400ms ease-in-out, opacity 350ms ease-in-out, transform 400ms ease-in-out; }
+    .cue-event-tucked .cue-event-body { opacity: 0; transform: translateX(-8px); clip-path: inset(0 100% 0 0); pointer-events: none; }
+    .cue-event-tuckable .cue-event-who { margin-right: var(--sp-1); }
+    @media (prefers-reduced-motion: reduce) { .cue-event-body, .cue-event-ico { transition: none; } }
+    .ham-rm-preview .cue-event-body { transition: none; }
     @keyframes cue-acting-stripes { to { background-position: 34px 0; } }
     @keyframes cue-event-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
     /* Merged: the row is pinned for a moment, its ✓ cell glows, a small
@@ -14333,7 +14362,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //                              remaining"); drawn in CI / Review, since it
     //                              can still regress to 070
     //   080 Ready for auto merge — green and approved; waiting for hive's
-    //                              merge sweep: "next sweep in 42s"
+    //                              merge pass: "next pass in 42s"
     //   095 Soaking              — admitted; the soak window runs: "7m left"
     //   100 Merging              — admitted and soaked; the merge is being
     //                              attempted (GitHub merge queue / tide)
@@ -14436,6 +14465,103 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const mt = item && item.merge_train;
       return mt && typeof mt === 'object' && mt.state ? mt : null;
     }
+    // The first merge-ready stage (080 awaiting merge admission). A train
+    // member below it holds a provisional slot: the planner has ordered
+    // it, but CI / the review verdict / the fixer still stand in front.
+    const STAGE_TRACKER_MERGE_READY = 80;
+    // The blocker headline for a provisional train member, by stage —
+    // the same words the stage column shows (stageTrackerShort in Go), so
+    // the chevron and the caption name one blocker (hive's own #15577 read
+    // "Merge queued · 1st" while its caption said "check build-and-test
+    // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Fixing', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    // Pure: true when the row's queue slot is a forecast — the server says
+    // so (merge_train.provisional), or, from an older server, the row's
+    // own stage is short of the merge gate.
+    function stageTrackerTrainProvisional(item) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return false;
+      if (mt.provisional === true) return true;
+      if (mt.provisional === false) return false;
+      const stage = Number(item.stage) || 0;
+      return stage > 0 && stage < STAGE_TRACKER_MERGE_READY;
+    }
+    // Pure: the provisional member's headline — its stage's blocker word.
+    function stageTrackerTrainProvisionalHeadline(item) {
+      const stage = Number(item && item.stage) || 0;
+      // Guarded: test harnesses lift this function without the active-word table.
+      const active = typeof STAGE_TRACKER_ACTIVE_WORD !== 'undefined' ? STAGE_TRACKER_ACTIVE_WORD[stage] : '';
+      return STAGE_TRACKER_PROVISIONAL_STAGE_WORD[stage] || active || STAGE_TRACKER_PROVISIONAL_STAGE_WORD[50];
+    }
+    // Pure: the trailing slot words for a provisional member — "queued 1st
+    // of 2 once ready" — never the headline. trains (the count of trains
+    // on the page) adds the train tag when there is more than one.
+    function stageTrackerTrainProvisionalSuffix(item, trains) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return '';
+      const pos = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT ? 1 : (stageTrackerTrainPlace(mt).pos || 2);
+      return 'queued ' + stageTrackerTrainOrdinalOfN(mt, pos) + ' once ready' + stageTrackerTrainTagSuffix(mt, trains);
+    }
+    // Pure: "1st of 2" — the place with the queue length, so two trains on
+    // one page do not read as two "1st"s with nothing to tell them apart
+    // (the owner's ask: "how are there 2 'merge queued 1st'?"). The bare
+    // ordinal when the length is unknown.
+    function stageTrackerTrainOrdinalOfN(mt, pos) {
+      pos = Number(pos) || 0;
+      const len = Math.max(stageTrackerTrainPlace(mt).len, pos);
+      return stageTrackerOrdinal(pos) + (len >= 2 ? ' of ' + len : '');
+    }
+    // Pure: the short name that tells one train from another — the
+    // basename of its first overlapping file ("main.go"), else its head
+    // ("#15567"); '' with neither.
+    function stageTrackerTrainTag(mt) {
+      if (!mt) return '';
+      const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
+      if (files.length) return String(files[0]).split('/').pop();
+      const head = stageTrackerTrainPlace(mt).head;
+      return head ? '#' + head : '';
+    }
+    // The chevron's train tag lead: "· train main.go".
+    const STAGE_TRACKER_TRAIN_TAG_LEAD = 'train ';
+    // Pure: " · train main.go" when more than one train is on the page
+    // (trains is that count); '' for one train or none.
+    function stageTrackerTrainTagSuffix(mt, trains) {
+      if (!((Number(trains) || 0) > 1)) return '';
+      const tag = stageTrackerTrainTag(mt);
+      return tag ? ' · ' + STAGE_TRACKER_TRAIN_TAG_LEAD + tag : '';
+    }
+    // Pure: the hover sentence naming the train — "Train of 2 PRs
+    // overlapping main.go; merges after #15567." ("merges first" at the
+    // front); '' when the tag is not shown.
+    function stageTrackerTrainTagTip(mt, trains) {
+      if (!mt || !stageTrackerTrainTagSuffix(mt, trains)) return '';
+      const p = stageTrackerTrainPlace(mt);
+      const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
+      const over = files.length ? ' overlapping ' + files.map(f => String(f).split('/').pop()).join(', ') : '';
+      const isFront = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || p.pos === 1;
+      const order = isFront ? 'merges first' : (p.head ? 'merges after #' + p.head : 'merges in turn');
+      return 'Train of ' + Math.max(p.len, p.pos || 1) + ' PRs' + over + '; ' + order + '.';
+    }
+    // Pure: { count, index } over the page's row items — how many distinct
+    // trains are drawn, and each train key's 0-based slot in order of
+    // first appearance (the rail accent cycles on it). Entries may be
+    // items or the grouped view's {item} / {group} wrappers.
+    function stageTrackerTrainIndex(items) {
+      const index = {};
+      let count = 0;
+      (items || []).forEach(e => {
+        const it = e && e.item ? e.item : (e && e.group ? null : e);
+        const k = it ? stageTrackerTrainKey(it) : '';
+        if (k && index[k] === undefined) index[k] = count++;
+      });
+      return { count, index };
+    }
+    // How many rail accents cycle before repeating (.ham-train-k0..k3).
+    const STAGE_TRACKER_TRAIN_ACCENTS = 4;
+    // Pure: " ham-train-k2" for a train's accent slot; '' when unknown.
+    function stageTrackerTrainAccentClass(idx) {
+      return typeof idx === 'number' && idx >= 0 ? ' ham-train-k' + (idx % STAGE_TRACKER_TRAIN_ACCENTS) : '';
+    }
     function stageTrackerOrdinal(n) {
       n = Number(n) || 0;
       const r100 = n % 100, r10 = n % 10;
@@ -14455,7 +14581,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
     // person says what the person has to do (the owner's ask: "waiting on
     // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
-    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for a merge sweep', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
     // Pure: the short reason a stalled head is stuck — the head_state
     // table, a human-decision head told apart by its reason, else the
     // head's own plain-word reason cut at its first clause.
@@ -14480,20 +14606,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return STAGE_TRACKER_TRAIN_STALLED_LEAD + what + (dur ? ' · ' + dur : '');
     }
     // The chevron word for a train member ('' for a row not in a train).
-    // The queued word is the place only — "Merge queued · 2nd" — so it
-    // reads the same with the merge sweep on or off (#15395); never the
-    // state slug, never "front" or "queued-behind", and never '' for a
-    // state this table does not know: an unmapped slug reads spelled out
-    // with the row's place ("Waiting for front · 3rd").
-    function stageTrackerTrainWord(item) {
+    // The queued word is the place with the queue length — "Merge queued
+    // · 2nd of 3" — so it reads the same with the merge sweep on or off
+    // (#15395); never the state slug, never "front" or "queued-behind",
+    // and never '' for a state this table does not know: an unmapped slug
+    // reads spelled out with the row's place ("Waiting for front · 3rd").
+    // trains is the count of trains on the page: past one, the word ends
+    // with the train's tag ("· train main.go") so two "1st"s tell apart.
+    function stageTrackerTrainWord(item, trains) {
       const mt = stageTrackerTrain(item);
       if (!mt) return '';
+      // A slot held ahead of readiness reads blocker first, slot second.
+      if ((mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED) && stageTrackerTrainProvisional(item)) return stageTrackerTrainProvisionalHeadline(item) + ' · ' + stageTrackerTrainProvisionalSuffix(item, trains);
       const stalled = stageTrackerTrainStalledWord(mt);
       if (stalled && (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED)) return stalled;
       const p = stageTrackerTrainPlace(mt);
+      const tag = stageTrackerTrainTagSuffix(mt, trains);
       switch (mt.state) {
-        case STAGE_TRACKER_TRAIN_STATE_FRONT: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · ' + stageTrackerOrdinal(1);
-        case STAGE_TRACKER_TRAIN_STATE_QUEUED: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · ' + stageTrackerOrdinal(p.pos || 2);
+        case STAGE_TRACKER_TRAIN_STATE_FRONT: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · ' + stageTrackerTrainOrdinalOfN(mt, 1) + tag;
+        case STAGE_TRACKER_TRAIN_STATE_QUEUED: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · ' + stageTrackerTrainOrdinalOfN(mt, p.pos || 2) + tag;
         case STAGE_TRACKER_TRAIN_STATE_REBASING: return 'Rebasing · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
         case STAGE_TRACKER_TRAIN_STATE_EXHAUSTED: return 'Needs human decision · rebase failed ' + (Number(mt.attempt) === 2 ? 'twice' : (Number(mt.attempt) || 0) + ' times');
       }
@@ -14509,7 +14640,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const s = Number(mt.eta_s) || 0;
       return s > 0 ? nowMs + s * 1000 : 0;
     }
-    // Pure: the ETA words — "ETA ~25m (2 ahead · next sweep in 40s)",
+    // Pure: the ETA words — "ETA ~25m (2 ahead · next pass in 40s)",
     // "running late — estimated ~25m, still waiting", or '' with no
     // estimate. Always a "~": an estimate, not a promise.
     function stageTrackerTrainEtaWords(mt, nowMs) {
@@ -14518,7 +14649,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const left = stageTrackerShortLeft(at - nowMs);
       const basis = String(mt.eta_basis || '').trim();
       if (mt.late) return 'Running late — estimated ~' + stageTrackerShortLeft((Number(mt.eta_s) || 0) * 1000) + ', still waiting' + (basis ? ' (' + basis + ')' : '') + '.';
-      return 'ETA ' + (left ? '~' + left : 'any sweep now') + (basis ? ' (' + basis + ')' : '') + '.';
+      return 'ETA ' + (left ? '~' + left : 'any moment now') + (basis ? ' (' + basis + ')' : '') + '.';
     }
     // Pure: the queued row's hover — "2nd of 6 in the merge queue · behind
     // #15253 (soaking, 12m left) · ETA ~25m. Hive merges one at a time, in
@@ -14640,23 +14771,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return text;
     }
-    function stageTrackerTrainHeaderHtml(item, shown) {
+    // idx is the train's accent slot on the page (stageTrackerTrainIndex);
+    // the header and its rows share the rail colour it picks.
+    function stageTrackerTrainHeaderHtml(item, shown, idx) {
       const rt = stageTrackerRowTrain(item);
       if (!rt) return '';
       const mt = rt.mt;
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
       const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }).join('\n');
-      return `<div class="ham-train-head" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
+      return `<div class="ham-train-head${stageTrackerTrainAccentClass(idx)}" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
         <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
       </div>`;
     }
-    // Row classes for a train member: the rail, and whether it leads / ends
-    // the run (prev/next are the neighbouring rows, or null).
-    function stageTrackerTrainRowClass(item, prev, next) {
+    // Row classes for a train member: the rail, whether it leads / ends
+    // the run (prev/next are the neighbouring rows, or null), and the
+    // train's accent slot (idx, from stageTrackerTrainIndex) so its rows
+    // and header share one colour.
+    function stageTrackerTrainRowClass(item, prev, next, idx) {
       const k = stageTrackerTrainKey(item);
       if (!k) return '';
       const rt = stageTrackerRowTrain(item);
-      let cls = ' ham-train';
+      let cls = ' ham-train' + stageTrackerTrainAccentClass(idx);
       if (rt.mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
       if (!next || stageTrackerTrainKey(next) !== k) cls += ' ham-train-last';
       return cls;
@@ -14669,6 +14804,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let prevKey = '';
       const list = items || [];
       const itemOf = e => (e && e.item ? e.item : (e && e.group ? null : e));
+      const trains = stageTrackerTrainIndex(list);
       list.forEach((e, i) => {
         // Entries are items, or the grouped view's {item} / {group} wrappers.
         const it = itemOf(e);
@@ -14680,7 +14816,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (!m || stageTrackerTrainKey(m) !== k) break;
             shown.push(stageTrackerRowTrain(m).pr);
           }
-          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown) });
+          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown, trains.index[k]) });
         }
         prevKey = k;
         out.push(rowOf(e, i));
@@ -15010,13 +15146,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Pure: { word, detail, tip, cue } for an item on the gate, null off it.
     //   word   — the pill word (STAGE_TRACKER_MERGE_GATE_WORD)
-    //   detail — the live part after " · " ("next sweep in 42s", "7m left");
+    //   detail — the live part after " · " ("next pass in 42s", "7m left");
     //            always a gate fact, never the issue's lane reason
     //   tip    — one plain sentence for the glyph's title + aria-label; on
     //            an issue row it leads with "open PR #N covers it · at <stage>"
     //   cue    — 'running' (sweep on it now) | 'waiting' | 'soaking' | 'merging' | ''
     //   until  — ms epoch the detail counts down to (0 when none)
-    function stageTrackerMergeGateInfo(item, nowMs) {
+    // trains — how many trains the page draws (ctx.trains); past one a
+    // queue word names its train.
+    function stageTrackerMergeGateInfo(item, nowMs, trains) {
       const rb = item && item.rebase;
       if (rb && rb.text && !(item.rebase_merge && item.rebase_merge.state && item.rebase_merge.state !== 'failed' && item.rebase_merge.state !== 'merged')) {
         // The fixer's autonomous rebase-resolve loop guard: "Rebasing ·
@@ -15031,16 +15169,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const state = stageTrackerMergeGateStateOf(src);
       // A decided row may sit on a stage with no merge_gate yet; the
       // decision still owns the pill (#15126).
-      if (!state && typeof stageTrackerDecidedOf === 'function' && (stageTrackerDecidedOf(src, nowMs) || stageTrackerDecidedOf(item, nowMs))) return stageTrackerMergeGateInfoFor(src, item, nowMs);
+      if (!state && typeof stageTrackerDecidedOf === 'function' && (stageTrackerDecidedOf(src, nowMs) || stageTrackerDecidedOf(item, nowMs))) return stageTrackerMergeGateInfoFor(src, item, nowMs, trains);
       if (!state || state === 'merged') return null;
-      const info = stageTrackerMergeGateInfoFor(src, item, nowMs);
+      const info = stageTrackerMergeGateInfoFor(src, item, nowMs, trains);
       const coverWhy = stageTrackerCoverReasonText(item);
       if (coverWhy) info.tip = coverWhy.charAt(0).toUpperCase() + coverWhy.slice(1) + ' — ' + info.tip;
       return info;
     }
     // src carries the merge_gate / stage read; item is the row itself (its
     // lane reason stands in for a gate reason only on a PR row).
-    function stageTrackerMergeGateInfoFor(src, item, nowMs) {
+    function stageTrackerMergeGateInfoFor(src, item, nowMs, trains) {
       const state = stageTrackerMergeGateStateOf(src);
       const mg = (src && src.merge_gate) || {};
       // A recorded decision whose effect is pending (hivecommons/hive#15126):
@@ -15066,16 +15204,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       // A merge-train member (hivecommons/hive#15395): the label is its
       // place in the queue and nothing else, so the chip does not flip
-      // between "… · merge sweep running" and the bare form each sweep,
+      // between "… · checking now" and the bare form each sweep,
       // and a front in its soak keeps its place word (never the slug) —
       // its countdown already includes the soak left.
       // The sweep is the spinning ⬡ and a "Checking now…" tooltip line.
       const trainSrc = stageTrackerTrain(src) ? src : (stageTrackerTrain(item) ? item : null);
       const mt = trainSrc ? stageTrackerTrain(trainSrc) : null;
+      // A provisional slot (the member's own stage is short of the gate):
+      // the chip's headline is the stage's blocker, the slot a muted
+      // trailing detail, and the hover leads with what blocks it.
+      if (mt && (state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED) && stageTrackerTrainProvisional(trainSrc)) {
+        const blocker = stageTrackerReviewPassedDetail(laneReason || mg.reason) || String((trainSrc && trainSrc.caption) || '').split(/ — /)[0].trim();
+        const headline = stageTrackerTrainProvisionalHeadline(trainSrc);
+        const tagTip = stageTrackerTrainTagTip(mt, trains);
+        const tip = headline + (blocker ? ' — ' + blocker : '') + '. ' + (tagTip ? tagTip + ' ' : '') + stageTrackerTrainQueueTip(mt, nowMs).replace(/ · merges next/, ' · merges first once it is ready') + (mg.sweep_running ? ' Checking now…' : '') + lastSeen;
+        return { state, word: headline, detail: stageTrackerTrainProvisionalSuffix(trainSrc, trains), tip, cue: 'waiting', until: 0, train: mt, stalled: false, provisional: true };
+      }
       if (mt && (state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED || state === STAGE_TRACKER_TRAIN_STATE_REBASING || state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED)) {
-        const trainWord = stageTrackerTrainWord(trainSrc) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
+        const trainWord = stageTrackerTrainWord(trainSrc, trains) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
         const queued = state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED;
-        const queueTip = queued ? stageTrackerTrainQueueTip(mt, nowMs) : stageTrackerTrainLines(trainSrc).join('. ') + '.';
+        const tagTip = queued ? stageTrackerTrainTagTip(mt, trains) : '';
+        const queueTip = (tagTip ? tagTip + ' ' : '') + (queued ? stageTrackerTrainQueueTip(mt, nowMs) : stageTrackerTrainLines(trainSrc).join('. ') + '.');
         const checking = mg.sweep_running ? ' Checking now…' : '';
         // The countdown to its turn ("· ~4m") ticks from eta_at like the
         // soak clock, so a poll re-render does not reset it; a blocked
@@ -15085,7 +15234,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const detail = etaAt > 0 ? (mt.late ? 'running late' : stageTrackerTrainEtaDetail(etaAt, nowMs)) : '';
         return { state, word: trainWord, detail, tip: queueTip + checking + lastSeen, cue: mg.sweep_running ? 'running' : 'waiting', until: etaAt > 0 && !mt.late ? etaAt : 0, train: mt, stalled: !!mt.stalled };
       }
-      // A soak clock (own or mirrored) outranks "merge sweep running": the
+      // A soak clock (own or mirrored) outranks "checking now": the
       // sweep reads the clock, it does not replace it. Any gate stage the
       // lane holds for the soak — 095 admitted, or 060/080 while trust
       // still blocks the head — counts the same clock down.
@@ -15095,7 +15244,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // "soak 12m left"; at 095 the soak is the stage.
         clock.prefix = state === 'soaking' ? '' : 'soak ';
         const soak = stageTrackerSoakWords(clock, nowMs, nextAt, !!mg.sweep_running);
-        return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
+        return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: soak.cue || 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
       }
       // 060 Review passed: the pill carries the lane's own recorded reason
       // ("CI in progress", "checks unreadable", "soak 30m remaining" —
@@ -15104,15 +15253,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const preWhy = state === 'gate-pending' ? (stageTrackerReviewPassedDetail(mg.reason || laneReason) || 'waiting for merge admission') : '';
       if (state === 'merge-failed') return stageTrackerMergeFailedInfo(mg, nowMs, nextAt, lastSeen);
       if (mg.sweep_running) {
-        return { state, word, detail: preWhy || 'merge sweep running', tip: (preWhy ? 'Review passed, not yet admitted to auto merge — ' + preWhy + '; ' : '') + "hive's merge sweep is running on this PR now.", cue: 'running', until: 0 };
+        return { state, word, detail: preWhy || 'checking now', tip: (preWhy ? 'Review passed, not yet admitted to auto merge — ' + preWhy + '; ' : '') + 'hive is checking this PR now.', cue: 'running', until: 0 };
       }
-      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const nextWords = stageTrackerNextPassWords(nextAt, nowMs);
       const sooner = ' A GitHub event on the PR (check run, review, push) triggers a pass sooner.';
       if (state === 'soaking') {
-        return { state, word, detail: 'soak window complete', tip: 'Admitted; the soak window is complete — hive merges on its next sweep' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: 0 };
+        return { state, word, detail: 'complete', tip: 'Soak complete — merges on the next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: 0 };
       }
       if (state === 'ready') {
-        return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's merge sweep" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
+        return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's next merge pass" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
       }
       if (state === 'merging') {
         // A live merge call (merging_since, hivecommons/hive#15245) says
@@ -15161,16 +15310,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const at = mg.merge_failed_at ? Date.parse(mg.merge_failed_at) : 0;
       const who = STAGE_TRACKER_MERGE_PATH_WORDS[mg.merge_path] || '';
       const when = (who ? ' (' + who + ')' : '') + (at > 0 ? ' ' + stageTrackerAgoText(at, nowMs) : '');
-      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const nextWords = stageTrackerNextPassWords(nextAt, nowMs);
       const details = why ? ' Details: ' + why : '';
       if (kind === 'checks-pending') {
-        const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? "; hive's merge sweep is on it now" : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
+        const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? '; hive is on it now' : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
         return { state, word: 'Waiting for CI', detail: checks > 0 ? checks + ' check' + (checks === 1 ? '' : 's') : '', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
       }
       const word = STAGE_TRACKER_MERGE_GATE_WORD[state];
       const sentence = 'hive tried to merge this' + when + ' and GitHub refused' + (text ? ' — ' + text : '') + '.';
       if (mg.sweep_running) {
-        return { state, word, detail: 'retrying', tip: sentence + " hive's merge sweep is retrying it now." + lastSeen + details, cue: 'running', until: 0 };
+        return { state, word, detail: 'retrying', tip: sentence + ' hive is retrying it now.' + lastSeen + details, cue: 'running', until: 0 };
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
     }
@@ -15182,10 +15331,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return line.length > STAGE_TRACKER_MERGE_FAILED_SHORT_MAX ? line.slice(0, STAGE_TRACKER_MERGE_FAILED_SHORT_MAX - 1).trimEnd() + '…' : line;
     }
     // Pure: the pill word with its live detail — "Ready for auto merge ·
-    // next sweep in 42s". The detail span carries data-ham-until so the
+    // next pass in 42s". The detail span carries data-ham-until so the
     // countdown ticks in place.
-    function stageTrackerMergeGateWordHtml(item, nowMs) {
-      const info = stageTrackerMergeGateInfo(item, nowMs);
+    function stageTrackerMergeGateWordHtml(item, nowMs, trains) {
+      const info = stageTrackerMergeGateInfo(item, nowMs, trains);
       if (!info) return '';
       // A soak detail carries its clock so the tick can redo both the
       // words and the hover sentence (data-ham-soak-tip is the sentence
@@ -15237,10 +15386,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (typeof formatDashboardTime === 'function') return formatDashboardTime(ms, opts);
       try { return new Intl.DateTimeFormat(undefined, opts).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString(); }
     }
-    // Pure: { word, detail, tip } for a soak clock at nowMs.
+    // Pure: "next pass in 42s" until the lane's next pass, "pass due now"
+    // once it has come, '' when the next pass is unknown. Never the word
+    // "sweep" — that is the lane's internal name, not a state.
+    function stageTrackerNextPassWords(nextAt, nowMs) {
+      if (nextAt > nowMs) return 'next pass in ' + stageTrackerShortLeft(nextAt - nowMs);
+      return nextAt > 0 ? 'pass due now' : '';
+    }
+    // Pure: { word, detail, tip, cue } for a soak clock at nowMs.
     //   soaking   — "Soaking · 12m left"; the hover carries the rule, the
     //               live time left and the end time
-    //   ready     — past until: "Soaking · ready — next sweep in 3m"
+    //   complete  — past until, waiting for the lane's next pass:
+    //               "Soaking · complete"
+    //   mergeable — past until and the lane's pass is on it now:
+    //               "Mergeable · merging now"
     //   restarted — "Soak restarted · new head"
     function stageTrackerSoakWords(clock, nowMs, nextAt, sweepRunning) {
       const short = clock.head ? clock.head.slice(0, 7) : '';
@@ -15248,32 +15407,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const mins = clock.windowS > 0 ? Math.round(clock.windowS / 60) : 0;
       const window = mins > 0 ? mins + ' minute' + (mins === 1 ? '' : 's') : 'the soak window';
       if (clock.restarted) {
-        return { word: 'Soak restarted', detail: 'new head', tip: who + ' was replaced by a new push, so the soak starts over on the new head: it must sit ' + window + ' without new commits before the hive merges it. hive re-reads it on its next sweep.' };
+        return { word: 'Soak restarted', detail: 'new head', tip: who + ' was replaced by a new push, so the soak starts over on the new head: it must sit ' + window + ' without new commits before the hive merges it. hive re-reads it on its next pass.' };
       }
       const prefix = clock.prefix || '';
       const leftMs = clock.until - nowMs;
       if (leftMs > 0) {
         return { word: 'Soaking', detail: prefix + stageTrackerShortLeft(leftMs) + ' left', tip: who + ' must sit ' + window + ' without new commits before the hive merges it · ' + stageTrackerSoakLeftText(leftMs) + ' left · soak ends ' + stageTrackerClockText(clock.until) };
       }
-      const next = sweepRunning ? 'merge sweep running' : (nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : 'sweep due now');
-      return { word: 'Soaking', detail: (prefix ? 'soaked — ' : 'ready — ') + next, tip: who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '; hive merges it on its next sweep (' + next + ').' };
+      const soaked = who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '. ';
+      if (sweepRunning) {
+        return { word: 'Mergeable', detail: prefix ? 'soaked — merging now' : 'merging now', tip: soaked + 'Mergeable — merging now.', cue: 'running' };
+      }
+      const next = stageTrackerNextPassWords(nextAt, nowMs);
+      return { word: 'Soaking', detail: prefix ? 'soak complete' : 'complete', tip: soaked + 'Soak complete — merges on the next pass' + (next ? ' (' + next + ')' : '') + '.', cue: 'soaking' };
     }
     // Pure: the leading glyph for a row on the gate — spinning while hive's
     // sweep is on it, a clock while it waits — with the sentence as title
     // and aria-label. '' off the gate.
-    function stageTrackerGateCueHtml(item, nowMs) {
-      const info = stageTrackerMergeGateInfo(item, nowMs);
+    function stageTrackerGateCueHtml(item, nowMs, trains) {
+      const info = stageTrackerMergeGateInfo(item, nowMs, trains);
       if (!info) return '';
       const spin = info.cue === 'running' || info.cue === 'merging';
       return `<span class="ham-gate-ico${spin ? ' cue-spin' : ''}" data-gate-cue="${esc(info.cue)}" role="img" title="${esc(info.tip)}" aria-label="${esc(info.tip)}">${stageTrackerIcon(spin ? 'sweep' : 'wait', 'ham-ico')}</span>`;
     }
     // Pure: the queue chip's countdown words — "~4m" until the estimate,
-    // "any sweep now" once it has passed.
+    // "any moment now" once it has passed.
     function stageTrackerTrainEtaDetail(etaAt, nowMs) {
       const left = stageTrackerShortLeft(etaAt - nowMs);
-      return left ? '~' + left : 'any sweep now';
+      return left ? '~' + left : 'any moment now';
     }
-    // Pure: ticks every countdown in el from nowMs; "sweep due now" once a
+    // Pure: ticks every countdown in el from nowMs; "pass due now" once a
     // ready row's next pass has come.
     function stageTrackerGateCountdownSync(el, nowMs) {
       if (!el || typeof el.querySelectorAll !== 'function') return;
@@ -15283,7 +15446,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const kind = n.getAttribute('data-ham-until-kind');
         if (n.getAttribute('data-ham-soak') === '1') { stageTrackerSoakTick(n, nowMs); continue; }
         const left = stageTrackerShortLeft(until - nowMs);
-        let t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· soak window complete') : (left ? '· next sweep in ' + left : '· sweep due now');
+        let t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· complete') : (left ? '· next pass in ' + left : '· pass due now');
         if (kind === 'decided') t = n.textContent.replace(/ · in [^·]*$|· in [^·]*$/, '') + (left ? ' · in ' + left : ' · due now');
         if (kind === STAGE_TRACKER_TRAIN_STATE_QUEUED || kind === STAGE_TRACKER_TRAIN_STATE_FRONT) t = '· ' + stageTrackerTrainEtaDetail(until, nowMs);
         if (n.textContent !== t) n.textContent = t;
@@ -15297,6 +15460,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const words = stageTrackerSoakWords(clock, nowMs, Number(n.getAttribute('data-ham-next')) || 0, n.getAttribute('data-ham-sweeping') === '1');
       const t = '· ' + words.detail;
       if (n.textContent !== t) n.textContent = t;
+      // At 095 the soak owns the pill word too: a soaked head under the
+      // lane's pass flips "Soaking" to "Mergeable" without a re-render.
+      const wordNode = n.previousSibling;
+      if (!clock.prefix && wordNode && wordNode.nodeType === 3 && wordNode.textContent.trim() !== words.word) wordNode.textContent = words.word + ' ';
       const prev = n.getAttribute('data-ham-soak-tip') || '';
       if (!prev || prev === words.tip || typeof n.closest !== 'function') return;
       const li = n.closest('li');
@@ -15469,6 +15636,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ico = stageTrackerIcon(p.kind, 'ham-ico ham-presence-ico', '');
       const dot = p.kind === 'human' ? '' : '<i class="ham-presence-dot"></i>';
       return `<span class="ham-presence ham-presence-${p.state} ham-presence-${p.kind}" role="img" aria-label="${esc(stageTrackerPresenceAria(item, nowMs))}" data-ham-presence="${p.state}" data-ham-presence-kind="${p.kind}">${ico}${dot}</span>`;
+    }
+    // The holder's live state after the chevron's "· @odttlnt's clanker":
+    // " · [■] offline 3h" when the row's presence is for that clanker and
+    // it is gone, " · [○] not registered" when no clanker is registered
+    // here for the login. An online clanker adds nothing (the row is
+    // moving, nothing to flag); a human has no presence. The title is the
+    // presence tooltip, so the next automatic step is one hover away.
+    function stageTrackerHolderPresenceHtml(item, claimant, nowMs) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p || p.kind !== 'clanker' || !claimant || claimant.kind !== 'clanker' || !claimant.login) return '';
+      if (String(claimant.login).toLowerCase() !== p.login.toLowerCase()) return '';
+      const now = Number(nowMs) || Date.now();
+      let word = '';
+      if (p.state === 'offline') word = 'offline' + (stageTrackerPresenceGone(p, now) ? ' ' + stageTrackerPresenceGone(p, now) : '');
+      else if (p.state === 'unknown') word = 'not registered';
+      if (!word) return '';
+      const tip = stageTrackerPresenceTip(item, now);
+      return `<span class="ham-holder-presence ham-presence ham-presence-${p.state} ham-presence-clanker" title="${esc(tip)}" aria-label="${esc(tip)}" data-ham-presence="${p.state}"> · <i class="ham-presence-dot" aria-hidden="true"></i>${esc(word)}</span>`;
     }
     // Pill text with the indicator placed just before the @login (or
     // leading, when the text names nobody): "waiting on [robot ●] @hanthor".
@@ -15713,7 +15898,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Segment list for one item: path segments with done/active state plus a
     // detour badge when the item sits on a side stage, and the merged end-cap.
-    function stageTrackerSegments(item, stages, nowMs) {
+    // ctx.trains (how many trains the page draws) lets a queue word name
+    // its train when there is more than one.
+    function stageTrackerSegments(item, stages, nowMs, ctx) {
+      const trains = ctx && ctx.trains;
       const byNum = {};
       (stages || []).forEach(st => { byNum[st.number] = st; });
       const cur = Number(item.stage) || 0;
@@ -15741,7 +15929,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const tipStage = (state === 'active' && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         // A merge-train member's word is its place in the train (#15117).
-        if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item); if (tw) word = tw; }
+        if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
@@ -16004,7 +16192,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Only the active chevron carries hover text (stage name, description,
     // whose move it is); passed and upcoming chevrons have none.
     function stageTrackerStripItems(item, stages, range, nowMs, ctx) {
-      const segs = stageTrackerSegments(item, stages, nowMs);
+      const segs = stageTrackerSegments(item, stages, nowMs, ctx);
+      const trains = ctx && ctx.trains;
       const curStage = Number(item.stage) || 0;
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
@@ -16013,7 +16202,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorTip = stageTrackerActorTip(item);
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
-      const holderHtml = holderShort ? `<span class="ham-holder"> · ${esc(holderShort)}</span>` : '';
+      // "· @odttlnt's clanker · ■ offline 3h": the holder's live state
+      // rides after the holder when the row's presence is theirs.
+      const holderPresence = holderShort && typeof stageTrackerHolderPresenceHtml === 'function' ? stageTrackerHolderPresenceHtml(item, claimant, nowMs) : '';
+      const holderHtml = holderShort ? `<span class="ham-holder"> · ${esc(holderShort)}${holderPresence}</span>` : '';
       // A row whose next mover is nobody (an unclassified PR under its
       // issue reads "PR in progress") still shows WHO holds it: the
       // holder's own kind icon stands where the actor icon would
@@ -16046,7 +16238,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           // With merge_gate in the payload the sentence is the gate's own
           // (what holds it, next sweep, soak left — #15073).
-          const gateInfo = !sg.detour && typeof stageTrackerMergeGateInfo === 'function' ? stageTrackerMergeGateInfo(item, nowMs) : null;
+          const gateInfo = !sg.detour && typeof stageTrackerMergeGateInfo === 'function' ? stageTrackerMergeGateInfo(item, nowMs, trains) : null;
           if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;
           else if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
@@ -16071,12 +16263,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const decision = active && !sg.cap && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
         // On the merge gate the word carries its live detail and the
         // leading glyph says in words what hive is doing (#15073).
-        const gateWord = active && !sg.cap && !sg.detour && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
+        const gateWord = active && !sg.cap && !sg.detour && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs, trains) : '';
         // A detour word that already names the holder ("Returned to
         // @bob's clanker") does not repeat them after the dot.
         const detourHolder = sg.detour && holderShort && sg.detour.text.indexOf(holderShort) >= 0 ? '' : holderHtml;
         const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}</span>` : (gateWord || `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${holderHtml}</span>`);
-        const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';
+        const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
         const workTip = worker && typeof stageTrackerCueLead === 'function' ? stageTrackerCueLead(item, worker, nowMs).replace(/ — $/, '') : '';
@@ -16996,7 +17188,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       const prs = typeof stageTrackerRowPRKeys === 'function' ? stageTrackerRowPRKeys(item) : '';
       const trainKey = typeof stageTrackerTrainKey === 'function' ? stageTrackerTrainKey(item) : '';
-      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
+      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs) : ''))}
@@ -17155,9 +17347,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let _stageTrackerEvents = {};
     // Pure: the events map after payload d at nowMs — new lines for what
     // changed, expired lines gone.
-    function stageTrackerEventsNext(events, prevStates, nextStates, stages, nowMs) {
+    // ttlMs (default STAGE_TRACKER_EVENT_MS) is how long a line lives
+    // untouched; Infinity (auto-collapse on) keeps it, tucked into its icon,
+    // until a newer line replaces it or its row leaves the payload.
+    function stageTrackerEventsNext(events, prevStates, nextStates, stages, nowMs, ttlMs) {
+      const ttl = typeof ttlMs === 'number' ? ttlMs : STAGE_TRACKER_EVENT_MS;
       const out = {};
-      for (const k of Object.keys(events || {})) if (nowMs - events[k].at < STAGE_TRACKER_EVENT_MS) out[k] = events[k];
+      for (const k of Object.keys(events || {})) if (nowMs - events[k].at < ttl && (!prevStates || ttl !== Infinity || nextStates[k])) out[k] = events[k];
       if (!prevStates) return out;
       for (const k of Object.keys(nextStates)) {
         const text = stageTrackerEventText(prevStates[k], nextStates[k], stages);
@@ -17168,8 +17364,127 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNoteEvents(d, nowMs) {
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       const next = stageTrackerStateMap(d && d.items);
-      _stageTrackerEvents = stageTrackerEventsNext(_stageTrackerEvents, _stageTrackerStates, next, d && d.stages, nowMs);
+      const ttl = typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting() ? Infinity : STAGE_TRACKER_EVENT_MS;
+      _stageTrackerEvents = stageTrackerEventsNext(_stageTrackerEvents, _stageTrackerStates, next, d && d.stages, nowMs, ttl);
       _stageTrackerStates = next;
+    }
+    /* ---- Hive notes: show, then tuck ---------------------------------------
+       Owner (2026-10-29): "show the hive comments when they are new for
+       30s. then they should shrink to the left inside a hive-info icon.
+       someone can click on the icon to expand the info for another 30s.
+       then it shrinks back again." A line opens for
+       STAGE_TRACKER_CAPTION_SHOW_MS from the moment it is written (or
+       re-opened by a click), then tucks: the text slides leftward into the
+       ⬡-i icon that sits where "Hive:" sat; the icon's tooltip keeps the
+       whole line and its age. Click / Enter / Space on the icon re-opens it
+       for another window, or tucks it at once while open. Hover never
+       opens it. One shared timer (never one per row) fires the next tuck;
+       a hidden tab pauses every open window (stageTrackerNoteShift) so a
+       line is not spent unseen. The tucked state lives in the events map
+       and is applied in place; stageTrackerRowSrcKey ignores it so a tuck
+       never swaps the row's node mid-slide. The ⚙ → Hive notes toggle
+       ("Auto-collapse hive notes", default on) turns this off and the
+       line keeps the old 2-minute fade instead. */
+    const STAGE_TRACKER_CAPTION_SHOW_MS = 30000;
+    const STAGE_TRACKER_NOTE_TUCK_KEY = 'hive.tracker.notetuck';
+    const STAGE_TRACKER_NOTE_LABEL = 'Hive note';
+    const STAGE_TRACKER_NOTE_ICON = '<svg class="cue-event-ico-svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/><path d="M8 7.2v4"/><circle cx="8" cy="5" r=".4"/></svg>';
+    function stageTrackerNoteTuckSetting() {
+      try { return localStorage.getItem(STAGE_TRACKER_NOTE_TUCK_KEY) !== '0'; } catch { return true; }
+    }
+    function stageTrackerSetNoteTuck(on) {
+      try { localStorage.setItem(STAGE_TRACKER_NOTE_TUCK_KEY, on ? '1' : '0'); } catch {}
+      if (typeof renderStageTracker === 'function') renderStageTracker();
+    }
+    function stageTrackerNoteTuckChange(checked) { stageTrackerSetNoteTuck(!!checked); }
+    // Pure: whether the line is open (text showing) at nowMs. auto=false
+    // (toggle off) keeps every line open.
+    function stageTrackerNoteOpen(ev, nowMs, auto) {
+      if (!ev) return false;
+      if (auto === false) return true;
+      if (ev.tucked) return false;
+      return nowMs - (typeof ev.openAt === 'number' ? ev.openAt : ev.at) < STAGE_TRACKER_CAPTION_SHOW_MS;
+    }
+    // Pure: the event after a click at nowMs — tucked at once while open,
+    // re-opened for another window while tucked.
+    function stageTrackerNoteToggled(ev, nowMs, auto) {
+      if (!ev) return ev;
+      if (stageTrackerNoteOpen(ev, nowMs, auto)) return Object.assign({}, ev, { tucked: true });
+      return Object.assign({}, ev, { tucked: false, openAt: nowMs });
+    }
+    // Pure: ms until the next open line tucks; Infinity when none is open.
+    function stageTrackerNoteNextDue(events, nowMs, auto) {
+      let due = Infinity;
+      if (auto === false) return due;
+      for (const k of Object.keys(events || {})) {
+        const ev = events[k];
+        if (!stageTrackerNoteOpen(ev, nowMs, auto)) continue;
+        due = Math.min(due, (typeof ev.openAt === 'number' ? ev.openAt : ev.at) + STAGE_TRACKER_CAPTION_SHOW_MS - nowMs);
+      }
+      return Math.max(0, due);
+    }
+    // Pure: every open window moved later by byMs (the time the tab was
+    // hidden); the age ("· 26s ago") keeps counting wall-clock time.
+    function stageTrackerNoteShift(events, byMs) {
+      const out = {};
+      for (const k of Object.keys(events || {})) {
+        const ev = events[k];
+        out[k] = ev && !ev.tucked ? Object.assign({}, ev, { openAt: (typeof ev.openAt === 'number' ? ev.openAt : ev.at) + byMs }) : ev;
+      }
+      return out;
+    }
+    // Pure: the icon's tooltip — the whole line and its age.
+    function stageTrackerNoteTitle(ev, nowMs) {
+      if (!ev) return '';
+      const age = stageTrackerAgoText(ev.at, nowMs);
+      return (ev.who === 'you' ? 'You' : 'Hive') + ': ' + ev.text + (age ? ' · ' + age : '');
+    }
+    let _stageTrackerNoteTimer = 0;
+    let _stageTrackerNoteHiddenAt = 0;
+    // Apply the open / tucked state to every line in place and arm the one
+    // shared timer for the next tuck.
+    function stageTrackerNoteSync(el, nowMs) {
+      if (!el || typeof el.querySelectorAll !== 'function') return;
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      const auto = stageTrackerNoteTuckSetting();
+      // While the tab is hidden the open windows are frozen at the moment
+      // it went hidden (the age keeps counting).
+      const openNow = _stageTrackerNoteHiddenAt || nowMs;
+      for (const p of Array.from(el.querySelectorAll('.cue-event[data-cue-key]'))) {
+        const ev = _stageTrackerEvents[p.getAttribute('data-cue-key')];
+        const open = !ev || stageTrackerNoteOpen(ev, openNow, auto);
+        if (open) p.classList.remove('cue-event-tucked'); else p.classList.add('cue-event-tucked');
+        const btn = p.querySelector('.cue-event-ico');
+        if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); const t = stageTrackerNoteTitle(ev, nowMs); if (btn.title !== t) btn.title = t; }
+      }
+      stageTrackerNoteSchedule(nowMs);
+    }
+    function stageTrackerNoteSchedule(nowMs) {
+      if (_stageTrackerNoteTimer) { clearTimeout(_stageTrackerNoteTimer); _stageTrackerNoteTimer = 0; }
+      if (document.hidden) return;
+      const due = stageTrackerNoteNextDue(_stageTrackerEvents, nowMs, stageTrackerNoteTuckSetting());
+      if (due === Infinity) return;
+      _stageTrackerNoteTimer = setTimeout(() => { _stageTrackerNoteTimer = 0; stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), Date.now()); }, due);
+    }
+    // The icon's click (and Enter / Space, it is a button).
+    function stageTrackerNoteToggle(key) {
+      const ev = _stageTrackerEvents[key];
+      if (!ev) return;
+      const nowMs = Date.now();
+      _stageTrackerEvents[key] = stageTrackerNoteToggled(ev, nowMs, stageTrackerNoteTuckSetting());
+      stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), nowMs);
+    }
+    // Hidden tab: stop the clock on every open line; visible again: give
+    // back the hidden time and re-arm.
+    function stageTrackerNoteVisibility(hidden, nowMs) {
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      if (hidden) {
+        _stageTrackerNoteHiddenAt = nowMs;
+        if (_stageTrackerNoteTimer) { clearTimeout(_stageTrackerNoteTimer); _stageTrackerNoteTimer = 0; }
+        return;
+      }
+      if (_stageTrackerNoteHiddenAt) { _stageTrackerEvents = stageTrackerNoteShift(_stageTrackerEvents, nowMs - _stageTrackerNoteHiddenAt); _stageTrackerNoteHiddenAt = 0; }
+      stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), nowMs);
     }
     // The owner's own action writes the row's line at once ("you: approved").
     function stageTrackerNoteOwnerEvent(key, text, nowMs) {
@@ -17178,12 +17493,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Pure: the event line markup; the age is filled in place by
     // stageTrackerCueAgeSync so a ticking clock never re-renders the row.
+    // With auto-collapse (ctx.noteTuck, else the setting) the line carries
+    // its ⬡-i button and the tucked class for its state at nowMs, so a
+    // fresh node arrives already tucked; stageTrackerNoteSync keeps the
+    // state and the button's tooltip current in place.
     function stageTrackerEventHtml(key, ctx) {
       const ev = ctx && ctx.events ? ctx.events[key] : null;
       if (!ev) return '';
       const nowMs = ctx && typeof ctx.nowMs === 'number' ? ctx.nowMs : Date.now();
-      const fading = nowMs - ev.at > STAGE_TRACKER_EVENT_MS * 2 / 3;
-      return `<p class="cue-event${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}"><span class="cue-event-who">${esc(ev.who === 'you' ? 'You' : 'Hive')}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span></p>`;
+      const auto = ctx && typeof ctx.noteTuck === 'boolean' ? ctx.noteTuck : (typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting());
+      const fading = !auto && nowMs - ev.at > STAGE_TRACKER_EVENT_MS * 2 / 3;
+      const open = !auto || stageTrackerNoteOpen(ev, nowMs, auto);
+      const who = ev.who === 'you' ? 'You' : 'Hive';
+      const body = `<span class="cue-event-who">${esc(who)}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`;
+      if (!auto) return `<p class="cue-event${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}">${body}</p>`;
+      const ico = `<button type="button" class="cue-event-ico" aria-label="${STAGE_TRACKER_NOTE_LABEL}" aria-expanded="${open ? 'true' : 'false'}" title="${esc(stageTrackerNoteTitle(ev, nowMs))}" data-action="stageTrackerNoteToggle" data-arg0="${esc(key)}" data-stop="1">${STAGE_TRACKER_NOTE_ICON}</button>`;
+      return `<p class="cue-event cue-event-tuckable${open ? '' : ' cue-event-tucked'}" data-cue-key="${esc(key)}">${ico}<span class="cue-event-body">${body}</span></p>`;
     }
     const STAGE_TRACKER_CUE_TICK_MS = 15000;
     function stageTrackerCueAgeSync(el, nowMs) {
@@ -17194,6 +17519,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (n.textContent !== t) n.textContent = t;
       }
       if (typeof stageTrackerGateCountdownSync === 'function') stageTrackerGateCountdownSync(el, nowMs);
+      if (typeof stageTrackerNoteSync === 'function') stageTrackerNoteSync(el, nowMs);
     }
     let _stageTrackerCueTimer = null;
     function stageTrackerCueTick() {
@@ -17497,8 +17823,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // -- keyed row reconcile ---------------------------------------------
     // Pure: a row's source with the one-render move stamp removed, so the
     // render after a move sees the same row and keeps its (animating) node.
+    // The hive note's open / tucked state is applied in place
+    // (stageTrackerNoteSync), so it is not a reason to swap the node either.
     function stageTrackerRowSrcKey(html) {
-      return String(html || '').replace(/ data-ham-prev-col="\d+" data-ham-col="\d+"/g, '');
+      return String(html || '').replace(/ data-ham-prev-col="\d+" data-ham-col="\d+"/g, '').replace(/ cue-event-tucked"/g, '"').replace(/ aria-expanded="(?:true|false)"/g, '').replace(/ title="(?:You|Hive): [^"]*" data-action="stageTrackerNoteToggle"/g, ' data-action="stageTrackerNoteToggle"');
     }
     // Pure: whether the stamped move attributes name this strip.
     function stageTrackerRowHasMove(html) { return / data-ham-prev-col="\d+"/.test(String(html || '')); }
@@ -18214,6 +18542,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
+      ctx.noteTuck = stageTrackerNoteTuckSetting();
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
@@ -18273,8 +18602,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // A merge train's rows carry a header line and a rail (#15117); the
       // row renderer sees its neighbours to close the rail on the last one.
       const pageItems = stageTrackerAdoptOrphanPRs(page.rows.map(e => grouping ? e.item : e));
+      // Every train on the page, so a queue word can name its train when
+      // there is more than one and each train's rows share a rail accent.
+      const trains = typeof stageTrackerTrainIndex === 'function' ? stageTrackerTrainIndex(pageItems) : { count: 0, index: {} };
       const itemRow = (it, i) => {
-        const near = Object.assign({}, ctx, { prevRow: i > 0 && pageItems[i - 1] ? pageItems[i - 1] : null, nextRow: pageItems[i + 1] ? pageItems[i + 1] : null });
+        const near = Object.assign({}, ctx, { prevRow: i > 0 && pageItems[i - 1] ? pageItems[i - 1] : null, nextRow: pageItems[i + 1] ? pageItems[i + 1] : null, trains: trains.count, trainIndex: trains.index });
         return { key: stageTrackerItemKey(it), html: stageTrackerRowHtml(it, stages, near) };
       };
       const rowOf = (e, i) => grouping && !e.item
@@ -22032,6 +22364,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + stageTrackerRepoSectionHtml(state.repoChip, state.group)
         + stageTrackerConfirmSectionHtml(state.skippedConfirms)
         + stageTrackerCelebrateSectionHtml(state.celebrate !== false, state.celebrateGlyph)
+        + stageTrackerNoteTuckSectionHtml(state.noteTuck !== false)
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
     }
     // Pure: the Merges section — the "Celebrate merges" toggle, the glyph.
@@ -22045,6 +22378,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </section>`;
     }
     function stageTrackerCelebrateChange(checked) { stageTrackerSetCelebrate(!!checked); }
+    // Pure: the "Hive notes" section — the auto-collapse toggle.
+    function stageTrackerNoteTuckSectionHtml(on) {
+      return `<section class="overview-settings-section" id="sts-notetuck" aria-labelledby="sts-notetuck-title">
+          <div class="overview-settings-card-title" id="sts-notetuck-title">Hive notes</div>
+          <p class="sts-hint">The "Hive: …" line under a row's chevrons shows for ${Math.round(STAGE_TRACKER_CAPTION_SHOW_MS / 1000)} s when it is new, then slides left into a small ⬡ icon so the list stays quiet; the icon's tooltip keeps the whole note and its age, and a click (or Enter / Space) opens it for another ${Math.round(STAGE_TRACKER_CAPTION_SHOW_MS / 1000)} s. A hidden tab pauses the clock. Off, the line stays open and fades out after two minutes as before.</p>
+          <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-notetuck-on" data-change-action="stageTrackerNoteTuckChange" data-arg-types="c"${on ? ' checked' : ''}>Auto-collapse hive notes <span class="text-muted">(default on)</span></label></div>
+        </section>`;
+    }
     function stageTrackerCelebrateGlyphChange(v) { stageTrackerSetCelebrateGlyph(v); }
     // Pure: the first row whose box is inside the viewport (top edge in
     // view is enough), else the first row at all — so the test plays
@@ -22103,7 +22444,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }
@@ -46067,6 +46408,7 @@ function burnAreaChart() {
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'visible') sseWatchdogTick(true);
       if (document.visibilityState === 'visible') { agentLogsResumeIfSkipped(); stageTrackerResumeIfSkipped(); }
+      if (typeof stageTrackerNoteVisibility === 'function') stageTrackerNoteVisibility(document.visibilityState !== 'visible');
     });
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];

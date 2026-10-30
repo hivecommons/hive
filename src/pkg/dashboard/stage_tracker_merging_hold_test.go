@@ -89,7 +89,7 @@ func TestStageTrackerMergeGateAttemptOverlay(t *testing.T) {
 	if mg = stageTrackerMergeGateAttempt(nil, failed, true); mg == nil || mg.State != MergeGateStateMergeFailed || mg.MergeFailed != "422 boom" || mg.MergeFailedAt == nil {
 		t.Errorf("failed attempt off the gate: %+v", mg)
 	}
-	for _, c := range []struct{ path, want string }{{github.PRAuditPathDashboard, "dashboard"}, {github.PRAuditPathRelay, "relay"}, {github.PRAuditPathForge, "forge"}, {github.PRAuditPathSweep, "automerge sweep"}, {"", "automerge sweep"}} {
+	for _, c := range []struct{ path, want string }{{github.PRAuditPathDashboard, "dashboard"}, {github.PRAuditPathRelay, "relay"}, {github.PRAuditPathForge, "forge"}, {github.PRAuditPathSweep, "automerge lane"}, {"", "automerge lane"}} {
 		if got := stageTrackerMergingCaption(github.MergeAttempt{Path: c.path}); !strings.Contains(got, c.want) {
 			t.Errorf("caption for %q = %q, want %q", c.path, got, c.want)
 		}

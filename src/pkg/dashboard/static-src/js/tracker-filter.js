@@ -624,6 +624,7 @@
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
+      ctx.noteTuck = stageTrackerNoteTuckSetting();
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
@@ -683,8 +684,11 @@
       // A merge train's rows carry a header line and a rail (#15117); the
       // row renderer sees its neighbours to close the rail on the last one.
       const pageItems = stageTrackerAdoptOrphanPRs(page.rows.map(e => grouping ? e.item : e));
+      // Every train on the page, so a queue word can name its train when
+      // there is more than one and each train's rows share a rail accent.
+      const trains = typeof stageTrackerTrainIndex === 'function' ? stageTrackerTrainIndex(pageItems) : { count: 0, index: {} };
       const itemRow = (it, i) => {
-        const near = Object.assign({}, ctx, { prevRow: i > 0 && pageItems[i - 1] ? pageItems[i - 1] : null, nextRow: pageItems[i + 1] ? pageItems[i + 1] : null });
+        const near = Object.assign({}, ctx, { prevRow: i > 0 && pageItems[i - 1] ? pageItems[i - 1] : null, nextRow: pageItems[i + 1] ? pageItems[i + 1] : null, trains: trains.count, trainIndex: trains.index });
         return { key: stageTrackerItemKey(it), html: stageTrackerRowHtml(it, stages, near) };
       };
       const rowOf = (e, i) => grouping && !e.item

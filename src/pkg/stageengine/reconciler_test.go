@@ -409,3 +409,47 @@ func TestNewDefaults(t *testing.T) {
 		t.Fatalf("defaults not applied: %+v", r.opts)
 	}
 }
+
+// suppressingWriter is a StageWriter standing in for the write-back gate
+// refusing a contributor PR's labels: Apply reports Suppressed and lands
+// nothing, as github.stageWriter does when the gate says no.
+type suppressingWriter struct {
+	suppress bool
+	err      error
+}
+
+func (w *suppressingWriter) Apply(context.Context, Ref, []string, stagelabels.Desired) (stagelabels.Outcome, error) {
+	return stagelabels.Outcome{Suppressed: w.suppress}, w.err
+}
+
+// TestReconcileRecordsSuppressedLabels: a write the gate kept off GitHub
+// marks the record so readers know its labels never carried the stage;
+// the mark clears once a write lands, and a failed write leaves it as is.
+func TestReconcileRecordsSuppressedLabels(t *testing.T) {
+	ctx := context.Background()
+	w := &suppressingWriter{suppress: true}
+	r, _, store := newTestReconciler(t, ModeEnforce, w)
+	f := prFacts(15312, "pending")
+	if _, err := r.Reconcile(ctx, f); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := store.Get(f.Ref.Key())
+	if !ok || rec.Stage == stagelabels.None || !rec.LabelsSuppressed {
+		t.Fatalf("suppressed write: record = %+v ok=%t, want stage kept with labels_suppressed", rec, ok)
+	}
+	w.err = errors.New("boom")
+	w.suppress = false
+	if _, err := r.Reconcile(ctx, f); err == nil {
+		t.Fatal("expected the writer's error")
+	}
+	if rec, _ := store.Get(f.Ref.Key()); !rec.LabelsSuppressed {
+		t.Fatalf("failed write cleared labels_suppressed: %+v", rec)
+	}
+	w.err = nil
+	if _, err := r.Reconcile(ctx, f); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := store.Get(f.Ref.Key()); rec.LabelsSuppressed {
+		t.Fatalf("landed write left labels_suppressed set: %+v", rec)
+	}
+}
