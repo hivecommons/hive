@@ -209,6 +209,8 @@ Full entry: [Hive activity monitor](dashboard-sections/activity-monitor.md#hive-
 
 The monitor's decision feature has its own entry: [Let hive decide](dashboard-sections/activity-monitor.md#let-hive-decide).
 
+Clicking it answers at once: the button reads **Asking the hive…** with the tracker's working glyph and the preview opens as a skeleton that fills when the plan arrives (served from a short server cache and prefetched as the row's options come into view). Every chevron carrying the 👤 marker names its reason after a middot (*PR in progress · #N needs a decision*), and an issue covered by a PR parked at 085 shows a passive *decision pending on #N* chip instead of the PR's button.
+
 ## Agent activity
 
 One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.
