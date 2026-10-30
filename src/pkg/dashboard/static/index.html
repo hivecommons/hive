@@ -2251,10 +2251,14 @@
     /* RUNNING tile cost rotor (#15614): the four window phrases share one
        grid cell, so the tile is always as wide as its widest phrase and the
        amount + window crossfades in place while the agent count stays put.
-       nowrap + ellipsis is the fallback when the tile is narrower still. */
-    .fleet-run-stat .val, .fleet-run-stat .gm-val { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    .fleet-run-count { color: var(--text); }
-    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; vertical-align: bottom; max-width: 100%; overflow: hidden; color: var(--text); }
+       The host is a flex row — count fixed, rotor shrinks — so the host
+       itself never overflows: a text-overflow ellipsis on the host would be
+       painted at the rotor's left edge, showing up as a stray dot between
+       "$" and the digits ("$.1,010"). Only the phrase ellipsizes. */
+    .fleet-run-stat .val, .fleet-run-stat .gm-val { display: flex; align-items: baseline; white-space: nowrap; overflow: hidden; min-width: 0; }
+    /* pre keeps the trailing space of "N · " that flex would otherwise trim. */
+    .fleet-run-count { flex: none; white-space: pre; color: var(--text); }
+    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text); }
     .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
     .fleet-cost-rotor .fcr-phrase.is-cur { opacity: 1; transform: translateY(0); }
     .fleet-cost-rotor .fcr-phrase.is-out { opacity: 0; transform: translateY(-0.5em); }
@@ -14221,18 +14225,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // phrases are rendered into the same grid cell so the tile is always as
     // wide as its widest phrase and never shifts or wraps. The rotation
     // index is module state so a status repaint keeps the current phrase.
+    // The hour window keeps cents (it is small and moves fast); the longer
+    // windows round to whole dollars (fmtUSDWhole) so the figure stays short.
+    // Labels are short so the phrase fits the 140px gov-grid column.
     const FLEET_COST_WINDOWS = [
-      { key: 'hour', label: 'this hour', usd: 'hourUSD', priced: 'hourPriced' },
-      { key: 'day', label: 'today', usd: 'dayUSD', priced: 'windowsPriced' },
-      { key: 'week', label: 'this week', usd: 'weekUSD', priced: 'windowsPriced' },
-      { key: 'month', label: 'this month', usd: 'monthUSD', priced: 'windowsPriced' },
+      { key: 'hour', label: 'this hr', usd: 'hourUSD', priced: 'hourPriced', fmt: fmtUSD },
+      { key: 'day', label: 'today', usd: 'dayUSD', priced: 'windowsPriced', fmt: fmtUSDWhole },
+      { key: 'week', label: 'this wk', usd: 'weekUSD', priced: 'windowsPriced', fmt: fmtUSDWhole },
+      { key: 'month', label: 'this mo', usd: 'monthUSD', priced: 'windowsPriced', fmt: fmtUSDWhole },
     ];
     const FLEET_COST_DWELL_MS = 4000;
     const FLEET_COST_WINDOWS_HELP = 'today / this week / this month are the cost ledger summed from 00:00 UTC today, Monday 00:00 UTC (ISO week) and the 1st 00:00 UTC, plus the rise since its last reading.';
     const _fleetCost = { idx: 0, started: false, hover: false, lastAdvance: -Infinity, clock: () => Date.now() };
     function fleetCostPhrases(f) {
       return FLEET_COST_WINDOWS.map(w => {
-        const amount = f && f[w.priced] ? fmtUSD(f[w.usd] || 0) : '$–';
+        const amount = f && f[w.priced] ? w.fmt(f[w.usd] || 0) : '$–';
         return { key: w.key, label: w.label, amount, text: `${amount} ${w.label}` };
       });
     }
@@ -31906,6 +31913,16 @@ function burnAreaChart() {
       }
       const frac = n < 100 ? 2 : 0;
       return '$' + formatNumber(n, 'en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
+    }
+    // fmtUSDWhole rounds to the nearest dollar, comma-grouped, never cents:
+    // "$1,010", "$10", "$0". Anything that would round to $0 but is non-zero
+    // shows "<$1" so a small, real spend is not mistaken for none. Used by
+    // the Governor RUNNING tile's today / week / month windows (#15614);
+    // the cost panel keeps the precise fmtUSD.
+    function fmtUSDWhole(n) {
+      if (n == null || isNaN(n)) return '—';
+      if (n > 0 && n < 0.5) return '<$1';
+      return '$' + formatNumber(Math.round(n), 'en-US', { maximumFractionDigits: 0 });
     }
 
     // Headline wording (#13484): one plainly-named figure. "lineage" and
