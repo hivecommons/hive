@@ -54,8 +54,20 @@ func queueEntry(login string) *hgithub.NativeMergeQueueEntry {
 	}
 	return e
 }
+
+// enableNativeQueue opts every repo into the native queue; the zero policy
+// is off (hivecommons/hive#15308).
+func enableNativeQueue(c *Engine, policy ...NativeMergeQueuePolicy) {
+	p := NativeMergeQueuePolicy{Enabled: true}
+	if len(policy) > 0 {
+		p = policy[0]
+	}
+	c.nativeMergeQueuePolicy = func() NativeMergeQueuePolicy { return p }
+}
+
 func nativeQueueEngine() (*Engine, *nativeQueueFake, *gh.PullRequest, effects.Claim) {
 	c := newAutoMergeSweepClient("http://unused.invalid")
+	enableNativeQueue(c)
 	f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
 	c.transport = f
 	pr := &gh.PullRequest{Number: gh.Ptr(7), NodeID: gh.Ptr("PR_7"), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}
@@ -183,6 +195,7 @@ func TestSelfAuthoredSweepNativeQueueAndHold(t *testing.T) {
 			c := newAutoMergeSweepClient(api.URL)
 			f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
 			c.transport = f
+			enableNativeQueue(c)
 			if held {
 				f.state.IsInMergeQueue = true
 				f.state.MergeQueueEntry = queueEntry(testHiveAppBotLogin)
@@ -212,6 +225,7 @@ func TestHumanMergeLanesEnqueueWithoutDirectMerge(t *testing.T) {
 			c := newAutoMergeSweepClient(api.URL)
 			f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
 			c.transport = f
+			enableNativeQueue(c)
 			c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
 				return TrustedAuthorDecision{Allowed: true, Role: "merger"}
 			}
@@ -246,6 +260,7 @@ func TestNativeQueuePauseWithdrawsOwnEntry(t *testing.T) {
 	client.SetRepoPausedFunc(func(string) bool { return true })
 	f := &nativeQueueFake{Transport: client, state: hgithub.NativeMergeQueueState{ID: "PR_7", IsMergeQueueEnabled: true, IsInMergeQueue: true, MergeQueueEntry: queueEntry(testHiveAppBotLogin)}}
 	c.transport = f
+	enableNativeQueue(c)
 	c.reconcileInactiveNativeQueues(context.Background())
 	if f.dequeues != 1 || f.enqueues != 0 || len(merged) != 0 {
 		t.Fatalf("dequeues=%d enqueues=%d merged=%v", f.dequeues, f.enqueues, merged)
@@ -328,6 +343,7 @@ func TestContributorLaneEnqueuesAfterGates(t *testing.T) {
 	c := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
 	f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
 	c.transport = f
+	enableNativeQueue(c)
 	event, reason, err := c.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
 	if err != nil || !strings.HasPrefix(reason, nativeQueueReason) || f.enqueues != 1 || fx.merges != 0 || event.MergeSHA != "" {
 		t.Fatalf("event=%+v reason=%q error=%v enqueues=%d merges=%d", event, reason, err, f.enqueues, fx.merges)
@@ -380,6 +396,7 @@ func TestSelfAuthoredSweepReadErrorKeepsQueuedEntry(t *testing.T) {
 	c := newAutoMergeSweepClient(api.URL)
 	f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true, IsInMergeQueue: true, MergeQueueEntry: queueEntry(testHiveAppBotLogin)}, readErr: errors.New("graphql 502")}
 	c.transport = f
+	enableNativeQueue(c)
 	if _, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -418,6 +435,7 @@ func TestQueuedLaneEnqueuesBlockedPROnQueueBase(t *testing.T) {
 			c := newAutoMergeSweepClient(api.URL)
 			f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: enabled}}
 			c.transport = f
+			enableNativeQueue(c)
 			c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
 				return TrustedAuthorDecision{Allowed: true, Role: "merger"}
 			}
@@ -433,51 +451,176 @@ func TestQueuedLaneEnqueuesBlockedPROnQueueBase(t *testing.T) {
 	}
 }
 
-// On a queue-enabled base the merge group tests the merged result, so the
-// behind update and the default-on current-base gate must not update the
-// branch: a new head would drop the PR from the queue.
-func TestNativeQueueSkipsCurrentBaseUpdate(t *testing.T) {
-	for _, lane := range []string{stageLaneSelf, stageLaneTrusted} {
-		for _, state := range []string{"behind", "clean"} {
-			t.Run(lane+"/"+state, func(t *testing.T) {
-				var merged []int
-				author := testHiveAppBotLogin
-				if lane == stageLaneTrusted {
-					author = "alice"
-				}
-				updates := 0
-				api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
-					switch {
-					case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
-						updates++
-						w.WriteHeader(http.StatusAccepted)
-						_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
-					case strings.Contains(r.URL.Path, "/compare/"):
-						_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
-					default:
-						t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-						w.WriteHeader(http.StatusNotFound)
+// The current-base gate stays in force on a queue-enabled base: a behind
+// head is updated (and so not enqueued this tick) exactly as on any other
+// base. Only the explicit auto_merge.native_merge_queue.skip_current_base_gate
+// lets the merge group test the merged result instead, because a new head
+// would drop the PR from the queue.
+func TestNativeQueueCurrentBaseGateIsExplicit(t *testing.T) {
+	for _, skip := range []bool{false, true} {
+		for _, lane := range []string{stageLaneSelf, stageLaneTrusted} {
+			for _, state := range []string{"behind", "clean"} {
+				t.Run(map[bool]string{false: "gate-kept", true: "gate-skipped"}[skip]+"/"+lane+"/"+state, func(t *testing.T) {
+					var merged []int
+					author := testHiveAppBotLogin
+					if lane == stageLaneTrusted {
+						author = "alice"
+					}
+					updates := 0
+					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
+						switch {
+						case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
+							updates++
+							w.WriteHeader(http.StatusAccepted)
+							_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+						case strings.Contains(r.URL.Path, "/compare/"):
+							_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
+						default:
+							t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+							w.WriteHeader(http.StatusNotFound)
+						}
+					})
+					defer api.Close()
+					c := newAutoMergeSweepClient(api.URL)
+					c.requireCurrentBase = func(string) bool { return true }
+					f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
+					c.transport = f
+					enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, SkipCurrentBaseGate: skip})
+					var err error
+					if lane == stageLaneSelf {
+						_, err = c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+					} else {
+						c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
+							return TrustedAuthorDecision{Allowed: true, Role: "merger"}
+						}
+						c.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"} }
+						_, err = c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{})
+					}
+					// The fixture has no base ref, so a clean head with the
+					// gate kept parks at current-base-check instead of
+					// updating; either way it is not enqueued.
+					wantUpdates, wantEnqueues := 0, 0
+					if !skip && state == "behind" {
+						wantUpdates = 1
+					}
+					if skip {
+						wantEnqueues = 1
+					}
+					if err != nil || updates != wantUpdates || f.enqueues != wantEnqueues || len(merged) != 0 {
+						t.Fatalf("updates=%d enqueues=%d merged=%v error=%v, want updates=%d enqueues=%d", updates, f.enqueues, merged, err, wantUpdates, wantEnqueues)
 					}
 				})
-				defer api.Close()
-				c := newAutoMergeSweepClient(api.URL)
-				c.requireCurrentBase = func(string) bool { return true }
-				f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
-				c.transport = f
-				var err error
-				if lane == stageLaneSelf {
-					_, err = c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
-				} else {
-					c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
-						return TrustedAuthorDecision{Allowed: true, Role: "merger"}
-					}
-					c.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"} }
-					_, err = c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{})
-				}
-				if err != nil || updates != 0 || f.enqueues != 1 || len(merged) != 0 {
-					t.Fatalf("updates=%d enqueues=%d merged=%v error=%v", updates, f.enqueues, merged, err)
-				}
-			})
+			}
 		}
+	}
+}
+
+// Without auto_merge.native_merge_queue.enabled (or with the repo outside
+// its allow-list) no lane reads, enqueues or withdraws a queue entry: the
+// hive behaves exactly as before the queue hand-off existed.
+func TestNativeQueueIsOptInPerRepo(t *testing.T) {
+	type readCounter struct{ reads int }
+	for _, mode := range []string{"default-off", "other-repo-only", "listed-repo"} {
+		t.Run(mode, func(t *testing.T) {
+			c, f, pr, claim := nativeQueueEngine()
+			counter := &readCounter{}
+			reading := &countingNativeQueueFake{nativeQueueFake: f, reads: &counter.reads}
+			c.transport = reading
+			f.state.IsInMergeQueue = true
+			f.state.MergeQueueEntry = queueEntry(testHiveAppBotLogin)
+			switch mode {
+			case "default-off":
+				c.nativeMergeQueuePolicy = nil
+			case "other-repo-only":
+				enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, Repos: map[string]bool{"acme/other": true}})
+			case "listed-repo":
+				enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, Repos: map[string]bool{"acme/widget": true}})
+			}
+			reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+			c.reconcileNativeQueueGate(context.Background(), stageLaneSelf, "acme", "widget", pr, "held")
+			enabled := c.nativeQueueEnabled(context.Background(), "acme/widget", pr)
+			if mode == "listed-repo" {
+				if err != nil || !strings.HasPrefix(reason, nativeQueueReason) || f.dequeues != 1 || !enabled || counter.reads == 0 {
+					t.Fatalf("listed repo: reason=%q error=%v dequeues=%d enabled=%v reads=%d", reason, err, f.dequeues, enabled, counter.reads)
+				}
+				return
+			}
+			if reason != "" || err != nil || f.enqueues != 0 || f.dequeues != 0 || enabled || counter.reads != 0 {
+				t.Fatalf("%s: reason=%q error=%v enqueues=%d dequeues=%d enabled=%v reads=%d, want no queue traffic", mode, reason, err, f.enqueues, f.dequeues, enabled, counter.reads)
+			}
+		})
+	}
+}
+
+type countingNativeQueueFake struct {
+	*nativeQueueFake
+	reads *int
+}
+
+func (f *countingNativeQueueFake) ReadNativeMergeQueue(ctx context.Context, id string) (hgithub.NativeMergeQueueState, error) {
+	*f.reads++
+	return f.nativeQueueFake.ReadNativeMergeQueue(ctx, id)
+}
+
+// The isMergeQueueEnabled probe is read once per repo#base and reused for
+// probe_ttl (default 30m); a read failure is not cached, and a new base
+// branch is its own probe.
+func TestNativeQueueProbeIsCachedPerBase(t *testing.T) {
+	c, f, pr, _ := nativeQueueEngine()
+	reads := 0
+	c.transport = &countingNativeQueueFake{nativeQueueFake: f, reads: &reads}
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr("main")}
+	other := &gh.PullRequest{Number: gh.Ptr(8), NodeID: gh.Ptr("PR_8"), Base: &gh.PullRequestBranch{Ref: gh.Ptr("main")}}
+	for i := 0; i < 3; i++ {
+		if !c.nativeQueueEnabled(context.Background(), "acme/widget", pr) || !c.nativeQueueEnabled(context.Background(), "acme/widget", other) {
+			t.Fatal("base has a queue")
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("reads=%d, want one probe per base across PRs and sweeps", reads)
+	}
+	release := &gh.PullRequest{Number: gh.Ptr(9), NodeID: gh.Ptr("PR_9"), Base: &gh.PullRequestBranch{Ref: gh.Ptr("release-1")}}
+	f.state.IsMergeQueueEnabled = false
+	if c.nativeQueueEnabled(context.Background(), "acme/widget", release) || reads != 2 {
+		t.Fatalf("other base: reads=%d, want its own probe reporting no queue", reads)
+	}
+	if !c.nativeQueueEnabled(context.Background(), "acme/widget", pr) || reads != 2 {
+		t.Fatalf("main stays cached: reads=%d", reads)
+	}
+
+	now = now.Add(DefaultNativeMergeQueueProbeTTL)
+	if c.nativeQueueEnabled(context.Background(), "acme/widget", pr) || reads != 3 {
+		t.Fatalf("after TTL: reads=%d, want a re-read seeing the queue gone", reads)
+	}
+
+	enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, ProbeTTL: time.Minute})
+	f.state.IsMergeQueueEnabled = true
+	now = now.Add(time.Minute)
+	f.readErr = errors.New("graphql 502")
+	if c.nativeQueueEnabled(context.Background(), "acme/widget", pr) || reads != 4 {
+		t.Fatalf("read failure: reads=%d, want false without caching", reads)
+	}
+	f.readErr = nil
+	if !c.nativeQueueEnabled(context.Background(), "acme/widget", pr) || reads != 5 {
+		t.Fatalf("after failure: reads=%d, want a fresh probe", reads)
+	}
+}
+
+// A paused repo's open PRs are only listed when the repo opted in.
+func TestInactiveQueueReconcileSkipsUnlistedRepos(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: testHiveAppBotLogin}}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	client := c.transport.(*hgithub.Client)
+	client.SetRepoPausedFunc(func(string) bool { return true })
+	f := &nativeQueueFake{Transport: client, state: hgithub.NativeMergeQueueState{ID: "PR_7", IsMergeQueueEnabled: true, IsInMergeQueue: true, MergeQueueEntry: queueEntry(testHiveAppBotLogin)}}
+	c.transport = f
+	enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, Repos: map[string]bool{"acme/other": true}})
+	c.reconcileInactiveNativeQueues(context.Background())
+	if f.dequeues != 0 {
+		t.Fatalf("dequeues=%d, unlisted repo must not be reconciled", f.dequeues)
 	}
 }

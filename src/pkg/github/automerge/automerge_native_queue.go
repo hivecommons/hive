@@ -30,6 +30,93 @@ const (
 // each read costs GraphQL points per PR.
 const inactiveQueueInterval = 10 * time.Minute
 
+// DefaultNativeMergeQueueProbeTTL mirrors
+// config.DefaultNativeMergeQueueProbeTTL: how long a base branch's
+// "has a merge queue" answer is reused before it is re-read.
+const DefaultNativeMergeQueueProbeTTL = 30 * time.Minute
+
+// NativeMergeQueuePolicy is the live auto_merge.native_merge_queue.* policy
+// (hivecommons/hive#15198). The zero value is OFF: no lane reads, enqueues
+// or withdraws a native merge queue entry, so a hive without queues sees
+// no behaviour change.
+type NativeMergeQueuePolicy struct {
+	// Enabled turns the hand-off on.
+	Enabled bool
+	// Repos is the lower-cased owner/repo allow-list; empty means every
+	// watched repository once Enabled.
+	Repos map[string]bool
+	// SkipCurrentBaseGate lets a queue-enabled base bypass the
+	// require_current_base gate and the behind update-branch. Off keeps
+	// both gates in force exactly as on any other base.
+	SkipCurrentBaseGate bool
+	// ProbeTTL bounds the per-base "has a merge queue" cache; <= 0 means
+	// DefaultNativeMergeQueueProbeTTL.
+	ProbeTTL time.Duration
+}
+
+func (p NativeMergeQueuePolicy) repoAllowed(repo string) bool {
+	if !p.Enabled {
+		return false
+	}
+	if len(p.Repos) == 0 {
+		return true
+	}
+	return p.Repos[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+func (p NativeMergeQueuePolicy) probeTTL() time.Duration {
+	if p.ProbeTTL <= 0 {
+		return DefaultNativeMergeQueueProbeTTL
+	}
+	return p.ProbeTTL
+}
+
+// nativeQueueProbe is one cached isMergeQueueEnabled answer for a base.
+type nativeQueueProbe struct {
+	enabled bool
+	at      time.Time
+}
+
+func (c *Engine) nativeQueuePolicy() NativeMergeQueuePolicy {
+	if c == nil || c.nativeMergeQueuePolicy == nil {
+		return NativeMergeQueuePolicy{}
+	}
+	return c.nativeMergeQueuePolicy()
+}
+
+// nativeQueueOptedIn reports whether repo (owner/repo) may use the native
+// queue at all: the policy is on, the repo is allow-listed and the
+// transport can enqueue (App auth).
+func (c *Engine) nativeQueueOptedIn(repo string) bool {
+	return c.nativeQueuePolicy().repoAllowed(repo) && c.nativeQueueTransport() != nil
+}
+
+// nativeQueueProbeKey identifies one base branch of one repo.
+func nativeQueueProbeKey(repo string, pr *gh.PullRequest) string {
+	return strings.ToLower(strings.TrimSpace(repo)) + "#" + pr.GetBase().GetRef()
+}
+
+// cachedNativeQueueProbe returns the base's cached answer when it is
+// younger than the policy's probe TTL.
+func (c *Engine) cachedNativeQueueProbe(key string) (bool, bool) {
+	c.nativeQueueProbeMu.Lock()
+	defer c.nativeQueueProbeMu.Unlock()
+	probe, ok := c.nativeQueueProbes[key]
+	if !ok || c.clock().Sub(probe.at) >= c.nativeQueuePolicy().probeTTL() {
+		return false, false
+	}
+	return probe.enabled, true
+}
+
+func (c *Engine) recordNativeQueueProbe(key string, enabled bool) {
+	c.nativeQueueProbeMu.Lock()
+	defer c.nativeQueueProbeMu.Unlock()
+	if c.nativeQueueProbes == nil {
+		c.nativeQueueProbes = map[string]nativeQueueProbe{}
+	}
+	c.nativeQueueProbes[key] = nativeQueueProbe{enabled: enabled, at: c.clock()}
+}
+
 type nativeQueueTransport interface {
 	NativeMergeQueueAvailable() bool
 	ReadNativeMergeQueue(context.Context, string) (hgithub.NativeMergeQueueState, error)
@@ -69,15 +156,35 @@ func nativeQueueWithdrawReason(reason string) bool {
 		strings.HasPrefix(reason, autoMergeReasonReviewGatePrefix+ReviewGateOutcomeChangesRequested)
 }
 
-// nativeQueueEnabled reports whether the PR's base has a native merge queue.
-// A read failure reports false so the lane keeps its pre-queue behaviour.
-func (c *Engine) nativeQueueEnabled(ctx context.Context, pr *gh.PullRequest) bool {
-	t := c.nativeQueue()
+// nativeQueueEnabled reports whether the PR's base has a native merge queue
+// and repo (owner/repo) opted in. The isMergeQueueEnabled answer is cached
+// per repo#base for the policy's probe TTL (default 30m) so a sweep over
+// many PRs costs one GraphQL read per base, not one per PR. A read failure
+// reports false (and is not cached) so the lane keeps its pre-queue
+// behaviour.
+func (c *Engine) nativeQueueEnabled(ctx context.Context, repo string, pr *gh.PullRequest) bool {
+	t := c.nativeQueue(repo)
 	if t == nil || pr.GetNodeID() == "" {
 		return false
 	}
+	key := nativeQueueProbeKey(repo, pr)
+	if enabled, ok := c.cachedNativeQueueProbe(key); ok {
+		return enabled
+	}
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
-	return err == nil && state.IsMergeQueueEnabled
+	if err != nil {
+		return false
+	}
+	c.recordNativeQueueProbe(key, state.IsMergeQueueEnabled)
+	return state.IsMergeQueueEnabled
+}
+
+// nativeQueueSkipsCurrentBase reports whether a lane may bypass the
+// current-base gate and the behind update-branch for pr: only when the
+// operator set auto_merge.native_merge_queue.skip_current_base_gate AND the
+// base has a queue. By default the gate stays in force on queue bases.
+func (c *Engine) nativeQueueSkipsCurrentBase(ctx context.Context, repo string, pr *gh.PullRequest) bool {
+	return c.nativeQueuePolicy().SkipCurrentBaseGate && c.nativeQueueEnabled(ctx, repo, pr)
 }
 
 // nativeQueueGatedState: a PR not yet merged through a required queue reads
@@ -90,7 +197,12 @@ func nativeQueueGatedState(pr *gh.PullRequest) bool {
 	return false
 }
 
-func (c *Engine) nativeQueue() nativeQueueTransport {
+// nativeQueueTransport returns the transport when it can enqueue (App auth),
+// regardless of policy.
+func (c *Engine) nativeQueueTransport() nativeQueueTransport {
+	if c == nil {
+		return nil
+	}
 	t, ok := c.transport.(nativeQueueTransport)
 	if !ok || !t.NativeMergeQueueAvailable() {
 		return nil
@@ -98,17 +210,31 @@ func (c *Engine) nativeQueue() nativeQueueTransport {
 	return t
 }
 
+// nativeQueue returns the queue transport for repo (owner/repo), or nil when
+// the repo has not opted in or the transport cannot enqueue.
+func (c *Engine) nativeQueue(repo string) nativeQueueTransport {
+	if !c.nativeQueuePolicy().repoAllowed(repo) {
+		return nil
+	}
+	return c.nativeQueueTransport()
+}
+
 // tryNativeQueue runs only after the lane's existing merge gates passed. A
 // queued PR is not a merged PR: no merged audit, issue closure or merge event.
 func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (string, error) {
-	t := c.nativeQueue()
+	t := c.nativeQueue(claim.Repo)
 	if t == nil || pr.GetNodeID() == "" {
+		return "", nil
+	}
+	key := nativeQueueProbeKey(claim.Repo, pr)
+	if enabled, ok := c.cachedNativeQueueProbe(key); ok && !enabled {
 		return "", nil
 	}
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
 	if err != nil {
 		return nativeQueueReasonRead, err
 	}
+	c.recordNativeQueueProbe(key, state.IsMergeQueueEnabled)
 	if !state.IsMergeQueueEnabled && !state.IsInMergeQueue {
 		return "", nil
 	}
@@ -173,8 +299,13 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 // reconcileNativeQueueGate runs for the owning lane's rejected candidates,
 // including cheap prefilter holds. Never withdraw another actor's entry.
 func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo string, pr *gh.PullRequest, reason string) {
-	t := c.nativeQueue()
+	t := c.nativeQueue(owner + "/" + repo)
 	if t == nil || pr == nil || pr.GetNodeID() == "" || !nativeQueueWithdrawReason(reason) {
+		return
+	}
+	// A base without a queue holds no entry to withdraw; reuse the probe
+	// so held PRs on plain bases cost nothing.
+	if enabled, ok := c.cachedNativeQueueProbe(nativeQueueProbeKey(owner+"/"+repo, pr)); ok && !enabled {
 		return
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
@@ -223,7 +354,7 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 // Pausing a repo stops new merges, but GitHub may still hold entries from a
 // previous pass. Withdraw only this App's entries through the usual boundary.
 func (c *Engine) reconcileInactiveNativeQueues(ctx context.Context) {
-	if c.nativeQueue() == nil {
+	if !c.nativeQueuePolicy().Enabled || c.nativeQueueTransport() == nil {
 		return
 	}
 	active := map[string]bool{}
@@ -234,10 +365,15 @@ func (c *Engine) reconcileInactiveNativeQueues(ctx context.Context) {
 		if (active[display] && c.repoAutoMergeAllowed(display)) || (c.repoOnGitHub != nil && !c.repoOnGitHub(display)) {
 			continue
 		}
+		owner, repo := c.transport.SplitRepo(display)
+		// Only an opted-in repo ever held an App entry; listing the others'
+		// open PRs every 10 minutes would be pure API cost.
+		if !c.nativeQueueOptedIn(owner + "/" + repo) {
+			continue
+		}
 		if !c.inactiveQueueDue(display) {
 			continue
 		}
-		owner, repo := c.transport.SplitRepo(display)
 		opts := &gh.PullRequestListOptions{State: "open", ListOptions: gh.ListOptions{PerPage: 100}}
 		for {
 			prs, resp, err := c.gh.PullRequests.List(ctx, owner, repo, opts)

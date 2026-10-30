@@ -218,6 +218,10 @@ type Options struct {
 	// callers wired before the policy existed (#15149); ignored when
 	// MergeTrain is set.
 	MergeTrainEnabled func() bool
+	// NativeMergeQueue returns the live auto_merge.native_merge_queue.*
+	// policy (hivecommons/hive#15198); nil means off, so no lane probes,
+	// enqueues or withdraws a native merge queue entry.
+	NativeMergeQueue func() NativeMergeQueuePolicy
 	// RebaseResolver receives the train's rebase-resolve requests for a
 	// conflicting PR; nil leaves a dirty front on its conflicting path.
 	RebaseResolver RebaseResolver
@@ -241,6 +245,10 @@ type Engine struct {
 
 	inactiveQueueMu   sync.Mutex
 	inactiveQueueLast map[string]time.Time
+
+	nativeMergeQueuePolicy func() NativeMergeQueuePolicy
+	nativeQueueProbeMu     sync.Mutex
+	nativeQueueProbes      map[string]nativeQueueProbe
 
 	selfSkipWarnedMu sync.Mutex
 	selfSkipWarned   map[string]struct{}
@@ -418,6 +426,7 @@ func New(transport Transport, opts Options) *Engine {
 		openPRs:                           opts.OpenPRs,
 		sweepTrigger:                      opts.SweepTrigger,
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
+		nativeMergeQueuePolicy:            opts.NativeMergeQueue,
 		rebaseResolver:                    opts.RebaseResolver,
 		rebaseEpisode:                     opts.RebaseEpisode,
 		hotspotRecorder:                   opts.HotspotRecorder,
@@ -1002,7 +1011,9 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 			}
 			result.Seen++
 			if reason := c.prefilterQueuedIssue(issue, label); reason != "" {
-				if c.nativeQueue() != nil {
+				// Only an opted-in repo may hold an App queue entry worth
+				// withdrawing; the extra PR read is skipped everywhere else.
+				if c.nativeQueue(owner+"/"+repoName) != nil {
 					if pr, _, err := c.gh.PullRequests.Get(ctx, owner, repoName, issue.GetNumber()); err == nil {
 						c.reconcileNativeQueueGate(ctx, nativeQueueLaneQueued, owner, repoName, pr, reason)
 					}
@@ -1893,10 +1904,12 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	c.reconcileOpenPRMergeEffect(ctx, mergeClaim, owner, repo, number)
 
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
-	// A native merge queue tests the merged result itself; updating the
-	// branch would only push a new head and drop any queue entry.
-	queueEnabled := sync.OnceValue(func() bool { return c.nativeQueueEnabled(ctx, pr) })
-	if strings.EqualFold(pr.GetMergeableState(), "behind") && !queueEnabled() {
+	// A native merge queue tests the merged result itself, and updating the
+	// branch would push a new head that drops any queue entry — but the
+	// current-base gate stays in force unless the operator explicitly set
+	// auto_merge.native_merge_queue.skip_current_base_gate.
+	queueSkipsBase := sync.OnceValue(func() bool { return c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
+	if strings.EqualFold(pr.GetMergeableState(), "behind") && !queueSkipsBase() {
 		if !branchUpdateAllowed {
 			// Keep the cause: still behind, retried next tick, not CI
 			// state and not author work (hivecommons/hive#12607).
@@ -1974,7 +1987,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// head is the author's to fix and must not be re-based under them, and a
 	// head policy refuses would be updated for nothing. Sits before the desk
 	// so the desk is only asked about a head that would merge this tick.
-	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueEnabled() {
+	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
 		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted, c.isForkPR(pr)); stop {
 			return ev, reason, err
 		}
@@ -2394,9 +2407,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, "changes-requested", nil
 	}
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
-	// See trySweepSelfAuthoredPR: a native queue tests the merged result.
-	queueEnabled := sync.OnceValue(func() bool { return c.nativeQueueEnabled(ctx, pr) })
-	if mergeableState == "behind" && !queueEnabled() {
+	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in.
+	queueSkipsBase := sync.OnceValue(func() bool { return c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
+	if mergeableState == "behind" && !queueSkipsBase() {
 		headSHA := ""
 		if pr.GetHead() != nil {
 			headSHA = pr.GetHead().GetSHA()
@@ -2450,7 +2463,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	// Current-base gate (hivecommons/hive#13634): only a green head that
 	// every gate above lets through is worth an update-branch commit.
-	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueEnabled() {
+	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
 		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind", c.isForkPR(pr)); stop {
 			return ev, reason, err
 		}
@@ -2796,7 +2809,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
 	// On a queue-required base GitHub reports blocked until the PR merges
 	// through the queue; the queue, not this gate, settles that state.
-	if mergeable != hgithub.MergeableYes && !(nativeQueueGatedState(pr) && c.nativeQueueEnabled(ctx, pr)) {
+	if mergeable != hgithub.MergeableYes && !(nativeQueueGatedState(pr) && c.nativeQueueEnabled(ctx, owner+"/"+repo, pr)) {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
 	}
 	baseBranch := ""
