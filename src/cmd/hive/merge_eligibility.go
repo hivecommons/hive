@@ -233,6 +233,7 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 			Verdict:            string(match.Verdict),
 			DecisionRequested:  match.DecisionRequested,
 			DecisionQuestion:   match.DecisionQuestion,
+			RedundantOf:        match.RedundantOf,
 			HumanSummaries:     append([]string(nil), match.HumanSummaries...),
 			HiveAuthoredKnown:  match.HiveAuthoredKnown,
 			HiveAuthored:       match.HiveAuthored,

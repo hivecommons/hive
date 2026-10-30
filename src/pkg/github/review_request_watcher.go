@@ -517,6 +517,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// so it must honor the same fail-closed contract and flow through the same
 	// error/retry handling as a real CreateReview failure below.
 	var created *gh.PullRequestReview
+	decisionDeduped := false
 	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 	} else if req.Revise {
@@ -527,6 +528,15 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		created, revised, err = c.reviseReview(ctx, req, body)
 		if err == nil && created == nil && !revised {
 			created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+		}
+	} else if existing := c.findOwnOpenDecisionReview(ctx, owner, repoName, req.Number, req.Body); existing != nil && apiEvent == "COMMENT" {
+		// The same decision question is already standing on this PR from
+		// an earlier head (hivecommons/hive#15499): refresh that review in
+		// place rather than asking the person again. The verdict for the
+		// new head is still recorded below.
+		created, err = c.refreshDecisionReview(ctx, owner, repoName, req.Number, existing, body)
+		if err == nil {
+			decisionDeduped = true
 		}
 	} else {
 		provenance := owner + "/" + repoName + "#" + strconv.Itoa(req.Number)
@@ -583,6 +593,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	}
 	if sentinelBlockNote != "" {
 		resp.Note = sentinelBlockNote
+	}
+	if decisionDeduped {
+		resp.Note = decisionDedupedNote
 	}
 
 	// Record where the review landed so the queue views can link to it. A

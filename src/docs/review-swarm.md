@@ -161,6 +161,8 @@ With `review.confidence_score: true` the relay appends one line to each posted r
 
 When the review carries `<!-- hive-redundant-of: #N -->` (the reviewer found a merged PR that already contains the change) and the score is below the *safe* band, the line is replaced by `**no-op merge: duplicate of #N**` so a redundant PR is not labelled as bad code.
 
+The same marker is the identity of the decision question. Two decision-requested reviews on one PR with the same `hive-redundant-of` (or, without one, the same question once mentions, item numbers, digits and punctuation are stripped) are one question however a model reworded them: the relay refreshes the hive's standing `COMMENTED` review in place instead of posting again, the 085 entry comment is not repeated, and a hive-authored PR with that marker is never self-approved — it goes to the empty-diff closer (see [hive-merge.md](hive-merge.md#empty-diff-prs-of-the-hives-own)). A PR whose diff against its base is empty re-stamps its prior verdict on every new head rather than drawing a fresh review round ([#15499](https://github.com/hivecommons/hive/pull/15499)).
+
 The line is derived from the verdict file the agent hands over with the comment; a request without a parseable verdict gets no line. It is off by default — the verdict marker already routes the decision, and a repo that did not ask for a score should not see one.
 
 ## Configuration
