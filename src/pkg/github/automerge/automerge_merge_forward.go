@@ -74,6 +74,22 @@ func (c *Engine) mergeForwardOrConflict(ctx context.Context, displayRepo, owner,
 	if headRef == "" || baseRef == "" || headSHA == "" || appLogin == "" {
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
+	if c.requireCurrentBaseFor(owner + "/" + repo) {
+		if reason, err := c.admitBasePreparation(ctx, owner, repo, baseRef, number, headSHA, stageLaneTrusted, true); reason != "" || err != nil {
+			if err != nil {
+				return AutoMergeSweepEvent{}, "merge-forward", err
+			}
+			return AutoMergeSweepEvent{}, reason, nil
+		}
+		if err := c.claimBasePreparationUpdate(ctx, owner, repo, number, headSHA); err != nil {
+			// A conflicting outsider belongs to the existing repair path,
+			// not to final preparation or a ready merge-train seat.
+			if wait := preparationWaitReason(err); wait != "" {
+				return AutoMergeSweepEvent{}, wait, nil
+			}
+			return AutoMergeSweepEvent{}, "merge-forward", err
+		}
+	}
 	if !c.markMergeForwardAttempted(owner, repo, number, headSHA) {
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
