@@ -70,10 +70,6 @@ const (
 	// stays with the reviewer's question).
 	alreadyLandedMaxFiles = 25
 
-	// alreadyLandedReason is the stage-label log reason of a close taken
-	// on the reviewer's already-landed verdict.
-	alreadyLandedReason = "self-authored:already-landed"
-
 	hiveEmptyDiffReasonHasDiff    = "has-diff"
 	hiveEmptyDiffReasonUnknown    = "diff-unknown"
 	hiveEmptyDiffReasonTooFresh   = "head-too-fresh"

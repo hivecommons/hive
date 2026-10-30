@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -2600,10 +2601,15 @@ func TestSupersededCheckWarrantedForRedundantOfDecision(t *testing.T) {
 // rule closes it.
 type alreadyLandedCloserSpy struct {
 	Transport
+	stage           stageReconcilerTransport
 	supersededCalls []int
 	landedCalls     []int
 	redundantOf     []int
 	result          hgithub.HiveEmptyDiffClose
+}
+
+func (s *alreadyLandedCloserSpy) StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) stageengine.Reconciler {
+	return s.stage.StageReconciler(store, opts, logger)
 }
 
 func (s *alreadyLandedCloserSpy) CloseSupersededHivePRIfEligible(_ context.Context, _ string, pr *gh.PullRequest) (hgithub.HiveSupersededClose, error) {
@@ -2656,7 +2662,11 @@ func TestApplyStageLabelsHiveAlreadyLandedClosesInsteadOfDecision(t *testing.T) 
 	e, _, store := newStageEngine(t, srv.URL, clock)
 	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} }
 	e.contributorLanePolicy = func() ContributorLanePolicy { return ContributorLanePolicy{} }
-	spy := &alreadyLandedCloserSpy{Transport: e.transport, result: hgithub.HiveEmptyDiffClose{Closed: true, Empty: true, RedundantOf: landed, Reason: hgithub.SupersessionActionClosedAlreadyLanded, Supersedes: []int{original}}}
+	stage, ok := e.transport.(stageReconcilerTransport)
+	if !ok {
+		t.Fatal("engine transport provides no stage writer")
+	}
+	spy := &alreadyLandedCloserSpy{Transport: e.transport, stage: stage, result: hgithub.HiveEmptyDiffClose{Closed: true, Empty: true, RedundantOf: landed, Reason: hgithub.SupersessionActionClosedAlreadyLanded, Supersedes: []int{original}}}
 	e.transport = spy
 	ctx := context.Background()
 
