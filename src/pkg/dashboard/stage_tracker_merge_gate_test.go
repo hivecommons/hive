@@ -332,6 +332,8 @@ func stageTrackerTrainQueueJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTrainEtaWords"),
 		jsFunc(t, html, "stageTrackerTrainEtaDetail"),
 		jsFunc(t, html, "stageTrackerTrainQueueTip"),
+		jsConstLine(t, html, "STAGE_TRACKER_LEFT_TRAIN_NOTE"),
+		jsFunc(t, html, "stageTrackerLeftTrainNote"),
 		jsFunc(t, html, "stageTrackerTrainLines"),
 	}, "\n")
 }

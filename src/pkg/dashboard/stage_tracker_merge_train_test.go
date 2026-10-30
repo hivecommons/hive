@@ -254,6 +254,8 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsFunc(t, html, "stageTrackerTrainEtaWords"),
 		jsFunc(t, html, "stageTrackerTrainEtaDetail"),
 		jsFunc(t, html, "stageTrackerTrainQueueTip"),
+		jsConstLine(t, html, "STAGE_TRACKER_LEFT_TRAIN_NOTE"),
+		jsFunc(t, html, "stageTrackerLeftTrainNote"),
 		jsFunc(t, html, "stageTrackerTrainLines"),
 		jsFunc(t, html, "stageTrackerRowTrain"),
 		jsFunc(t, html, "stageTrackerTrainKey"),

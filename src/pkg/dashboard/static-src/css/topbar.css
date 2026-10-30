@@ -126,6 +126,10 @@
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
     .oc-topbar-right { position: relative; z-index: 2; justify-self: end; max-width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }
     .oc-health-badge { --nav-chip-color: var(--status-ok); }
+    /* Waiting on you pill (hivecommons/hive#15638): attention colour, hidden at zero, clickable. */
+    .nav-chip--attention, .oc-waiting-on-you { --nav-chip-color: var(--status-attention); }
+    .oc-waiting-on-you { flex: 0 0 auto; cursor: pointer; font-weight: 600; }
+    .oc-waiting-on-you[hidden] { display: none; }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }

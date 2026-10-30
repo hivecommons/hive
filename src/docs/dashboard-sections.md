@@ -108,7 +108,7 @@ How busy Hive thinks your projects are right now, and how often it wakes its wor
 - The Governor picks a mode by comparing the amount of actionable work with three thresholds. Actionable work is work Hive could do now, with nothing waiting on a person.
 - The **actionable issues** and **actionable PRs** tiles use the same count as the Overview's Actionable now tile. The two always agree.
 - The **hold** list names every held item. Held means someone parked it with a hold label.
-- The compact strip at the top of the Agents view also shows **running** — how many workers are mid-round right now, and the estimated spend the whole fleet has accrued in the current clock hour (`3 · $1.20 this hour`). The hour figure is the rise in the cumulative estimate since the top of the hour; `$–` means the hive has not yet taken a reading this hour.
+- The compact strip at the top of the Agents view and the Governor grid also show **running** — how many workers are mid-round right now, and the fleet's estimated spend, which rotates through four windows every ~4 seconds: `3 · $1.20 this hour` → `$9.80 today` → `$41 this week` → `$130 this month`. The worker count stays fixed; only the amount and window phrase crossfade, the tile reserves the width of its widest phrase so nothing shifts or wraps, the rotation pauses while you hover (the hover lists all four values) or while the tab is hidden, and it swaps instantly when your system asks for reduced motion. The hour figure is the rise in the cumulative estimate since the top of the hour; today / this week / this month are the cost ledger summed from 00:00 UTC today, Monday 00:00 UTC (ISO week) and the 1st of the month 00:00 UTC, plus the rise since the ledger's last reading. `$–` means the hive has not yet taken a reading for that window.
 - The **cadence table** shows, for each worker, how often it runs in each mode. Continuous means it runs again as soon as it finishes.
 - The **budget** shows how much of the AI spending allowance for the current period has been used.
 - The **next kick** estimate follows the eval tick, which is longer while GitHub webhooks are trusted (`/api/status.webhooks.mode` reads `webhook`) and drops back to `governor.eval_interval_s` when they degrade (`polling`). How that decision is made is in [webhooks.md](webhooks.md#fallback-when-webhooks-degrade).
@@ -127,21 +127,27 @@ How busy Hive thinks your projects are right now, and how often it wakes its wor
 
 ## PRs by model
 
-Which AI models wrote the pull requests Hive opened, and how often each model's work was merged without extra fixes.
+Which AI models wrote the pull requests Hive opened, how well each model's work landed, and how the models rank against each other.
 
-**What it tells you.** This part of the Governor section compares the AI models your workers use. It shows how many pull requests each model wrote and how they ended.
+**What it tells you.** This part of the Governor section compares the AI models your workers use. It shows how many pull requests each model wrote, how they ended, and a rank that favours models with a long, clean record over models with a short, lucky one.
 
 **How the numbers are worked out.**
 
-- Each row is one model. The bar splits its pull requests into merged, still open, and closed without merging.
-- **First-pass rate** is the share of merged pull requests that needed no follow-up fixes.
-- **Failure rate** and **nothing to ship** count runs that failed or finished without a pull request.
-- A model gets a **rank** only after it has at least 5 merged pull requests in the window. With fewer, the sample is too small to compare.
+- Each row is one model. Model ids are normalised so one model gets one row: a provider prefix (`openai-codex/gpt-6.1-sol`), a `:variant` suffix (`gpt-5.6-sol:high`) and a dash between version digits (`claude-opus-5-5`) are folded into `gpt-6.1-sol`, `gpt-5.6-sol` and `claude-opus-5.5`. The backends that drove the model appear as chips under its name; hover the row to see the raw ids and how many pull requests each contributed.
+- The bar splits a model's pull requests into merged, still open, and closed without merging.
+- **Merged** is the number of merged pull requests in the window.
+- **1st pass** is the share of merged pull requests that merged without a review-requested fix round.
+- **PR runs** is the share of recorded task runs (from the contributor run log) that ended with a verified pull request.
+- **Fail** is the share of recorded task runs that failed: crashed, timed out, or exited non-zero.
+- **No ship** is the share of recorded task runs that completed but opened no pull request.
+- **Rank** orders models by a score that combines those columns and penalises small samples: `score = Wilson 95% lower bound(1st-pass merged ÷ merged) × (1 − Fail) × (1 − No ship)`. The Wilson lower bound is the pessimistic end of the confidence interval for the first-pass rate, so 5 of 5 (lower bound 0.57) scores below 21 of 22 (0.78) and well below 203 of 313 (0.60 after the bound, but with no failures). A model with no recorded runs keeps its bound as the score.
+- A model gets a rank only after it has at least 5 merged pull requests in the window. With fewer, the sample is too small to compare and the row is listed without a rank.
+- Rows whose pull requests carry no model id are shown last, muted, as **unattributed**. They are counted but never ranked.
 - You can show the last 7 days, the last 30 days, or all time. You can sort by rank or by count.
 
-**What it is good for.** Use it when choosing which model a worker should use. A model with a low first-pass rate costs more review time.
+**What it is good for.** Use it when choosing which model a worker should use. A model with a low first-pass rate or a high failure rate costs more review and retry time; the rank already weighs both.
 
-**Example.** Model A has 40 pull requests and a 70% first-pass rate. Model B has 6 pull requests and a 30% rate. Model A is the safer default.
+**Example.** Model A has 40 merged pull requests, 28 of them first pass, and 2% failed runs. Model B has 5 merged pull requests, all first pass, and 51% failed runs. A scores about 0.54 and B about 0.28, so A ranks higher even though B shows 100% first pass.
 
 **When it appears.** Inside the Governor section, so at autonomy level L2 and above.
 
@@ -793,6 +799,16 @@ The header reports the filtered row count and how many need attention; paginatio
 
 **The counter beside the section name.** The left-menu counter and the header lead (`37 rows (33 issues + 4 PRs on their own row) · 3 need attention`) count *rows* of the default view, not items: every open issue is a row; a pull request is its own row only when it is not drawn under a listed issue. The Overview counter (`33/13`) prints the same open set as issues/PRs, so the two differ by exactly the pull requests that share their issue's row (`9 PRs shown on their issue's row` in the tooltip). The header and tooltip also name the PRs sharing issue rows. Filters and the kind tabs narrow the list and the `showing X–Y of N` line, never the counter.
 
+### How you'll know something is waiting on you
+
+The hive often parks work on a person: a decision asked at **045** / **085**, a PR at **090** ready for a human merge, an approval the hive's GitHub App cannot give (`needs-human`, `unauthorized`), or a contributor who has gone offline past their grace so the operator is the fallback. Those waits used to look like any other row ("PR in progress"); nothing added them up and nothing said so. Three surfaces now read one server block, `/api/stage-tracker` → `waiting_on_human` (`count`, `items[{repo, number, type, kind, since, who}]`), so a human wait is never silent:
+
+- **Sidebar.** A second, orange badge on **Hive activity monitor** carries the waiting-on-you count (the grey badge stays the row count). Its tooltip lists the five longest waits with what each needs and how long it has waited. Hidden at zero.
+- **Topbar.** A **Waiting on you · N** pill sits beside **Health**, hidden at zero. Click it to land on the activity monitor with the **Waiting on you** filter applied; `?filter=waiting-on-you` on the dashboard URL does the same (for links from chat or a notification).
+- **Toast.** When the count rises between two polls, one in-app toast says **N items need your decision — #15312, #15433 …** with a **Show** action that applies the filter. At most one toast per ten minutes; none in kiosk mode.
+
+`kind` is one of `needs-decision` (045 / 085 or the `needs-decision` modifier), `ready-for-human-merge` (090), `approve-needed` (`needs-human` / `unauthorized`), `returned-to-contributor-offline` (071 / 072 once the author's grace has elapsed — `who` is then the contributor, the operator being their fallback), `other-human-wait` (015 triage). `who` is `operator` for everything the signed-in operator / maintainers must do themselves. Rows on **hold**, advisories, decided rows and PRs nested under a listed issue are not counted: hold is the operator's own choice, an advisory asks for nothing, and a decided row is the hive's to act on next. Each item also carries `waiting_on_you` / `wait_kind`, which is what the **Waiting on you** toolbar chip filters on.
+
 ### Filters, sorting and pagination
 
 Filters run on the cached browser payload and persist across reloads, except the page number:
@@ -800,6 +816,7 @@ Filters run on the cached browser payload and persist across reloads, except the
 - Kind, **Repo**, **Author** kind and search (`#number`, number or title substring, including covering PRs).
 - **Since**: any, over one hour/day/week on the current step, or past that stage's configured dwell. Stalled items always qualify.
 - **Needs attention**: drawn health modifiers or a human-gated stage. Deferred merge-gate pills do not qualify; a handled regression alone does not qualify.
+- **Waiting on you**: only rows the server flagged `waiting_on_you` (see *How you'll know something is waiting on you* above).
 - Synthetic **Needs human** / **On hold** facets and label chips, described below. Stage labels sort numerically, then other labels alphabetically, case-insensitively. Chips within one family OR; families AND; synthetic facets AND with label chips.
 
 **+N more** opens *All labels*, with every label and count, type-to-filter, toggles and **Clear**. Selected labels are promoted into the visible row. **Clear filters** appears whenever the view is narrowed.
@@ -919,6 +936,8 @@ The tooltip lists the PRs ahead and the overlapping files. Waiting siblings are 
 **The header counts the rows under it.** A member drawn as a sub-row of its linked issue (`nested_under`) still sits in the train run — the issue row rides its open PR's train, in that PR's merge order, and wears the rail — so a train of three is three rows under one header whether or not its PRs have issues. When a filter or tab hides some members, the header says so and names them: `merge train · 1 of 3 PRs here · 1st: #15425 · not in this view: #15529, #15530`; it never claims `3 PRs` over one row (hive's v5#15425 did, with #15529 and #15530 drawn under their issues). No member on the page, no header.
 
 **Who rides.** A PR the lane leaves to a person is not a train member and never its head: an author below the lane's trust (`untrusted-author-role`, `contributor-lane:no-linked-issue`, …), the title/label human-merge rule, a human-merge path, a merge GitHub refused for review, and every other `human_merge_reason` code except the catch-all `policy`. The lane's verdict is remembered per lane and head (`noteMergeTrainOutcome`); a new head starts clean. A head the lane last saw unable to merge on its own (red required check, terminal hold, permanent refusal) stays a member but never fronts.
+
+**PRs under repair leave the train.** A PR somebody is fixing is not a train member either: the planner (`mergeTrainUnderRepair`) skips a PR at 070 fixing, 071 needs-author, 072 returned-to-contributor or 085 needs-decision (label or stage store), and the tracker (`stageTrackerTrainUnderRepair`) drops one whose stage says so or whose `reason` is a red required check (`required-check-failing:` / `check-failing:` / `ci-red`) — hive's own #15405 once led a header as `merge train · 2 PRs · 1st: #15405` while its own chevron read *Fixing* (a maintainer had just requested changes). The dropped row carries `left_train: {why, note}` and no `merge_train`: no ordinal, no rail, and its hover ends with the one muted line *Merge train: left the merge train while being fixed; rejoins when green*. The survivors close ranks — `size`, `position`, `front`, `ahead`, `members` are recomputed, and the next in line fronts when the front itself left — and a train left with one member is no train: no header, no ordinal, the 080 row back to *Green and approved; waiting for the automerge lane to admit it*. The exception is the `rebase-exhausted` tail at 085: the train put it there, and it stays so the person who rebases it sees where it merges. Provisional members (050 / 060 with nothing red, [#15580](https://github.com/hivecommons/hive/issues/15580)) keep their slot.
 
 **Queue position, countdown, stall** ([#15395](https://github.com/hivecommons/hive/issues/15395)). The queued chip is its place in the queue and nothing else — **Merge queued · 2nd of 6 · ~4m** — so it reads the same whether or not a merge sweep is evaluating it: the sweep is the spinning ⬡ glyph and a *Checking now…* line in the hover, never a change of words (one label per chevron), and no state slug (`queued-behind`, `front`) ever reaches the page. The hover is the place sentence — *2nd of 6 in the merge queue · behind #15253 (soaking, 12m left) · ETA ~25m (2 ahead · head soaking 12m · next pass in 40s). Hive merges one at a time, in order.*; the head's reads *1st of 6 in the merge queue · merges next · ETA ~13m.* — or, when the head is on a person or on CI, the blocker instead of a clock: *… behind #15253 (waiting for a maintainer (untrusted author)) · no estimate until #15253 moves.* Every train state — the 1st included — lights the **Merge queue** column, whatever numeric stage the lane holds the head at (the train's facts are mirrored onto a head still at 050/070; hive's own #15400 once lit CI / Review beside its 2nd-place sibling). The server adds to each member's `merge_train`: `length`, `head_number`, `head_state` (`needs-human` / `ci` / `soaking` / `ready` / `merging` / `fixing` / `unknown`), `head_reason` (plain words), `head_since`, `eta_s`, `eta_at`, `eta_basis`, `late`, `stalled`, `stalled_s`.
 
@@ -1213,6 +1232,8 @@ Every PR at the gate now carries `merge_gate: {state, reason, sweep_running, las
 | any stage after the merge call drew *N of M required status checks are expected* (`merge_failed_kind: checks-pending`, `merge_failed_checks`) | **Waiting for CI** | *4 checks* | ⟳ while the sweep is on it, else 🕓 — *hive tried to merge this (automerge sweep) 1m ago before its required checks had reported — 4 required checks haven't finished. It merges once they pass.* |
 
 A merge outcome (**Merging**, **Merge failed**, **Waiting for CI**) always lights the **Merge queue** column, whatever numeric stage the lane fell back to (hivecommons/docs#512 drew "Merge failed" in CI / Review because the PR sat at 060).
+
+A refusal is scoped to the head it failed on. Once the PR head moves (merge-from-base, a new push) or the record falls back below 080 to wait on CI (`required-check-pending:*`) after the refusal, the chevron reads the live stage word (**CI running · build-and-test**, **Review pending**) and the refusal survives only in the hover — *merge attempt on previous head 92d4cef failed: branch protection* (`merge_gate.prior_head_merge_failed`, `prior_head_merge_failed_kind`, `prior_head_merge_failed_text`, `prior_head_merge_failed_at`, `prior_head_merge_failed_head`). The chevron and the caption never disagree about whether a merge is failing now ([#15611](https://github.com/hivecommons/hive/issues/15611); hive#15574 read "Merge failed · branch protection" over a caption waiting on CI for the new head).
 | 110 | **Merged** (the ✓ cap) | — | — |
 
 #### Merging is held for the toast's lifetime
