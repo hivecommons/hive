@@ -159,6 +159,8 @@ func (n *Notifier) sendDiscordWebhook(title, message string) {
 	payload := map[string]any{
 		"content": fmt.Sprintf("**%s**\n%s", title, message),
 		"flags":   DiscordSuppressEmbeds,
+		// Untrusted text (issue titles) must never ping @everyone or roles.
+		"allowed_mentions": map[string]any{"parse": []string{}},
 	}
 
 	body, err := json.Marshal(payload)

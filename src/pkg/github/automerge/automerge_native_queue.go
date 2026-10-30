@@ -139,8 +139,8 @@ func ownNativeQueueEntry(e *hgithub.NativeMergeQueueEntry, slug string) bool {
 
 // nativeQueueWithdrawReason reports whether a lane's rejection reason means
 // the PR lost merge eligibility (#15198): a hold, a withdrawn or stale
-// approval, changes requested, a paused or disabled repo, or a draft or
-// closed PR. Anything else — pending or red checks, behind, a moved head, an
+// approval, changes requested, a paused or disabled repo, a draft or closed
+// PR, a release in progress, or a human-merge path. Anything else — pending or red checks, behind, a moved head, an
 // API error, a routing observation — keeps the App's queue entry.
 func nativeQueueWithdrawReason(reason string) bool {
 	switch reason {
@@ -149,7 +149,7 @@ func nativeQueueWithdrawReason(reason string) bool {
 		"queue-approval-missing-head", "queue-approval-head-changed", "self-merge-ban", autoMergeReasonUntrustedMerger,
 		"changes-requested", autoMergeReasonHumanChangesRequested, contributorLaneReasonChangesRequested,
 		nativeQueueReasonPaused, "repo-auto-merge-disabled", relayLaneReasonDisabled,
-		"draft", "closed":
+		"draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath:
 		return true
 	}
 	return strings.HasPrefix(reason, "label:do-not-merge") || strings.HasPrefix(reason, "excluded-label:") ||

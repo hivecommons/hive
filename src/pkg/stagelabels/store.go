@@ -124,6 +124,12 @@ type Record struct {
 	// "superseder merged but this PR has moved on" note was posted, so a
 	// diverged original is told once per head rather than every poll.
 	SupersederMergedNotedHead string `json:"superseder_merged_noted_head,omitempty"`
+	// MentionCause is the cause (ReasonClass) the author was last
+	// @-mentioned for in the hive status comment. In quiet notification
+	// mode a person is mentioned once per distinct cause, not once per
+	// head: a mention is an email, and the same cause on a new head is the
+	// same ask.
+	MentionCause string `json:"mention_cause,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
 	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
@@ -350,6 +356,15 @@ type Record struct {
 	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
 	// "PR in progress" while the record said 085).
 	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
+	// TrainEjectedWhy / TrainEjectedHead / TrainEjectedAt record the merge
+	// train's last ejection of this PR (hivecommons/hive#15825): the head
+	// it was ejected at, why (head-moved, ci-pending, ci-red,
+	// verdict-owed, conflicting, …) and when. The tracker's gray pill
+	// carries the lineage ("left merge train · pushed 3m ago") while the
+	// row sits back in the CI / Review column; re-admission clears it.
+	TrainEjectedWhy  string    `json:"train_ejected_why,omitempty"`
+	TrainEjectedHead string    `json:"train_ejected_head,omitempty"`
+	TrainEjectedAt   time.Time `json:"train_ejected_at,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -896,6 +911,55 @@ func (s *Store) NotePush(key, sha string, at time.Time) bool {
 	return true
 }
 
+// NoteTrainEjected records that the merge train ejected an existing
+// record's PR at head for why (hivecommons/hive#15825). A zero or future
+// instant reads as now.
+func (s *Store) NoteTrainEjected(key, head, why string, now time.Time) {
+	why = strings.TrimSpace(why)
+	if why == "" {
+		s.ClearTrainEjected(key)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	at := now
+	if clock := s.now(); at.IsZero() || at.After(clock) {
+		at = clock
+	}
+	if r.TrainEjectedWhy == why && r.TrainEjectedHead == head {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = why, strings.TrimSpace(head), at
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearTrainEjected forgets a record's merge-train ejection: the PR rides
+// a train again, or merged.
+func (s *Store) ClearTrainEjected(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.TrainEjectedWhy == "" && r.TrainEjectedHead == "" && r.TrainEjectedAt.IsZero()) {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = "", "", time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// TrainEjected reports the recorded merge-train ejection.
+func (r Record) TrainEjected() (why, head string, at time.Time, ok bool) {
+	if r.TrainEjectedWhy == "" {
+		return "", "", time.Time{}, false
+	}
+	return r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt, true
+}
+
 // PushedSinceWaiting reports whether a push landed after the current
 // waiting-on-push state began: the ball is back with the hive even if the
 // sweep has not re-staged the item yet.
@@ -1104,6 +1168,41 @@ func (r Record) EntryCommentExplains(head, cause string) bool {
 		return false
 	}
 	return len(r.EntryCommentedCauses) == 0 || cause == "" || slices.Contains(r.EntryCommentedCauses, cause)
+}
+
+// MentionDue reports whether the author should be @-mentioned for cause:
+// never for an empty cause, otherwise only when it differs from the cause
+// of the last mention.
+func (r Record) MentionDue(cause string) bool {
+	cause = MentionCauseClass(cause)
+	return cause != "" && !strings.EqualFold(r.MentionCause, cause)
+}
+
+// MentionCauseClass collapses a stage reason to what the author would be
+// asked to do about it: "check-failing:unit" and "check-failing:lint" are
+// both "CI is red, fix it", so a second red check on a later head is the
+// same cause and earns no second @-mention; a conflict after a red check is
+// a new one. The class is the reason's kind (ReasonClass, then the part
+// before the first ':'), with the "required-" qualifier dropped.
+func MentionCauseClass(reason string) string {
+	class := ReasonClass(reason)
+	if i := strings.IndexByte(class, ':'); i >= 0 {
+		class = class[:i]
+	}
+	return strings.TrimPrefix(strings.TrimSpace(class), "required-")
+}
+
+// MarkMentioned records that the author was @-mentioned for cause.
+func (s *Store) MarkMentioned(key, cause string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.MentionCause = MentionCauseClass(cause)
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkStallCommented records that the stall note for this stage visit was posted.

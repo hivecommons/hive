@@ -7,6 +7,45 @@ import (
 	"testing"
 )
 
+func TestHubContributeAppleMLXSetup(t *testing.T) {
+	t.Setenv("HIVE_HUB_PUBLIC_URL", "https://hive.hivecommons.dev")
+	s := newHubServerForTest(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/contribute", nil)
+	s.handleContributeLanding(rec, req)
+	for _, want := range []string{
+		`id="apple-mlx"`, "Apple Silicon only", "just contribute-mlx-serve",
+		"just contribute-mlx-setup", "--verify-tools", "just contribute-setup pi",
+		"just contribute-mlx", "#apple-mlx-local-inference",
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("hub contributor MLX setup missing %q", want)
+		}
+	}
+}
+
+func TestAppleMLXIsLocalInferenceIntegrationNotSignIn(t *testing.T) {
+	page, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(page)
+	start := strings.Index(body, `<p class="stack-group-label">Local AI inference</p>`)
+	if start < 0 {
+		t.Fatal("public homepage missing local AI inference group")
+	}
+	group := strings.SplitN(body[start:], `</div>`+"\n        </div>", 2)[0]
+	for _, want := range []string{`href="/contribute#apple-mlx"`, "Apple MLX", "Apple Silicon", "Pi coding agent", "not Apple", "just"} {
+		if !strings.Contains(strings.ToLower(group), strings.ToLower(want)) {
+			t.Errorf("local inference integration missing %q", want)
+		}
+	}
+	signIn := strings.SplitN(strings.SplitN(body, `<p class="stack-group-label">Sign-in</p>`, 2)[1], `</div>`, 2)[0]
+	if strings.Contains(signIn, "Apple MLX") {
+		t.Error("Apple MLX must not be presented as Apple sign-in")
+	}
+}
+
 func TestHubContributeLandingListsPublicContributorHives(t *testing.T) {
 	t.Setenv("HIVE_HUB_PUBLIC_URL", "https://hive.hivecommons.dev")
 	s := newHubServerForTest(t)

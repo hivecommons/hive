@@ -311,6 +311,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 h1{font-size:var(--fs-3xl);margin-bottom:var(--sp-4)}
 .subtitle{color:var(--text-muted);font-size:1.1rem;margin-bottom:var(--sp-9)}
 .subtitle-discord{font-size:var(--fs-md);margin-top:var(--sp-0);margin-bottom:var(--sp-9)}
+.mlx-note{display:none;margin-bottom:var(--sp-5);font-size:var(--fs-sm);color:var(--text-muted)}
 .discord-link{color:var(--cc-accent);font-weight:600}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:10px;margin-bottom:var(--sp-8)}
 .stat{background:var(--surface-2);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-4);text-align:center;box-shadow:var(--shadow-card)}
@@ -1610,13 +1611,14 @@ select.admin-act{min-width:0;max-width:100%%}
 </select>
 </span>
 <span style="display:inline-flex;align-items:center;gap:var(--sp-4);white-space:nowrap">
-<label style="font-size:.9rem;color:var(--text-muted)">Choose your CLI:</label>
+<label style="font-size:.9rem;color:var(--text-muted)">Choose your CLI / inference engine:</label>
 <!-- Keep this curated contributor list cross-checked with config/backends.conf KNOWN_BACKENDS; not every registered backend is ready for this picker. -->
 <select id="cli-select" style="background:var(--surface-2);color:var(--text);border:1px solid var(--line-strong);border-radius:var(--r);padding:var(--sp-3) var(--sp-5);font-size:.9rem;cursor:pointer">
 <option value="claude" data-install="npm i -g @anthropic-ai/claude-code" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="">Claude Code</option>
 <option value="codex" data-install="npm i -g @openai/codex" data-host-install="npm i -g @openai/codex\ncodex login --device-auth   # or export CODEX_API_KEY / OPENAI_API_KEY for API-key mode" data-model-flag="--model" data-default-model="" data-env="# Optional: Codex reasoning effort — the relay passes it as -c model_reasoning_effort.\n# export AGENT_REASONING_EFFORT=high">OpenAI Codex</option>
 <option value="copilot" data-install="" data-host-install="npm install -g @github/copilot # uses your existing gh auth" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
 <option value="pi" data-install="" data-host-install="curl -fsSL https://pi.dev/install.sh | sh" data-model-flag="--model" data-default-model="">Pi</option>
+<option value="mlx" data-install="" data-host-install="npm install -g @earendil-works/pi-coding-agent@1.4.0" data-model-flag="--model" data-default-model="">Apple MLX (Pi + local MLX-LM, Apple Silicon)</option>
 <option value="omp" data-install="curl -fsSL https://omp.sh/install.sh | sh" data-host-install="curl -fsSL https://omp.sh/install.sh | sh\nomp   # run once, finish provider setup with /login, then quit" data-model-flag="--model" data-default-model="">Oh My Pi</option>
 <option value="goose" data-install="" data-host-install="# Install Goose: https://github.com/block/goose/releases\n# Install Ollama: https://ollama.com/download\nollama pull llama3.2:3b\nexport GOOSE_PROVIDER=ollama GOOSE_MODEL=llama3.2:3b" data-model-flag="" data-default-model="">Goose</option>
 <option value="litellm" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# Your own LiteLLM proxy — exported locally, never sent to the hive\nexport HIVE_LITELLM_ENDPOINT=https://your-litellm-host:4000\nexport HIVE_LITELLM_API_KEY=sk-your-litellm-key  # only if your proxy needs one">LiteLLM (Claude Code + your proxy)</option>
@@ -1681,6 +1683,10 @@ select.admin-act{min-width:0;max-width:100%%}
 </div>
 <div id="omp-confinement-note" style="display:none;margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid #d29922;border-radius:var(--r);padding:var(--sp-5) 14px;font-size:.85rem;color:var(--text);line-height:1.5">
 <strong style="color:var(--text)">Oh My Pi (omp) has no verified local sandbox.</strong> <strong>Container</strong> mode (the default) is the supported boundary and runs the pinned <code>omp</code> binary from the contributor image. <strong>Host</strong> mode launches the CLI directly on your machine and refuses to run unless you intentionally opt out with <code>HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1</code>; use it only if you understand that trade-off.
+</div>
+<div id="pi-mlx-note" class="mlx-note">
+<h3 id="apple-mlx">Apple MLX local inference</h3>
+Choose <strong>Apple MLX</strong> above for copy-pastable installation, model verification and <code>just contribute-mlx</code> commands. Enter the exact already-downloaded model ID or absolute path (without an <code>mlx/</code> prefix) in the Model field. Requires <strong>Apple Silicon</strong>, native arm64 Node ≥22.19 and Python ≥3.10, macOS ≥14, Pi ≥1.4.0, and a tool-capable model. Intel Macs and Rosetta are unsupported. MLX-LM runs on your Mac; Pi runs coding tools in the contributor container. Docker Desktop 4.34+ host networking must be enabled by you; Kubernetes and Podman machine cannot reach Mac loopback. Models consume shared host RAM outside the relay container's limit. No automatic weight downloads, public listener, cloud fallback or memory-setting changes. The explicit setup probe runs two bounded inference requests; coding quality and live Mac inference are not certified by that probe. <a href="https://github.com/hivecommons/hive/blob/{{HIVE_BRANCH}}/src/docs/contributor-relay.md#apple-mlx-local-inference" target="_blank" rel="noopener">Setup, RAM budgeting and troubleshooting</a>. Integration names identify compatibility, not Apple endorsement.
 </div>
 <div id="multi-hub-note" style="margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid #58a6ff;border-radius:var(--r);padding:var(--sp-5) 14px;font-size:.85rem;color:var(--text);line-height:1.5">
 <strong style="color:var(--text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/hivecommons/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
@@ -1782,8 +1788,37 @@ function isHostOnly(c){return HOST_ONLY_BACKENDS.indexOf(c)>=0;}
 // openrouter/vllm/llm-d/watsonx are UI flavors of the litellm backend: the
 // Justfile only accepts 'litellm' (#6821), so every generated command must
 // say litellm while the option keeps its flavor-specific env exports.
-var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm'};
+// MLX is likewise an inference-engine flavor, backed by the Pi coding CLI.
+var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm',mlx:'pi'};
 function setupBackend(v){return SETUP_BACKEND[v]||v;}
+// MLX onboarding generator: pure so CI can execute the actual page logic.
+function mlxShellQuote(value){return "'"+String(value).replace(/'/g,"'\\''")+"'";}
+function mlxCommands(os,mode,runtime,model,hub,branch,prereq){
+  if(os!=='macos')return '# Apple MLX requires Apple Silicon and macOS 14+; Intel, Rosetta, Linux and Windows hosts are unsupported.\n# Select macOS only on a compatible Mac.';
+  if(mode!=='containerized')return '# Apple MLX onboarding uses Containerized mode with Docker Desktop 4.34+ host networking.\n# Kubernetes cannot reach Mac loopback. Native Pi has no sandbox; see the MLX docs for its separate explicit opt-in.';
+  if(runtime==='podman')return '# Podman machine localhost is its Linux VM, not the Mac.\n# Select Docker Desktop 4.34+ and enable host networking yourself; never expose MLX-LM on 0.0.0.0.';
+  var text=prereq+'\n# Apple Silicon, macOS 14+, native Python >=3.10 and Node >=22.19 required.\n'+
+    '# Install/enable Docker Desktop 4.34+ host networking yourself.\n'+
+    'git clone -b '+mlxShellQuote(branch)+' https://github.com/hivecommons/hive && cd hive\n'+
+    'npm install -g @earendil-works/pi-coding-agent@1.4.0\n'+
+    'python3 -m venv .venv-mlx\n'+
+    '.venv-mlx/bin/python -m pip install mlx-lm==0.32.2\n'+
+    'export HIVE_MLX_PYTHON="$PWD/.venv-mlx/bin/python"\n'+
+    'export HIVE_MLX_ENDPOINT=http://127.0.0.1:8080/v1\n';
+  if(!model)return text+'# Download a tool-capable model yourself within your shared-RAM budget.\n# Enter its exact ID or absolute path in the Model field above to show the serve/setup/run commands.';
+  if(!/^(?:[A-Za-z0-9]|\/)[A-Za-z0-9._/+:@~-]*$/.test(model)||model==='default_model'||model.indexOf('mlx/')===0)return text+'# Enter an explicit MLX model ID or absolute path without whitespace or an mlx/ prefix, not default_model.';
+  return text+'# No model weights are downloaded by these recipes.\n'+
+    '# In ANOTHER terminal, from this checkout, start your already-downloaded model:\n'+
+    '# HIVE_MLX_PYTHON="$PWD/.venv-mlx/bin/python" just contribute-mlx-serve '+mlxShellQuote(model)+'\n'+
+    '# Wait for the loopback server, then explicitly opt in to two bounded tool-check requests:\n'+
+    'just contribute-mlx-setup '+mlxShellQuote(model)+' --verify-tools\n'+
+    'export AGENT_MODEL='+mlxShellQuote('mlx/'+model)+'\n'+
+    'export HIVE_HUB='+mlxShellQuote(hub)+'\n'+
+    'export HIVE_CONTAINER_RUNTIME=docker\n'+
+    'just contribute-check pi\njust contribute-setup pi\njust contribute-mlx\n'+
+    '# To persist: add the AGENT_MODEL line to your existing private contributor.env after registration.\n';
+}
+// End MLX onboarding generator.
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
@@ -1808,7 +1843,16 @@ var agyNote=document.getElementById('agy-confinement-note');
 if(agyNote)agyNote.style.display=(cli==='agy')?'block':'none';
 var ompNote=document.getElementById('omp-confinement-note');
 if(ompNote)ompNote.style.display=(cli==='omp')?'block':'none';
+var mlxNote=document.getElementById('pi-mlx-note');
+if(mlxNote)mlxNote.style.display=(cli==='pi'||cli==='mlx')?'block':'none';
 modelRow.style.display=(modelFlag||cli==='goose')?'flex':'none';
+modelInput.placeholder=cli==='mlx'?'/Users/YOU/models/tool-coder or mlx-community/model':'e.g. claude-sonnet-4-6, gpt-4o';
+if(cli==='mlx'){
+  runtimeGroup.style.display=mode==='containerized'?'inline-flex':'none';
+  cmds.textContent=mlxCommands(os,mode,runtimeSel.value,model,hubURL,'{{HIVE_BRANCH}}',prereq);
+  if(typeof syncBranded==='function')syncBranded();
+  return;
+}
 var modelLine='';
 if(model){
 if(cli==='goose'){modelLine='export GOOSE_MODEL='+model+'\n';}
@@ -1878,6 +1922,7 @@ claude:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#d97757" d="M12 
 codex:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l6.93 4v8L12 20l-6.93-4V8z" fill="none" stroke="var(--vendor-openai)" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 10.5l2 1.5-2 1.5M13.5 15h3" stroke="var(--vendor-openai)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 copilot:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12.5" r="8" fill="none" stroke="#e6edf3" stroke-width="1.6"/><circle cx="9" cy="12" r="1.3" fill="#e6edf3"/><circle cx="15" cy="12" r="1.3" fill="#e6edf3"/><path d="M12 4.5V2M8 5l-1-2M16 5l1-2" stroke="#e6edf3" stroke-width="1.4" stroke-linecap="round"/></svg>',
 pi:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16" stroke="#7c93ff" stroke-width="2" stroke-linecap="round"/><path d="M9 8v10M15.5 8v7.5a2 2 0 0 0 2 2" stroke="#7c93ff" stroke-width="2" stroke-linecap="round"/></svg>',
+mlx:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 9h6v6H9zM8 2v3M16 2v3M8 19v3M16 19v3M2 8h3M2 16h3M19 8h3M19 16h3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
 goose:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#3fb0ac" d="M6 14a6 6 0 0 1 6-6c1 0 1.6.9 1 1.7 2.5.4 4 2.4 4 5.1 0 .6-.5 1.2-1.2 1.2H8.5A2.5 2.5 0 0 1 6 13.5V14Z"/><circle cx="10.5" cy="10.8" r=".8" fill="#0d1117"/><path d="M13 9.7l2.4-1" stroke="#f0b429" stroke-width="1.4" stroke-linecap="round"/></svg>',
 litellm:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="var(--status-info)" stroke-width="1.5"/><path d="M8 10l2 2-2 2M12.5 14h3.5" stroke="var(--status-info)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 openrouter:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-4 3 8 3-4h3" fill="none" stroke="#8b5cf6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -1900,6 +1945,7 @@ claude:{name:'Claude Code',tag:'Anthropic',peer:true,
 codex:{name:'Codex',tag:'OpenAI',peer:true},
 copilot:{name:'GitHub Copilot',tag:'GitHub',peer:true},
 pi:{name:'Pi',tag:'pi.dev',peer:true},
+mlx:{name:'Apple MLX',tag:'local · Apple Silicon · Pi',peer:true},
 goose:{name:'Goose',tag:'Block (Ollama)',peer:true},
 litellm:{name:'LiteLLM',tag:'your proxy',peer:true},
 openrouter:{name:'OpenRouter',tag:'your key',peer:true},
@@ -1946,6 +1992,7 @@ function buildTiles(){
 }
 function defaultPromptFor(v){
   var c=CLIENTS[v]||{name:v};
+  if(v==='mlx')return 'Help me set up LOCAL ClankeR inference with Apple MLX-LM and the Pi coding runner. Use the Apple MLX section on /contribute and its exact just recipes: contribute-mlx-serve, contribute-mlx-setup <model> --verify-tools, contribute-setup pi, contribute-mlx. Verify Apple Silicon, native Python >=3.10, macOS >=14, Pi >=1.4.0 and Docker Desktop host networking. Do not install packages, download weights, start inference, change memory settings or run the explicit tool probe without my consent. Never invent an mlx coding CLI or a hosted fallback. Hub: '+hubURL;
   return 'Help me contribute to this hive using '+c.name+' on my machine.\n'+
     'The hive hub is: '+hubURL+'\n\n'+
     'Please walk me through, step by step, using the official setup:\n'+
@@ -2020,6 +2067,7 @@ if(pbCopy&&promptText){
   });
 }
 buildTiles();
+if(window.location.hash==='#apple-mlx'){sel.value='mlx';}
 update();  // initial paint: copy block + branded UI in sync from first load
 // ── end #2548 ───────────────────────────────────────────────────────────────
 })();

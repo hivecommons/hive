@@ -164,6 +164,8 @@ stateDiagram-v2
     s060 --> s080: CI green, author side done
     s080 --> s095: lane admits, soak window running
     s080 --> s100: lane admits, no soak / soak already complete
+    s080 --> s070: current head red, changes requested or being rebased by the train (hivecommons/hive#15825; backward hop)
+    s080 --> s050: new push: CI and verdicts owed again on the current head (hivecommons/hive#15825; backward hop)
     s095 --> s100: soak complete
     s100 --> s095: pre-095 record reclassified while still soaking (not a regression)
     s050 --> s070: hive PR red / changes requested
