@@ -474,6 +474,7 @@ dashboard:
     webhook_refresh_debounce_ms: 2000
     webhook_refresh_replay_window_s: 1800   # re-apply re-reads to snapshots published meanwhile
     closed_sweep_interval_s: 300   # list items closed since the last look and evict rows still shown; -1 disables
+    waiting_push_stale_h: 4        # hours without a push on a CI / Review row before the pill's age turns muted-amber
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions
