@@ -377,8 +377,10 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 // closeIssuesAlreadyLanded closes the issues pr's closing references name
 // once the PR itself is closed as already landed: the work is on the base,
 // so the issue gets the usual close (CloseIssue's tracking-issue and
-// reporter-confirmation gates included) with a note naming the PR that
-// landed it. Failures are logged, never fatal: the PR close stands.
+// reporter-confirmation gates included), then a note naming the PR that
+// landed it — only once the close went through, so a refused close leaves
+// no "done" note on an open issue. Failures are logged, never fatal: the
+// PR close stands.
 func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name string, pr *gh.PullRequest, redundantOf int) []int {
 	repo := owner + "/" + name
 	var closed []int
@@ -391,13 +393,8 @@ func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name strin
 		if d := c.WritebackAllowed(repo, item, writeback.KindIssueClose, "close issue already landed"); !d.Allowed {
 			continue
 		}
-		note := alreadyLandedIssueNote(pr.GetNumber(), redundantOf, strings.TrimSpace(pr.GetBase().GetRef()))
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, name, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
-			if c.logger != nil {
-				c.logger.Warn("already-landed auto-close: issue note failed", slog.String("repo", repo), slog.Int("issue", number), slog.String("error", err.Error()))
-			}
-			continue
-		}
+		// Close first: CloseIssue's gates may refuse, and a "this issue is
+		// done" note must never sit on an issue that stayed open.
 		if err := c.CloseIssue(ctx, repo, number, IssueCloseOptions{StateReason: IssueStateReasonCompleted}); err != nil { // writeback:gated
 			if c.logger != nil {
 				c.logger.Warn("already-landed auto-close: issue left open", slog.String("repo", repo), slog.Int("issue", number), slog.String("error", err.Error()))
@@ -405,6 +402,10 @@ func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name strin
 			continue
 		}
 		closed = append(closed, number)
+		note := alreadyLandedIssueNote(pr.GetNumber(), redundantOf, strings.TrimSpace(pr.GetBase().GetRef()))
+		if _, _, err := c.client.Issues.CreateComment(ctx, owner, name, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil && c.logger != nil { // writeback:gated
+			c.logger.Warn("already-landed auto-close: issue note failed", slog.String("repo", repo), slog.Int("issue", number), slog.String("error", err.Error()))
+		}
 	}
 	return closed
 }
