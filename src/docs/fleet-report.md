@@ -190,7 +190,7 @@ change the agents' model — not a repeated runtime defect
 
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
-busy` (`deliverReEngagement`, `src/cmd/hive/main.go`): a saturated shared CLI
+busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI
 session pool refusing another session is backpressure. The kick can be retried
 on a later sweep and consumes no repair budget, so a burst across PRs is not a
 repeated runtime defect (hivecommons/hive#15350). Other undeliverable-kick
