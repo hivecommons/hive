@@ -85,11 +85,13 @@ var cliToollessArgs = map[string]struct {
 		// for the agents' default profile are not loaded; login comes from the
 		// auth broker (OMP_AUTH_BROKER_*), not from the profile. --no-session
 		// writes no session file and --no-title makes no extra model call.
-		// --system-prompt replaces the default coding-assistant prompt, which
-		// otherwise steers the model away from answering in the classifier's
-		// format. The prompt itself is read from stdin (-p with no text).
+		// --no-context-files skips AGENTS.md/CLAUDE.md-style context files
+		// even if the profile or cwd ever gains one. --system-prompt replaces
+		// the default coding-assistant prompt, which otherwise steers the
+		// model away from answering in the classifier's format. The prompt
+		// itself is read from stdin (-p with no text).
 		args: []string{"-p", "--mode", "text", "--no-tools", "--no-lsp", "--no-extensions",
-			"--no-skills", "--no-rules", "--no-session", "--no-title",
+			"--no-skills", "--no-rules", "--no-session", "--no-title", "--no-context-files",
 			"--profile", cliOmpProfile, "--system-prompt", cliOmpSystemPrompt},
 	},
 }

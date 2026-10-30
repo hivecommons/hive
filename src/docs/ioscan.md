@@ -191,8 +191,9 @@ and `omp`.
   carries `COPILOT_HOME` and `COPILOT_GITHUB_TOKEN` for copilot's own login
   and never `GH_TOKEN`/`GITHUB_TOKEN`, which copilot would otherwise honour.
 * **omp.** omp is launched as `omp -p --mode text --no-tools --no-lsp
-  --no-extensions --no-skills --no-rules --no-session --no-title --profile
-  hive-ioscan --system-prompt <text> [--model m]`, with the prompt on stdin.
+  --no-extensions --no-skills --no-rules --no-session --no-title
+  --no-context-files --profile hive-ioscan --system-prompt <text> [--model m]`,
+  with the prompt on stdin.
   The `hive-ioscan` profile is never configured, so no MCP server, hook or
   context file from the agents' profile loads, and the default system prompt
   is replaced. The environment adds only `OMP_AUTH_BROKER_URL` and

@@ -236,7 +236,7 @@ func TestCLIChatClientOmpLaunchIsToolless(t *testing.T) {
 
 	argv := strings.Split(strings.TrimSuffix(readRec(t, rec, "argv"), "\n"), "\n")
 	joined := strings.Join(argv, "\x00") + "\x00"
-	for _, want := range []string{"-p", "--no-tools", "--no-lsp", "--no-extensions", "--no-skills", "--no-rules", "--no-session"} {
+	for _, want := range []string{"-p", "--no-tools", "--no-lsp", "--no-extensions", "--no-skills", "--no-rules", "--no-session", "--no-title", "--no-context-files"} {
 		if !strings.Contains(joined, "\x00"+want+"\x00") {
 			t.Errorf("omp launch argv %q lacks %s", argv, want)
 		}
