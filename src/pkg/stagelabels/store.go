@@ -330,6 +330,32 @@ type Record struct {
 	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
 	// "PR in progress" while the record said 085).
 	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
+	// WaitingPushSince is when the current waiting-on-push state began:
+	// entry to 071 needs-author / 072 returned-to-contributor, or a nudge
+	// for the head the contributor last pushed (the ball went back to
+	// them). Zero while the item is not waiting on a push
+	// (hivecommons/hive#15784).
+	WaitingPushSince time.Time `json:"waiting_push_since,omitempty"`
+	// LastPushAt / LastPushSHA record the last head change the hive saw
+	// on the PR: the webhook re-read after a `pull_request` synchronize
+	// (NotePush), or the head change the enumeration noticed as a fallback
+	// (NoteActivity). A fresh waiting-on-push state clears them, so a push
+	// read against WaitingPushSince says whether the contributor acted.
+	LastPushAt  time.Time `json:"last_push_at,omitempty"`
+	LastPushSHA string    `json:"last_push_sha,omitempty"`
+}
+
+// WaitingPushStage reports whether s waits on the PR's author to push:
+// 071 needs-author (a human's PR) or 072 returned-to-contributor (a
+// clanker's). 070 fixing is the hive's own rework, not a wait on a person.
+func WaitingPushStage(s Stage) bool {
+	return s == NeedsAuthor || s == ReturnedToContributor
+}
+
+// PushedSinceWaiting reports whether a push landed after the current
+// waiting-on-push state began: the ball is back with the hive.
+func (r Record) PushedSinceWaiting() bool {
+	return !r.WaitingPushSince.IsZero() && !r.LastPushAt.IsZero() && !r.LastPushAt.Before(r.WaitingPushSince)
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -655,6 +681,17 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 		next.ReasonChangedAt = now
 	}
 	switch {
+	case !WaitingPushStage(stage):
+		next.WaitingPushSince = time.Time{}
+	case !had || !WaitingPushStage(prev.Stage):
+		// A fresh wait on the author: the push that came before it is
+		// history, not progress on this wait.
+		next.WaitingPushSince = now
+		next.LastPushAt, next.LastPushSHA = time.Time{}, ""
+	case next.WaitingPushSince.IsZero():
+		next.WaitingPushSince = next.EnteredAt
+	}
+	switch {
 	case had && prev.Stage != None && !progress && IsRegression(prev.Stage, stage):
 		// Backwards. A second fall while still regressed keeps the ORIGINAL
 		// high-water mark so the narration names where the item first fell
@@ -763,6 +800,14 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at
 	}
+	// The enumeration's fallback for a push the webhook re-read missed: a
+	// head that moved from the one last observed. A wait on the author
+	// that began on this same observation is a wait ON that head, not a
+	// push answering it.
+	freshWait := WaitingPushStage(r.Stage) && !r.WaitingPushSince.IsZero() && r.WaitingPushSince.Equal(r.LastSeen)
+	if a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead && a.Head != r.LastPushSHA && !freshWait {
+		r.LastPushAt, r.LastPushSHA = at, a.Head
+	}
 	if changed {
 		r.HiveHeldWarned = false
 	}
@@ -782,6 +827,31 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	}
 	s.items[key] = r
 	return changed
+}
+
+// NotePush records that key's PR head moved to sha at at, as read by the
+// webhook re-read after a `pull_request` synchronize. A head the record
+// already knows (the one last observed by the enumeration, or the last
+// push recorded) is not a push, and nor is any head on a record with no
+// observed head yet: there is nothing to compare it with. It reports
+// whether a push was recorded.
+func (s *Store) NotePush(key, sha string, at time.Time) bool {
+	if s == nil || sha == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.ActivityHead == "" || sha == r.ActivityHead || sha == r.LastPushSHA {
+		return false
+	}
+	if now := s.now(); at.IsZero() || at.After(now) {
+		at = now
+	}
+	r.LastPushAt, r.LastPushSHA = at, sha
+	s.items[key] = r
+	s.dirty = true
+	return true
 }
 
 // CountOwnComments records that the hive itself posted n comments on key,
@@ -1009,6 +1079,12 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	r, ok := s.items[key]
 	if !ok {
 		return
+	}
+	if head != "" && r.LastPushSHA == head && WaitingPushStage(r.Stage) {
+		// Nudged about the head the contributor pushed: that push did not
+		// settle it, so a fresh wait on them begins (hivecommons/hive#15784).
+		r.WaitingPushSince = now
+		r.LastPushAt, r.LastPushSHA = time.Time{}, ""
 	}
 	if r.NudgeHead != head {
 		r.NudgeCount = 0

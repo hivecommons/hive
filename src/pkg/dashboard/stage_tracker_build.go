@@ -119,6 +119,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				t2 := rec.LastNudgeAt
 				it.LastNudgeAt = &t2
 			}
+			stageTrackerPushProgress(it, rec)
 			it.AdoptedBy = rec.AdoptedBy
 			it.AdoptedByState = stageTrackerAdoptedByState(rec)
 			it.SupersededBy = stageTrackerSupersededBy(rec)

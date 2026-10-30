@@ -471,6 +471,15 @@ type StageTrackerItem struct {
 	NudgeCount  int                      `json:"nudge_count,omitempty"`
 	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
 	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	// WaitingPushSince, LastPushAt / LastPushSHA and PushedSinceWaiting
+	// carry the stage record's push progress (stageTrackerPushProgress,
+	// hivecommons/hive#15784): when the wait on the author's push began,
+	// the last push the hive saw, and whether it landed after that wait
+	// began — the ball is back with the hive.
+	WaitingPushSince   *time.Time `json:"waiting_push_since,omitempty"`
+	LastPushAt         *time.Time `json:"last_push_at,omitempty"`
+	LastPushSHA        string     `json:"last_push_sha,omitempty"`
+	PushedSinceWaiting bool       `json:"pushed_since_waiting,omitempty"`
 	// AdoptedByState qualifies AdoptedBy when the hive's copy is not simply
 	// open (hivecommons/hive#15052): "closed" — the copy was closed without
 	// merging and the hive is re-adopting; "closed-twice" — two copies were
