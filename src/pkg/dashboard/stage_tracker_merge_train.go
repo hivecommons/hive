@@ -383,7 +383,7 @@ func stageTrackerSoakLeftOf(it *StageTrackerItem, now time.Time) time.Duration {
 }
 
 // mergeTrainEtaBasis is the short plain-English reading of the estimate:
-// "2 ahead · head soaking 12m · next sweep in 40s".
+// "2 ahead · head soaking 12m · next pass in 40s".
 func mergeTrainEtaBasis(aheadN int, headState string, headLeft, own, tick time.Duration, sweeping bool) string {
 	var parts []string
 	switch aheadN {
@@ -403,9 +403,9 @@ func mergeTrainEtaBasis(aheadN int, headState string, headLeft, own, tick time.D
 		parts = append(parts, "own soak "+shortDuration(own))
 	}
 	if sweeping {
-		parts = append(parts, "sweep running")
+		parts = append(parts, "pass running")
 	} else if tick > 0 {
-		parts = append(parts, "next sweep in "+shortDuration(tick))
+		parts = append(parts, "next pass in "+shortDuration(tick))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -422,7 +422,7 @@ func mergeTrainHeadState(head *StageTrackerItem, now time.Time) (state, reason s
 		return mergeTrainHeadMerging, "merging now", 0, true
 	}
 	if mg != nil && mg.State == MergeGateStateMergeFailed {
-		return mergeTrainHeadReady, "GitHub refused the last merge; hive retries on its next sweep", 0, false
+		return mergeTrainHeadReady, "GitHub refused the last merge; hive retries on its next pass", 0, false
 	}
 	switch head.Stage {
 	case trackerNumberReadyForHuman:
@@ -446,7 +446,7 @@ func mergeTrainHeadState(head *StageTrackerItem, now time.Time) (state, reason s
 		if left > 0 {
 			return mergeTrainHeadSoaking, "soaking, " + shortDuration(left) + " left", left, true
 		}
-		return mergeTrainHeadSoaking, "soaked; hive merges it on its next sweep", 0, true
+		return mergeTrainHeadSoaking, "soaked; hive merges it on its next pass", 0, true
 	case trackerNumberReviewed, trackerNumberReviewPending:
 		return mergeTrainHeadCI, "waiting for CI", 0, false
 	case trackerNumberFixing, trackerNumberReturned, trackerNumberNeedsAuthor:
@@ -463,7 +463,7 @@ func mergeTrainHeadState(head *StageTrackerItem, now time.Time) (state, reason s
 	if mg != nil && mg.NextSweepAt != nil && mg.NextSweepAt.After(now) {
 		next = mg.NextSweepAt.Sub(now)
 	}
-	return mergeTrainHeadReady, "approved and green; merges on hive's next sweep", next, true
+	return mergeTrainHeadReady, "approved and green; merges on hive's next pass", next, true
 }
 
 // shortDuration is "12m" / "1h 05m" / "45s" for the chip's words.
