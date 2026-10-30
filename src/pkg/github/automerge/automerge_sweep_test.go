@@ -28,6 +28,8 @@ type sweepPR struct {
 	reviewAuthor    string
 	reviewState     string
 	headSHA         string
+	baseRef         string
+	baseSHA         string
 	reviewCommitID  *string
 	label           bool
 	extraLabels     []string
@@ -2941,6 +2943,8 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 						"repo": map[string]string{"full_name": headRepo},
 					},
 					"base": map[string]any{
+						"ref":  pr.baseRef,
+						"sha":  pr.baseSHA,
 						"repo": map[string]string{"full_name": "acme/widget"},
 					},
 					"labels": issueLabels(expectedLabel, pr.extraLabels),
@@ -2997,7 +3001,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"mergeable":       pr.mergeableState == "clean",
 				"user":            map[string]string{"login": pr.author},
 				"head":            map[string]any{"sha": headSHA, "repo": map[string]string{"full_name": headRepo}},
-				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
+				"base":            map[string]any{"ref": pr.baseRef, "sha": pr.baseSHA, "repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          prLabels,
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status") && hasShaNumber(r.URL.Path):
