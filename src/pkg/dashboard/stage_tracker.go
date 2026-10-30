@@ -76,6 +76,10 @@ type StageTrackerResponse struct {
 	// filter cannot disagree.
 	NeedsHuman int `json:"needs_human"`
 	OnHold     int `json:"on_hold"`
+	// WaitingOnHuman lists the items parked on the operator / maintainers
+	// (stage_tracker_waiting.go): the sidebar badge, topbar pill and
+	// toast read it so a human wait is never silent.
+	WaitingOnHuman StageTrackerWaitingOnHuman `json:"waiting_on_human"`
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
@@ -327,6 +331,12 @@ type StageTrackerItem struct {
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`
+	// WaitingOnYou is true when the item is parked on the signed-in
+	// operator / maintainers (stage_tracker_waiting.go); WaitKind names
+	// why (needs-decision, ready-for-human-merge, approve-needed,
+	// returned-to-contributor-offline, other-human-wait).
+	WaitingOnYou bool   `json:"waiting_on_you,omitempty"`
+	WaitKind     string `json:"wait_kind,omitempty"`
 	// Hold says who set the `hold` label and why, when the stage-label
 	// pass could read it (hivecommons/hive#15020): the pill then reads
 	// "Held by hive · reporter trust (issue #N by @X, contributor)" or
@@ -2441,6 +2451,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	applyRebaseAttempts(resp.Items)
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
+	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
