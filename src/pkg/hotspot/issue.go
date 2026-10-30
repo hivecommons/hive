@@ -7,21 +7,29 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueshape"
 )
 
 // Labels applied to every modularize issue. Both exist on hivecommons/hive;
 // the writer's label-ensure step creates them elsewhere.
 var Labels = []string{"agent/ci-maintainer", "kind/cleanup"}
 
-// Title is the issue title for a hotspot.
+// Title is the issue title for a hotspot. The governor's hotspot advisor
+// files it, so it carries the `[governor]` tag every hive-filed issue title
+// starts with; the agent/ci-maintainer label says who works it.
 func Title(h Hotspot, units int) string {
+	var title string
 	switch h.Recommendation {
 	case RecommendSplitSource:
-		return fmt.Sprintf("refactor: %s is a merge hotspot — split its source %s into %d units", h.File, strings.TrimSuffix(h.GeneratedFrom, "/"), units)
+		title = fmt.Sprintf("refactor: %s is a merge hotspot — split its source %s into %d units", h.File, strings.TrimSuffix(h.GeneratedFrom, "/"), units)
 	case RecommendSplitDoc:
-		return fmt.Sprintf("refactor: %s is a merge hotspot — split into %d sections", h.File, units)
+		title = fmt.Sprintf("refactor: %s is a merge hotspot — split into %d sections", h.File, units)
+	default:
+		title = fmt.Sprintf("refactor: %s is a merge hotspot — split into %d units", h.File, units)
 	}
-	return fmt.Sprintf("refactor: %s is a merge hotspot — split into %d units", h.File, units)
+	return issueshape.TitleFor(config.OriginSourceGovernor, title)
 }
 
 // Body renders the issue body: plain-language summary (≤ 300 words),
@@ -205,8 +213,8 @@ type IssueStater interface {
 	HotspotIssueState(ctx context.Context, repo string, number int) (open bool, closedAt time.Time, err error)
 }
 
-// Filer turns actionable hotspots into issues with the dedupe and refile
-// rules applied.
+// Filer turns actionable hotspots into issues with the dedupe, refile and
+// open-issue cap rules applied.
 type Filer struct {
 	Store   *Store
 	Gate    Gate
@@ -214,21 +222,29 @@ type Filer struct {
 	Stater  IssueStater
 	Opts    Options
 	Refile  time.Duration
-	Now     func() time.Time
-	Logf    func(format string, args ...any)
+	// MaxOpen caps the modularize issues that may be open for a repo at
+	// once; no new one is filed while that many are open (0 = default).
+	MaxOpen int
+	// MaxPerPass caps the issues one File call may open (0 = default).
+	MaxPerPass int
+	Now        func() time.Time
+	Logf       func(format string, args ...any)
 }
 
 // Outcome is what File decided for one hotspot.
 type Outcome struct {
 	File   string
-	Action string // "filed", "open", "refile-wait", "gated", "skip", "error"
+	Action string // "filed", "open", "refile-wait", "capped", "gated", "skip", "error"
 	Number int
 	Err    error
 }
 
-// File walks hotspots and files at most one new issue per actionable file.
-// It is safe to call every eval cycle: existing issues are checked, closed
-// ones wait Refile before a new one may be opened.
+// File walks hotspots (highest score first) and files at most one new
+// issue per actionable file, at most MaxPerPass per call, and none while
+// MaxOpen issues it filed earlier are still open. It is safe to call every
+// eval cycle: existing issues are checked, closed ones wait Refile before a
+// new one may be opened, and the next-ranked hotspot is filed when a slot
+// frees.
 func (f *Filer) File(ctx context.Context, repo string, hs []Hotspot) []Outcome {
 	now := time.Now
 	if f.Now != nil {
@@ -238,10 +254,20 @@ func (f *Filer) File(ctx context.Context, repo string, hs []Hotspot) []Outcome {
 	if refile <= 0 {
 		refile = time.Duration(DefaultHotspotRefileDays) * 24 * time.Hour
 	}
+	maxOpen := f.MaxOpen
+	if maxOpen <= 0 {
+		maxOpen = DefaultHotspotMaxOpen
+	}
+	maxPerPass := f.MaxPerPass
+	if maxPerPass <= 0 {
+		maxPerPass = DefaultHotspotMaxPerPass
+	}
 	logf := f.Logf
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	filedThisPass := 0
+	cappedLogged := false
 	var out []Outcome
 	for _, h := range hs {
 		if !h.Actionable() {
@@ -272,6 +298,14 @@ func (f *Filer) File(ctx context.Context, repo string, hs []Hotspot) []Outcome {
 				continue
 			}
 		}
+		if open := f.Store.OpenIssues(repo); open >= maxOpen || filedThisPass >= maxPerPass {
+			if !cappedLogged {
+				logf("hotspot: %s: not filing for %s — %d modularize issue(s) open (cap %d), %d filed this pass (cap %d)", repo, h.File, open, maxOpen, filedThisPass, maxPerPass)
+				cappedLogged = true
+			}
+			out = append(out, Outcome{File: h.File, Action: "capped"})
+			continue
+		}
 		if f.Gate != nil && !f.Gate.IssueFileAllowed(repo, h.File) {
 			out = append(out, Outcome{File: h.File, Action: "gated"})
 			continue
@@ -288,11 +322,20 @@ func (f *Filer) File(ctx context.Context, repo string, hs []Hotspot) []Outcome {
 			continue
 		}
 		f.Store.RecordIssue(IssueRecord{Repo: repo, File: h.File, Number: num, URL: url, FiledAt: now()})
+		filedThisPass++
 		logf("hotspot: filed %s#%d for %s", repo, num, h.File)
 		out = append(out, Outcome{File: h.File, Action: "filed", Number: num})
 	}
 	return out
 }
 
-// DefaultHotspotRefileDays mirrors config.DefaultHotspotRefileDays.
-const DefaultHotspotRefileDays = 30
+// Defaults mirroring config.DefaultHotspot*.
+const (
+	DefaultHotspotRefileDays = 30
+	// DefaultHotspotMaxOpen caps open modularize issues per repo so the
+	// advisor cannot flood the work queue (hivecommons/hive: five filed in
+	// one pass while three older ones still had PRs in flight).
+	DefaultHotspotMaxOpen = 2
+	// DefaultHotspotMaxPerPass caps new issues per File call.
+	DefaultHotspotMaxPerPass = 1
+)

@@ -3,6 +3,7 @@ package hotspot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -283,7 +284,7 @@ func TestFilerDedupeAndRefileWindow(t *testing.T) {
 	if !strings.HasPrefix(cr.body, Marker(h.File)) {
 		t.Errorf("body must start with dedupe marker, got %q", cr.body[:60])
 	}
-	if cr.title != "refactor: pkg/dashboard/api.go is a merge hotspot — split into 4 units" {
+	if cr.title != "[governor] refactor: pkg/dashboard/api.go is a merge hotspot — split into 4 units" {
 		t.Errorf("title=%q", cr.title)
 	}
 	if strings.Join(cr.labels, ",") != "agent/ci-maintainer,kind/cleanup" {
@@ -360,7 +361,7 @@ func TestBodyGolden(t *testing.T) {
 	if !strings.Contains(gb, "**generated**") || strings.Contains(gb, "## Split proposal") {
 		t.Errorf("generated body wrong:\n%s", gb)
 	}
-	if got := Title(gen, 4); got != "refactor: pkg/dashboard/static/index.html is a merge hotspot — split its source pkg/dashboard/static-src into 4 units" {
+	if got := Title(gen, 4); got != "[governor] refactor: pkg/dashboard/static/index.html is a merge hotspot — split its source pkg/dashboard/static-src into 4 units" {
 		t.Errorf("generated title=%q", got)
 	}
 }
@@ -469,5 +470,83 @@ func TestGeneratedWithSplitSourceIsReportOnly(t *testing.T) {
 				t.Errorf("n=%d: report-only hotspot is actionable", c.n)
 			}
 		}
+	}
+}
+
+// TestFilerOpenAndPerPassCaps pins the flood guard: with three ranked
+// hotspots and the default caps (2 open, 1 per pass) the filer opens one
+// issue per pass, stops at two open, and fills the slot with the next
+// highest-ranked hotspot only after one closes — logging once per pass.
+func TestFilerOpenAndPerPassCaps(t *testing.T) {
+	store, err := NewStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := day(0)
+	now := func() time.Time { return clock }
+	store.SetClock(now)
+	cr := &fakeCreator{}
+	st := &fakeStater{open: true}
+	var logs []string
+	f := &Filer{Store: store, Creator: cr, Stater: st, Now: now, Refile: 30 * 24 * time.Hour,
+		Logf: func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }}
+	ctx := context.Background()
+	a, b, c := hot(), hot(), hot()
+	b.File, c.File = "pkg/b.go", "pkg/c.go"
+	hs := []Hotspot{a, b, c}
+
+	actions := func(out []Outcome) string {
+		var s []string
+		for _, o := range out {
+			s = append(s, o.Action)
+		}
+		return strings.Join(s, ",")
+	}
+	capLogs := func() int {
+		n := 0
+		for _, l := range logs {
+			if strings.Contains(l, "not filing") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Pass 1: per-pass cap → only the top-ranked file is filed.
+	if got := actions(f.File(ctx, "o/r", hs)); got != "filed,capped,capped" || cr.calls != 1 {
+		t.Fatalf("pass 1: %s calls=%d", got, cr.calls)
+	}
+	if capLogs() != 1 {
+		t.Fatalf("pass 1: want one cap log line, got %q", logs)
+	}
+	// Pass 2: a is open, one slot left → b filed, c capped.
+	if got := actions(f.File(ctx, "o/r", hs)); got != "open,filed,capped" || cr.calls != 2 {
+		t.Fatalf("pass 2: %s calls=%d", got, cr.calls)
+	}
+	// Pass 3: two open → c stays capped, nothing filed.
+	if got := actions(f.File(ctx, "o/r", hs)); got != "open,open,capped" || cr.calls != 2 {
+		t.Fatalf("pass 3: %s calls=%d", got, cr.calls)
+	}
+	if capLogs() != 3 {
+		t.Fatalf("want exactly one cap log per pass, got %d in %q", capLogs(), logs)
+	}
+	if n := store.OpenIssues("o/r"); n != 2 {
+		t.Fatalf("OpenIssues=%d", n)
+	}
+
+	// a's issue closes → slot frees → c (next ranked) is filed; a waits refile.
+	st.open, st.closedAt = false, day(1)
+	clock = day(2)
+	if got := actions(f.File(ctx, "o/r", hs)); got != "refile-wait,refile-wait,filed" || cr.calls != 3 {
+		t.Fatalf("pass 4: %s calls=%d", got, cr.calls)
+	}
+
+	// Raised caps: fresh store, both remaining files land in one pass.
+	store2, _ := NewStore("")
+	store2.SetClock(now)
+	cr2 := &fakeCreator{}
+	f2 := &Filer{Store: store2, Creator: cr2, Stater: &fakeStater{open: true}, Now: now, MaxOpen: 3, MaxPerPass: 2}
+	if got := actions(f2.File(ctx, "o/r", hs)); got != "filed,filed,capped" || cr2.calls != 2 {
+		t.Fatalf("raised caps: %s calls=%d", got, cr2.calls)
 	}
 }

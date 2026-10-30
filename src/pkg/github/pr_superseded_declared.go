@@ -29,21 +29,36 @@ var supersedesLinePattern = regexp.MustCompile(`(?i)\bsupersedes\b:?([^\n]*)`)
 
 var supersedesNumberPattern = regexp.MustCompile(`#(\d+)`)
 
-// bodyDeclaresSupersedes reports whether body states that it supersedes
-// PR number.
-func bodyDeclaresSupersedes(body string, number int) bool {
-	if number <= 0 {
-		return false
-	}
+// SupersedesDeclared returns the PR numbers body states it supersedes
+// (`Supersedes #N`), in order of first appearance, de-duplicated. An
+// adoption copy's body names its original this way.
+func SupersedesDeclared(body string) []int {
+	seen := map[int]bool{}
+	var out []int
 	for _, m := range supersedesLinePattern.FindAllStringSubmatch(body, -1) {
 		rest := m[1]
 		if i := strings.IndexAny(rest, "·;("); i >= 0 {
 			rest = rest[:i]
 		}
 		for _, n := range supersedesNumberPattern.FindAllStringSubmatch(rest, -1) {
-			if v, err := strconv.Atoi(n[1]); err == nil && v == number {
-				return true
+			if v, err := strconv.Atoi(n[1]); err == nil && v > 0 && !seen[v] {
+				seen[v] = true
+				out = append(out, v)
 			}
+		}
+	}
+	return out
+}
+
+// bodyDeclaresSupersedes reports whether body states that it supersedes
+// PR number.
+func bodyDeclaresSupersedes(body string, number int) bool {
+	if number <= 0 {
+		return false
+	}
+	for _, v := range SupersedesDeclared(body) {
+		if v == number {
+			return true
 		}
 	}
 	return false
