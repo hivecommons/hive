@@ -156,12 +156,13 @@ func isIssueCreateRESTWrite(method, path string) bool {
 
 // injectOriginLabel ensures an agent's issue-create JSON body carries the
 // canonical agent/<lane> label and no redundant origin/<lane> or bare <lane>
-// label, so an issue filed with `gh issue create` through the proxy records
-// the same provenance as one filed through the issue-request watcher. The
-// body is returned unchanged (ok=false) for other routes, an unidentified
-// caller, a body that is not a JSON object, or a labels field in an unexpected
-// shape (GitHub accepts label objects too; those are forwarded as written
-// rather than guessed at).
+// label, and that its title starts with the `[<lane>]` tag every hive-filed
+// issue carries, so an issue filed with `gh issue create` through the proxy
+// records the same provenance as one filed through the issue-request
+// watcher. The body is returned unchanged (ok=false) for other routes, an
+// unidentified caller, a body that is not a JSON object, or a labels field in
+// an unexpected shape (GitHub accepts label objects too; those are forwarded
+// as written rather than guessed at).
 func injectOriginLabel(method, path string, body []byte, agentName string) ([]byte, bool) {
 	lane := config.OriginLaneFromAgent(agentName)
 	if lane == "" || agentName == internalCallerName || !isIssueCreateRESTWrite(method, path) {
@@ -171,22 +172,37 @@ func injectOriginLabel(method, path string, body []byte, agentName string) ([]by
 	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
 		return body, false
 	}
+	changed := false
 	var labels []string
 	if raw, present := payload["labels"]; present && len(bytes.TrimSpace(raw)) > 0 && string(bytes.TrimSpace(raw)) != "null" {
 		if err := json.Unmarshal(raw, &labels); err != nil {
 			return body, false
 		}
 	}
-	filtered := config.WithIssueOriginLabel(labels, lane)
-	if sameLabels(labels, filtered) {
+	if filtered := config.WithIssueOriginLabel(labels, lane); !sameLabels(labels, filtered) {
+		encoded, err := json.Marshal(filtered)
+		if err != nil {
+			return body, false
+		}
+		payload["labels"] = encoded
+		changed = true
+	}
+	if raw, present := payload["title"]; present {
+		var title string
+		if err := json.Unmarshal(raw, &title); err == nil && title != "" {
+			if tagged := issueshape.TitleFor(lane, title); tagged != title {
+				encoded, err := json.Marshal(tagged)
+				if err != nil {
+					return body, false
+				}
+				payload["title"] = encoded
+				changed = true
+			}
+		}
+	}
+	if !changed {
 		return body, false
 	}
-	labels = filtered
-	encoded, err := json.Marshal(labels)
-	if err != nil {
-		return body, false
-	}
-	payload["labels"] = encoded
 	rewritten, err := json.Marshal(payload)
 	if err != nil {
 		return body, false
