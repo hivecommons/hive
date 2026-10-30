@@ -91,6 +91,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	isClankerOwner := stageTrackerIsClankerOwner()
 	adoptionClock := s.stageTrackerAdoptionClock()
 	rerouteCandidates := s.stageTrackerRerouteCandidates()
+	pushStaleAfter := s.stageTrackerWaitingPushStale()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -191,7 +192,24 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.Caption = stageTrackerAdoptionCaption(it.Caption, it.Adoption)
 			}
 		}
-		if login := stageTrackerWaitingOn(*it, stage); login != "" {
+		it.Push = stageTrackerPushFor(*it, stage, rec, hasRec, pushStaleAfter, now)
+		pushed := it.Push != nil && it.Push.State == pushStatePushed
+		if pushed {
+			// The ball is back with the hive: the row says what the push
+			// queued, and its note ages from the push (a new hive line).
+			it.Caption = stageTrackerPushCaption(it.Push, now)
+			if it.NoteChangedAt == nil || it.Push.Since.After(*it.NoteChangedAt) {
+				at := *it.Push.Since
+				it.NoteChangedAt = &at
+			}
+		}
+		// A pushed row no longer waits on its author: no presence marker,
+		// no rework pickup word, no adoption clock — the pill names the
+		// push instead.
+		if pushed {
+			it.Adoption = nil
+		}
+		if login := stageTrackerWaitingOn(*it, stage); login != "" && !pushed {
 			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
 			it.Rework = stageTrackerReworkFor(*it, login, stage, rec, hasRec, fixWork, now)
 		}

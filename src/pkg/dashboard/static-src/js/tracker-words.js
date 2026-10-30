@@ -216,8 +216,94 @@
       const p = stageTrackerPresenceOf(item);
       if (!p || stageTrackerAdoptionTip(item)) return '';
       const ptip = stageTrackerPresenceTip(item, Date.now());
-      const tip = typeof stageTrackerReworkJoinTip === 'function' ? stageTrackerReworkJoinTip(ptip, item, Date.now()) : ptip;
-      return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc(tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}</span>`;
+      const rtip = typeof stageTrackerReworkJoinTip === 'function' ? stageTrackerReworkJoinTip(ptip, item, Date.now()) : ptip;
+      // The wait's age rides last on the pill, muted-amber once stale
+      // (hivecommons/hive#15784). Guarded: the harnesses load by name.
+      const wait = typeof stageTrackerPushWaitHtml === 'function' ? stageTrackerPushWaitHtml(item, Date.now()) : '';
+      const wtip = typeof stageTrackerPushTip === 'function' ? stageTrackerPushTip(item, Date.now()) : '';
+      const tip = wtip ? rtip + ' · ' + wtip : rtip;
+      return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc(tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}${wait}</span>`;
+    }
+
+    // Push progress on a CI / Review row (`push`: {state, login, since, sha,
+    // url, next, stale} — hivecommons/hive#15784). The chevron keeps the
+    // stage; the gray pill carries the push:
+    //   waiting — the hive waits for the author's push; the pill ends with
+    //             the wait's age ("waiting on @zoe to push · 38m"), amber
+    //             once past dashboard.stage_tracker.waiting_push_stale_h.
+    //   pushed  — a head landed and CI / the re-review for it still run:
+    //             "@zoe pushed abc1234 · 2m" (links to the commit); on an
+    //             adopted row the lineage chip says "· pushed 2m ago"
+    //             instead. The presence marker goes: the ball is back with
+    //             the hive.
+    const STAGE_TRACKER_PUSH_NEXT = { ci: 'CI running', 're-review': 're-review queued' };
+    function stageTrackerPushOf(item) {
+      const p = item && item.kind === 'pr' ? item.push : null;
+      if (!p || (p.state !== 'waiting' && p.state !== 'pushed')) return null;
+      return p;
+    }
+    // Pure: whether the author's push has landed — the row is the hive's again.
+    function stageTrackerPushedBack(item) {
+      const p = stageTrackerPushOf(item);
+      return !!(p && p.state === 'pushed');
+    }
+    // Pure: the short age of the state ("38m", "2h"); '' without a time.
+    function stageTrackerPushAge(p, nowMs) {
+      const at = Date.parse((p && p.since) || '');
+      return at > 0 ? stageTrackerAgoText(at, nowMs).replace(/ ago$/, '') : '';
+    }
+    function stageTrackerPushSha(p) {
+      return String((p && p.sha) || '').slice(0, 7);
+    }
+    // " · 38m" for the waiting pill, the age wrapped so a stale wait can take
+    // the muted-amber tone; '' unless the row waits.
+    function stageTrackerPushWaitHtml(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p || p.state !== 'waiting') return '';
+      const age = stageTrackerPushAge(p, nowMs);
+      if (!age) return '';
+      return ' · <span class="ham-push-age' + (p.stale ? ' ham-push-stale' : '') + '">' + esc(age) + '</span>';
+    }
+    // Pure: "@zoe pushed abc1234 · 2m"; '' unless the push landed.
+    function stageTrackerPushChipText(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p || p.state !== 'pushed') return '';
+      const sha = stageTrackerPushSha(p);
+      const age = stageTrackerPushAge(p, nowMs);
+      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (age ? ' · ' + age : '');
+    }
+    // Pure: whether the row's lineage chip (adopted / rebased copy) carries
+    // the push instead of a pill of its own.
+    function stageTrackerPushOnLineage(item) {
+      const l = item && item.lineage;
+      return !!(l && l.kind && l.kind !== 'superseded' && Number(l.from_number) > 0);
+    }
+    // Pure: " · pushed 2m ago" for the lineage chip; '' unless pushed.
+    function stageTrackerPushLineageSuffix(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p || p.state !== 'pushed' || !stageTrackerPushOnLineage(item)) return '';
+      const at = Date.parse(p.since || '');
+      const ago = at > 0 ? stageTrackerAgoText(at, nowMs) : '';
+      return ' · pushed' + (ago ? ' ' + ago : '');
+    }
+    // Pure: the hover line — how long the hive has waited, or what the push queued.
+    function stageTrackerPushTip(item, nowMs) {
+      const p = stageTrackerPushOf(item);
+      if (!p) return '';
+      const at = Date.parse(p.since || '');
+      const when = at > 0 ? stageTrackerAgoText(at, nowMs) + ' (' + agentNowClockTime(at, nowMs) + ')' : '';
+      const who = p.login ? '@' + p.login : 'the author';
+      if (p.state === 'waiting') return 'waiting for ' + who + ' to push' + (when ? ' since ' + when : '') + (p.stale ? ' · no push for a long time' : '');
+      const next = STAGE_TRACKER_PUSH_NEXT[p.next] || STAGE_TRACKER_PUSH_NEXT.ci;
+      return who + ' pushed' + (stageTrackerPushSha(p) ? ' ' + stageTrackerPushSha(p) : '') + (when ? ' ' + when : '') + ' · ' + next;
+    }
+    function stageTrackerPushChipHtml(item, nowMs) {
+      const text = stageTrackerPushChipText(item, nowMs);
+      if (!text || stageTrackerPushOnLineage(item)) return '';
+      const p = stageTrackerPushOf(item);
+      const tip = stageTrackerPushTip(item, nowMs);
+      const attrs = `class="ham-badge ham-badge-waiting ham-badge-push" title="${esc(tip)}" aria-label="${esc(tip)}"`;
+      return p.url ? `<a ${attrs} href="${esc(p.url)}" target="_blank" rel="noopener">${esc(text)}</a>` : `<span ${attrs}>${esc(text)}</span>`;
     }
 
     // Rework pickup on a returned PR (`rework`: {state, actor, requested_at,
