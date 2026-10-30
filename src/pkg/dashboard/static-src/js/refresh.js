@@ -523,6 +523,7 @@
       if (hiveIdBadge) hiveIdBadge.textContent = hiveId;
       const ocHiveId = document.getElementById('oc-hive-id');
       if (ocHiveId) ocHiveId.textContent = hiveId;
+      if (typeof stageTrackerPopoutSyncTitle === 'function') stageTrackerPopoutSyncTitle(hiveId);
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderProviderStrip(document.getElementById('oc-providers'), data.providers);
