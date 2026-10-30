@@ -693,7 +693,7 @@
       /* Scheduled-upgrade progress pill, history badge and interrupt action
          on the hive card's Version cell (#14950). */
       .upgrade-progress-pill { display: inline-block; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-size: var(--fs-2xs); background: var(--surface); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
-      .upgrade-progress-pill.is-draining { color: var(--amber); }
+      .upgrade-progress-pill.is-draining, .upgrade-progress-pill.is-delayed { color: var(--amber); }
       .upgrade-progress-pill.is-missed, .upgrade-progress-pill.has-missed { color: var(--red); }
       .upgrade-progress-pill.is-done { color: var(--green); }
       .upgrade-progress-history { margin-left: var(--sp-2); cursor: help; }
@@ -9940,8 +9940,8 @@
        window is never silent. Only the states that mean "something is
        happening or went wrong" get a pill; a plain "scheduled" row looks as
        it does today (the auto-upgrade line already says when). */
-    var UPGRADE_PROGRESS_PILL_STATES = {draining: 1, pulling: 1, rolling: 1, verifying: 1, missed: 1};
-    var UPGRADE_PROGRESS_LABELS = {scheduled: 'Scheduled', draining: 'Draining', pulling: 'Pulling', rolling: 'Rolling', verifying: 'Verifying', done: 'Upgraded', missed: 'Missed window'};
+    var UPGRADE_PROGRESS_PILL_STATES = {delayed: 1, draining: 1, pulling: 1, rolling: 1, verifying: 1, missed: 1};
+    var UPGRADE_PROGRESS_LABELS = {scheduled: 'Scheduled', delayed: 'Delayed', draining: 'Draining', pulling: 'Pulling', rolling: 'Rolling', verifying: 'Verifying', done: 'Upgraded', missed: 'Missed window'};
     var UPGRADE_HISTORY_MAX_ROWS = 14;
 
     function upgradeProgressLabel(state) {
@@ -9964,9 +9964,15 @@
     function renderUpgradeHistory(h) {
       var rows = (h && h.upgradeHistory) || [];
       if (!rows.length) return '';
-      var missed = 0;
+      var succeededAt = rows.reduce(function(latest, a) {
+        return a.outcome === 'done' ? Math.max(latest, Date.parse(a.endedAt) || 0) : latest;
+      }, 0);
+      var missed = rows.filter(function(a) {
+        return a.outcome === 'missed' && a.trigger !== 'window' &&
+          (Date.parse(a.endedAt || a.startedAt) || 0) > succeededAt;
+      }).length;
+      if (!missed) return '';
       var lines = rows.slice(0, UPGRADE_HISTORY_MAX_ROWS).map(function(a) {
-        if (a.outcome === 'missed') missed++;
         var when = a.endedAt && a.endedAt !== '0001-01-01T00:00:00Z' ? a.endedAt : a.startedAt;
         var d = when ? new Date(when) : null;
         var ts = d && !isNaN(d.getTime()) ? d.toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : '?';
@@ -9998,7 +10004,7 @@
         var left = typeof st.drainRemainingS === 'number' && st.drainRemainingS > 0 ? formatUpgradeElapsed(st.drainRemainingS * 1000) + ' left' : 'deadline reached';
         extra = ' · ' + left;
         if (agents) tipExtra = '\n' + agents;
-      } else if (st.state === 'missed' && st.reason) {
+      } else if ((st.state === 'missed' || st.state === 'delayed') && st.reason) {
         tipExtra = '\n' + st.reason;
       }
       var tip = (st.detail || label) + tipExtra;

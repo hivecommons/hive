@@ -37,7 +37,7 @@ type upgradeProgressInput struct {
 //	Upgrading + spoke reports upgrading  → pulling
 //	Upgrading + no beat since instruction→ rolling
 //	Upgrading (older build, silent)      → pulling, qualified
-//	open window held by the gate         → missed (hold reason)
+//	open window held by the gate         → delayed (hold reason)
 //	last history row ended recently      → that row's outcome
 //	daily/weekly schedule                → scheduled (next window)
 //	instant / spoke-managed              → scheduled (next poll)
@@ -124,8 +124,9 @@ func upgradeProgressFor(in upgradeProgressInput) *spoke.UpgradeProgress {
 		return p
 	}
 
-	// Nothing in flight. A window the gate is holding right now is a live
-	// miss, before any history row.
+	history := spoke.UpgradeHistoryForDisplay(in.History, time.Time{})
+	last, hasLast := latestClosedAttempt(history)
+	// A newer closed attempt supersedes a stale schedule hold.
 	daily := false
 	if in.AutoUpgrade {
 		switch effectiveAutoUpgradeSchedule(in.Mode, in.Channel) {
@@ -137,18 +138,19 @@ func upgradeProgressFor(in upgradeProgressInput) *spoke.UpgradeProgress {
 	if daily {
 		nextWindow = nextScheduledAutoUpgradeAt(in.Mode, in.LastFired, now)
 	}
-	if daily && in.HoldReason != "" && scheduledUpgradeWindowOpen(in.Mode, in.LastFired, now) {
+	if daily && in.HoldReason != "" && scheduledUpgradeWindowOpen(in.Mode, in.LastFired, now) &&
+		(!hasLast || in.HoldAt.After(last.EndedAt)) {
 		return &spoke.UpgradeProgress{
-			State:        spoke.UpgradeStateMissed,
+			State:        spoke.UpgradeStateDelayed,
 			From:         historyRef(e.GitHash),
 			NextWindowAt: nextWindow,
 			Reason:       in.HoldReason,
-			Detail:       "window held: " + in.HoldReason,
+			Detail:       "delayed: " + in.HoldReason,
 			EndedAt:      rfc(in.HoldAt),
 		}
 	}
 
-	if last, ok := latestClosedAttempt(in.History); ok && now.Sub(last.EndedAt) <= upgradeHistoryRecentFor {
+	if hasLast && now.Sub(last.EndedAt) <= upgradeHistoryRecentFor {
 		p := &spoke.UpgradeProgress{
 			State:        last.Outcome,
 			Target:       last.Target,
@@ -162,6 +164,8 @@ func upgradeProgressFor(in upgradeProgressInput) *spoke.UpgradeProgress {
 		switch last.Outcome {
 		case spoke.UpgradeOutcomeDone:
 			p.Detail = "upgraded to " + orDash(last.Target) + " " + ago
+		case spoke.UpgradeOutcomeDelayed:
+			p.Detail = "delayed: " + last.Reason
 		default:
 			if last.Trigger == spoke.UpgradeTriggerWindow {
 				p.Detail = "missed window " + ago + ": " + last.Reason
