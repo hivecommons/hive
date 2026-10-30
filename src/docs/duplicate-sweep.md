@@ -79,7 +79,7 @@ duplicate_sweep:
 says anything on a contributor's PR. `post_comments` has no effect without it.
 
 The sweep runs at most once per hour (`duplicateSweepInterval`,
-`src/cmd/hive/main.go`) and its comments are idempotent: each cluster carries an
+`src/cmd/hive/main_sweeps.go`) and its comments are idempotent: each cluster carries an
 invisible marker, so a later pass edits its own prior suggestion in place — and
 elides the write entirely when the body is unchanged — rather than stacking a
 fresh comment every hour.
@@ -98,4 +98,4 @@ fresh comment every hour.
 
 Source: `src/pkg/dupsweep` (clustering and rendering, no GitHub dependency),
 `src/pkg/github/duplicate_sweep.go` (the scan and the comment path),
-`runDuplicateSweepIfDue` in `src/cmd/hive/main.go` (the cadence).
+`runDuplicateSweepIfDue` in `src/cmd/hive/main_sweeps.go` (the cadence).
