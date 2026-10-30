@@ -303,7 +303,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			result.Candidates++
 			repoCandidates++
 			c.sweepClock.evaluating(repo, number)
-			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
+			event, reason, err := c.trySweepSelfAuthoredPR(withMergeTrainCandidateHold(ctx, c.mergeTrainCandidateReason(train, number)), repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
 			c.sweepClock.evaluated()
 			if event.BranchUpdated || reason == "updated-branch" || reason == "update-branch" {
 				branchUpdateAttempts++
@@ -498,7 +498,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			}
 			result.Candidates++
 			c.sweepClock.evaluating(displayRepo, number)
-			event, reason, err := c.trySweepTrustedAuthorPR(ctx, displayRepo, owner, repoName, number, policy)
+			event, reason, err := c.trySweepTrustedAuthorPR(withMergeTrainCandidateHold(ctx, c.mergeTrainCandidateReason(train, number)), displayRepo, owner, repoName, number, policy)
 			c.sweepClock.evaluated()
 			if err == nil {
 				c.noteMergeTrainOutcome(stageLaneTrusted, owner, repoName, number, pr.GetHead().GetSHA(), reason)
