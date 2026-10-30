@@ -2,14 +2,24 @@ package automerge
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 )
 
+// TestBasePreparationStoreFileModes verifies the store never creates
+// group-writable state on the shared /data volume. The umask is cleared so the
+// requested modes land on disk unmasked (runners default to 022, which would
+// hide a group-writable request), and the store root is a subdirectory of
+// t.TempDir() so MkdirAll actually creates it with the store's mode.
 func TestBasePreparationStoreFileModes(t *testing.T) {
-	dir := t.TempDir()
+	old := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	dir := filepath.Join(t.TempDir(), "state")
 	store := NewBasePreparationStore(dir)
 
-	// Perform a change to create the directory and files.
 	err := store.change("owner/repo:main", func(st *basePreparation) error {
 		st.Owner.Number = 42
 		return nil
@@ -18,38 +28,38 @@ func TestBasePreparationStoreFileModes(t *testing.T) {
 		t.Fatalf("change failed: %v", err)
 	}
 
-	// Check directory mode is not group-writable.
 	dirInfo, err := os.Stat(dir)
 	if err != nil {
 		t.Fatalf("stat directory failed: %v", err)
 	}
-	dirMode := dirInfo.Mode()
-	if (dirMode & 0o020) != 0 {
-		t.Errorf("directory is group-writable: mode=%#o", dirMode)
+	if got := dirInfo.Mode().Perm(); got != 0o755 {
+		t.Errorf("directory mode = %#o, want 0755", got)
 	}
 
-	// Check .json file mode is not group-writable.
-	jsonPath := dir + "/sha256hex.json"
-	// Find actual .json file since the name is sha256(key)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("readdir failed: %v", err)
 	}
-	var jsonFile os.FileInfo
+	var sawJSON, sawLock bool
 	for _, e := range entries {
-		if e.Name() != ".lock" {
-			info, err := e.Info()
-			if err != nil {
-				t.Fatalf("info failed: %v", err)
-			}
-			jsonFile = info
-			break
+		info, err := e.Info()
+		if err != nil {
+			t.Fatalf("info %s failed: %v", e.Name(), err)
+		}
+		switch {
+		case strings.HasSuffix(e.Name(), ".json"):
+			sawJSON = true
+		case strings.HasSuffix(e.Name(), ".lock"):
+			sawLock = true
+		default:
+			t.Errorf("unexpected entry %q", e.Name())
+			continue
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Errorf("%s mode = %#o, want 0644", e.Name(), got)
 		}
 	}
-	if jsonFile != nil {
-		jsonMode := jsonFile.Mode()
-		if (jsonMode & 0o020) != 0 {
-			t.Errorf(".json file is group-writable: mode=%#o", jsonMode)
-		}
+	if !sawJSON || !sawLock {
+		t.Fatalf("expected a .json and a .lock entry, got json=%v lock=%v", sawJSON, sawLock)
 	}
 }
