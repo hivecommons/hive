@@ -156,6 +156,12 @@ func (s *Server) nudgeSweepAndAwaitAdoption(ctx context.Context, store *stagelab
 	return rec.AdoptedBy
 }
 
+// repoItemDecisionStatusAdoptionQueued is Adopt now's status when the sweep
+// has not opened the copy within the handler's wait: queued, not done. The
+// earlier "adoption-forced" wording claimed the pass now running would open
+// it, which the tracker then contradicted for minutes.
+const repoItemDecisionStatusAdoptionQueued = "adoption-queued"
+
 func repoItemAdoptNowResponse(repoFull string, number, superseding int) repoItemDecisionResponse {
 	out := repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: repoItemDecisionAdopt, Label: delegatedecision.LabelAdoptSupersede,
 		Result: &RowActionResult{Target: rowActionTarget(repoFull, "pr", number), Action: rowActionAdopted}}
@@ -165,9 +171,9 @@ func repoItemAdoptNowResponse(repoFull string, number, superseding int) repoItem
 		out.Result.Next = fmt.Sprintf("The hive rebases and fixes CI on #%d; the author's commits and sign-off are preserved.", superseding)
 		return out
 	}
-	out.Status = "adoption-forced"
-	out.Result.Outcome = "Adoption forced: hive opens its copy on the pass now running."
-	out.Result.Next = "The contributor PR closes as superseded (an agent's PR in the adopting pass, a person's when the hive's copy merges) and leaves the list; the author's commits and sign-off are preserved. The row updates when the pass lands."
+	out.Status = repoItemDecisionStatusAdoptionQueued
+	out.Result.Outcome = "Adopting… (queued): the hive opens its copy on its next stage pass; any earlier approval of this head no longer holds it."
+	out.Result.Next = "The row reads \"Adopting… (queued)\" until the pass lands, then \"Adopted → #N\". The contributor PR closes as superseded (an agent's PR in the adopting pass, a person's when the hive's copy merges); the author's commits and sign-off are preserved."
 	return out
 }
 
