@@ -70,12 +70,12 @@ func TestStageTrackerMergeAttemptInPayload(t *testing.T) {
 // into the gate narration.
 func TestStageTrackerMergeGateAttemptOverlay(t *testing.T) {
 	now := time.Date(2026, 10, 28, 21, 31, 0, 0, time.UTC)
-	if mg := stageTrackerMergeGateAttempt(nil, github.MergeAttempt{}, false); mg != nil {
+	if mg := stageTrackerMergeGateAttempt(nil, github.MergeAttempt{}, false, "", stagelabels.None, stagelabels.Record{}, false); mg != nil {
 		t.Errorf("no attempt, no gate: %+v", mg)
 	}
 	live := github.MergeAttempt{Repo: "a/b", Number: 1, StartedAt: now, Path: github.PRAuditPathRelay}
 	soak := now.Add(time.Minute)
-	mg := stageTrackerMergeGateAttempt(&StageTrackerMergeGate{State: MergeGateStateSoaking, SoakUntil: &soak, SoakRemainingSeconds: 60, NextSweepAt: &soak}, live, true)
+	mg := stageTrackerMergeGateAttempt(&StageTrackerMergeGate{State: MergeGateStateSoaking, SoakUntil: &soak, SoakRemainingSeconds: 60, NextSweepAt: &soak}, live, true, "", stagelabels.PreMergeSoak, stagelabels.Record{}, false)
 	if mg.State != MergeGateStateMerging || mg.MergingSince == nil || mg.SoakUntil != nil || mg.SoakRemainingSeconds != 0 || mg.NextSweepAt != nil || mg.MergePath != github.PRAuditPathRelay {
 		t.Errorf("live attempt over soaking: %+v", mg)
 	}
@@ -86,7 +86,7 @@ func TestStageTrackerMergeGateAttemptOverlay(t *testing.T) {
 	if st := stageTrackerMergeAttemptStage(stagelabels.ReadyForHumanMerge, failed, true); st != stagelabels.ReadyForHumanMerge {
 		t.Errorf("failed attempt must keep the stage, got %v", st)
 	}
-	if mg = stageTrackerMergeGateAttempt(nil, failed, true); mg == nil || mg.State != MergeGateStateMergeFailed || mg.MergeFailed != "422 boom" || mg.MergeFailedAt == nil {
+	if mg = stageTrackerMergeGateAttempt(nil, failed, true, "", stagelabels.None, stagelabels.Record{}, false); mg == nil || mg.State != MergeGateStateMergeFailed || mg.MergeFailed != "422 boom" || mg.MergeFailedAt == nil {
 		t.Errorf("failed attempt off the gate: %+v", mg)
 	}
 	for _, c := range []struct{ path, want string }{{github.PRAuditPathDashboard, "dashboard"}, {github.PRAuditPathRelay, "relay"}, {github.PRAuditPathForge, "forge"}, {github.PRAuditPathSweep, "automerge lane"}, {"", "automerge lane"}} {
