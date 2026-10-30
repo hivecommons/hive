@@ -10,11 +10,7 @@ import (
 // to the companion #15817 change; this pins delivery to that pipeline.
 func TestStageTrackerMergeSessionNode(t *testing.T) {
 	html := indexHTML(t)
-	script := stageTrackerCelebrateJS(t, html) + "\n" + strings.Join([]string{
-		jsConstLine(t, html, "STAGE_TRACKER_MERGE_SESSION_KEY"),
-		"var _stageTrackerMergeSessionLoaded = false;",
-		jsFunc(t, html, "stageTrackerReconcileMerges"),
-	}, "\n") + stageTrackerCelebrateFixture + `
+	script := stageTrackerCelebrateJS(t, html) + stageTrackerCelebrateFixture + `
 function reload() {
   _stageTrackerMergeSessionLoaded = false;
   _stageTrackerMergeState = null;
@@ -75,7 +71,9 @@ tick(ttl - 1);
 assert.ok(b.parentNode, 'banner remains for its configured lifetime');
 tick(1);
 assert.ok(b.classList.contains('merge-banner-out'), 'shared timer dismisses at the bar deadline');
-tick(200);
+// No animationend is emitted by the fake DOM: allow the shared
+// stageTrackerAfter fallback (1.5 times the 180ms exit animation) to fire.
+tick(270);
 assert.strictEqual(b.parentNode, null);
 const manual = stageTrackerMergeBanner({ key: 'o/r/pr#8', repo: 'o/r', number: 8 });
 assert.ok(manual._countdown.timer);
