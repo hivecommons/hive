@@ -13,4 +13,9 @@ var (
 	UnsubstitutedTemplatePlaceholder = cruxissueshape.UnsubstitutedTemplatePlaceholder
 	BodyHasMisEscapedNewlines        = cruxissueshape.BodyHasMisEscapedNewlines
 	UnchosenOptionList               = cruxissueshape.UnchosenOptionList
+	TitleFor                         = cruxissueshape.TitleFor
+	HasAgentPrefix                   = cruxissueshape.HasAgentPrefix
+	AgentPrefix                      = cruxissueshape.AgentPrefix
+	StripAgentPrefix                 = cruxissueshape.StripAgentPrefix
+	SameTitle                        = cruxissueshape.SameTitle
 )

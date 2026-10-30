@@ -129,7 +129,7 @@ func TestReviewBacklogOneItemPerFindingAcrossPerspectivesAndHeads(t *testing.T) 
 	file5(review.PerspectiveStyle, "abc", oos("New test re-covers prWarnOnce semantics rather than the dispatcher wiring", file, 27, "the test exercises prWarnOnce"))
 	file5(review.PerspectiveSecurity, "abc", oos("Previous style finding still present (non-blocking)", file, 27, "unchanged"))
 	file5(review.PerspectiveIntentAlignment, "abc", oos("Previous style note still present (non-blocking): TestReviewPromotedWarnOncePerPR exercises prWarnOnce, not planReviewDispatchWith wiring", file, 30, "unchanged"))
-	if len(sink.created) != 1 || sink.created[0].Title != "Review backlog (style): New test re-covers prWarnOnce semantics rather than the dispatcher wiring" {
+	if len(sink.created) != 1 || sink.created[0].Title != "[reviewer] Review backlog (style): New test re-covers prWarnOnce semantics rather than the dispatcher wiring" {
 		t.Fatalf("created = %+v, want the one style item", sink.created)
 	}
 	if len(sink.appends) != 0 {
@@ -158,7 +158,7 @@ func TestReviewBacklogOneItemPerFindingAcrossPerspectivesAndHeads(t *testing.T) 
 	}
 	// A genuinely new finding elsewhere still files.
 	file5(review.PerspectiveCorrectness, "bbb", oos("Dispatcher wiring untested", "pkg/other.go", 9, "nothing covers planReviewDispatchWith"))
-	if len(sink.created) != 2 || sink.created[1].Title != "Review backlog (correctness): Dispatcher wiring untested" {
+	if len(sink.created) != 2 || sink.created[1].Title != "[reviewer] Review backlog (correctness): Dispatcher wiring untested" {
 		t.Fatalf("created = %+v, want the new correctness finding filed second", sink.created)
 	}
 

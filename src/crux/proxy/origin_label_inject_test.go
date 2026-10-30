@@ -21,8 +21,11 @@ func TestInjectOriginLabelAddsLaneOnceAndKeepsAgentChoice(t *testing.T) {
 		agent      string
 		wantOK     bool
 		wantLabels []string
+		wantTitle  string
 	}{
-		{name: "no labels field", method: http.MethodPost, path: path, body: `{"title":"t","body":"b"}`, agent: "scanner", wantOK: true, wantLabels: []string{"agent/scanner"}},
+		{name: "no labels field", method: http.MethodPost, path: path, body: `{"title":"t","body":"b"}`, agent: "scanner", wantOK: true, wantLabels: []string{"agent/scanner"}, wantTitle: "[scanner] t"},
+		{name: "already tagged title kept, replica suffix stripped", method: http.MethodPost, path: path, body: `{"title":"[scanner] t","body":"b","labels":["agent/scanner"]}`, agent: "scanner-2", wantOK: false},
+		{name: "foreign tag not double-prefixed", method: http.MethodPost, path: path, body: `{"title":"[Tests] t","body":"b"}`, agent: "tester", wantOK: true, wantLabels: []string{"agent/tester"}, wantTitle: "[Tests] t"},
 		{name: "bare lane label dropped, replica suffix stripped", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["agent/scanner","scanner","kind/bug"]}`, agent: "scanner-2", wantOK: true, wantLabels: []string{"agent/scanner", "kind/bug"}},
 		{name: "agent-supplied origin kept while bare filing lane drops", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/dashboard","agent/scanner","scanner"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/dashboard", "agent/scanner"}},
 		{name: "agent-supplied matching origin drops redundant origin and bare label", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/scanner","agent/scanner","scanner","kind/bug"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"agent/scanner", "kind/bug"}},
@@ -53,8 +56,12 @@ func TestInjectOriginLabelAddsLaneOnceAndKeepsAgentChoice(t *testing.T) {
 			if err := json.Unmarshal(got, &payload); err != nil {
 				t.Fatalf("rewritten body is not JSON: %v: %s", err, got)
 			}
-			if payload.Title != "t" || payload.Body != "b" {
-				t.Fatalf("title/body must survive the rewrite: %s", got)
+			wantTitle := tc.wantTitle
+			if wantTitle == "" {
+				wantTitle = "[" + strings.TrimSuffix(tc.agent, "-2") + "] t"
+			}
+			if payload.Title != wantTitle || payload.Body != "b" {
+				t.Fatalf("title = %q, want %q; body must survive the rewrite: %s", payload.Title, wantTitle, got)
 			}
 			if strings.Join(payload.Labels, ",") != strings.Join(tc.wantLabels, ",") {
 				t.Fatalf("labels = %v, want %v", payload.Labels, tc.wantLabels)
@@ -87,6 +94,9 @@ func TestEnforceIssueShapeForInjectsOriginAfterShapePasses(t *testing.T) {
 	forwarded := readAllString(t, req)
 	if strings.Contains(forwarded, `"origin/tester"`) || !strings.Contains(forwarded, `"agent/tester"`) || strings.Contains(forwarded, `"tester"`) || !strings.Contains(forwarded, `"kind/bug"`) {
 		t.Fatalf("forwarded body = %s", forwarded)
+	}
+	if !strings.Contains(forwarded, `"title":"[tester] Real title"`) {
+		t.Fatalf("forwarded title must carry the filing lane: %s", forwarded)
 	}
 	if req.ContentLength != int64(len(forwarded)) {
 		t.Fatalf("ContentLength %d != forwarded %d", req.ContentLength, len(forwarded))
