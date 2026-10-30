@@ -442,7 +442,7 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	// Issue-author credit (hivecommons/hive#14581) rides the PR already
 	// fetched above; a merge-commit request fetches it only when the credit
 	// is on for the repo.
-	if creditor := c.MergeCreditor(); creditor.Enabled(owner+"/"+repo) {
+	if creditor := c.MergeCreditor(); creditor.Enabled(owner + "/" + repo) {
 		if fetched == nil && !fetchedTried {
 			if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, mergeCreditCaller), owner, repo, number); err == nil {
 				fetched = pr
@@ -598,6 +598,9 @@ func (c *Client) updateBranch(ctx context.Context, repo string, number int, expe
 		owner, repo = parts[0], parts[1]
 	}
 	var inputs map[string]string
+	if c.baseRefreshScheduled(owner + "/" + repo) {
+		return fmt.Errorf("base-refresh:awaiting-admission: %s/%s#%d is refreshed only by the automerge preparation front", owner, repo, number)
+	}
 	if expectedHeadSHA != "" || observedBaseSHA != "" {
 		inputs = map[string]string{"expected_head_sha": expectedHeadSHA, "observed_base_sha": observedBaseSHA}
 	}

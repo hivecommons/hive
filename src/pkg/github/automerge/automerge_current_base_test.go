@@ -29,7 +29,7 @@ func TestCurrentBaseGate(t *testing.T) {
 	}{
 		{name: "off by default", optIn: false, behindBy: 3, updateAllowed: true},
 		{name: "up to date merges", optIn: true, behindBy: 0, updateAllowed: true, wantCompares: 1},
-		{name: "behind updates branch", optIn: true, behindBy: 2, updateAllowed: true, wantStop: true, wantReason: "check-pending", wantCompares: 1, wantUpdates: 1, wantUpdated: true},
+		{name: "behind updates branch", optIn: true, behindBy: 2, updateAllowed: true, wantStop: true, wantReason: basePreparationReady, wantCompares: 1, wantUpdates: 1, wantUpdated: true},
 		{name: "behind without update budget holds", optIn: true, behindBy: 2, updateAllowed: false, wantStop: true, wantReason: "behind", wantCompares: 1},
 		{name: "compare failure fails closed", optIn: true, compareStatus: http.StatusInternalServerError, updateAllowed: true, wantStop: true, wantReason: autoMergeReasonCurrentBaseCheck, wantErr: true, wantCompares: 1},
 	}
@@ -41,6 +41,8 @@ func TestCurrentBaseGate(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/main..."+head:
 					compares++
 					if tc.compareStatus != 0 {
@@ -115,6 +117,8 @@ func TestCurrentBaseGateUpdateUnavailableFallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/main..."+head:
 					_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
 				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
@@ -190,7 +194,7 @@ func newCurrentBaseLaneServer(t *testing.T, a *currentBaseLaneAPI) *httptest.Ser
 				"mergeable":       true,
 				"user":            map[string]string{"login": testHiveAppBotLogin},
 				"head":            map[string]any{"sha": head, "repo": map[string]string{"full_name": "acme/widget"}},
-				"base":            map[string]any{"ref": "main", "repo": map[string]string{"full_name": "acme/widget"}},
+				"base":            map[string]any{"ref": "main", "sha": "base1", "repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          []map[string]string{},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
@@ -264,7 +268,7 @@ func TestTrySweepSelfAuthoredPRCurrentBaseGateAfterGreen(t *testing.T) {
 		wantMerges    int
 	}{
 		{name: "green current head merges", optIn: true, statusState: "success", behindBy: 0, updateAllowed: true, wantMergeSHA: "merge7", wantCompares: 1, wantMerges: 1},
-		{name: "green behind head is updated and counted against the budget", optIn: true, statusState: "success", behindBy: 2, updateAllowed: true, wantReason: "check-pending", wantUpdated: true, wantCompares: 1, wantUpdates: 1},
+		{name: "green behind head is updated and counted against the budget", optIn: true, statusState: "success", behindBy: 2, updateAllowed: true, wantReason: basePreparationReady, wantUpdated: true, wantCompares: 1, wantUpdates: 1},
 		{name: "green behind head holds when the budget is spent", optIn: true, statusState: "success", behindBy: 2, updateAllowed: false, wantReason: autoMergeReasonBehindBudgetExhausted, wantCompares: 1},
 		{name: "pending behind head is left alone", optIn: true, statusState: "pending", behindBy: 2, updateAllowed: true, wantCIKind: ciReasonPending},
 		{name: "red behind head is left alone", optIn: true, statusState: "failure", behindBy: 2, updateAllowed: true, wantCIKind: ciReasonRed},
@@ -321,7 +325,7 @@ func TestContributorLaneCurrentBaseGateAfterGreen(t *testing.T) {
 		wantMerges   int
 	}{
 		{name: "green soaked current head merges", optIn: true, behindBy: 0, soaked: true, wantCompares: 1, wantMerges: 1},
-		{name: "green soaked behind head is updated instead of merged", optIn: true, behindBy: 2, soaked: true, wantReason: "check-pending", wantCompares: 1, wantUpdates: 1},
+		{name: "green soaked behind head is updated instead of merged", optIn: true, behindBy: 2, soaked: true, wantReason: basePreparationReady, wantCompares: 1, wantUpdates: 1},
 		{name: "relay evaluation of a behind head holds without updating", optIn: true, behindBy: 2, soaked: true, relay: true, wantReason: "behind", wantCompares: 1},
 		{name: "red behind head is left alone", optIn: true, headStatus: "failure", behindBy: 2, soaked: true, wantCIKind: ciReasonRed},
 		{name: "soaking behind head is left alone until soaked", optIn: true, behindBy: 2, soaked: false, wantSoaking: true},
@@ -337,7 +341,7 @@ func TestContributorLaneCurrentBaseGateAfterGreen(t *testing.T) {
 			defer api.Close()
 			policy := defaultContributorLanePolicy()
 			clock := &contributorLaneClock{at: time.Date(2026, 10, 22, 13, 0, 0, 0, time.UTC)}
-			opts := Options{RequireCurrentBase: func(repo string) bool { return tc.optIn && strings.EqualFold(repo, "acme/widget") }}
+			opts := Options{BasePreparation: NewBasePreparationStore(""), RequireCurrentBase: func(repo string) bool { return tc.optIn && strings.EqualFold(repo, "acme/widget") }}
 			if tc.soaked {
 				opts.ContributorSoak = soakedTracker(clock)
 			}
