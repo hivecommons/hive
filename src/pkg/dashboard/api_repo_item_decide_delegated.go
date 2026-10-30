@@ -679,6 +679,10 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	}
 	in.SentinelReason = strings.TrimSpace(req.SentinelReason)
 	lowerReason := strings.ToLower(reason)
+	if in.Kind == delegatedecision.KindPR && in.HiveAuthored && s.hiveSupersedingAutoMerge() {
+		in.HiveSuperseding = ghpkg.HiveSupersedingPR(true, in.Body)
+		in.HiveSupersederHardStop = stagelabels.HiveSupersederHardStopReason(reason)
+	}
 	in.AdoptionStalled = strings.HasPrefix(lowerReason, stagelabels.LaneReasonAdoptionStalledPrefix)
 	if in.Kind == delegatedecision.KindPR && !in.HiveAuthored {
 		in.AdoptionGraceElapsed = s.delegatedAdoptionGraceElapsed(repoFull, number)

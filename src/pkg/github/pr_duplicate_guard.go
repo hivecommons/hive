@@ -12,6 +12,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/dupsweep"
+	"github.com/hivecommons/hive/pkg/prstatus"
 )
 
 // Duplicate reasons reported in CreatePRResult.DuplicateReason.
@@ -280,9 +281,19 @@ func duplicateGuardComment(f *duplicateFinding, head string) string {
 }
 
 // redirectToExistingPR posts the redirect comment on the existing PR, once.
-// Best-effort: the refusal is the enforcement, the comment is courtesy.
+// Best-effort: the refusal is the enforcement, the comment is courtesy. In
+// quiet notification mode it is a section of the PR's hive status comment,
+// edited in place, so a retried request or a second agent never emails the
+// watchers again.
 func (c *Client) redirectToExistingPR(ctx context.Context, owner, repo, head string, f *duplicateFinding) {
 	if f.reason == DuplicateReasonMergedFix {
+		return
+	}
+	if c.notificationsQuiet() {
+		if _, err := c.UpsertPRStatusSection(ctx, owner+"/"+repo, f.pr.GetNumber(), prstatus.KeyDuplicateGuard, duplicateGuardComment(f, head)); err != nil {
+			c.logger.Warn("duplicate guard: could not record the redirect in the status comment",
+				slog.String("repo", repo), slog.Int("number", f.pr.GetNumber()), slog.String("error", err.Error()))
+		}
 		return
 	}
 	comments, _, err := c.client.Issues.ListComments(ctx, owner, repo, f.pr.GetNumber(), &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}})

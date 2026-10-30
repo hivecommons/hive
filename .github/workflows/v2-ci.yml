@@ -905,6 +905,7 @@ jobs:
           node --check bin/lib/pane-classifier.js
           bash -n bin/contributor-relay.sh
           node bin/contributor-relay.test.js
+          node --test bin/mlx-backend.test.js
 
       # bin/vibe-kanban-mirror.js (#10641): report-only hive → vibe-kanban
       # mirror, exercised against a fake MCP stdio server.

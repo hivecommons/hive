@@ -435,6 +435,7 @@
     "BaseURL": "",
     "AppAuthoredPRs": null,
     "AppSignedCommits": null,
+    "notifications": {},
     "OAuthBaseURLOverride": "",
     "OAuthAPIURLOverride": ""
   },
@@ -723,7 +724,8 @@
     "contributor_lane": {},
     "contributor_tier": {},
     "merge_train": {},
-    "native_merge_queue": {}
+    "native_merge_queue": {},
+    "hive_superseding": {}
   },
   "decisions": {
     "delegate": {}

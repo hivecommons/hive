@@ -11,7 +11,7 @@ Twitch stream. Operator guide, Twitch-side setup, and troubleshooting:
 | `authproxy/` | Loopback reverse proxy (stdlib Go) that adds `Authorization: Bearer $DASHBOARD_TOKEN` to every dashboard request so the token is never in a URL, in Chromium's history, or on screen. Forwards only `GET`/`HEAD` (anything else is answered `405` locally, before the token is attached) because the shared token is an unscoped owner credential and a kiosk only reads. Logs when the upstream answers with a login redirect. |
 | `healthcheck.sh` | Chromium alive + ffmpeg progress file fresher than 20 s with `frame>0`. Used by the image `HEALTHCHECK` and the Deployment's probes. |
 | `docker-compose.yaml`, `.env.example` | Run the same image from a laptop. |
-| `k8s/` | Kustomize base: Namespace `hive-stream`, ConfigMap, Deployment (1 replica, non-root, 512 Mi `/dev/shm`, 1–2 CPU / 2–3 Gi), NetworkPolicy (DNS, dashboard Service, public RTMP/HTTPS only). `secret.yaml` is a **template** and is not in the kustomization. |
+| `k8s/` | Kustomize base: Namespace `hive-stream`, ConfigMap, Deployment (1 replica, non-root, 512 Mi `/dev/shm`, 1–3 CPU / 3–6 Gi), NetworkPolicy (DNS, dashboard Service, public RTMP/HTTPS only). `secret.yaml` is a **template** and is not in the kustomization. |
 | `overlays/hive-hosted/` | hive's own hosted spoke on `hive-oke`. |
 
 ## Environment

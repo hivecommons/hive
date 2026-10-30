@@ -618,6 +618,9 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE:-}" == "1" ]]; then
 fi
 
 validate_pi_selection() {
+  if [[ "${AGENT_MODEL:-}" == mlx/* ]]; then
+    node "${SCRIPT_DIR}/mlx-backend.js" check "${AGENT_MODEL}" --endpoint-only >&2 || return
+  fi
   node "${SCRIPT_DIR}/pi-backend.js" "${AGENT_MODEL:-}"
 }
 
@@ -1148,6 +1151,9 @@ if [[ -n "${AGENT_MODEL:-}" ]]; then
     goose|bob) ;;
     *) MODEL_FLAG="--model $AGENT_MODEL" ;;
   esac
+fi
+if [[ "$AGENT_BACKEND" == "pi" && "${AGENT_MODEL:-}" == mlx/* ]]; then
+  MODEL_FLAG+=" --extension $(printf %q "${SCRIPT_DIR}/mlx-pi-extension.js")"
 fi
 REASONING_FLAG=""
 if [[ "$AGENT_BACKEND" == "codex" && -n "${AGENT_REASONING_EFFORT:-}" ]]; then

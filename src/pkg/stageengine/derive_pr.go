@@ -248,6 +248,10 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
+		if replacement, ok := PreserveStageOnStaleDecisionAnswer(prev, true, obs, verdict, pass.FixerExcluded); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+		}
 	}
 	var human *stagelabels.Route
 	if verdict.Human && !verdict.Terminal && verdict.Reason != prstage.ReasonSupersessionPending {
@@ -292,6 +296,11 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		verdict.Stage = stagelabels.NeedsDecision
 		verdict.Rank = stageRankOwned
 		obs.Reason = stagelabels.LaneReasonRebaseFailedTwice
+	}
+	if !verdict.Terminal && pass.FixerExhausted > 0 && verdict.Stage == FixingStage(obs) {
+		verdict.Stage = stagelabels.NeedsDecision
+		verdict.Rank = stageRankOwned
+		obs.Reason = stagelabels.FixerExhaustedReason(pass.FixerExhausted)
 	}
 	d := Decision{
 		Stage:      verdict.Stage,

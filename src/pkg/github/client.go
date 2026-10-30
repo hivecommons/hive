@@ -269,6 +269,11 @@ type Client struct {
 	// a negative value disables the backstop.
 	combinedPerspectivesFn func() bool
 	maxReviewsPerHeadFn    func() int
+	// quietNotificationsFn is github.notifications.mode != normal, read
+	// live: fold the hive's PR notes into one edited status comment, post no
+	// no-findings review, one hive review per head. nil (nothing wired)
+	// reads as normal, so unwired clients behave as before.
+	quietNotificationsFn func() bool
 	// reviewRequireLabelsFn returns review.require_labels, read live so a
 	// Features-tab edit gates the next relay request without a rebuild. nil
 	// or empty means the gate is off.
@@ -688,6 +693,24 @@ func (c *Client) SetReviewCadenceLimits(combined func() bool, maxPerHead func() 
 	c.maxReviewsPerHeadFn = maxPerHead
 }
 
+// SetNotificationsQuiet wires github.notifications.mode (quiet when fn
+// returns true). Read live so a config reload applies to the next write.
+func (c *Client) SetNotificationsQuiet(fn func() bool) {
+	if c == nil {
+		return
+	}
+	c.quietNotificationsFn = fn
+}
+
+// notificationsQuiet reports whether the hive is in quiet notification
+// mode: a new comment or review is an email to the author and every
+// watcher, and the Activity Monitor already carries what the comment would
+// say. The config default is quiet; a client nothing wired (tests) behaves
+// as before.
+func (c *Client) notificationsQuiet() bool {
+	return c != nil && c.quietNotificationsFn != nil && c.quietNotificationsFn()
+}
+
 func (c *Client) SetConfidenceScore(enabled func() bool) {
 	if c == nil {
 		return
@@ -935,6 +958,11 @@ type PullRequest struct {
 	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
+	// Supersedes is the PR this one declares it supersedes ("Supersedes
+	// #N" in the body: the hive's adoption / takeover / re-author copy of
+	// a contributor PR), read from the list payload; 0 when none.
+	// IsHiveSupersedingPR pairs it with AppAuthored.
+	Supersedes int `json:"supersedes,omitempty"`
 	// BaseDiffEmpty is true when the per-PR detail fetch reported zero
 	// changed files, additions and deletions against the base: the PR
 	// carries nothing the base does not already have (an adoption whose
@@ -2279,6 +2307,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			RequestedReviewers: reqLogins,
 			RequestedTeams:     reqTeams,
 			ReferencedIssues:   PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
+			Supersedes:         prSupersedesNumberOrZero(pr.GetBody()),
 		})
 	}
 

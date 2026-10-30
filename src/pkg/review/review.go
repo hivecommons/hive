@@ -129,8 +129,14 @@ type PerspectiveReport struct {
 	HeadSHA      string      `json:"head_sha,omitempty"`
 	BodyDigest   string      `json:"body_digest,omitempty"`
 	HiveAuthored bool        `json:"hive_authored,omitempty"`
-	AuthorModel  string      `json:"author_model,omitempty"`
-	ReviewModel  string      `json:"review_model,omitempty"`
+	// HiveSuperseding marks the hive App's own superseding copy of another
+	// PR ("Supersedes #N" in its body), stamped by the verdict relay from
+	// the PR, never from the reviewer's JSON. Its requires_human findings
+	// — security-sensitive included — route to the fixer instead of
+	// parking for an operator (hiveSupersedingFixRoute).
+	HiveSuperseding bool   `json:"hive_superseding,omitempty"`
+	AuthorModel     string `json:"author_model,omitempty"`
+	ReviewModel     string `json:"review_model,omitempty"`
 	// Head is the review head (agents.<name>.review_heads key, e.g.
 	// code-reviewer-sol) this report came from, set by the relay from the
 	// dispatch record. Empty for ordinary single-reviewer perspectives.
@@ -195,6 +201,13 @@ type AggregateOptions struct {
 	// a decision question that matches no DecisionRiskClass and carries no
 	// `hive-decision-risk: high` marker.
 	SelfAuthoredDecisionPolicy string
+	// HiveSupersedingAutoMergeOff is `auto_merge.hive_superseding.auto_merge:
+	// false`: the hive's superseding copy of another PR is then judged like
+	// any other hive-authored PR, so a risk / security-sensitive
+	// requires_human parks it for a person. Off (the zero value) is the
+	// owner's rule: such findings go to the fixer and the PR auto-merges
+	// once CI and review are clean.
+	HiveSupersedingAutoMergeOff bool
 	// SensitivePaths are the operator's extra `security.sensitive_paths`
 	// globs; a contributor-PR finding on one of them (or on a
 	// sentinel.DefaultSensitivePaths path) is a security finding that may
@@ -228,14 +241,17 @@ type AggregateOptions struct {
 }
 
 type Aggregate struct {
-	Repo              string  `json:"repo"`
-	Number            int     `json:"number"`
-	HeadSHA           string  `json:"head_sha,omitempty"`
-	BodyDigest        string  `json:"body_digest,omitempty"`
-	AuthorModel       string  `json:"author_model,omitempty"`
-	ReviewModel       string  `json:"review_model,omitempty"`
-	HiveAuthored      bool    `json:"hive_authored,omitempty"`
-	HiveAuthoredKnown bool    `json:"hive_authored_known,omitempty"`
+	Repo              string `json:"repo"`
+	Number            int    `json:"number"`
+	HeadSHA           string `json:"head_sha,omitempty"`
+	BodyDigest        string `json:"body_digest,omitempty"`
+	AuthorModel       string `json:"author_model,omitempty"`
+	ReviewModel       string `json:"review_model,omitempty"`
+	HiveAuthored      bool   `json:"hive_authored,omitempty"`
+	HiveAuthoredKnown bool   `json:"hive_authored_known,omitempty"`
+	// HiveSuperseding is true when any report marked the PR as the hive's
+	// superseding copy of another PR (PerspectiveReport.HiveSuperseding).
+	HiveSuperseding   bool    `json:"hive_superseding,omitempty"`
 	Verdict           Verdict `json:"verdict"`
 	MergeEligible     bool    `json:"merge_eligible"`
 	FixCycle          bool    `json:"fix_cycle"`
@@ -408,6 +424,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	agg.HiveAuthoredKnown = true
 	agg.HiveAuthored = reportsHiveAuthored(reports)
+	agg.HiveSuperseding = reportsHiveSuperseding(reports)
 	agg.PermissionsTighteningOnly = reportsPermissionsTighteningOnly(reports)
 	seenVerdicts := map[Verdict]bool{}
 	var decisionRequested bool
@@ -490,6 +507,36 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	sortReasons(agg.Reasons)
 	sort.Strings(agg.HumanSummaries)
+
+	if hiveSupersedingFixRoute(agg, opts, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman) {
+		// Owner rule: a PR the hive created to supersede another PR auto-
+		// merges with no operator decision. A reviewer's requires_human —
+		// a risk-class question, a security-sensitive finding — is a
+		// finding the fixer addresses and the swarm re-reviews, exactly
+		// like a changes_requested; only an exhausted fix cycle hands the
+		// head to a person (the stage engine's hard-stops cover the
+		// sentinel, holds, red CI and conflicts).
+		if finding, backed := securityFindingAcross(reports, sensitivePaths); backed {
+			agg.DecisionFinding = finding
+		}
+		if opts.FixAttempts >= maxFix {
+			agg.Verdict = VerdictRequiresHuman
+			agg.RequiresHuman = true
+			agg.DecisionRequested = decisionRequested
+			agg.DecisionQuestion = decisionQuestion
+			agg.Reasons = []string{fmt.Sprintf("fix cycle cap reached (%d/%d)", opts.FixAttempts, maxFix)}
+			return agg
+		}
+		agg.Verdict = VerdictChangesRequested
+		agg.FixCycle = true
+		markRequiresHumanPerspectivesAsChangesRequested(&agg)
+		agg.RequiresHuman = false
+		agg.DecisionRequested = false
+		agg.DecisionQuestion = ""
+		agg.Reasons = append(append([]string{}, agg.Reasons...), HiveSupersedingFixRouteReason)
+		sortReasons(agg.Reasons)
+		return agg
+	}
 
 	if decisionRequested {
 		if finding, backed := securityFindingAcross(reports, sensitivePaths); !backed && contributorHandsFree(agg, opts) {
@@ -859,6 +906,40 @@ func resolveSelfAuthoredDecisionQuestions(reports []PerspectiveReport, opts Aggr
 		}
 	}
 	return true
+}
+
+// HiveSupersedingFixRouteReason is the aggregate reason recorded when a
+// hive-authored superseding PR's requires_human was routed to the fixer
+// instead of an operator decision (owner rule, @clubanderson: "if a pr is
+// superseded by a pr that a hive agent creates, it should auto merge").
+const HiveSupersedingFixRouteReason = "hive-authored superseding PR: reviewer requires_human routed to the fixer; auto-merges once CI and review are clean"
+
+// hiveSupersedingFixRoute says whether this aggregate is one the owner's
+// superseder rule turns from a human park into a fix cycle: the PR is the
+// hive's superseding copy, the knob is on, no perspective rejected, and
+// the only thing holding it is a requires_human / decision question the
+// ordinary self-authored resolution would have escalated (a risk-class
+// question, a security-sensitive finding, an unresolvable summary). A
+// reject stays a reject: it is an emergent problem with the PR, not a
+// finding to fix. Everything the self-authored path already resolves on
+// its own (non-risk questions, concrete remediation) keeps that path.
+func hiveSupersedingFixRoute(agg Aggregate, opts AggregateOptions, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman bool) bool {
+	if !agg.HiveSuperseding || !agg.HiveAuthored || opts.HiveSupersedingAutoMergeOff || hasReject {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
+		return false
+	}
+	return unresolvedRequiresHuman || (decisionRequested && riskEscalation)
+}
+
+func reportsHiveSuperseding(reports []PerspectiveReport) bool {
+	for _, r := range reports {
+		if r.HiveSuperseding {
+			return true
+		}
+	}
+	return false
 }
 
 func reportsHiveAuthored(reports []PerspectiveReport) bool {

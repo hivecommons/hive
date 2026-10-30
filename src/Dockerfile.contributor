@@ -536,6 +536,8 @@ COPY bin/contributor-relay.js /usr/local/bin/
 COPY bin/contributor-relay.sh /usr/local/bin/
 COPY bin/lib/ /usr/local/bin/lib/
 COPY bin/pi-backend.js /usr/local/bin/
+COPY bin/mlx-backend.js /usr/local/bin/
+COPY bin/mlx-pi-extension.js /usr/local/bin/
 # #7925: the relay runs this against the task checkout's .hive/tools before
 # typing the prompt; it must sit beside contributor-relay.js.
 COPY bin/repo-toolchain.sh /usr/local/bin/

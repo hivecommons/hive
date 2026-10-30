@@ -437,8 +437,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.Caption = joinClause(it.Caption, clause)
 			}
 		}
+		if n, ok := stageTrackerFixerExhaustedAttempts(it.Reason); ok && it.Stage == trackerNumberNeedsDecision {
+			it.Caption, it.Actor = stageTrackerFixerExhaustedCaption(n, stageTrackerFixerExhaustedSummary(agg)), "maintainer"
+		}
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, agg, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
+		stageTrackerApplyFixerStatus(&it, review.FixDispatchStatusFor(dispatchState, qualifyRepo(repoName), pr.Number, pr.HeadSHA), workers)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
 			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
@@ -488,6 +492,23 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
+	preparationState := s.stageTrackerPRStateResolver(nil, resp.Merged24h)
+	resp.BasePreparation = s.stageTrackerPreparation(resp.Items, now, func(repo string, number int) string {
+		for _, merged := range resp.Merged24h {
+			if merged.Number == number && strings.EqualFold(merged.Repo, repo) {
+				return blockedOnPRStateMerged
+			}
+		}
+		if state := preparationState(repo, number); state != "" {
+			return state
+		}
+		for _, closed := range resp.RecentlyClosed {
+			if closed.Number == number && strings.EqualFold(closed.Repo, repo) {
+				return blockedOnPRStateClosed
+			}
+		}
+		return ""
+	})
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
@@ -850,6 +871,10 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 	var hashBuf bytes.Buffer
 	hashResp := resp
 	hashResp.GeneratedAt = time.Time{}
+	hashResp.BasePreparation = slices.Clone(resp.BasePreparation)
+	for i := range hashResp.BasePreparation {
+		hashResp.BasePreparation[i].ObservedAt = time.Time{}
+	}
 	if err := json.NewEncoder(&hashBuf).Encode(hashResp); err != nil {
 		logOverviewEncodeFailure(err)
 		return stageTrackerCache{}, false

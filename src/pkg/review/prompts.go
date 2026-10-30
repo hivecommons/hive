@@ -106,7 +106,10 @@ type PullRequest struct {
 	// the PR this cycle (ReviewPriority*), stamped onto its kicks.
 	MergeReady bool
 	CIPending  bool
-	Priority   string
+	// PreparationOwner marks the exact live head of an active base-refresh
+	// owner. It changes slot ordering only, after normal review admission.
+	PreparationOwner bool
+	Priority         string
 }
 
 func PullRequestBodyDigest(title, body string) string {
@@ -340,6 +343,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	b.WriteString("Use approve only when this perspective finds no IN-SCOPE blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower the verdict.\n")
 	b.WriteString("For Hive-authored PRs, resolve sequencing, naming, config-shape, scope, and land-now-vs-later questions yourself: prefer approve with an advisory note, or changes_requested only for a concrete in-scope fix. Use requires_human only for risk a human must own: security, data loss, irreversible or public-facing behavior, policy/governance, licensing, spend, or when you could not read the diff.\n")
 	b.WriteString(permissionsTighteningGuidance)
+	b.WriteString(hiveSupersedingGuidance)
 	b.WriteString("A Hive-authored incomplete fix with concrete remediation is changes_requested, not requires_human. If there are two engineering remedies (for example, add producer code OR reword a changelog), choose the best route yourself and state it as the requested change; do not escalate the choice to a human unless it falls into one of the risk categories above. Intent-alignment cleanup such as trimming a PR summary or changelog fragment that duplicates already-landed work is also changes_requested when the remediation is concrete.\n")
 	if head := strings.TrimSpace(opts.HeadRecordOnly); head != "" {
 		b.WriteString(buildHeadRecordOnlyInstruction(pr, head))

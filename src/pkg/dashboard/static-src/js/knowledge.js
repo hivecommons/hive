@@ -150,6 +150,16 @@
       return formatNumber(total) + ' fact' + (total === 1 ? '' : 's');
     }
 
+    // Validate the same layer totals used by the displayed facts badge.
+    // Missing layers are unknown, not an empty knowledge base.
+    function kbSidebarFactCount(stats) {
+      if (!stats || typeof stats.enabled !== 'boolean') return null;
+      if (!stats.enabled) return 0;
+      if (!Array.isArray(stats.layers) || stats.layers.some(l => !l || !Number.isSafeInteger(l.total_pages) || l.total_pages < 0)) return null;
+      const count = kbTotalFactsFromStats(stats);
+      return Number.isSafeInteger(count) ? count : null;
+    }
+
     // ── Document Sources ──
     const DOC_CONTENT_ICONS = { 'text/html': '🌐', 'application/pdf': '📄', 'text/plain': '📝', 'text/markdown': '📝', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📋' };
 
@@ -231,10 +241,21 @@
         _kbCache = await r.json();
         _kbCache._documents = (docsR && docsR.ok) ? await docsR.json() : [];
         setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
-        var kbBadge = document.getElementById('knowledge-sidebar-badge');
+        const kbBadge = document.getElementById('knowledge-sidebar-badge');
         if (kbBadge) {
-          var kbFacts = kbTotalFactsFromStats(_kbCache);
-          setSidebarCountBadge(kbBadge, _kbCache && _kbCache.enabled ? kbFacts : 0, kbFactsLabel(kbFacts));
+          const kbFacts = kbSidebarFactCount(_kbCache);
+          const kbShown = kbTotalFactsFromStats(_kbCache);
+          const hasLayers = Array.isArray(_kbCache.layers);
+          const title = kbFacts !== null ? kbFactsLabel(kbShown) : hasLayers
+            ? kbFactsLabel(kbShown) + ' known; some layer counts unavailable'
+            : 'Knowledge fact count unavailable';
+          // Toggling priming changes what the badge shows, not stored facts.
+          if (prev && prev.enabled !== _kbCache.enabled) navCountDelta(kbBadge, null);
+          // Partial layer stats still refresh the section and its known
+          // facts. Only the delta baseline needs a complete numeric total.
+          if (kbFacts !== null || hasLayers) setSidebarCountBadge(kbBadge, _kbCache.enabled ? kbShown : 0, title);
+          else kbBadge.title = title;
+          navCountDelta(kbBadge, kbFacts, title);
         }
         if (_kbInitialLoad && _kbCache && _kbCache.enabled) {
           _kbSetupView = 'none';
@@ -2397,4 +2418,3 @@
       await kcSyncNow(name);
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
-
