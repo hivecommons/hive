@@ -108,6 +108,11 @@ pinned:
   # (#15438). The component exists only on the v6 development line; v4 is
   # feature-frozen and v5 never carried it, hence the explicit exclusions.
   prometheusrule-check.yml: [v6, -v4, -v5]
+  # Renders every kustomize overlay, plus the monitoring component (#15503).
+  # Same v6-only reasoning as prometheusrule-check.yml: the component exists
+  # only on the v6 development line; v4 is feature-frozen and v5 never
+  # carried it, hence the explicit exclusions.
+  kustomize-render.yml: [v6, -v4, -v5]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []
