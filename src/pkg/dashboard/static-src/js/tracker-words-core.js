@@ -185,6 +185,22 @@
       const mt = item && item.merge_train;
       return mt && typeof mt === 'object' && mt.state ? mt : null;
     }
+    // Pure: why a PR at stage, with reason, is somebody's to repair right
+    // now — '' when nothing is. Mirrors stageTrackerTrainUnderRepair in
+    // Go (the rule that seats a PR in, or drops it from, its merge train)
+    // so the chevron column and train membership read one predicate: a
+    // PR being fixed (070), waiting on its author (071) or contributor
+    // (072), freshly adopted (074), parked on a decision (085), or whose
+    // required checks are red rides no train; all but the decision park
+    // light CI / Review whatever the gate or the planner last recorded.
+    const STAGE_TRACKER_REPAIR_STAGE_WHY = { 70: 'fixing', 71: 'needs-author', 72: 'returned-to-contributor', 74: 'adopted-by-hive', 85: 'needs-decision' };
+    function stageTrackerUnderRepair(stage, reason) {
+      const why = STAGE_TRACKER_REPAIR_STAGE_WHY[Number(stage) || 0];
+      if (why) return why;
+      const lower = String(reason || '').trim().toLowerCase();
+      if (lower.indexOf('required-check-failing:') === 0 || lower.indexOf('check-failing:') === 0 || lower === 'ci-red') return 'checks-failing';
+      return '';
+    }
     // The first merge-ready stage (080 awaiting merge admission). A train
     // member below it holds a provisional slot: the planner has ordered
     // it, but CI / the review verdict / the fixer still stand in front.

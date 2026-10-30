@@ -56,6 +56,11 @@ type StageTrackerAdoption struct {
 	// the row is in its acted state ("Adopting… (queued by @x)") and no
 	// blocker or adopt action is shown.
 	QueuedBy string `json:"queued_by,omitempty"`
+	// AutoAdoptAt is when the engine's predicate (automerge.AutoAdoption)
+	// adopts this head on its own, while its clock runs and nothing holds
+	// it; AutoDue is true once it has fired (the next sweep adopts).
+	AutoAdoptAt *time.Time `json:"auto_adopt_at,omitempty"`
+	AutoDue     bool       `json:"auto_due,omitempty"`
 	// Text is the plain-words pill/tooltip: "waiting on @hanthor
 	// (maintainer, offline 26h) — adopt?".
 	Text string `json:"text"`
@@ -105,7 +110,7 @@ func (s *Server) stageTrackerMaintainerPolicy() string {
 // stage/072 from its stage record and the author's live presence; nil
 // when the row was never nudged at its current head (nothing to adopt
 // yet) or is already adopted.
-func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(login string) (automerge.ContributorPresence, bool), policy string, now time.Time) *StageTrackerAdoption {
+func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(login string) (automerge.ContributorPresence, bool), policy string, clock stageTrackerAdoptionClock, now time.Time) *StageTrackerAdoption {
 	if it.Kind != "pr" || !hasRec {
 		return nil
 	}
@@ -163,6 +168,9 @@ func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 		if by == stagelabels.AdoptBlockedAuthorMaintainer && policy == config.AdoptionMaintainerPolicyAsk {
 			out.Action = decisionActionAdopt
 		}
+	} else if v := stageTrackerAutoAdoption(it, rec, hasRec, presence, clock, now); v.Running {
+		at := v.At
+		out.AutoAdoptAt, out.AutoDue = &at, v.Due
 	}
 	out.Text = stageTrackerAdoptionText(it.Author, *out, now)
 	return out
@@ -206,6 +214,10 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 		text += " — not adopted: a maintainer approved this head; the hive merges it as-is"
 	case a.BlockedBy != "":
 		text += " — not adopted: " + a.BlockedBy
+	case a.AutoDue:
+		text += " — hive adopts it on the next sweep"
+	case a.AutoAdoptAt != nil && a.AutoAdoptAt.After(now):
+		text += " — hive adopts it in " + stageTrackerShortDuration(max(a.AutoAdoptAt.Sub(now), time.Minute)) + " unless a new head lands"
 	}
 	return text
 }

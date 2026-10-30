@@ -129,6 +129,9 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLinkedSupersededTip"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
 		stageTrackerTierJS(t, html),
+		jsConstLine(t, html, "STAGE_TRACKER_COVERED_BY_PR"),
+		jsFunc(t, html, "stageTrackerLeadStage"),
+		jsFunc(t, html, "stageTrackerLead"),
 		jsFunc(t, html, "stageTrackerSortKey"),
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "agentNowAgo"),
@@ -154,6 +157,10 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMoveAttrs"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerVisible"),
+		jsFunc(t, html, "stageTrackerIsReviewNote"),
+		jsFunc(t, html, "stageTrackerFoldedReviewNotes"),
+		jsFunc(t, html, "stageTrackerReviewNotesHtml"),
+		jsFunc(t, html, "stageTrackerFoldedCount"),
 		stageTrackerCuesJS(t, html),
 	}, "\n")
 }
