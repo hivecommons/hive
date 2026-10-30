@@ -185,6 +185,43 @@
       const mt = item && item.merge_train;
       return mt && typeof mt === 'object' && mt.state ? mt : null;
     }
+    // The first merge-ready stage (080 awaiting merge admission). A train
+    // member below it holds a provisional slot: the planner has ordered
+    // it, but CI / the review verdict / the fixer still stand in front.
+    const STAGE_TRACKER_MERGE_READY = 80;
+    // The blocker headline for a provisional train member, by stage —
+    // the same words the stage column shows (stageTrackerShort in Go), so
+    // the chevron and the caption name one blocker (hive's own #15577 read
+    // "Merge queued · 1st" while its caption said "check build-and-test
+    // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Fixing', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    // Pure: true when the row's queue slot is a forecast — the server says
+    // so (merge_train.provisional), or, from an older server, the row's
+    // own stage is short of the merge gate.
+    function stageTrackerTrainProvisional(item) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return false;
+      if (mt.provisional === true) return true;
+      if (mt.provisional === false) return false;
+      const stage = Number(item.stage) || 0;
+      return stage > 0 && stage < STAGE_TRACKER_MERGE_READY;
+    }
+    // Pure: the provisional member's headline — its stage's blocker word.
+    function stageTrackerTrainProvisionalHeadline(item) {
+      const stage = Number(item && item.stage) || 0;
+      // Guarded: test harnesses lift this function without the active-word table.
+      const active = typeof STAGE_TRACKER_ACTIVE_WORD !== 'undefined' ? STAGE_TRACKER_ACTIVE_WORD[stage] : '';
+      return STAGE_TRACKER_PROVISIONAL_STAGE_WORD[stage] || active || STAGE_TRACKER_PROVISIONAL_STAGE_WORD[50];
+    }
+    // Pure: the trailing slot words for a provisional member — "queued 1st
+    // once ready" — never the headline.
+    function stageTrackerTrainProvisionalSuffix(item) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return '';
+      const p = stageTrackerTrainPlace(mt);
+      const pos = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT ? 1 : (p.pos || 2);
+      return 'queued ' + stageTrackerOrdinal(pos) + ' once ready';
+    }
     function stageTrackerOrdinal(n) {
       n = Number(n) || 0;
       const r100 = n % 100, r10 = n % 10;
@@ -237,6 +274,8 @@
     function stageTrackerTrainWord(item) {
       const mt = stageTrackerTrain(item);
       if (!mt) return '';
+      // A slot held ahead of readiness reads blocker first, slot second.
+      if ((mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED) && stageTrackerTrainProvisional(item)) return stageTrackerTrainProvisionalHeadline(item) + ' · ' + stageTrackerTrainProvisionalSuffix(item);
       const stalled = stageTrackerTrainStalledWord(mt);
       if (stalled && (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED)) return stalled;
       const p = stageTrackerTrainPlace(mt);
@@ -821,6 +860,15 @@
       // The sweep is the spinning ⬡ and a "Checking now…" tooltip line.
       const trainSrc = stageTrackerTrain(src) ? src : (stageTrackerTrain(item) ? item : null);
       const mt = trainSrc ? stageTrackerTrain(trainSrc) : null;
+      // A provisional slot (the member's own stage is short of the gate):
+      // the chip's headline is the stage's blocker, the slot a muted
+      // trailing detail, and the hover leads with what blocks it.
+      if (mt && (state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED) && stageTrackerTrainProvisional(trainSrc)) {
+        const blocker = stageTrackerReviewPassedDetail(laneReason || mg.reason) || String((trainSrc && trainSrc.caption) || '').split(/ — /)[0].trim();
+        const headline = stageTrackerTrainProvisionalHeadline(trainSrc);
+        const tip = headline + (blocker ? ' — ' + blocker : '') + '. ' + stageTrackerTrainQueueTip(mt, nowMs).replace(/ · merges next/, ' · merges first once it is ready') + (mg.sweep_running ? ' Checking now…' : '') + lastSeen;
+        return { state, word: headline, detail: stageTrackerTrainProvisionalSuffix(trainSrc), tip, cue: 'waiting', until: 0, train: mt, stalled: false, provisional: true };
+      }
       if (mt && (state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED || state === STAGE_TRACKER_TRAIN_STATE_REBASING || state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED)) {
         const trainWord = stageTrackerTrainWord(trainSrc) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
         const queued = state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED;
