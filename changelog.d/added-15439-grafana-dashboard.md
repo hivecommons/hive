@@ -1,0 +1,1 @@
+- The opt-in `monitoring` Kustomize component now ships a Grafana dashboard (`hive-grafana-dashboard` ConfigMap labelled `grafana_dashboard: "1"`) covering estimated cost, tokens, PRs, reviews, rework, PR follow-ups and stage-engine anomalies, with the Prometheus data source as a variable ([#15439](https://github.com/hivecommons/hive/issues/15439)).

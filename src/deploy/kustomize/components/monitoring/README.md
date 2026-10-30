@@ -118,3 +118,31 @@ alert to fire. CI runs it through `.github/workflows/prometheusrule-check.yml`.
 To see each alert fire on a kind cluster: scale the Deployment to 0 for
 `HiveMetricsDown`, patch the cost threshold to `> 0` for `HiveCostBurnHigh`,
 and trigger a rejected transition for `HiveStageTransitionAnomalies`.
+
+## Grafana dashboard
+
+The component also generates a `hive-grafana-dashboard` ConfigMap from
+`hive-metrics.json`, labelled `grafana_dashboard: "1"` so the
+kube-prometheus-stack Grafana sidecar imports it. It targets Grafana 11 or
+later and takes the Prometheus data source from a `datasource` variable, so no
+UID is hardcoded. A `hive_id` variable filters by hive.
+
+Rows and the series they read (all exported by `/metrics` today):
+
+| Row | Series |
+| --- | --- |
+| Cost (estimated) | `hive_estimated_cost_usd_total`, `hive_estimated_cost_usd_by_agent`, `hive_estimated_cost_usd` |
+| Tokens | `hive_model_input_tokens_total`, `hive_model_output_tokens_total` |
+| PRs, reviews and rework | `hive_prs_by_model_total`, `hive_reviews_by_model_pair_total`, `hive_pr_rework_by_model` |
+| PR follow-ups | `hive_pr_followup_resumed_total`, `_deferred_total`, `_handoffs_total`, `_fallback_total`, `_skipped_total` |
+| Stage engine | `hive_stage_transition_anomaly_total`, `hive_stage_duplicate_pills_healed_total` |
+
+The cost panels are estimates (token counts times list price), not billed
+spend. The `hive_pr_followup_*` series appear only once the PR follow-up feature
+has written its counter file, so those panels stay empty until then.
+
+If your Grafana sidecar only watches its own namespace, set the sidecar's
+`searchNamespace` to include `hive` (or `ALL`).
+
+`src/scripts/check-prometheusrule.sh` also checks that the dashboard is valid
+JSON and that every metric it queries is one `/metrics` exports.

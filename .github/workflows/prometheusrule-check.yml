@@ -1,9 +1,10 @@
 name: PrometheusRule Check
 
-# Validates the monitoring component's PrometheusRule (#15438): `promtool check
-# rules` on the extracted rule groups, plus the promtool unit tests that force
-# each alert to fire. The logic lives in src/scripts/check-prometheusrule.sh so
-# it runs identically on a laptop.
+# Validates the monitoring component's PrometheusRule (#15438) and Grafana
+# dashboard (#15439): `promtool check rules` on the extracted rule groups, the
+# promtool unit tests that force each alert to fire, and a dashboard JSON check.
+# The logic lives in src/scripts/check-prometheusrule.sh so it runs identically
+# on a laptop.
 
 on:
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'src/deploy/kustomize/components/monitoring/**'
       - 'src/scripts/check-prometheusrule.sh'
+      - 'src/pkg/dashboard/metrics_*.go'
       - '.github/workflows/prometheusrule-check.yml'
   pull_request:
     branches:
@@ -19,6 +21,7 @@ on:
     paths:
       - 'src/deploy/kustomize/components/monitoring/**'
       - 'src/scripts/check-prometheusrule.sh'
+      - 'src/pkg/dashboard/metrics_*.go'
       - '.github/workflows/prometheusrule-check.yml'
 
 concurrency:
@@ -52,5 +55,5 @@ jobs:
             --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
           echo "${RUNNER_TEMP}/promtool" >> "$GITHUB_PATH"
 
-      - name: Check and unit-test the PrometheusRule
+      - name: Check and unit-test the PrometheusRule and dashboard
         run: bash src/scripts/check-prometheusrule.sh
