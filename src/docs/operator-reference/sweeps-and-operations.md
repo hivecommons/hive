@@ -187,7 +187,7 @@ checks are red at two heads, the hive reopens the original, removes
 ("needs a person"); at most one reopen per original per 24h. The note,
 label, close and reopen are unsolicited writes on a contributor's PR, so each
 first asks the write-back gate as kind `contributor_adopt` (L6 + opt-in label
-by default; see [the write-back table](../operator-reference.md#what-hive-writes-to-github-and-when)):
+by default; see [the write-back table](#what-hive-writes-to-github-and-when)):
 refused, the original is not closed and stays open on the keep-open path
 until the copy merges, and a due reopen waits for the next poll. A clanker-
 or hive-authored original is exempt from the opt-in label: with
@@ -315,6 +315,18 @@ between. Two mechanisms close that gap
   re-lists on its next call. An `issues` closed delivery (or a PR merged
   with a closing keyword, which GitHub delivers as the issue's own close)
   already evicts the issue from the status snapshot the lane offers from.
+  The same open delivery also **preempts a fixer already at work**
+  ([#15469](https://github.com/hivecommons/hive/issues/15469)): the
+  `/contribute` hub releases every in-flight contributor task on the
+  covered issue whose session is not the PR's own author (reason
+  `preempted: open PR #N by @login already covers this issue`) and hands
+  the session other work, exactly as a claim takeover does. Before this
+  the ledger stopped *offering* the issue but never told the contributor
+  it had dispatched nine seconds after the issue was filed, so that
+  fixer finished and opened a second PR
+  ([#15473](https://github.com/hivecommons/hive/pull/15473)) for an issue
+  the owner's PR ([#15470](https://github.com/hivecommons/hive/pull/15470))
+  already covered.
 - **Duplicate-fix sweep.** Every ~15 minutes (an unstick step, alongside the
   supersession sweep) the hive looks for an open issue two or more open PRs
   close and resolves the pair deterministically. The **earlier-created PR
@@ -325,7 +337,20 @@ between. Two mechanisms close that gap
   audit entry. A later PR a person authored (`author/human`) is never
   closed: it gets the comment, with a request to close it or say why both
   should land, and stays open at its current stage
-  (`duplicate-fix-commented`). Only when the earlier PR is **red or stale**
+  (`duplicate-fix-commented`). A later PR by a **relay contributor
+  registered on this hive** (the login has a contributor profile — the
+  hive's own fixer under its contributor account) is read as the hive's
+  own for the write-back gate, so the notice is never suppressed as
+  unsolicited, but it is likewise left open with one comment
+  (`Superseded by #<keeper> … held out of the merge queue and returned to
+  its author`) rather than closed: the merge train holds it as
+  `duplicate-of#<keeper>` and the stage engine parks it at
+  `stage/072-returned-to-contributor` (071 for a person, 070 for the App's
+  own) with the tracker pill *Duplicate of #keeper · needs a pick* — never
+  "Approved; waiting its turn" — and the 07x pass neither nudges nor adopts
+  it ([#15469](https://github.com/hivecommons/hive/issues/15469): a relay
+  login with no `author/*` label yet read as a person, the L4 gate refused
+  the notice, and both PRs rode the merge train). Only when the earlier PR is **red or stale**
   (no update for 24h) **and** the later PR is green does the hive ask the
   owner: the later PR is parked `needs-human` → `stage/085-needs-decision`
   with a comment naming both PRs and the check states
@@ -704,7 +729,7 @@ The hive already predicts PR file overlap for the merge train. The advisor reuse
 
 - A file is a **hotspot** when, over the rolling window, at least `hotspot_min_prs` distinct PRs touched it and at least `hotspot_min_overlaps` pairs of them were open at the same time. Score = concurrent pairs × a size weight (1 / 1.25 / 1.5 / 2 at 800 / 1500 / 4000 lines) + 2 × attributed conflicts. Hunk-level "same region" weighting is not available from the train's records and is skipped.
 - **Don't splinter.** A split is only recommended for code when the file has at least `hotspot_min_lines` lines **and** two or more top-level symbol groups (Go: funcs and types via `go/ast`, methods grouped under their receiver; JS/TS/Python: top-level declarations; Markdown: `##` headings). The proposal targets at most 4 files of at least 150 lines, no behaviour change, exported API unchanged, tests move with the code.
-- **By kind.** Docs (`*.md`, `*.rst`, `*.txt`) are reported but only recommended for a by-section split above 1500 lines (the `docs/api-reference/<area>.md` pattern). Generated files (`// Code generated … DO NOT EDIT`, `*.pb.go`, the dashboard SPA under `pkg/dashboard/static/` → `static-src/`) point at their source. Lock and data files are report-only.
+- **By kind.** Docs (`*.md`, `*.rst`, `*.txt`) are reported but only recommended for a by-section split above 1500 lines (the `docs/api-reference/<area>.md` pattern). Generated files (`// Code generated … DO NOT EDIT`, `*.pb.go`, the dashboard SPA under `pkg/dashboard/static/` → `static-src/`) point at their source — unless that source tree is already split into more than 4 files, in which case they are report-only (regeneration makes the output touch every source change). Lock and data files are report-only.
 - **One issue per file.** Title `refactor: <path> is a merge hotspot — split into <N> units`, labels `agent/ci-maintainer` + `kind/cleanup`, origin `governor`, body marker `<!-- hive:hotspot file=<path> -->`, evidence table, the top-level units, a concrete split proposal and the don't-splinter rule. While that issue is open no second one is filed; after it closes the file waits `hotspot_refile_days` before it can be filed again. **Capped.** At most `hotspot_max_open` modularize issues are open per repo at once (an issue that already has a PR still counts) and at most `hotspot_max_per_pass` are filed per advisor pass; the highest-ranked uncapped hotspot is filed when a slot frees, and the advisor logs one INFO line per pass when the cap holds it back. Issues go through the writeback gate as `issue_file` (a paused repo or `writeback.per_repo[<repo>].mode: off` stops them) and are skipped when the GitHub budget governor is skipping optional sweeps.
 - **Where to look.** `GET /api/hotspots` (or `hivectl governor hotspots [--repo owner/name]`) lists every hotspot with its recommendation and issue; `/api/status` carries `hotspots: {count, actionable, filed}`. State lives in `/data/hotspots.json`; the analysis runs at most hourly in the eval cycle, the intake on every merge-train sweep. A PR the train has not seen for two hours has its interval closed at its last sighting.
 

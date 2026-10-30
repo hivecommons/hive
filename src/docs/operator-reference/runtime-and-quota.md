@@ -179,7 +179,7 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   branch is the pushed branch. `issues` `labeled`/`unlabeled`/`reopened`
   mark the issue for the next un-park sweep.
 - `pull_request` `opened`/`synchronize`/`reopened` also hands the PR to the
-  [sentinel](../operator-reference.md#suspicious-activity-alerts-sentinel), which evaluates it now
+  [sentinel](sweeps-and-operations.md#suspicious-activity-alerts-sentinel), which evaluates it now
   instead of waiting for its reconcile cadence
   ([#13379](https://github.com/hivecommons/hive/issues/13379)).
 - `projects_v2_item` (`created`/`edited`/`deleted`/`reordered`/`archived`/
@@ -584,6 +584,8 @@ curl -s 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=1' | head  # parked g
 | `HIVE_COVERAGE_BADGE_URL` | Source of the coverage percentage on the ci-maintainer card: an `http(s)` badge URL (shields JSON or SVG) or `repo://<ref>/<path>` read from the primary repo via the App client. See [env-vars.md](../env-vars.md). |
 
 ### Dashboard metrics
+
+See [Monitoring a hive with Prometheus and Grafana](../monitoring.md) for setup, metric families and scraping.
 
 | Name | Purpose |
 |---|---|
