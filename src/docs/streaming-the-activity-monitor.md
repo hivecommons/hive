@@ -145,7 +145,8 @@ position. For hive's hive that is `hivecommons/hive`, a public repository. It
 does **not** render tokens, secrets, settings, webhooks, chat, or the
 operator's agent terminals; `?kiosk=1` additionally hides the sidebar, topbar,
 avatar/settings menus, notices, the Welcome and NPS dialogs, and every other
-dashboard section. Do not point the streamer at a hive tracking private
+dashboard section, and renders dark regardless of any stored theme
+(append `&theme=light` for a light stream). Do not point the streamer at a hive tracking private
 repositories without reviewing what the tracker would show.
 
 ## Quick manual test with OBS (no cluster)

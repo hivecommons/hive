@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"log/slog"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -215,10 +216,124 @@ func stageTrackerApplyDuplicateHold(it *StageTrackerItem, mt *StageTrackerMergeT
 	}
 }
 
+// stageTrackerLeftTrainNote is the muted hover note on a PR the view
+// dropped from its merge train while a person or the fixer has it
+// (hivecommons/hive#15405 led a train header as "1st: #15405" while its
+// own chevron read "Fixing").
+const stageTrackerLeftTrainNote = "left the merge train while being fixed; rejoins when green"
+
+// stageTrackerAwaitingAdmissionCaption is the 080 row's own caption, off
+// any train.
+const stageTrackerAwaitingAdmissionCaption = "Green and approved; waiting for the automerge lane to admit it"
+
+// StageTrackerLeftTrain says why a PR the planner had ordered rides no
+// train in this view: Why is the repair token (fixing, needs-author,
+// returned-to-contributor, needs-decision, checks-failing) and Note the
+// hover sentence. The row has no merge_train and no ordinal.
+type StageTrackerLeftTrain struct {
+	Why  string `json:"why"`
+	Note string `json:"note"`
+	// trainID and position remember the slot it held so the survivors
+	// can close ranks (stageTrackerMergeTrainPostPass).
+	trainID  string
+	position int
+}
+
+// stageTrackerTrainUnderRepair names why a PR at stage, with reason, is
+// not a train member right now — "" when it may ride. A PR being fixed
+// (070), waiting on its author (071) or contributor (072), parked on a
+// human decision (085), or whose required checks are red is somebody's
+// to repair first; the planner may still have ordered it, but the view
+// never seats it (hivecommons/hive#15581 admits 050/060 provisionally
+// only while nothing is red).
+func stageTrackerTrainUnderRepair(stage int, reason string) string {
+	switch stage {
+	case stagelabels.Fixing.Number():
+		return stagelabels.Fixing.Slug()
+	case stagelabels.NeedsAuthor.Number():
+		return stagelabels.NeedsAuthor.Slug()
+	case stagelabels.ReturnedToContributor.Number():
+		return stagelabels.ReturnedToContributor.Slug()
+	case stagelabels.NeedsDecision.Number():
+		return stagelabels.NeedsDecision.Slug()
+	}
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if strings.HasPrefix(lower, "required-check-failing:") || strings.HasPrefix(lower, "check-failing:") || lower == "ci-red" {
+		return "checks-failing"
+	}
+	return ""
+}
+
+// stageTrackerLeaveMergeTrain takes a PR out of its train: the train
+// record and the train's gate words go, and LeftTrain keeps why (and,
+// unexported, which train and which slot) so the row can say so on hover
+// and the survivors can close ranks. why "" (a train that shrank to one
+// member) leaves no note — there is no train to have left.
+func stageTrackerLeaveMergeTrain(it *StageTrackerItem, why string) {
+	if it == nil || it.MergeTrain == nil {
+		return
+	}
+	mt := it.MergeTrain
+	if it.MergeGate != nil && (it.MergeGate.State == mt.State || it.MergeGate.State == MergeGateStateTrainFront) {
+		// Back to the stage's own gate state (ready at 080, pending at
+		// 060); off the gate there is no gate.
+		it.MergeGate.State = ""
+		switch it.Stage {
+		case stagelabels.Reviewed.Number():
+			it.MergeGate.State = MergeGateStatePending
+		case stagelabels.AwaitingMergeAdmission.Number():
+			it.MergeGate.State = MergeGateStateReady
+		}
+		it.MergeGate.Reason = ""
+		if it.MergeGate.State == "" || reflect.DeepEqual(*it.MergeGate, StageTrackerMergeGate{}) {
+			it.MergeGate = nil
+		}
+	}
+	it.MergeTrain = nil
+	// The caption the train wrote ("waiting its turn … behind #N") is
+	// stale now; an 080 row goes back to the gate's own words.
+	if it.Stage == stagelabels.AwaitingMergeAdmission.Number() && (it.Caption == stageTrackerMergeTrainCaption(it.Reason) || it.Caption == stageTrackerMergeTrainFrontCaption(mt)) {
+		it.Caption = stageTrackerAwaitingAdmissionCaption
+	}
+	if why != "" {
+		pos := mt.Position
+		if mt.State == MergeGateStateTrainFront {
+			pos = 1
+		}
+		it.LeftTrain = &StageTrackerLeftTrain{Why: why, Note: stageTrackerLeftTrainNote, trainID: mt.ID, position: pos}
+	}
+}
+
+// stageTrackerMergeTrainFrontGate words the gate of the member merging
+// first: "1st in the merge queue; merges next (1st of 2, overlapping
+// files: a.go)", or "merges first once it is ready" while its own stage
+// is short of the gate. promoted is a member that was queued behind a
+// front that just left: its queued words are stale and are replaced.
+func stageTrackerMergeTrainFrontGate(front *StageTrackerItem, size int, files []string, promoted bool) {
+	if front.MergeGate == nil {
+		front.MergeGate = &StageTrackerMergeGate{}
+	}
+	if front.MergeGate.State == "" || front.MergeGate.State == MergeGateStateReady || (promoted && front.MergeGate.State == MergeGateStateQueuedBehind) {
+		front.MergeGate.State = MergeGateStateTrainFront
+	}
+	if front.MergeGate.Reason == "" || promoted {
+		next := "merges next"
+		if stageTrackerMergeTrainProvisional(front.Stage) {
+			next = "merges first once it is ready"
+		}
+		front.MergeGate.Reason = "1st in the merge queue; " + next + " (1st of " + strconv.Itoa(size) + ", overlapping files: " + strings.Join(files, ", ") + ")"
+	}
+}
+
 // stageTrackerMergeTrainPostPass runs over the finished items: the front
 // (which the lane evaluates on its normal path and so carries no train
 // reason) is marked from its siblings' records, and every member learns
-// the PRs ahead of it. Members are matched on repo and base.
+// the PRs ahead of it. Members are matched on repo and base. A member
+// under repair (stageTrackerTrainUnderRepair) leaves the train first —
+// the front included — the rest close ranks (size, place, front and
+// ahead recomputed), and a train left with one member is no train at
+// all: no header, no ordinal (hivecommons/hive#15405 led a header as
+// "1st: #15405" while its own chevron read "Fixing").
 func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQueueOptions, mem *mergeTrainMemory) {
 	type trainKey struct{ repo, id string }
 	members := map[trainKey][]int{}
@@ -227,14 +342,28 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQue
 		if it.MergeTrain == nil || it.Kind != "pr" {
 			continue
 		}
+		// A rebase-exhausted tail sits at 085 by the train's own doing;
+		// it stays so the person who rebases it sees where it merges.
+		if it.MergeTrain.State != MergeGateStateRebaseExhausted {
+			if why := stageTrackerTrainUnderRepair(it.Stage, it.Reason); why != "" {
+				stageTrackerLeaveMergeTrain(it, why)
+				continue
+			}
+		}
 		members[trainKey{it.Repo, it.MergeTrain.ID}] = append(members[trainKey{it.Repo, it.MergeTrain.ID}], i)
 	}
 	for key, idx := range members {
 		sample := items[idx[0]].MergeTrain
 		frontIdx := -1
+		frontLeft := false
 		for i := range items {
 			it := &items[i]
 			if it.Kind == "pr" && it.Repo == key.repo && it.Number == sample.Front && it.Stage < stageTrackerMergedStage {
+				if why := stageTrackerTrainUnderRepair(it.Stage, it.Reason); why != "" {
+					it.LeftTrain = &StageTrackerLeftTrain{Why: why, Note: stageTrackerLeftTrainNote, trainID: sample.ID, position: 1}
+					frontLeft = true
+					break
+				}
 				frontIdx = i
 				break
 			}
@@ -245,28 +374,56 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQue
 				ID: sample.ID, State: MergeGateStateTrainFront, Front: sample.Front, Position: 1, Size: sample.Size,
 				OverlapFiles: append([]string(nil), sample.OverlapFiles...),
 			}
-			if front.MergeGate == nil {
-				front.MergeGate = &StageTrackerMergeGate{}
-			}
-			if front.MergeGate.State == "" || front.MergeGate.State == MergeGateStateReady {
-				front.MergeGate.State = MergeGateStateTrainFront
-			}
-			if front.MergeGate.Reason == "" {
-				next := "merges next"
-				if stageTrackerMergeTrainProvisional(front.Stage) {
-					next = "merges first once it is ready"
-				}
-				front.MergeGate.Reason = "1st in the merge queue; " + next + " (1st of " + strconv.Itoa(sample.Size) + ", overlapping files: " + strings.Join(sample.OverlapFiles, ", ") + ")"
-			}
+			stageTrackerMergeTrainFrontGate(front, sample.Size, sample.OverlapFiles, false)
 			if front.Stage == stagelabels.AwaitingMergeAdmission.Number() {
 				front.Caption = stageTrackerMergeTrainFrontCaption(sample)
 			}
 			idx = append(idx, frontIdx)
 		}
+		// The slots the view has emptied: survivors behind them move up.
+		var dropped []int
+		for i := range items {
+			it := &items[i]
+			if it.Kind == "pr" && it.Repo == key.repo && it.MergeTrain == nil && it.LeftTrain != nil && it.LeftTrain.trainID == sample.ID {
+				dropped = append(dropped, it.LeftTrain.position)
+			}
+		}
+		if len(dropped) > 0 {
+			if sample.Size-len(dropped) < 2 {
+				for _, i := range idx {
+					stageTrackerLeaveMergeTrain(&items[i], "")
+				}
+				continue
+			}
+			for _, i := range idx {
+				mt := items[i].MergeTrain
+				moved := 0
+				for _, p := range dropped {
+					if p > 0 && p < mt.Position {
+						moved++
+					}
+				}
+				mt.Position -= moved
+				mt.Size = max(sample.Size-len(dropped), len(idx))
+			}
+		}
 		// Members in merge order, so each one's Ahead is the prefix.
 		sort.Slice(idx, func(a, b int) bool {
 			return items[idx[a]].MergeTrain.Position < items[idx[b]].MergeTrain.Position
 		})
+		if frontLeft {
+			// The old front is out; the member now in slot 1 leads.
+			newFront := 0
+			if first := &items[idx[0]]; first.MergeTrain.Position == 1 {
+				newFront = first.Number
+				first.MergeTrain.State = MergeGateStateTrainFront
+				stageTrackerMergeTrainFrontGate(first, first.MergeTrain.Size, first.MergeTrain.OverlapFiles, true)
+				frontIdx = idx[0]
+			}
+			for _, i := range idx {
+				items[i].MergeTrain.Front = newFront
+			}
+		}
 		members := make([]int, 0, len(idx))
 		for _, i := range idx {
 			members = append(members, items[i].Number)
