@@ -16,7 +16,7 @@ func TestCloseOnMergeOptionsAdvisoryAutoclose(t *testing.T) {
 		wantDisable bool
 	}{
 		{"unset", config.Config{}, false},
-		{"off", config.Config{Dedupe: config.DedupeConfig{AdvisoryAutoclose: &off}}, true},
+		{"off", config.Config{Dedupe: config.DedupeAdvisoryConfig{AdvisoryAutoclose: &off}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := closeOnMergeOptionsFor(&tc.cfg, nil, nil).DisableAdvisoryAutoclose; got != tc.wantDisable {

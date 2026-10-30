@@ -48,7 +48,7 @@ func TestStageTrackerAdvisoryAutocloseKnob(t *testing.T) {
 	if !stageTrackerAdvisoryAutoclose(nil) || !stageTrackerAdvisoryAutoclose(&config.Config{}) {
 		t.Error("unset knob must read as on")
 	}
-	if stageTrackerAdvisoryAutoclose(&config.Config{Dedupe: config.DedupeConfig{AdvisoryAutoclose: &off}}) {
+	if stageTrackerAdvisoryAutoclose(&config.Config{Dedupe: config.DedupeAdvisoryConfig{AdvisoryAutoclose: &off}}) {
 		t.Error("knob set false must read as off")
 	}
 }
