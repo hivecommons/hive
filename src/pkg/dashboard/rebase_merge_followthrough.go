@@ -62,11 +62,21 @@ func (s *Server) armRebaseThenMerge(ctx context.Context, w http.ResponseWriter, 
 	gh := s.deps.GHClient
 	now := rebaseMergeNow()
 	hiveAuthored := gh.IsHiveAuthorLogin(st.Author)
-	if !hiveAuthored && !st.PushReachable() {
+	// Workflow paths refuse every author: the App token cannot push them
+	// even to the hive's own fork. Plain reachability keeps the hive-authored
+	// bypass — the hive pushes its own heads without maintainer edits.
+	refusal := ""
+	switch {
+	case len(st.WorkflowPushPaths) > 0:
+		refusal = rebasemerge.FailWorkflowPush
+	case !hiveAuthored && !st.PushReachable():
+		refusal = rebasemerge.FailNotReachable
+	}
+	if refusal != "" {
 		f := rebasemerge.Arm(repoFull, number, user, st.BaseRef, st.HeadSHA, false, now)
-		f.FailNow(now, rebasemerge.FailNotReachable, nil)
+		f.FailNow(now, refusal, st.WorkflowPushPaths)
 		// A 200 with a refused result, not an error: the toast shows the
-		// reason and the two ways out instead of "HTTP 409".
+		// reason and a recovery step instead of "HTTP 409".
 		jsonStatusResponse(w, http.StatusOK, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: repoItemDecisionMergeNow, Status: rowActionRefused, Head: st.HeadSHA,
 			Result: rebaseMergeFailedResult(f)})
 		return
@@ -132,6 +142,9 @@ func rebaseMergeQueuedResult(f rebasemerge.FollowThrough, already bool) *RowActi
 func rebaseMergeFailedResult(f rebasemerge.FollowThrough) *RowActionResult {
 	out := &RowActionResult{Action: rowActionRefused, Target: rowActionTarget(f.Repo, rowActionTargetPR, f.Number), Outcome: f.FailureText(), Why: f.FailReason}
 	out.Next = "Pick a way out: adopt the commits into a fresh branch, or close it as superseded."
+	if f.FailReason == rebasemerge.FailWorkflowPush {
+		out.Next = "Rebase the fork branch with credentials that can push workflow changes, then approve and merge again."
+	}
 	if f.FailReason == rebasemerge.FailForeignHead {
 		out.Next = "Read the new head; if it is what you meant to merge, approve it again — or close the PR as superseded."
 	}
@@ -167,10 +180,17 @@ func renderRebaseThenMergeComment(user, comment string, number int, base string)
 func renderRebaseThenMergeFailedComment(f rebasemerge.FollowThrough) string {
 	body := "Rebase, then merge as maintainer did not land: " + f.FailureText()
 	if len(f.ConflictFiles) > 0 {
-		body += "\n\nFiles to resolve:\n"
+		if f.FailReason == rebasemerge.FailWorkflowPush {
+			body += "\n\nWorkflow paths blocking the push:\n"
+		} else {
+			body += "\n\nFiles to resolve:\n"
+		}
 		for _, file := range f.ConflictFiles {
 			body += "- `" + file + "`\n"
 		}
+	}
+	if f.FailReason == rebasemerge.FailWorkflowPush {
+		return body
 	}
 	if f.FailReason == rebasemerge.FailForeignHead {
 		body += fmt.Sprintf("\n@%s: from the dashboard row, **%s** or **%s**.", f.Actor, rebasemerge.OptionReapproveLabel, rebasemerge.OptionCloseSupersLabel)
@@ -220,6 +240,13 @@ func (s *Server) tickRebaseMerge(ctx context.Context) {
 func (s *Server) driveRebaseMerge(ctx context.Context, store *rebasemerge.Store, f rebasemerge.FollowThrough, st ghpkg.PRMergeState) {
 	gh := s.deps.GHClient
 	now := rebaseMergeNow()
+	if st.NeedsRebase() && len(st.WorkflowPushPaths) > 0 && !st.Merged {
+		f.FailNow(now, rebasemerge.FailWorkflowPush, st.WorkflowPushPaths)
+		_ = store.Update(f)
+		s.settleRebaseMergeLedger(ctx, f)
+		s.invalidateStageTrackerForWebhook()
+		return
+	}
 	obs := rebasemerge.Observation{Now: now, Head: st.HeadSHA, State: st.State, Merged: st.Merged, MergeableState: st.MergeableState, CIRed: st.CIRed}
 	if head := strings.TrimSpace(st.HeadSHA); head != "" && head != f.ApprovedHead && head != f.RebasedHead && !f.HiveAuthored && !st.Merged {
 		// The approval was bound to ApprovedHead. Before the new head can
