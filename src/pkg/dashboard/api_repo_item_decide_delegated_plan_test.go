@@ -217,3 +217,37 @@ func TestOperatorActionFromBodyRecordsChosenButton(t *testing.T) {
 		t.Fatalf("%+v %v", req, ok)
 	}
 }
+
+// TestDelegatedPlanWhyAlreadyLandedNamesTheEvidence is
+// hivecommons/hive#15732: the preview for #15544 said "Close #15544 as
+// superseded by #15545" and then "Author @Karibhou is untrusted and their
+// clanker is offline". A close driven by an empty diff and a merged
+// landing says so, and never mentions the author's standing.
+func TestDelegatedPlanWhyAlreadyLandedNamesTheEvidence(t *testing.T) {
+	in := delegatedecision.Input{Kind: delegatedecision.KindPR, Number: 15544, Author: "Karibhou", DiffEmpty: true,
+		SupersededBy: &delegatedecision.MergedCloser{PR: 15545, Issue: 15543}}
+	d := delegatedecision.Decision{Verdict: delegatedecision.VerdictCloseSuperseded, Rule: delegatedecision.RuleAlreadyFixed,
+		Actions: []delegatedecision.Action{{Kind: delegatedecision.ActionCloseDuplicate, Target: 15545}}}
+	if why := delegatedPlanWhy(in, d); why != "Diff is empty — the change already landed via #15545 (merged)." {
+		t.Fatalf("why %q", why)
+	}
+	summary, _ := delegatedPlanWording(in, d)
+	if summary != "Close #15544 as superseded by #15545." {
+		t.Fatalf("summary %q", summary)
+	}
+	// Trusted or not, offline or not: the reason is the evidence.
+	in.TrustedAuthor, in.ContributorOnline = true, false
+	if why := delegatedPlanWhy(in, d); strings.Contains(why, "untrusted") || strings.Contains(why, "offline") {
+		t.Fatalf("why mentions the author's standing: %q", why)
+	}
+	// Without the empty-diff fact the landing alone is the reason.
+	in.DiffEmpty = false
+	if why := delegatedPlanWhy(in, d); why != "The change already landed via #15545 (merged)." {
+		t.Fatalf("why %q", why)
+	}
+	// Any other rule keeps the author's standing as the reason.
+	other := delegatedecision.Input{Kind: delegatedecision.KindPR, Number: 15029, Author: "Karibhou"}
+	if why := delegatedPlanWhy(other, delegatedecision.Decision{Rule: "contributor-offline"}); why != "Author @Karibhou is untrusted and their clanker is offline." {
+		t.Fatalf("why %q", why)
+	}
+}

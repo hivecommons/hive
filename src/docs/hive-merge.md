@@ -916,6 +916,30 @@ closed with the redundant-of note. Only when the verdict names no PR
 *and* the compare is not empty does the PR fall through to 085 as before
 ([#15647](https://github.com/hivecommons/hive/pull/15647)).
 
+**Already landed, any author.** That entry was the hive's own: #15544, a
+trusted contributor's PR for #15543, was +0/−0 against `v5` because
+#15545 (merged) carried the identical change, and the reviewer's "should
+decide whether #15544 can be closed as a no-op now that #15545 (merged)
+carries this change" still parked it at 085 for nine hours. Whether a
+change is already on the base is a measurement, not a trust call, so the
+already-landed entry now takes any author's PR when the evidence is
+unambiguous: the diff against the current base is empty (no files, or
+every file byte-identical on the base tip) **and** the landing is proven
+— the PR the reviewer named is merged, the issue this PR closes was
+closed by a merged PR, or the compare lists no commits (the head is
+contained in the base). "#N (merged)" in the reviewer's words names the
+landing PR like "via #N" does. The hive comments "already landed via #N
+— closing as superseded; thank you @author", closes the PR through the
+supersession-close write-back gate, and logs
+`already-landed:<author_kind>` (the caption is the same "already landed
+via #N — closing as superseded"). A trusted author is treated exactly
+like anyone else. A PR with a real diff, an empty PR whose landing is not
+proven, a held or `keep-open` PR, or one a person parked keeps the
+reviewer's question as before. The "Let hive decide" preview for such a
+PR gives the evidence as its reason — "diff is empty — the change already
+landed via #N (merged)" — never the author's standing
+([#15732](https://github.com/hivecommons/hive/issues/15732)).
+
 ## Usage
 
 ```sh
