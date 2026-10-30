@@ -96,7 +96,7 @@
       'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
-      'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
+      'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
@@ -1266,12 +1266,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function contributorsSectionSummary(contributors, pool) {
       contributors = Array.isArray(contributors) ? contributors : [];
-      const active = contributors.filter(c => c && c.active).length || Number(pool && pool.active) || 0;
+      const online = pool && pool.online != null ? (Number(pool.online) || 0) : contributors.filter(c => c && c.online).length;
       const total = contributors.length || Number(pool && pool.registered) || 0;
       const ranked = contributors.slice().sort((a, b) => (Number(b.total_tasks_completed || b.tasks_completed) || 0) - (Number(a.total_tasks_completed || a.tasks_completed) || 0));
       const top = ranked[0] && (ranked[0].github_username || ranked[0].login);
-      if (top) return `${total} contributors · ${active} active · top: @${top}`;
-      return total ? `${total} contributors · ${active} active` : '0 contributors';
+      if (top) return `${total} contributors · ${online} online · top: @${top}`;
+      return total ? `${total} contributors · ${online} online` : '0 contributors';
     }
     function inceptionSectionSummary() {
       const campaigns = Array.isArray(_campaigns) ? _campaigns : [];

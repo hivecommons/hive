@@ -126,9 +126,55 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 	if got.HeadSHA != "abc123" {
 		t.Fatalf("dispatch head SHA was not bound into the recorded verdict: %q", got.HeadSHA)
 	}
-	if !got.RequiresHuman {
-		t.Fatalf("requires_human verdict did not survive into the aggregate: %+v", got)
+	// A bare correctness requires_human with no security finding is advisory
+	// on a contributor PR (hivecommons/hive#15640): the verdict is recorded
+	// and aggregated, but the PR keeps moving.
+	if got.RequiresHuman || got.Verdict != review.VerdictApprove {
+		t.Fatalf("non-security requires_human did not resolve to advisory approve: %+v", got)
 	}
+	if !reasonsContain(got.Reasons, "recorded as advisory:") {
+		t.Fatalf("Reasons = %v, want the requires_human recorded as advisory", got.Reasons)
+	}
+	if got.Perspectives[review.PerspectiveCorrectness] != review.VerdictApprove {
+		t.Fatalf("perspectives = %v, want the relayed verdict collected and resolved", got.Perspectives)
+	}
+}
+
+// The security perspective's requires_human is a security finding in its
+// own right and does survive into the aggregate with the finding named.
+func TestRecordReviewVerdictSecurityHoldSurvivesAggregate(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "projectbluefin/common", 1121, "security", "requires_human")
+	pending := pendingVerdict("projectbluefin/common", 1121, review.PerspectiveSecurity, "reviewer")
+	pending.HeadSHA = "abc123"
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{pending}})
+
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 {
+		t.Fatalf("want 1 aggregated item, got %d", len(artifact.Items))
+	}
+	got := artifact.Items[0]
+	if !got.RequiresHuman || got.Verdict != review.VerdictRequiresHuman {
+		t.Fatalf("security requires_human did not survive into the aggregate: %+v", got)
+	}
+	if !strings.Contains(got.DecisionFinding, "security review withheld approval") {
+		t.Fatalf("DecisionFinding = %q, want the security hold named", got.DecisionFinding)
+	}
+}
+
+func reasonsContain(reasons []string, needle string) bool {
+	for _, r := range reasons {
+		if strings.Contains(r, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
@@ -156,12 +202,54 @@ func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
 		t.Fatalf("Collect: %v", err)
 	}
 	got := artifact.Items[0]
-	if got.Verdict != review.VerdictRequiresHuman || !got.DecisionRequested ||
-		!strings.Contains(got.DecisionQuestion, "groundwork lands before its consumer") {
-		t.Fatalf("aggregate = %+v, want decision request", got)
+	// The marker is relayed, but a product question with no security
+	// finding behind it is advisory on a contributor PR
+	// (hivecommons/hive#15640): the aggregate approves and keeps the
+	// question in its reasons; a person meets the PR at the merge gate.
+	if got.Verdict != review.VerdictApprove || got.DecisionRequested || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want advisory approve", got)
+	}
+	if !reasonsContain(got.Reasons, "recorded as advisory: @clubanderson should decide whether this groundwork lands before its consumer.") {
+		t.Fatalf("Reasons = %v, want the question recorded as advisory", got.Reasons)
 	}
 	if got.BodyDigest != "body-v1" {
 		t.Fatalf("BodyDigest = %q, want dispatch digest", got.BodyDigest)
+	}
+}
+
+// A decision marker whose question is a security-class one (sensitive
+// paths) is a finding: it survives as a decision request with the finding
+// named, so the 085 comment can say what the review found.
+func TestRecordReviewVerdictPromotesSecurityDecisionMarker(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123", "body-v1")
+	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		HeadSHA:     "abc123",
+		BodyDigest:  "body-v1",
+		Confirmed:   time.Now().UTC(),
+	}}})
+	body := "No defects; trust surface.\n\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: @clubanderson should decide whether this workflow trigger change is acceptable. -->"
+
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+	if len(recorded) != 1 || recorded[0].Verdict != review.VerdictRequiresHuman || !recorded[0].DecisionRequested {
+		t.Fatalf("recorded = %+v, want promoted decision request", recorded)
+	}
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := artifact.Items[0]
+	if got.Verdict != review.VerdictRequiresHuman || !got.DecisionRequested ||
+		!strings.Contains(got.DecisionQuestion, "workflow trigger change") {
+		t.Fatalf("aggregate = %+v, want decision request", got)
+	}
+	if !strings.Contains(got.DecisionFinding, "sensitive-paths question") {
+		t.Fatalf("DecisionFinding = %q, want the sensitive-paths finding named", got.DecisionFinding)
 	}
 }
 

@@ -126,6 +126,9 @@ type Config struct {
 	// escalation or codebase damage, from any author. Default on; see
 	// SentinelConfig.
 	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	// Security holds the hive-wide security knobs that are not one agent's
+	// or one sweep's; see SecurityConfig.
+	Security SecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 	// Evidence controls the review evidence bundles the review relay writes
 	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
 	Evidence EvidenceConfig `yaml:"evidence,omitempty" json:"evidence,omitempty"`

@@ -147,7 +147,7 @@ type Server struct {
 	// the tracker's "Merging" rows (stage_tracker_merge_gate.go); tests only.
 	mergeAttempts func() []github.MergeAttempt
 	// stageTrackerCache is the last /api/stage-tracker payload built from
-	// the status snapshot, served until its TTL lapses (stage_tracker.go).
+	// the status snapshot, served until its TTL lapses (stage_tracker_build.go).
 	stageTrackerCache   stageTrackerCache
 	stageTrackerCacheMu sync.Mutex
 	// stageTrackerBuild is the one rebuild in flight, nil when none; it is
@@ -160,7 +160,7 @@ type Server struct {
 	// build they can hold open; nil in production.
 	stageTrackerBuildFn func(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse
 	// stageTrackerLinks memoises the issue lookups that title the tracker's
-	// untitled links across rebuilds (stage_tracker.go).
+	// untitled links across rebuilds (stage_tracker_links.go).
 	stageTrackerLinks stageTrackerLinkMemo
 	// evidenceHB is the background-refreshed evidence aggregate the hub
 	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
