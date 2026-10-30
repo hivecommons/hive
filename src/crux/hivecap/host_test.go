@@ -156,9 +156,9 @@ func TestInferenceRoutesRetryUntilDelivered(t *testing.T) {
 		got, ok := h.route("a")
 		return ok && got.Backend == "new"
 	})
-	if n, err := r.Pending(); n != 0 || err != nil {
-		t.Fatalf("Pending after recovery = %d, %v", n, err)
-	}
+	// The host records the route before the worker's bookkeeping runs, so
+	// Pending must be awaited, not sampled.
+	waitFor(t, "pending drained after recovery", func() bool { n, err := r.Pending(); return n == 0 && err == nil })
 }
 
 // The periodic resync re-pushes every held route so a hive that lost its
