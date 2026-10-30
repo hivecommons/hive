@@ -36,7 +36,7 @@
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:close-read': 'Close (read)',
       'decide:adopt': 'Adopt (hive takes over)',
-      'decide:merge-now': 'Approve & merge as maintainer', 'decide:queue-merge': 'Approve — let hive merge',
+      'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:re-author': 'Re-author as hive PR',
       'decide:adopt-now': 'Adopt now — hive takes it over', 'decide:reroute': 'Reroute to another clanker',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
@@ -44,10 +44,11 @@
       'open:app-settings': 'Grant the App permission', 'blocker:recheck': 'Re-check permissions', 'blocker:patch': 'Prepare the patch for a person to push',
       'blocker:close-partial': 'Mark partially-addressed and close', 'blocker:wait': 'Keep waiting',
     };
-    // Actions that end with a commit on the base branch (merge now, or an
-    // approval the hive's sweep merges on): merger or owner only, like
-    // POST .../queue-automerge.
-    const STAGE_TRACKER_MERGE_ACTIONS = ['decide:merge-now', 'decide:queue-merge'];
+    // Actions that end with a commit on the base branch — the lead
+    // "Approve and let hive merge" (the hive's sweep merges on its next
+    // tick once CI is green) and the secondary "Merge now as maintainer":
+    // merger or owner only, like POST .../queue-automerge.
+    const STAGE_TRACKER_MERGE_ACTIONS = ['decide:queue-merge', 'decide:merge-now'];
     // Generic items every row has; a server-named decision option with one
     // of these ids is not repeated at the top of the menu.
     const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt'];
@@ -847,7 +848,7 @@
       // The one recommended action: the first the viewer may take, else the
       // lead option greyed with its reason. Short verbs here; the ⋯ menu
       // keeps the full labels.
-      const shortLabel = { 'decide:merge-now': 'Merge it', 'decide:queue-merge': 'Let hive merge it', 'decide:direction': 'Send back' };
+      const shortLabel = { 'decide:queue-merge': 'Let hive merge', 'decide:merge-now': 'Merge now', 'decide:direction': 'Send back' };
       const primary = options.length ? (options.find(o => o.enabled) || options[0]) : null;
       const lead = primary ? `<button type="button" class="ham-decision-act ham-decision-lead${primary.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(primary.id)}"${primary.enabled ? (primary.consequence ? ` title="${esc(primary.consequence)}"` : '') : ` aria-disabled="true" title="${esc(primary.why)}"`}>${esc(shortLabel[primary.id] || primary.label)}</button>` : '';
       const more = options.length > 1 ? `<button type="button" class="ham-decision-act ham-decision-more" data-ham-more="1" title="All actions for this row">More ⋯</button>` : '';
@@ -1395,10 +1396,13 @@
     // subject line; ONE decision sentence; ONE why line; at most two
     // "then" items; everything else — the sentinel finding, the rails, the
     // rungs ruled out — behind a single collapsed Details. Two buttons,
-    // [Cancel] [Let hive do that]; "Approve & merge as-is" only when the
-    // plan says the head is mergeable as it is.
+    // [Cancel] [Let hive do that]; the merge button — "Approve and let hive
+    // merge" (queue-merge), or "Merge now as maintainer" when the hive
+    // would approve anyway — only when the plan says the head is mergeable
+    // as it is.
     const STAGE_TRACKER_PLAN_BUTTON_DELEGATE = 'Let hive do that';
-    const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve & merge as-is';
+    const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve and let hive merge';
+    const STAGE_TRACKER_PLAN_MERGE_ACTIONS = ['decide:queue-merge', 'decide:merge-now'];
     const STAGE_TRACKER_PLAN_TITLE = 'Let hive decide';
     const STAGE_TRACKER_PLAN_EYEBROW = 'Hive would';
     const STAGE_TRACKER_PLAN_NEXT_MAX = 2;
@@ -1420,7 +1424,7 @@
     // Pure: one view model for every decision the preview can show — a
     // PR or an issue; direction, adopt, close, approve, recommend-only.
     //   { title, subject, finding, decisions: [{ ref, sentence, why, next[] }],
-    //     ruledOut[], rails, mergeable, mergeWhy, danger }
+    //     ruledOut[], rails, mergeable, mergeWhy, mergeAction, mergeLabel, danger }
     function stageTrackerDelegatePlanView(plans, sentinel) {
       plans = plans || [];
       // One item: "repo#N · title"; a batch names each item on its own
@@ -1448,6 +1452,8 @@
         mergeable,
         mergeWhy: mergeable ? '' : (stageTrackerDelegatePlanMergeReason(plans) || STAGE_TRACKER_PLAN_MERGE_WHY),
         showMerge: stageTrackerDelegatePlanOffersMerge(plans),
+        mergeAction: stageTrackerDelegatePlanMergeAction(plans),
+        mergeLabel: stageTrackerDelegatePlanMergeLabel(plans),
         danger: !!sentinel,
       };
     }
@@ -1476,7 +1482,7 @@
         + '<details class="ham-plan-details"><summary>Details</summary>' + details.join('') + '</details>'
         + '<div class="hive-dialog-buttons">'
         + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>'
-        + (view.showMerge ? '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"' + (view.mergeable ? '' : ' aria-disabled="true" disabled title="' + esc(view.mergeWhy) + '"') + '>' + esc(STAGE_TRACKER_PLAN_BUTTON_MERGE) + '</button>' : '')
+        + (view.showMerge ? '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"' + (view.mergeable ? '' : ' aria-disabled="true" disabled title="' + esc(view.mergeWhy) + '"') + '>' + esc(view.mergeLabel || STAGE_TRACKER_PLAN_BUTTON_MERGE) + '</button>' : '')
         + '<button type="button" class="hv-btn ' + (view.danger ? 'btn-danger' : 'btn-primary') + ' hive-dialog-btn primary" data-initial-focus>' + esc(STAGE_TRACKER_PLAN_BUTTON_DELEGATE) + '</button>'
         + '</div>';
     }
@@ -1485,19 +1491,38 @@
     function stageTrackerDelegatePlanVisibleText(html) {
       return String(html).replace(/<details[\s\S]*?<\/details>/g, ' ').replace(/<div class="hive-dialog-buttons">[\s\S]*$/, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
     }
-    // Pure: does the dialog offer "Approve & merge as-is" at all — only
-    // when every plan says the head is mergeable as it is (the ladder's
-    // mergeable-as-is rung, or green and conflict-free without a ladder).
-    function stageTrackerDelegatePlanOffersMerge(plans) {
-      return (plans || []).length > 0 && plans.every(pl => pl.mergeable_as_is === true && (pl.alternatives || []).some(a => a.action === 'decide:merge-now'));
+    // Pure: the merge alternative every plan shares — the lead queue-merge
+    // ("Approve and let hive merge") when each plan lists it, else merge-now
+    // ("Merge now as maintainer", the one left when the hive would approve
+    // anyway); '' when the plans disagree or list neither.
+    function stageTrackerDelegatePlanMergeAction(plans) {
+      for (const action of STAGE_TRACKER_PLAN_MERGE_ACTIONS) {
+        if ((plans || []).length > 0 && plans.every(pl => (pl.alternatives || []).some(a => a.action === action))) return action;
+      }
+      return '';
     }
-    // Pure: can "Approve & merge as-is" run — offered, and every plan lists
-    // merge-now as an enabled alternative (merge rights).
+    // Pure: does the dialog offer a merge button at all — only when every
+    // plan says the head is mergeable as it is (the ladder's
+    // mergeable-as-is rung, or green and conflict-free without a ladder)
+    // and they share a merge alternative.
+    function stageTrackerDelegatePlanOffersMerge(plans) {
+      return (plans || []).length > 0 && plans.every(pl => pl.mergeable_as_is === true) && stageTrackerDelegatePlanMergeAction(plans) !== '';
+    }
+    // Pure: the merge button's label — the shared alternative's own label.
+    function stageTrackerDelegatePlanMergeLabel(plans) {
+      const action = stageTrackerDelegatePlanMergeAction(plans);
+      for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === action && a.label) return a.label;
+      return (action && STAGE_TRACKER_ACTION_LABELS[action]) || STAGE_TRACKER_PLAN_BUTTON_MERGE;
+    }
+    // Pure: can the merge button run — offered, and every plan lists the
+    // shared merge alternative as enabled (merge rights).
     function stageTrackerDelegatePlanMergeable(plans) {
-      return stageTrackerDelegatePlanOffersMerge(plans) && plans.every(pl => (pl.alternatives || []).some(a => a.action === 'decide:merge-now' && a.enabled !== false));
+      const action = stageTrackerDelegatePlanMergeAction(plans);
+      return stageTrackerDelegatePlanOffersMerge(plans) && plans.every(pl => (pl.alternatives || []).some(a => a.action === action && a.enabled !== false));
     }
     function stageTrackerDelegatePlanMergeReason(plans) {
-      for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === 'decide:merge-now' && a.enabled === false && a.reason_if_disabled) return a.reason_if_disabled;
+      const action = stageTrackerDelegatePlanMergeAction(plans);
+      for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === action && a.enabled === false && a.reason_if_disabled) return a.reason_if_disabled;
       return '';
     }
     async function stageTrackerFetchDelegatePlan(item) {
@@ -1511,7 +1536,7 @@
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }
     // The preview: resolves { chosen } for Let hive do that, { chosen,
-    // mergeNow: true } for Approve & merge as-is, null on Cancel.
+    // merge: <action id> } for the merge button, null on Cancel.
     function stageTrackerDelegatePlanDialog(plans, sentinel) {
       const view = stageTrackerDelegatePlanView(plans, sentinel);
       return new Promise(resolve => {
@@ -1523,11 +1548,11 @@
         const would = plans.map(pl => pl.would || '?').filter((v, i, a) => a.indexOf(v) === i).join('/');
         hiveWireDialog(overlay, resolve, null, '.primary', '.cancel', close => close({ chosen: STAGE_TRACKER_PLAN_BUTTON_DELEGATE + ' · previewed ' + would }));
         const merge = overlay.querySelector('.ham-plan-merge');
-        if (merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: STAGE_TRACKER_PLAN_BUTTON_MERGE + ' · previewed ' + would, mergeNow: true }); });
+        if (merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: view.mergeLabel + ' · previewed ' + would, merge: view.mergeAction }); });
       });
     }
     // Let hive decide → plan → preview → act. Returns the delegate payload,
-    // or null when cancelled or when the operator took the merge-now
+    // or null when cancelled or when the operator took the merge
     // alternative (which runs as its own row action with the chosen button
     // recorded on the ledger).
     async function stageTrackerDelegatePreview(items) {
@@ -1536,8 +1561,8 @@
       if (failed.length) { showToast('Could not preview ' + failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', '), 'error'); return null; }
       const picked = await stageTrackerDelegatePlanDialog(plans, stageTrackerSentinelPreface(items));
       if (!picked) return null;
-      if (picked.mergeNow) {
-        await stageTrackerRunActions(items, 'decide:merge-now', { comment: '', chosen: picked.chosen }, items);
+      if (picked.merge) {
+        await stageTrackerRunActions(items, picked.merge, { comment: '', chosen: picked.chosen }, items);
         return null;
       }
       return { chosen: picked.chosen };
@@ -1597,10 +1622,10 @@
           if (items.some(stageTrackerNeedsRebase)) {
             return (await stageTrackerAsk(id, 'confirm', { title: STAGE_TRACKER_REBASE_MERGE_LABEL, message: preface + refs + ' is behind ' + base + ' (needs a rebase), so GitHub would refuse a plain merge. Record your approval as ' + who + ' and have the hive rebase it onto ' + base + ', wait for CI, then merge it with your approval on record? You get a toast when it lands or if the rebase conflicts.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & rebase-merge', danger: true })) ? {} : null;
           }
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now, credited to ' + who + '? Hive left this merge to a person; this is you taking that call. The version you see is the one that merges.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Merge now as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now, credited to ' + who + '? Hive left this merge to a person; this is you taking that call yourself instead of letting hive merge on its next tick. The version you see is the one that merges.' + stageTrackerDCOCaveat(items), confirmLabel: 'Merge now', danger: true })) ? {} : null;
         }
         case 'decide:queue-merge':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is on its next pass once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve and let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is through its own App on the next tick once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:re-author': {
           const caveat = stageTrackerDCOCaveat(items);
           return (await stageTrackerAsk(id, 'confirm', { title: 'Re-author as hive PR', message: preface + 'Have the hive re-author ' + refs + ' as ' + who + '?' + (caveat || ' Its head cannot merge as-is.') + ' The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. Nothing is merged as-is, and the author\'s commits stay attributed.', confirmLabel: 'Re-author', danger: true })) ? {} : null;
@@ -1676,13 +1701,12 @@
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
-      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…', 'decide:re-author': 'Queuing re-authoring…',
-      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…',
+      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
-      merged: 'merged', 'queued-for-merge': 'queued for merge', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
+      merged: 'merged', 'queued-for-merge': 'approved — hive will merge on the next tick once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };

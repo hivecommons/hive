@@ -1778,7 +1778,7 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body st
 				continue
 			}
 			candidate := strings.TrimSpace(is.GetTitle())
-			if candidate == title {
+			if candidate == title || reviewBacklogTitlesEqual(candidate, title) {
 				return openIssueMatches{subject: is}, nil
 			}
 			// Pages arrive newest-first, so overwriting leaves the oldest

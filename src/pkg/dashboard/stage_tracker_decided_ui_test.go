@@ -57,7 +57,7 @@ func TestStageTrackerDecidedStatesNode(t *testing.T) {
 		// Preview before acting: the plan route and the three buttons.
 		`fetch(req.url + '/plan'`,
 		`const STAGE_TRACKER_PLAN_BUTTON_DELEGATE = 'Let hive do that';`,
-		`const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve & merge as-is';`,
+		`const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve and let hive merge';`,
 		`class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>`,
 		`if (payload.chosen) body.chosen = payload.chosen;`,
 		`.ham-sub-superseded { opacity: .55; }`,

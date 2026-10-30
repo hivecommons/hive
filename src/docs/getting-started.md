@@ -90,7 +90,7 @@ For the following weeks, review findings and improve tests before considering mo
 
 ## Community help
 
-If you get stuck, [Join our Discord](https://hivecommons.dev/discord). The invite is permanent, and the Hive Commons community can help with setup, first-run questions, contributor relay, and choosing a safe next ACMM step.
+If you get stuck, [Join our Discord](https://hivecommons.dev/discord). The invite is permanent, and the Hive Commons community can help with setup, first-run questions, contributor relay, and choosing a safe next ACMM step. To see what a running hive looks like, [watch the hive live on Twitch](https://www.twitch.tv/hivecommons).
 
 ## Common gotchas (so you don't panic)
 

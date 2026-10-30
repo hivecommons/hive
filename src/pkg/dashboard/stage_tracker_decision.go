@@ -302,12 +302,14 @@ func decisionForParked(it StageTrackerItem, held bool) *StageTrackerDecision {
 // decisionForHumanMerge: a PR parked at 090 Ready for human merge — the
 // hive's lanes will not merge it unattended (untrusted author, workflow
 // files, manual-merge path, branch protection, …), so the person is asked
-// to merge. The lead options do exactly that (hivecommons/hive#15078):
-// "Approve & merge as maintainer" merges now through the hive's GitHub
-// App, attributed to the operator; "Approve — let hive merge" queues the
-// PR for the hive's merge sweep, which merges it on its next pass once CI
-// is green and the head has soaked. Both need the merger or owner role;
-// the SPA greys them out for anyone else.
+// to merge. The lead option is "Approve and let hive merge"
+// (hivecommons/hive#15078): the maintainer has the last word, and the
+// default way to use it is to approve and let the hive perform the merge
+// through its own App — the merge sweep picks it up on its next tick once
+// CI is green, soak and the self-merge ban still apply, and the merge is
+// attributed to the approver. "Merge now as maintainer" merges at once
+// through the App and stays available, but second. Both need the merger
+// or owner role; the SPA greys them out for anyone else.
 func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision {
 	base, approver := stagelabels.HumanApprovedReason(it.Reason)
 	base = strings.TrimSpace(base)
@@ -353,8 +355,8 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	}
 	d.Detail = stageTrackerSayOnce(d.Question, details...)
 	mergeNow := decisionMergeNowOption(it, held)
-	queue := decisionOption(decisionActionQueueMerge, "Approve — let hive merge", !held, "Release the hold first")
-	queue.Consequence = "Hive merges " + ref + " on its next pass"
+	queue := decisionOption(decisionActionQueueMerge, decisionQueueMergeLabel, !held, "Release the hold first")
+	queue.Consequence = "Hive merges " + ref + " on its next tick once CI is green"
 	if admitter != "" && !held {
 		queue.Enabled, queue.ReasonIfDisabled = false, "@"+admitter+" already approved it; hive merges it next pass"
 	}
@@ -362,7 +364,7 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 		// The lanes skip a breaking-titled / needs-owner-merge PR however
 		// it is queued (hivecommons/hive#15442): the merge-now click is the
 		// one path, so queueing is offered greyed with the reason.
-		queue.Enabled, queue.ReasonIfDisabled = false, "Hive never merges a breaking change; merge it as maintainer"
+		queue.Enabled, queue.ReasonIfDisabled = false, "Hive never merges a breaking change; merge it now as maintainer"
 	}
 	if it.DCOUnsigned > 0 {
 		mergeNow.Consequence += "; " + decisionDCOConsequence(it)
@@ -375,12 +377,32 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
 	closeWontfix.Consequence = "Closes " + ref + " without merging"
 	delegate := decisionDelegateOption(held, "Hive explains and recommends; merges nothing")
-	d.Options = []StageTrackerDecisionOption{mergeNow, queue}
+	d.Options = decisionHumanMergeLeadOptions(mergeNow, queue)
 	if it.DCOUnsigned > 0 {
 		d.Options = append(d.Options, decisionReauthorOption(it, ref, held))
 	}
 	d.Options = append(d.Options, delegate, direction, closeSup, closeWontfix, decisionHoldOption(held))
 	return d
+}
+
+// decisionQueueMergeLabel is the lead merge-gate answer on a 090 row: the
+// maintainer approves and the hive's merge sweep merges on its next tick.
+const decisionQueueMergeLabel = "Approve and let hive merge"
+
+// decisionMergeNowLabel is the secondary answer: merge at once through the
+// hive's App, attributed to the maintainer.
+const decisionMergeNowLabel = "Merge now as maintainer"
+
+// decisionHumanMergeLeadOptions orders the two merge-gate answers: "Approve
+// and let hive merge" leads whenever it can be clicked; only when queueing
+// is greyed out (a breaking change the lanes never merge, a head somebody
+// already admitted) does "Merge now as maintainer" step forward, so the
+// lead is never a button nobody can press.
+func decisionHumanMergeLeadOptions(mergeNow, queue StageTrackerDecisionOption) []StageTrackerDecisionOption {
+	if !queue.Enabled && mergeNow.Enabled {
+		return []StageTrackerDecisionOption{mergeNow, queue}
+	}
+	return []StageTrackerDecisionOption{queue, mergeNow}
 }
 
 // stageTrackerSayOnce joins parts into one text, dropping any sentence
@@ -487,10 +509,11 @@ func decisionReauthorOption(it StageTrackerItem, ref string, held bool) StageTra
 	return o
 }
 
-// decisionMergeNowOption is "Approve & merge as maintainer", or — when the
-// row wears needs-rebase, so a plain merge would be a GitHub 405 — "Rebase,
+// decisionMergeNowOption is "Merge now as maintainer", or — when the row
+// wears needs-rebase, so a plain merge would be a GitHub 405 — "Rebase,
 // then merge as maintainer": the same click records the approval, has the
 // hive rebase the PR, and merges it on green (hivecommons/hive#14822).
+// Either way it is the secondary answer behind "Approve and let hive merge".
 func decisionMergeNowOption(it StageTrackerItem, held bool) StageTrackerDecisionOption {
 	ref := "#" + strconv.Itoa(it.Number)
 	into := strings.TrimSpace(it.BaseRef)
@@ -502,7 +525,7 @@ func decisionMergeNowOption(it StageTrackerItem, held bool) StageTrackerDecision
 		opt.Consequence = rebaseMergeFollowThroughConsequence(it.Number, strings.TrimSpace(it.BaseRef))
 		return opt
 	}
-	opt := decisionOption(decisionActionMergeNow, "Approve & merge as maintainer", !held, "Release the hold first")
+	opt := decisionOption(decisionActionMergeNow, decisionMergeNowLabel, !held, "Release the hold first")
 	opt.Consequence = "Merges " + ref + " into " + into + " now, credited to you"
 	return opt
 }

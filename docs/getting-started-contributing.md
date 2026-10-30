@@ -16,6 +16,7 @@ build/test commands, see [`docs/development.md`](development.md).
 - Comment on the issue before starting anything non-trivial so work isn't
   duplicated.
 - Need a quick human answer? [Join our Discord](https://hivecommons.dev/discord).
+- Curious what a running hive looks like? [Watch the hive live on Twitch](https://www.twitch.tv/hivecommons).
 
 ## 2. Set up a local environment
 

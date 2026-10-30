@@ -22,12 +22,15 @@ RUN go mod init hive-stream/authproxy >/dev/null 2>&1 \
 
 FROM ${BASE_REGISTRY}/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 ENV DEBIAN_FRONTEND=noninteractive
-# No PulseAudio on purpose: Twitch requires an audio track, which ffmpeg
-# synthesises from anullsrc; Chromium runs --mute-audio.
+# PulseAudio provides a null sink ("hive") that Chromium plays the tracker's
+# merge-zap / new-item-buzz sounds into; ffmpeg captures its monitor so the
+# stream carries them. STREAM_AUDIO=silent (entrypoint.sh) restores the old
+# anullsrc + --mute-audio behaviour without PulseAudio running.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl tini procps \
       xvfb x11-utils xdotool \
+      pulseaudio pulseaudio-utils \
       chromium \
       ffmpeg \
       fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji fonts-liberation \
@@ -38,12 +41,13 @@ RUN apt-get update \
 COPY --from=authproxy /out/authproxy /usr/local/bin/authproxy
 COPY src/deploy/stream/entrypoint.sh src/deploy/stream/healthcheck.sh /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh \
- && chromium --version && ffmpeg -version | head -1 && Xvfb -help >/dev/null 2>&1
+ && chromium --version && ffmpeg -version | head -1 && Xvfb -help >/dev/null 2>&1 \
+ && pulseaudio --version && ffmpeg -hide_banner -devices 2>/dev/null | grep -q pulse
 
 USER stream
 ENV HOME=/home/stream RUN_DIR=/run/stream \
     DASHBOARD_PATH="/?kiosk=1#section-activity-monitor-section" \
     TWITCH_INGEST=rtmp://live.twitch.tv/app \
-    VIDEO_SIZE=1920x1080 FPS=30 BITRATE=4500k RELOAD_EVERY=30m
+    VIDEO_SIZE=1920x1080 FPS=30 BITRATE=4500k RELOAD_EVERY=30m STREAM_AUDIO=pulse
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 CMD ["/usr/local/bin/healthcheck.sh"]
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
