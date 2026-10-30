@@ -338,6 +338,7 @@ func deltaSection(pr PullRequest, ctx *DeltaContext) string {
 		b.WriteString("The previous review recorded no findings, so there is nothing to re-check beyond the delta itself.\n")
 	}
 	b.WriteString("Your verdict is for the WHOLE PR at the new head: a previous finding that is still present keeps its verdict; a clean delta on a previously approved PR is approve. Record it with the usual head_sha above.\n")
+	b.WriteString("Say fixed / still present / no longer applies in your summary. Do not list a still-present out-of-scope finding again under findings: it is already in the backlog, and a re-report (\"Previous … still present\") is discarded, not filed. Cite its backlog issue with `<!-- hive-refers-to: #N -->` if you need to point at it. Only in-scope findings that still bear on the verdict, and genuinely new findings in the delta, go under findings.\n")
 	return b.String()
 }
 
