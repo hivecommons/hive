@@ -69,7 +69,7 @@ func TestReviewPreparationHandoffWiringCurrentHeadAdmissionAndPerDestinationCach
 					head = strings.Repeat("d", 40)
 				}
 				if err := review.WriteArtifact("", review.Artifact{Items: []review.Aggregate{{
-					Repo: owner.Repo, Number: owner.Number, HeadSHA: head, Verdict: review.VerdictApproved,
+					Repo: owner.Repo, Number: owner.Number, HeadSHA: head, Verdict: review.VerdictApprove,
 				}}}); err != nil {
 					t.Fatal(err)
 				}

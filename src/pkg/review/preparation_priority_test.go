@@ -14,7 +14,7 @@ func TestPreparationOwnerGetsNextFreeSlotWithoutInterruptingValidReviews(t *test
 	opts := DispatchOptions{RequireApproval: true, FanOut: true, CombinedPerspectives: true,
 		ProjectOrg: "acme", MaxParallelReviews: 1, Agents: []AgentCapability{reviewer("r1")}, Now: now}
 	// A stale pre-refresh bundle must neither settle nor receive the kick.
-	artifact := Artifact{Items: []Aggregate{{Repo: "acme/hive", Number: owner.Number, HeadSHA: "old", Verdict: VerdictApproved}}}
+	artifact := Artifact{Items: []Aggregate{{Repo: "acme/hive", Number: owner.Number, HeadSHA: "old", Verdict: VerdictApprove}}}
 	state := DispatchState{Waits: []ReviewWaitRecord{{Repo: "acme/hive", Number: other.Number,
 		HeadSHA: other.HeadSHA, Cycles: ReviewWaitStarvationCycles}}}
 	plan := PlanDispatch([]PullRequest{other, owner}, artifact, state, opts)
