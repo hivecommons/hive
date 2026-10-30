@@ -176,6 +176,7 @@ type Service struct {
 	pendingTopic       string
 	topicTimer         *time.Timer
 	pendingInterviews  map[pendingInterviewKey]*pendingInterview
+	inceptionBuffers   map[string]*inceptionBuffer
 	pendingPersonas    map[pendingPersonaKey]*pendingPersonaSetup
 	pendingCheckpoints map[pendingCheckpointKey]*pendingCheckpoint
 	// expandedRuns and shownSummaries are the per-author, per-run marks the
