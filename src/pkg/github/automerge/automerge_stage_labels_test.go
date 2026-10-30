@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -2583,5 +2584,128 @@ func TestSupersededCheckWarrantedForRedundantOfDecision(t *testing.T) {
 	}
 	if supersededCheckWarranted(human, other) {
 		t.Fatal("an ordinary decision question is not a supersession check")
+	}
+	// hivecommons/hive#15647: the reviewer said it in words, no marker.
+	worded := stageObservation{Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "@clubanderson should decide whether to close this adoption of #15324 as already landed, since v5 already contains the identical two-line test change via #15506"}}}
+	if !supersededCheckWarranted(human, worded) {
+		t.Fatal("an already-landed decision in words must run the closer")
+	}
+	lineage := stageObservation{Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "@clubanderson should decide whether this adoption of #15324 should keep the contributor's flag rename"}}}
+	if supersededCheckWarranted(human, lineage) {
+		t.Fatal("a PR mention that is not about redundancy is a person's decision")
+	}
+}
+
+// alreadyLandedCloserSpy stands in for the hgithub closers on the stage
+// engine's transport: the superseded rule keeps the PR, the already-landed
+// rule closes it.
+type alreadyLandedCloserSpy struct {
+	Transport
+	stage           stageReconcilerTransport
+	supersededCalls []int
+	landedCalls     []int
+	redundantOf     []int
+	result          hgithub.HiveEmptyDiffClose
+}
+
+func (s *alreadyLandedCloserSpy) StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) stageengine.Reconciler {
+	return s.stage.StageReconciler(store, opts, logger)
+}
+
+func (s *alreadyLandedCloserSpy) CloseSupersededHivePRIfEligible(_ context.Context, _ string, pr *gh.PullRequest) (hgithub.HiveSupersededClose, error) {
+	s.supersededCalls = append(s.supersededCalls, pr.GetNumber())
+	return hgithub.HiveSupersededClose{Reason: "issue-open"}, nil
+}
+
+func (s *alreadyLandedCloserSpy) CloseAlreadyLandedHivePRIfEligible(_ context.Context, _ string, pr *gh.PullRequest, redundantOf int) (hgithub.HiveEmptyDiffClose, error) {
+	s.landedCalls = append(s.landedCalls, pr.GetNumber())
+	s.redundantOf = append(s.redundantOf, redundantOf)
+	return s.result, nil
+}
+
+// TestApplyStageLabelsHiveAlreadyLandedClosesInsteadOfDecision is
+// hivecommons/hive#15647: a hive-authored adoption whose reviewer verdict
+// says the change already landed via another PR is closed as superseded
+// (and its adopted original settled) — never parked at 085.
+func TestApplyStageLabelsHiveAlreadyLandedClosesInsteadOfDecision(t *testing.T) {
+	const copy, original, landed = 15647, 15324, 15506
+	var closedOriginal bool
+	var originalComments []string
+	api := &stageAPI{}
+	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/15647":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": copy, "state": "open", "user": map[string]any{"login": testHiveAppBotLogin},
+				"body": "Supersedes #15324 (adopted after CI went red; original commits by @onkar717 preserved).",
+				"head": map[string]any{"sha": "h1", "ref": "hive/adopt-15324"}, "base": map[string]any{"ref": "v5"}})
+			return true
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/15324":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": original, "state": "open", "user": map[string]any{"login": "onkar717"},
+				"head": map[string]any{"sha": "o1", "ref": "fix"}, "base": map[string]any{"ref": "v5"}})
+			return true
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/acme/widget/pulls/15324":
+			closedOriginal = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": original, "state": "closed"})
+			return true
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/15324/comments":
+			var c struct{ Body string }
+			_ = json.NewDecoder(r.Body).Decode(&c)
+			originalComments = append(originalComments, c.Body)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+			return true
+		}
+		return false
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 3, 41, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} }
+	e.contributorLanePolicy = func() ContributorLanePolicy { return ContributorLanePolicy{} }
+	stage, ok := e.transport.(stageReconcilerTransport)
+	if !ok {
+		t.Fatal("engine transport provides no stage writer")
+	}
+	spy := &alreadyLandedCloserSpy{Transport: e.transport, stage: stage, result: hgithub.HiveEmptyDiffClose{Closed: true, Empty: true, RedundantOf: landed, Reason: hgithub.SupersessionActionClosedAlreadyLanded, Supersedes: []int{original}}}
+	e.transport = spy
+	ctx := context.Background()
+
+	// The original is on record as adopted (supersede mode) by the copy.
+	origKey := stageKey("acme", "widget", original)
+	store.Observe(origKey, stagelabels.AdoptedByHive, "adopted")
+	store.MarkAdopted(origKey, "o1", copy, clock.at)
+
+	pr := stagePR(copy)
+	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", copy, stagelabels.RoleTrusted)
+	e.noteStageVerdict("acme", "widget", copy, ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true,
+		DecisionQuestion: "@clubanderson should decide whether to close this adoption of #15324 as already landed, since v5 already contains the identical two-line test change via #15506"})
+	res, err := e.ApplyStageLabels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ClosedSuperseded != 1 {
+		t.Fatalf("ClosedSuperseded=%d want 1", res.ClosedSuperseded)
+	}
+	for _, batch := range api.added {
+		for _, l := range batch {
+			if l == "stage/085-needs-decision" {
+				t.Fatalf("already-landed hive PR routed to 085: added=%v", api.added)
+			}
+		}
+	}
+	if !reflect.DeepEqual(spy.landedCalls, []int{copy}) || !reflect.DeepEqual(spy.redundantOf, []int{landed}) {
+		t.Fatalf("already-landed closer calls=%v redundant_of=%v", spy.landedCalls, spy.redundantOf)
+	}
+	if !closedOriginal || len(originalComments) != 1 || !strings.Contains(originalComments[0], "via #15506") {
+		t.Fatalf("original lineage: closed=%v comments=%q", closedOriginal, originalComments)
+	}
+	rec, _ := store.Get(origKey)
+	if rec.SupersededBy != copy || rec.SupersededOpen {
+		t.Fatalf("original record not marked superseded: %+v", rec)
+	}
+	if _, ok := store.Get(stageKey("acme", "widget", copy)); ok {
+		t.Fatal("closed copy still on the store")
 	}
 }

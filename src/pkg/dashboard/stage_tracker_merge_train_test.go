@@ -262,6 +262,8 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsFunc(t, html, "stageTrackerTrainOrder"),
 		jsFunc(t, html, "stageTrackerTrainContiguous"),
 		jsFunc(t, html, "stageTrackerTrainMissing"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_MECHANICS"),
+		jsFunc(t, html, "stageTrackerTrainWhere"),
 		jsFunc(t, html, "stageTrackerTrainHeaderText"),
 		jsFunc(t, html, "stageTrackerTrainHeaderHtml"),
 		jsFunc(t, html, "stageTrackerTrainRowClass"),
@@ -298,8 +300,10 @@ assert.strictEqual(lit(other).short, 'Ready for auto merge');
 
 // Tooltip: the queue ahead and the overlapping files.
 const tip = stageTrackerTooltip(third, now);
-assert.ok(tip.includes('Merge train: 4 PRs to v5 touch the same files; they merge one at a time, in order (1st: #15074)'), tip);
-assert.ok(tip.includes('Position: 3rd of 4 · ahead: #15074, #15085'), tip);
+assert.ok(tip.includes('Merge train: 4 PRs in the merge queue to v5 touch the same files, so they merge one at a time, in order (1st: #15074)'), tip);
+assert.ok(tip.includes('rebased onto the base only after the PR ahead of it merges'), tip);
+assert.ok(tip.includes('Position: 3rd of 4 · after #15085 merges · ahead: #15074, #15085'), tip);
+assert.ok(stageTrackerTooltip(second, now).includes('Position: 2nd of 4 · after #15074 merges'), 'second tip');
 assert.ok(tip.includes('The PR ahead merged; rebase attempt 1 of 2 in progress'), tip);
 assert.ok(tip.includes('Overlapping files: stage_tracker.go, index.html'), tip);
 assert.ok(stageTrackerTooltip(front, now).includes('Position: 1st — merges next'), 'front tip');
@@ -389,15 +393,31 @@ assert.deepStrictEqual(fullRows.map(r => r.key), ['train:hivecommons/hive|v5#154
 assert.ok(fullRows[0].html.includes('</svg> merge train · 3 PRs · 1st: #15425'), fullRows[0].html);
 assert.strictEqual(stageTrackerTrainRowClass(issue2, t1, issue3), ' ham-train');
 assert.strictEqual(stageTrackerTrainRowClass(issue3, issue2, plainIssue), ' ham-train ham-train-last');
-// A view that carries only the head (a filter hid the other two) says so
-// and names them — never "3 PRs" over one row.
-const partRows = stageTrackerTrainRows([t1, plainIssue], (it) => ({ key: String(it.number), html: '' }));
+// A page that carries only the head says where the rest are — on another
+// page, hidden by the filter — and names them; never "3 PRs" over one row,
+// and never a bare "not in this view" (owner: "what does 'not in this
+// view' mean?").
+const where = stageTrackerTrainWhere([t1, issue2, plainIssue], [t1, issue2, issue3, plainIssue]);
+assert.deepStrictEqual(Object.keys(where.listed).sort(), ['15425', '15529']);
+assert.deepStrictEqual(Object.keys(where.known).sort(), ['15425', '15529', '15530']);
+const partRows = stageTrackerTrainRows([t1, plainIssue], (it) => ({ key: String(it.number), html: '' }), where);
 assert.deepStrictEqual(partRows.map(r => r.key), ['train:hivecommons/hive|v5#15425', '15425', '15499']);
-assert.ok(partRows[0].html.includes('</svg> merge train · 1 of 3 PRs here · 1st: #15425 · not in this view: #15529, #15530'), partRows[0].html);
+assert.ok(partRows[0].html.includes('</svg> merge train · 1 of 3 PRs here · 1st: #15425 · on another page: #15529 · hidden by the filter: #15530'), partRows[0].html);
 assert.ok(!partRows[0].html.includes('3 PRs ·'), partRows[0].html);
-assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425, 15530]), 'merge train · 2 of 3 PRs here · 1st: #15425 · not in this view: #15529');
-// Without a member list the header still counts honestly.
-assert.strictEqual(stageTrackerTrainHeaderText({ id: 'v5#1', front: 1, size: 3 }, [1]), 'merge train · 1 of 3 PRs here · 1st: #1 · not in this view: 2 more');
+assert.ok(!partRows[0].html.includes('not in this view'), partRows[0].html);
+assert.ok(partRows[0].html.includes('rebased onto the base only after the PR ahead of it merges'), 'header hover explains the order: ' + partRows[0].html);
+assert.ok(!partRows[0].html.includes('Position:'), 'the header speaks for the train, not one slot: ' + partRows[0].html);
+// All on the page: a plain count.
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425, 15529, 15530], where), 'merge train · 3 PRs · 1st: #15425');
+// Some on another page only.
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425], stageTrackerTrainWhere([t1, issue2, issue3], [t1, issue2, issue3])), 'merge train · 1 of 3 PRs here · 1st: #15425 · on another page: #15529, #15530');
+// Some filtered out only.
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425], stageTrackerTrainWhere([t1], [t1, issue2, issue3])), 'merge train · 1 of 3 PRs here · 1st: #15425 · hidden by the filter: #15529, #15530');
+// A member the payload does not carry at all is said so, not guessed.
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425, 15530], stageTrackerTrainWhere([t1, issue3], [t1, issue3])), 'merge train · 2 of 3 PRs here · 1st: #15425 · not in this payload: #15529');
+// Without the where context the header still says only what it knows.
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425, 15530]), 'merge train · 2 of 3 PRs here · 1st: #15425 · not on this page: #15529');
+assert.strictEqual(stageTrackerTrainHeaderText({ id: 'v5#1', front: 1, size: 3 }, [1]), 'merge train · 1 of 3 PRs here · 1st: #1 · not on this page: 2 more');
 assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425, 15529, 15530]), 'merge train · 3 PRs · 1st: #15425');
 assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train), 'merge train · 3 PRs · 1st: #15425');
 // No members on the page, no header.

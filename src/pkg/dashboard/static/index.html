@@ -1595,6 +1595,7 @@
     /* "supersedes N": the closed original a live PR replaced (hive PR 15135 follow-up). Muted — a trace, not a call to act. */
     .ham-badge-supersedes { color: var(--text-faint); border-color: var(--line-subtle); text-decoration: none; }
     .ham-badge-supersedes:hover { color: var(--text-muted); }
+    .ham-badge-overlap { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
     .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
@@ -14648,9 +14649,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (lower.indexOf('required-check-failing:') === 0 || lower.indexOf('check-failing:') === 0 || lower === 'ci-red') return 'checks-failing';
       return '';
     }
-    // The first merge-ready stage (080 awaiting merge admission). A train
-    // member below it holds a provisional slot: the planner has ordered
-    // it, but CI / the review verdict / the fixer still stand in front.
+    // The first merge-ready stage (080 awaiting merge admission). The
+    // server seats no train member below it (a PR short of the queue
+    // carries an `overlap` hint instead); the provisional words below are
+    // the fallback for a payload that still does, so the chevron never
+    // contradicts the caption.
     const STAGE_TRACKER_MERGE_READY = 80;
     // The blocker headline for a provisional train member, by stage —
     // the same words the stage column shows (stageTrackerShort in Go), so
@@ -14860,6 +14863,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else if (why) tip += ' · no estimate until #' + p.head + ' moves';
       return tip + '.' + order;
     }
+    // One sentence of merge-train mechanics for every train hover.
+    const STAGE_TRACKER_TRAIN_MECHANICS = 'Each one is rebased onto the base only after the PR ahead of it merges — it cannot be rebased before that. Only green, approved PRs (merge queue, 080+) are counted; a PR still at CI / Review is not in the train.';
     // The muted hover note on a PR the server took out of its merge train
     // while it is under repair (left_train: {why, note} — fixing, needs
     // author, needs decision, red checks). The row rides no train and
@@ -14871,16 +14876,83 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
       return String(lt.note || STAGE_TRACKER_LEFT_TRAIN_NOTE);
     }
+    /* ---- overlap hint (a PR short of the merge queue) ---------------------
+       The merge train is a merge-queue concept: only PRs at 080 and
+       beyond ride one. A PR still at CI / Review whose files overlap
+       another open PR's carries `overlap: {behind, with, files, note}`
+       instead of `merge_train` — hive's own page once drew "merge train ·
+       2 PRs · 1st: #15637" under two rows that both read CI / Review. The
+       row shows one muted badge, "overlaps #15637", whose hover is the
+       note: "overlaps #15637 (sidebar.html, index.html) — will queue
+       behind it". No rail, no ordinal, no header. */
+    // Pure: the row's overlap hint, or null when it rides a train or
+    // overlaps nothing.
+    function stageTrackerOverlap(item) {
+      const o = item && item.overlap;
+      if (!o || typeof o !== 'object' || stageTrackerTrain(item)) return null;
+      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
+      if (!(Number(o.behind) > 0) && !withPRs.length) return null;
+      return o;
+    }
+    // Pure: the badge word — "overlaps #15637" (the PR it queues behind,
+    // else the first PR it overlaps, "+1" for the rest).
+    function stageTrackerOverlapBadgeText(item) {
+      const o = stageTrackerOverlap(item);
+      if (!o) return '';
+      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
+      const lead = Number(o.behind) > 0 ? Number(o.behind) : withPRs[0];
+      const rest = withPRs.filter(n => n !== lead).length;
+      return 'overlaps #' + lead + (Number(o.behind) > 0 ? '' : (rest > 0 ? ' +' + rest : ''));
+    }
+    // Pure: the hover sentence — the server's note, else built from the
+    // parts the same way.
+    function stageTrackerOverlapTip(item) {
+      const o = stageTrackerOverlap(item);
+      if (!o) return '';
+      if (o.note) return String(o.note);
+      const files = (Array.isArray(o.files) ? o.files : []).filter(Boolean);
+      const paren = files.length ? ' (' + files.join(', ') + ')' : '';
+      if (Number(o.behind) > 0) return 'overlaps #' + Number(o.behind) + paren + ' — will queue behind it';
+      const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
+      return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — merges ahead of ' + (withPRs.length > 1 ? 'them once all are ready' : 'it once both are ready');
+    }
+    // Pure: the muted badge beside the row's chips; '' without a hint.
+    function stageTrackerOverlapBadgeHtml(item) {
+      const text = stageTrackerOverlapBadgeText(item);
+      if (!text) return '';
+      const tip = 'Not in the merge queue yet: ' + stageTrackerOverlapTip(item);
+      return `<span class="ham-badge ham-badge-overlap" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(text)}</span>`;
+    }
     // Tooltip lines: the queue ahead and the overlapping files — or, for a
-    // PR that left its train, the one muted note.
-    function stageTrackerTrainLines(item) {
+    // PR that left its train, the one muted note — or, for a PR short of
+    // the merge queue, the overlap hint.
+    // header is true for the train header's own hover, which speaks for
+    // the whole train rather than one member's slot.
+    function stageTrackerTrainLines(item, header) {
       const mt = stageTrackerTrain(item);
-      if (!mt) { const left = stageTrackerLeftTrainNote(item); return left ? ['Merge train: ' + left] : []; }
+      if (!mt) {
+        const left = stageTrackerLeftTrainNote(item);
+        if (left) return ['Merge train: ' + left];
+        // Guarded: test harnesses lift this function on its own.
+        const over = typeof stageTrackerOverlapTip === 'function' ? stageTrackerOverlapTip(item) : '';
+        return over ? ['Not in the merge queue yet: ' + over] : [];
+      }
       const ahead = Array.isArray(mt.ahead) ? mt.ahead.filter(n => Number(n) > 0) : [];
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) lines.push('Position: 1st — merges next; the lane then updates or rebases the others');
-      else lines.push('Position: ' + stageTrackerOrdinal(mt.position) + ' of ' + (Number(mt.size) || 0) + (ahead.length ? ' · ahead: ' + ahead.map(n => '#' + n).join(', ') : ''));
+      const size = Number(mt.size) || 0;
+      const base = String(mt.id || '').split('#')[0] || 'the same base';
+      // The mechanics the owner asked about: shared files mean a fixed
+      // order, and a member can only rebase once the one ahead has merged.
+      const lines = ['Merge train: ' + size + ' PRs in the merge queue to ' + base + ' touch the same files, so they merge one at a time, in order' + (mt.front ? ' (1st: #' + mt.front + ')' : '')];
+      // Guarded: test harnesses lift this function without the constant.
+      if (typeof STAGE_TRACKER_TRAIN_MECHANICS !== 'undefined') lines.push(STAGE_TRACKER_TRAIN_MECHANICS);
+      if (header) {
+        // nothing more: the header speaks for the whole train
+      } else if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) lines.push('Position: 1st — merges next; the lane then updates or rebases the others');
+      else {
+        const prev = ahead.length ? ahead[ahead.length - 1] : (Number(mt.front) || 0);
+        lines.push('Position: ' + stageTrackerOrdinal(mt.position) + ' of ' + size + (prev ? ' · after #' + prev + ' merges' : '') + (ahead.length > 1 ? ' · ahead: ' + ahead.map(n => '#' + n).join(', ') : ''));
+      }
       if (mt.state === STAGE_TRACKER_TRAIN_STATE_REBASING) lines.push('The PR ahead merged; rebase attempt ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' in progress');
       if (mt.state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED) lines.push('Rebase failed ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' times — a maintainer rebases, then merges');
       if (files.length) lines.push('Overlapping files: ' + files.join(', '));
@@ -14944,14 +15016,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       (shown || []).forEach(n => { here[Number(n)] = true; });
       return Object.keys(known).map(Number).filter(n => !here[n]).sort((a, b) => a - b);
     }
+    // Pure: where a train's members are on the client, for the header's
+    // missing line — listed: PR numbers in the filtered, ordered list
+    // (any page); known: PR numbers in the whole payload. Built once per
+    // render in tracker-filter.js from the rows the train helpers see (a
+    // PR drawn under its issue counts under its own number).
+    function stageTrackerTrainWhere(listed, known) {
+      const nums = rows => {
+        const out = {};
+        (Array.isArray(rows) ? rows : []).forEach(it => {
+          const rt = stageTrackerRowTrain(it && it.item ? it.item : it);
+          if (rt && rt.pr > 0) out[rt.pr] = true;
+          if (it && it.kind === 'pr' && Number(it.number) > 0) out[Number(it.number)] = true;
+        });
+        return out;
+      };
+      return { listed: nums(listed), known: nums(known) };
+    }
     // Header line over a train's rows: "merge train · 4 PRs · 1st: #15074".
     // The count is the rows drawn under the header, never the server's
     // size alone: with shown (the PR numbers rendered in this run) a
-    // train the view only partly carries reads "merge train · 1 of 3 PRs
-    // here · 1st: #15425 · not in this view: #15529, #15530" so the header
-    // never claims rows that are not there (the train icon sits in front
-    // of it in the HTML).
-    function stageTrackerTrainHeaderText(mt, shown) {
+    // train the page only partly carries says where the rest are —
+    // "merge train · 1 of 3 PRs here · 1st: #15425 · on another page:
+    // #15529, #15530" or "… · hidden by the filter: #15529" — so the header
+    // never claims rows that are not there and never leaves the owner
+    // asking what "not in this view" means. The server's size counts
+    // only PRs in the merge queue (080 and beyond); a PR still at CI /
+    // Review is not a member and is not mentioned here (hivecommons/hive#15653).
+    // where is stageTrackerTrainWhere's answer; without it the rest read
+    // "not on this page".
+    function stageTrackerTrainHeaderText(mt, shown, where) {
       const size = Number(mt.size) || 0;
       const front = Number(mt.front) || 0;
       if (!Array.isArray(shown)) return 'merge train · ' + size + ' PRs · 1st: #' + front;
@@ -14959,23 +15053,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let text = 'merge train · ' + (here < size ? here + ' of ' + size + ' PRs here' : here + (here === 1 ? ' PR' : ' PRs')) + ' · 1st: #' + front;
       if (here < size) {
         const missing = stageTrackerTrainMissing(mt, shown);
-        const named = missing.map(n => '#' + n);
         const unnamed = size - here - missing.length;
-        if (unnamed > 0) named.push(unnamed + ' more');
-        text += ' · not in this view: ' + (named.length ? named.join(', ') : (size - here) + ' PRs');
+        if (!where || !where.listed) {
+          const named = missing.map(n => '#' + n);
+          if (unnamed > 0) named.push(unnamed + ' more');
+          text += ' · not on this page: ' + (named.length ? named.join(', ') : (size - here) + ' PRs');
+          return text;
+        }
+        const paged = missing.filter(n => where.listed[n]);
+        const filtered = missing.filter(n => !where.listed[n] && where.known && where.known[n]);
+        const gone = missing.filter(n => !where.listed[n] && !(where.known && where.known[n]));
+        if (paged.length) text += ' · on another page: ' + paged.map(n => '#' + n).join(', ');
+        if (filtered.length) text += ' · hidden by the filter: ' + filtered.map(n => '#' + n).join(', ');
+        const rest = gone.map(n => '#' + n);
+        if (unnamed > 0) rest.push(unnamed + ' more');
+        if (rest.length) text += ' · not in this payload: ' + rest.join(', ');
       }
       return text;
     }
     // idx is the train's accent slot on the page (stageTrackerTrainIndex);
     // the header and its rows share the rail colour it picks.
-    function stageTrackerTrainHeaderHtml(item, shown, idx) {
+    function stageTrackerTrainHeaderHtml(item, shown, idx, where) {
       const rt = stageTrackerRowTrain(item);
       if (!rt) return '';
       const mt = rt.mt;
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }).join('\n');
+      const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }, true).join('\n');
       return `<div class="ham-train-head${stageTrackerTrainAccentClass(idx)}" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
-        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
+        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown, where))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
       </div>`;
     }
     // Row classes for a train member: the rail, whether it leads / ends
@@ -14994,7 +15099,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Inserts a train header entry before the first row of each train run.
     // Entries are {key, html}; items are the page's row items in order. The
     // header counts the run it heads — the rows actually drawn under it.
-    function stageTrackerTrainRows(items, rowOf) {
+    // where (stageTrackerTrainWhere) tells the header where the members
+    // it does not draw are.
+    function stageTrackerTrainRows(items, rowOf, where) {
       const out = [];
       let prevKey = '';
       const list = items || [];
@@ -15011,7 +15118,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (!m || stageTrackerTrainKey(m) !== k) break;
             shown.push(stageTrackerRowTrain(m).pr);
           }
-          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown, trains.index[k]) });
+          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown, trains.index[k], where) });
         }
         prevKey = k;
         out.push(rowOf(e, i));
@@ -16724,7 +16831,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerChipsHtml(item) {
-      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '');
+      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
@@ -17061,7 +17168,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null,
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
@@ -17435,7 +17542,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '') || null, lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, decided: lp.decided || item.decided || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -18978,7 +19085,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? { key: e.group.key, html: stageTrackerGroupHeaderHtml(e.group, stages, ctx) }
         : itemRow(pageItems[i], i);
       const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]
-        .concat(stageTrackerTrainRows(page.rows, rowOf)), nowMs);
+        .concat(stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null)), nowMs);
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
