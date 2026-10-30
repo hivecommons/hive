@@ -1,0 +1,1 @@
+- The rebase-then-merge follow-through now counts a head as the hive's own by its committer: an email-domain-only match (no GitHub login resolved) needs GitHub to report the commit as verified, and the author counts only when GitHub resolves it to the App bot, since a signature never vouches for the author address ([#15182](https://github.com/hivecommons/hive/issues/15182)).
