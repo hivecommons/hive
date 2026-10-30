@@ -372,11 +372,21 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if stageHandoffReasons[reason] {
 		return stageVerdict{}
 	}
+	if strings.HasPrefix(reason, "base-refresh:") {
+		// Preparation/queued is not ready-to-merge or a merge train seat.
+		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned, Reason: reason}
+	}
 	if train, ok := prstage.ParseMergeTrain(reason); ok {
 		// The merge train parked this PR behind an overlapping front
 		// (hivecommons/hive#15117): a hive-side wait at the merge gate,
 		// never a human stage — unless the train gave up rebasing it.
 		if train.State == prstage.MergeTrainStateRebaseExhausted {
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+		}
+		if train.State == prstage.MergeTrainStateClaimConflict {
+			// Another lane's open PR claims the same issue and nobody has
+			// decided which lands (hivecommons/hive#15810): a person's
+			// call, so 085 — not a turn in the queue.
 			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 		}
 		if train.State == prstage.MergeTrainStateDuplicateOf {

@@ -187,6 +187,17 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 		}
 	}
 	switch {
+	case d.Rule == delegatedecision.RuleSameIssueClaimConflict && in.ClaimConflictWith > 0:
+		other := "#" + strconv.Itoa(in.ClaimConflictWith)
+		issue := "the same issue"
+		if in.ClaimConflictIssue > 0 {
+			issue = "issue #" + strconv.Itoa(in.ClaimConflictIssue)
+		}
+		return "Hold both: " + ref + " and " + other + " claim " + issue + ". Keep " + other + ", close " + ref + " — or keep " + ref + ", close " + other + "; the hive will not pick.",
+			[]string{
+				"Neither PR merges until one of them is closed or approved.",
+				"Approve on a row admits that PR to the merge queue; Close as superseded on the other closes it with credit.",
+			}
 	case d.Verdict == delegatedecision.VerdictAdoptSupersede:
 		return "Re-open " + ref + " as hive's own PR with the same commits and merge that; close " + ref + " as superseded.",
 			[]string{

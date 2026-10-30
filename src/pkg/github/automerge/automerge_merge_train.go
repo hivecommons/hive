@@ -362,6 +362,9 @@ type mergeTrainPlan struct {
 	// duplicates are the PRs held out of every train this pass because
 	// another open PR fixes the same issue (one PR per issue).
 	duplicates map[int]mergeTrainDuplicateHold
+	// claimConflicts are the candidates held because an open PR outside
+	// this lane claims the same issue and no decision is recorded.
+	claimConflicts map[int]mergeTrainClaimConflict
 }
 
 // group returns the train number rides in, if any.
@@ -414,7 +417,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
 		return plan
 	}
-	prs = c.planDuplicateHolds(plan, lane, owner, repo, displayRepo, prs, prefilter)
+	prs = c.planDuplicateHolds(ctx, plan, lane, owner, repo, displayRepo, prs, prefilter)
 	perBase := map[string][]*gh.PullRequest{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
@@ -422,6 +425,9 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 		}
 		if !mergeTrainCandidate(prefilter(pr)) {
 			continue
+		}
+		if c.preparingBase(owner, repo, pr.GetBase().GetRef(), pr.GetNumber()) {
+			continue // preparation is not a current-head-ready train seat
 		}
 		if why := c.mergeTrainUnderRepair(owner, repo, pr); why != "" {
 			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), why)
@@ -778,6 +784,9 @@ func (c *Engine) mergeTrainAfterFrontMerge(ctx context.Context, plan *mergeTrain
 		head := live.GetHead().GetSHA()
 		switch {
 		case state == "behind":
+			if c.requireCurrentBaseFor(plan.owner + "/" + plan.repo) {
+				continue // the next admitted preparation front owns its refresh
+			}
 			if err := c.executeUpdateBranchEffect(ctx, plan.owner, plan.repo, n, head, "merge-train:front-merged#"+strconv.Itoa(front)); err != nil {
 				switch classifyUpdateBranchError(err, c.isForkPR(live)) {
 				case updateBranchUpToDate:

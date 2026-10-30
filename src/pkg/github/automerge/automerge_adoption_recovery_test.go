@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -145,6 +146,48 @@ func TestAdoptedStaleRedRecovery(t *testing.T) {
 				if u != "7@aaa" {
 					t.Fatalf("update-branch must name the evaluated head: %v", h.adopt.branchUpdates)
 				}
+			}
+		})
+	}
+}
+
+func TestAdoptedRecoveryPreparationWaitDoesNotConsumeAttempt(t *testing.T) {
+	for _, duplicate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "queued", true: "duplicate"}[duplicate], func(t *testing.T) {
+			h, key, done := recoveryHarness(t)
+			defer done()
+			h.e.requireCurrentBase = func(string) bool { return true }
+			h.e.basePreparation = NewBasePreparationStore("")
+			h.adopt.compareBehind = 2
+			h.adopt.baseChecks = map[string]string{"coverage": "success"}
+			front, head, wantReason := 8, "head8", preparationQueued(8)
+			if duplicate {
+				front, head, wantReason = 7, "aaa", basePreparationReady
+			}
+			h.adopt.superseders[front] = map[string]any{
+				"number": front, "state": "open",
+				"head": map[string]string{"sha": head},
+				"base": map[string]string{"ref": "v5", "sha": "base1"},
+			}
+			if reason, err := h.e.admitBasePreparation(context.Background(), "acme", "widget", "v5", front, head, stageLaneContributor, false); reason != "" || err != nil {
+				t.Fatalf("admit owner: reason=%q error=%v", reason, err)
+			}
+			if duplicate {
+				if err := h.e.claimBasePreparationUpdate(context.Background(), "acme", "widget", front, head); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			out := h.e.recoverStaleRedAdoption(context.Background(), h.e.stageStoreOrShared(), key, stageObservation{
+				Owner: "acme", Repo: "widget", Display: "acme/widget", Number: 7,
+				BaseRef: "v5", HeadSHA: "aaa", Lane: stageLaneContributor, Reason: recoveryReason,
+			}, rec)
+			if out.Attempted || out.Reason != adoptionRecoverySkipPrefix+wantReason || out.Deferred != duplicate {
+				t.Fatalf("recovery while waiting: %+v", out)
+			}
+			rec, _ = h.e.stageStoreOrShared().Get(key)
+			if rec.AdoptRecoveryCount != 0 || rec.AdoptRecoveryAttempt != "" || len(h.adopt.branchUpdates) != 0 {
+				t.Fatalf("waiting recovery consumed attempt: record=%+v updates=%v", rec, h.adopt.branchUpdates)
 			}
 		})
 	}

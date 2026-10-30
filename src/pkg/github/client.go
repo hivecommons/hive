@@ -75,7 +75,8 @@ type Client struct {
 	// enumeration goroutine is deciding what work exists. Nil (the zero value,
 	// and what every test constructs) means nothing is paused, so the client
 	// behaves exactly as it did before.
-	repoPaused func(repo string) bool
+	repoPaused           func(repo string) bool
+	scheduledBaseRefresh func(repo string) bool
 	// writeback is the unsolicited write-back gate (writeback_gate.go);
 	// nil allows everything.
 	writeback *writeback.Gate

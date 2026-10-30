@@ -2137,6 +2137,8 @@
        list with one Preview button each plus a sample row the previews play on. */
     .sts-hint { color: var(--muted); font-size: var(--fs-xs); margin: 0; }
     .sts-row { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); flex-wrap: wrap; }
+    .sts-timing-input { width: 6em; }
+    .sts-timing-unit { color: var(--muted); }
     .sts-motion-list { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
     .sts-motion-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-sm); }
     .sts-motion-item:has(input:checked) { border-color: var(--line-strong); background: var(--panel-strong); color: var(--text); }
@@ -6728,6 +6730,60 @@
     body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
     body.kiosk-mode .ham-sticky { top: 0; }
     body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }
+/* ---- pop-out & full screen: the activity monitor on its own (#15829) ----
+   `?popout=1` (see js/boot.js) is what the ⧉ header button opens in a
+   named popup window so an operator can park the tracker on a second
+   monitor. Same chrome-less layout as kiosk — no sidebar, topbar, avatar
+   menu, chat FAB or notices, every other section out of flow — but attended:
+   the cursor stays, the gear works, and a ⤶ Return link goes back to the
+   opener. The ⛶ button puts the document into the Fullscreen API and sets
+   body.ham-fullscreen, which shares every rule below — the document rather
+   than the section so the body-level toasts (waiting on you, merges) stay
+   visible while full screen. */
+    body.popout-mode, body.ham-fullscreen { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
+    body.popout-mode .oc-sidebar, body.popout-mode .oc-sidebar-resize, body.popout-mode .oc-topbar,
+    body.popout-mode #dash-notices, body.popout-mode #oc-agent-detail, body.popout-mode .hive-chat-fab,
+    body.popout-mode .hive-chat-panel, body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
+    body.ham-fullscreen .oc-sidebar, body.ham-fullscreen .oc-sidebar-resize, body.ham-fullscreen .oc-topbar,
+    body.ham-fullscreen #dash-notices, body.ham-fullscreen #oc-agent-detail, body.ham-fullscreen .hive-chat-fab,
+    body.ham-fullscreen .hive-chat-panel { display: none !important; }
+    /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
+       display:grid!important with id specificity; beat it with (1,2,2). */
+    html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
+    body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
+    body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.popout-mode #activity-monitor-section .dashboard-grip, body.popout-mode #activity-monitor-section .section-chevron,
+    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron { display: none !important; }
+    /* The header cannot collapse the only section on the page, but its
+       gear, full-screen and return buttons must still take clicks. */
+    body.popout-mode #activity-monitor-section .section-header-toggle,
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle { pointer-events: none; }
+    body.popout-mode #activity-monitor-section .section-header-toggle button,
+    body.popout-mode #activity-monitor-section .section-header-toggle .config-info,
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle button,
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
+    /* A collapsed state saved from the main window would leave an empty
+       page with a header that cannot be clicked: always show the body. */
+    body.popout-mode #activity-monitor-section .section-body.collapsed,
+    body.ham-fullscreen #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
+    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions,
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
+    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary,
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
+    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky { top: 0; }
+    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols { top: var(--ham-sticky-bar-h); }
+
+    /* Header tools: ⧉ pop out and ⛶ full screen sit beside the gear and
+       share its chip styling; the return link is a pop-out-only text pill. */
+    .ham-header-tool { width: auto; min-width: 15px; padding: 0 var(--sp-1); font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; }
+    .ham-header-tool[aria-pressed="true"] { color: var(--blue); border-color: var(--blue); }
+    .ham-popout-return { display: none; margin-left: var(--sp-2); padding: 0 var(--sp-2); height: 15px; border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, var(--blue) 60%, transparent); background: color-mix(in srgb, var(--blue) 18%, var(--panel)); color: var(--blue); font: inherit; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0; line-height: 1; white-space: nowrap; cursor: pointer; }
+    .ham-popout-return:hover, .ham-popout-return:focus-visible { background: var(--blue); color: var(--bg); outline: none; }
+    body.popout-mode .ham-popout-return { display: inline-flex; align-items: center; }
+    /* A window that already is the tracker has nothing to pop out, and a
+       kiosk has no one to click. */
+    body.popout-mode .ham-popout-btn, body.ham-fullscreen .ham-popout-btn,
+    body.kiosk-mode .ham-header-tool, body.kiosk-mode .ham-popout-return { display: none !important; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6761,15 +6817,27 @@
 // The class is set here, before first paint, so the chrome never flashes.
 // Tracker sounds are on by default in kiosk mode (the streamer captures them
 // through a PulseAudio null sink); `&sound=off` keeps the display silent.
+// Pop-out mode (#15829): `?popout=1` is the same chrome-less, tracker-only
+// layout for an operator's second monitor — opened by the ⧉ button in the
+// activity monitor header via window.open. Unlike kiosk it is attended: the
+// cursor stays, the settings gear works, preferences persist as usual, and a
+// "Return to dashboard" link focuses the opener. Reloading keeps the layout
+// because the flag lives in the URL.
 (function(){
-  var kiosk=false, sound=true;
-  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, sound=true;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
   window.HIVE_KIOSK=kiosk;
+  window.HIVE_POPOUT=popout&&!kiosk;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
   window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };
   if(kiosk){
     document.body.classList.add('kiosk-mode');
+  }else if(window.HIVE_POPOUT){
+    document.body.classList.add('popout-mode');
+  }
+  if(kiosk||window.HIVE_POPOUT){
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();
@@ -8840,6 +8908,12 @@
       return `<button type="button" class="config-info section-settings-gear" data-section-settings="1" data-action="${esc(action)}" data-stop="1"${extraAttrs || ''} title="${esc(title || (label + ' settings'))}" aria-label="${esc(label)} settings"><svg class="section-settings-gear-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M13.3 2.25h-2.6l-.42 2.66a7.46 7.46 0 0 0-1.24.52L6.86 3.84 5.02 5.68 6.61 7.86c-.22.4-.4.82-.52 1.25l-2.66.42v2.6l2.66.42c.13.43.3.85.52 1.25l-1.59 2.18 1.84 1.84 2.18-1.59c.4.22.81.39 1.24.52l.42 2.66h2.6l.42-2.66c.43-.13.85-.3 1.24-.52l2.18 1.59 1.84-1.84-1.59-2.18c.22-.4.4-.82.52-1.25l2.66-.42v-2.6l-2.66-.42a7.4 7.4 0 0 0-.52-1.25l1.59-2.18-1.84-1.84-2.18 1.59c-.4-.22-.81-.39-1.24-.52l-.42-2.66ZM12 14.9a2.9 2.9 0 1 0 0-5.8 2.9 2.9 0 0 0 0 5.8Z"/></svg></button>`;
     }
 
+    // Pop out / full screen / return (hivecommons/hive#15829), rendered next to
+    // the activity monitor's gear; handlers live in js/tracker-popout.js and
+    // css/popout.css decides which of the three show in which mode.
+    const STAGE_TRACKER_HEADER_TOOLS_HTML = '<button type="button" class="config-info section-settings-gear ham-header-tool ham-popout-btn" id="activity-monitor-popout" data-action="openStageTrackerPopout" data-stop="1" title="Pop out — open the activity monitor in its own window, for another monitor" aria-label="Pop out the Hive activity monitor into its own window">⧉</button>'
+      + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
+      + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
       'governor': { title: '🚦 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
@@ -8867,7 +8941,7 @@
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
-      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -14555,6 +14629,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // it alone); stage_tracker_merge_gate_test.go pins the two equal.
     const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
     // merge_gate.merge_path (the merge call's issuer) in words (#15245).
+    // A merge call (or a sweep's pass on a soaked PR) older than this says
+    // "waiting for GitHub…" rather than spinning without a reason (#15808).
+    const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
     const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
@@ -14625,6 +14702,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
     // / duplicate_issue carry the numbers).
     const STAGE_TRACKER_GATE_DUPLICATE_PREFIX = 'duplicate-of:';
+    // merge_gate.state of a PR the queue holds because an open PR in
+    // another lane claims the same issue and nobody has decided which
+    // lands (hivecommons/hive#15810): "claim-conflict:15793".
+    const STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX = 'claim-conflict:';
+    // Pure: the other claimant of a "claim-conflict:<n>" gate state; 0 for
+    // any other state.
+    function stageTrackerGateClaimConflictOf(state) {
+      state = String(state || '');
+      return state.indexOf(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX) === 0 ? Number(state.slice(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX.length)) || 0 : 0;
+    }
     // Pure: the PR number a "duplicate-of:<n>" gate state yields to; 0 for
     // any other state.
     function stageTrackerGateDuplicateOf(state) {
@@ -14639,6 +14726,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
       const dup = stageTrackerGateDuplicateOf(state);
       if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
+      // Inline prefix read (hivecommons/hive#15810): this function is
+      // lifted alone into node by the Go tests.
+      if (state.indexOf('claim-conflict:') === 0) {
+        const conflict = Number(state.slice('claim-conflict:'.length)) || 0;
+        if (conflict) return 'Held · duplicate of #' + conflict + ' · needs decision';
+      }
       if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
       const plain = state.replace(/[-_]+/g, ' ').trim();
       return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';
@@ -15539,6 +15632,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // kept one and holds this one — "Duplicate of #15402 · needs a
       // pick"; no clock, no train. Let hive decide on either row closes
       // the held one as superseded.
+      // Two open PRs for one issue in different lanes (hivecommons/hive#15810):
+      // the queue admits neither until a person keeps one and closes the
+      // other; the row's decision options name both PRs.
+      const conflictWith = typeof stageTrackerGateClaimConflictOf === 'function' ? stageTrackerGateClaimConflictOf(state) : 0;
+      if (conflictWith) {
+        const issue = Number(mg.duplicate_issue) || 0;
+        const tip = 'This PR and #' + conflictWith + ' both claim' + (issue ? ' #' + issue : ' the same issue') + " from different merge lanes. Hive's merge queue admits neither until one is closed or approved, so two implementations of one fix never both land. Keep this one (Approve) or close it as superseded by #" + conflictWith + '.' + lastSeen;
+        return { state, word: word, detail: 'needs decision', tip, cue: 'waiting', until: 0, duplicateOf: conflictWith };
+      }
       const dupOf = stageTrackerGateDuplicateOf(state);
       if (dupOf) {
         const issue = Number(mg.duplicate_issue) || 0;
@@ -15586,7 +15688,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // At 060/080 the stage keeps its own word and the detail says
         // "soak 12m left"; at 095 the soak is the stage.
         clock.prefix = state === 'soaking' ? '' : 'soak ';
-        const soak = stageTrackerSoakWords(clock, nowMs, nextAt, !!mg.sweep_running);
+        const soak = stageTrackerSoakWords(clock, nowMs, nextAt, !!mg.sweep_running, clock.sweepingSince);
         return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: soak.cue || 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
       }
       // 060 Review passed: the pill carries the lane's own recorded reason
@@ -15608,13 +15710,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (state === 'merging') {
         // A live merge call (merging_since, hivecommons/hive#15245) says
-        // who issued it and how long ago; a held row (the SPA keeping
-        // "Merging" lit for the toast's lifetime after the merge landed)
-        // says the ✓ follows. Without either, the lane's 100 record.
+        // who issued it and how long ago — and, past
+        // STAGE_TRACKER_MERGING_SLOW_MS, that it is waiting for GitHub
+        // (#15808); a held row (the SPA bridging the gap until the merged
+        // fact lands) says the ✓ follows. Without either, the lane's 100
+        // record.
         const since = mg.merging_since ? Date.parse(mg.merging_since) : 0;
         const sinceWords = since > 0 ? ' since ' + stageTrackerAgoText(since, nowMs) : '';
         const who = STAGE_TRACKER_MERGE_PATH_WORDS[mg.merge_path] || '';
-        if (mg.held) return { state, word, detail: 'merge landed', tip: 'hive merged it' + (who ? ' (' + who + ')' : '') + sinceWords + '; the row advances to ✓ in a moment.', cue: 'merging', until: 0 };
+        if (mg.held) return { state, word, detail: 'waiting for GitHub', tip: 'hive issued the merge' + (who ? ' (' + who + ')' : '') + sinceWords + '; waiting for GitHub to confirm — the row advances to ✓ the moment it does.', cue: 'merging', until: 0 };
+        if (since > 0 && nowMs - since > STAGE_TRACKER_MERGING_SLOW_MS) return { state, word, detail: 'merging · waiting for GitHub…', tip: 'hive is merging it' + (who ? ' (' + who + ')' : '') + ' — the merge call has been in flight' + sinceWords + ', longer than usual; waiting for GitHub to answer.', cue: 'merging', until: 0 };
         if (since > 0) return { state, word, detail: 'merge call in flight', tip: 'hive is merging it now' + (who ? ' (' + who + ')' : '') + ' — the merge call has been in flight' + sinceWords + '.', cue: 'merging', until: 0 };
         return { state, word, detail: '', tip: 'Admitted and soaked; hive is merging it now (GitHub merge queue / merge window).' + lastSeen, cue: 'merging', until: 0 };
       }
@@ -15699,7 +15804,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // words and the hover sentence (data-ham-soak-tip is the sentence
       // currently written into the row's titles; the tick swaps it out).
       const c = info.soakClock;
-      const soakAttrs = c ? ` data-ham-soak="1" data-ham-until="${c.until}" data-ham-until-kind="soaking" data-ham-soak-window="${c.windowS}" data-ham-soak-head="${esc(c.head)}" data-ham-soak-restarted="${c.restarted ? 1 : 0}" data-ham-soak-prefix="${esc(c.prefix || '')}" data-ham-next="${c.nextAt || 0}" data-ham-sweeping="${c.sweepRunning ? 1 : 0}" data-ham-soak-tip="${esc(info.soak)}"` : '';
+      const soakAttrs = c ? ` data-ham-soak="1" data-ham-until="${c.until}" data-ham-until-kind="soaking" data-ham-soak-window="${c.windowS}" data-ham-soak-head="${esc(c.head)}" data-ham-soak-restarted="${c.restarted ? 1 : 0}" data-ham-soak-prefix="${esc(c.prefix || '')}" data-ham-next="${c.nextAt || 0}" data-ham-sweeping="${c.sweepRunning ? 1 : 0}" data-ham-sweeping-since="${c.sweepingSince || 0}" data-ham-soak-tip="${esc(info.soak)}"` : '';
       const detail = info.detail ? ` <span class="ham-gate-detail"${soakAttrs || (info.until ? ` data-ham-until="${info.until}" data-ham-until-kind="${esc(info.state)}"` : '')}>· ${esc(info.detail)}</span>` : '';
       return `<span class="ham-seg-t${info.stalled ? ' ham-queue-stalled' : ''}">${esc(info.word)}${detail}</span>`;
     }
@@ -15728,7 +15833,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (!(until > 0)) return null;
       const rowHead = String((src && src.head) || (item && item.head) || '');
-      return { until, started, windowS, head, restarted: !!(head && rowHead && head !== rowHead), fromSoak, nextAt: mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0, sweepRunning: !!mg.sweep_running };
+      return { until, started, windowS, head, restarted: !!(head && rowHead && head !== rowHead), fromSoak, nextAt: mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0, sweepRunning: !!mg.sweep_running, sweepingSince: mg.sweeping_since ? Date.parse(mg.sweeping_since) || 0 : 0 };
     }
     // Pure: "12m 30s" / "45s" / "1h 05m" for the hover; '' when none.
     function stageTrackerSoakLeftText(ms) {
@@ -15757,10 +15862,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //               live time left and the end time
     //   complete  — past until, waiting for the lane's next pass:
     //               "Soaking · complete"
-    //   mergeable — past until and the lane's pass is on it now:
-    //               "Mergeable · merging now"
+    //   mergeable — past until and the lane's pass is on this PR now:
+    //               "Mergeable · merging now"; past
+    //               STAGE_TRACKER_MERGING_SLOW_MS of that (sweepingSince)
+    //               "Mergeable · merging · waiting for GitHub…", so a
+    //               spinner never sits without a visible reason (#15808)
     //   restarted — "Soak restarted · new head"
-    function stageTrackerSoakWords(clock, nowMs, nextAt, sweepRunning) {
+    function stageTrackerSoakWords(clock, nowMs, nextAt, sweepRunning, sweepingSince) {
       const short = clock.head ? clock.head.slice(0, 7) : '';
       const who = short ? 'Head ' + short : 'The head';
       const mins = clock.windowS > 0 ? Math.round(clock.windowS / 60) : 0;
@@ -15775,6 +15883,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       const soaked = who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '. ';
       if (sweepRunning) {
+        if (sweepingSince > 0 && nowMs - sweepingSince > STAGE_TRACKER_MERGING_SLOW_MS) {
+          return { word: 'Mergeable', detail: (prefix ? 'soaked — ' : '') + 'merging · waiting for GitHub…', tip: soaked + "Mergeable — hive's pass has been on it since " + stageTrackerAgoText(sweepingSince, nowMs) + '; waiting for GitHub to answer.', cue: 'running' };
+        }
         return { word: 'Mergeable', detail: prefix ? 'soaked — merging now' : 'merging now', tip: soaked + 'Mergeable — merging now.', cue: 'running' };
       }
       const next = stageTrackerNextPassWords(nextAt, nowMs);
@@ -15816,7 +15927,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the time left reads right at hover time without a re-render.
     function stageTrackerSoakTick(n, nowMs) {
       const clock = { until: Number(n.getAttribute('data-ham-until')), windowS: Number(n.getAttribute('data-ham-soak-window')) || 0, head: n.getAttribute('data-ham-soak-head') || '', restarted: n.getAttribute('data-ham-soak-restarted') === '1', prefix: n.getAttribute('data-ham-soak-prefix') || '' };
-      const words = stageTrackerSoakWords(clock, nowMs, Number(n.getAttribute('data-ham-next')) || 0, n.getAttribute('data-ham-sweeping') === '1');
+      const words = stageTrackerSoakWords(clock, nowMs, Number(n.getAttribute('data-ham-next')) || 0, n.getAttribute('data-ham-sweeping') === '1', Number(n.getAttribute('data-ham-sweeping-since')) || 0);
       const t = '· ' + words.detail;
       if (n.textContent !== t) n.textContent = t;
       // At 095 the soak owns the pill word too: a soaked head under the
@@ -21182,12 +21293,48 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // toast says why in plain words and carries the next actions.
     const STAGE_TRACKER_ACTION_NO_EFFECT = 'no-effect';
     const STAGE_TRACKER_RESULT_TOAST_MAX = 5;
-    // An informational result toast ("adopted", "/lgtm posted", a no-op)
-    // closes itself after this long, with the countdown bar and hover /
-    // focus pause every timed toast gets; it still leaves earlier on × or
-    // when the tracker reports the target in a new state. Errors and
-    // toasts carrying next-action buttons wait for the operator instead.
-    const STAGE_TRACKER_RESULT_TOAST_MS = 15000;
+    // Tracker toast lifetimes (hivecommons/hive#15813). An informational
+    // result toast ("adopted", "/lgtm posted", a no-op) and the waiting-on-you
+    // nudge close after the info duration; an
+    // error result closes after the error duration (it keeps its × for an
+    // earlier dismissal); a toast carrying next-action buttons is a prompt
+    // and waits for the operator. Both durations are the hive's
+    // dashboard.stage_tracker.toast_info_s / toast_error_s, read from the
+    // tracker payload's settings block; this browser's localStorage copy
+    // is only the fallback for when the server write was refused.
+    const STAGE_TRACKER_TOAST_DEFAULT_S = Object.freeze({ info: 15, error: 30 });
+    const STAGE_TRACKER_TOAST_MIN_S = 3;
+    const STAGE_TRACKER_TOAST_MAX_S = 120;
+    const STAGE_TRACKER_TOAST_KEY = 'hive.tracker.toastS';
+    // The merge banner stays this many times longer than an info toast
+    // (30 s at the default), so the two move together.
+    const STAGE_TRACKER_MERGE_BANNER_FACTOR = 2;
+    // Pure: a toast duration in seconds, or 0 when the value is not a
+    // usable number (0 itself means "the default").
+    function stageTrackerToastSecondsValid(v) {
+      const n = Number(v);
+      if (!isFinite(n) || n <= 0) return 0;
+      return Math.max(STAGE_TRACKER_TOAST_MIN_S, Math.min(Math.round(n), STAGE_TRACKER_TOAST_MAX_S));
+    }
+    // Pure: the effective duration in seconds for kind ('info' | 'error').
+    // This browser's fallback copy wins when present — it only exists when
+    // the hive refused the write, so the payload still carries the old
+    // value — then the server's settings block, then the default.
+    function stageTrackerToastSeconds(kind, settings, local) {
+      kind = kind === 'error' ? 'error' : 'info';
+      const fromLocal = stageTrackerToastSecondsValid(local && local[kind]);
+      if (fromLocal) return fromLocal;
+      const fromServer = stageTrackerToastSecondsValid(settings && settings['toast_' + kind + '_s']);
+      if (fromServer) return fromServer;
+      return STAGE_TRACKER_TOAST_DEFAULT_S[kind];
+    }
+    function stageTrackerToastLocal() {
+      try { const v = JSON.parse(localStorage.getItem(STAGE_TRACKER_TOAST_KEY) || 'null'); return v && typeof v === 'object' ? v : null; } catch { return null; }
+    }
+    function stageTrackerToastMs(kind) {
+      return stageTrackerToastSeconds(kind, _stageTracker && _stageTracker.settings, stageTrackerToastLocal()) * 1000;
+    }
+    function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
@@ -21322,8 +21469,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let _stageTrackerResultToasts = [];
     // Build and show the result toast; it leaves on ×, when the tracker
     // reports the target in a new state (see stageTrackerResultToastsSync)
-    // or, for a plain informational result, after
-    // STAGE_TRACKER_RESULT_TOAST_MS (see stageTrackerResultToastTimed).
+    // or, for a plain informational result, after the info toast duration
+    // (see stageTrackerResultToastTimed); an error leaves after the error
+    // toast duration.
     function stageTrackerResultToast(result, item, ctx) {
       const text = stageTrackerResultText(result, item, ctx);
       const container = document.getElementById('toast-container');
@@ -21361,7 +21509,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (container) container.appendChild(el);
       makeToastSticky(el);
-      if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));
+      if (text.type === 'error') toastCountdownBar(el, stageTrackerToastMs('error'), () => dismissToast(el, null, null, true));
+      else if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, stageTrackerToastMs('info'), () => dismissToast(el, null, null, true));
       const key = stageTrackerTargetKey(result.target) || stageTrackerItemKey(item);
       const entry = { el, key, state: stageTrackerItemState(stageTrackerItemByKey(_stageTracker, key)), result, text };
       if (text.type !== 'error') _stageTrackerResultToasts.push(entry);
@@ -21729,21 +21878,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function stageTrackerNoteMerges(d) {
       const nowMs = Date.now();
+      _stageTrackerMergingHoldMs = stageTrackerMergingHoldMsOf(d, _stageTrackerMergingHoldMs);
       const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d));
-      // The merge gate holds "Merging" for at least the merge toast's
-      // lifetime before the row advances to ✓ (hivecommons/hive#15245): a
-      // merge that lands inside the hold is masked as still open until it
-      // ends, then re-read as fresh.
-      _stageTrackerMergingHold = stageTrackerMergingHoldNext(_stageTrackerMergingHold, d, _stageTrackerMergeState, raw, _stageTrackerPRItems, nowMs);
-      const masked = stageTrackerMergingHoldMask(raw, _stageTrackerMergingHold, nowMs);
-      if (masked.until) stageTrackerMergingHoldSchedule(masked.until - nowMs);
-      // The Merged chip holds the masked merges back too: the server
-      // already counts them, their glyph has not even launched yet.
-      _stageTrackerMergedHeld = {};
-      masked.held.forEach(k => { _stageTrackerMergedHeld[k] = true; });
+      // The merge gate's hold (hivecommons/hive#15245, #15808) keeps a
+      // row the payload dropped mid-merge on the board at "Merging" until
+      // the merged fact arrives (then the merge is fresh at once) or the
+      // hold window passes.
+      _stageTrackerMergingHold = stageTrackerMergingHoldNext(_stageTrackerMergingHold, d, raw, nowMs);
+      const until = stageTrackerMergingHoldUntil(_stageTrackerMergingHold, nowMs);
+      if (until) stageTrackerMergingHoldSchedule(until - nowMs);
+      const prevItems = _stageTrackerPRItems;
       _stageTrackerPRItems = stageTrackerPRItemsOf(d);
-      const next = masked.state;
+      Object.assign(_stageTrackerPRLast, _stageTrackerPRItems);
+      const next = raw;
       const fresh = stageTrackerNewlyMerged(_stageTrackerMergeState, next).filter(k => !_stageTrackerZapped[k]);
+      // A PR that left the board closed, not merged (recently_closed, the
+      // closed twin of recently_merged): say so once, neutrally — no bee,
+      // no count — instead of letting the row vanish in silence.
+      const closed = stageTrackerNewlyClosed(d, _stageTrackerMergeState, next, _stageTrackerPRItems, _stageTrackerClosedNoted);
+      const closedItems = closed.map(k => prevItems[k] || _stageTrackerPRLast[k]);
+      closed.forEach(k => { _stageTrackerClosedNoted[k] = true; delete next[k]; delete _stageTrackerPRLast[k]; });
       _stageTrackerMergeState = next;
       // A merged PR is no longer in this payload, so its last host survives.
       if (typeof stageTrackerPRHosts === 'function') Object.assign(_stageTrackerPRHost, stageTrackerPRHosts(d));
@@ -21753,33 +21907,54 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (celebrate) fresh.forEach(k => { _stageTrackerCelebratePending[k] = true; });
       if (typeof stageTrackerMergedSync === 'function') stageTrackerMergedSync(d, fresh, Date.now());
       if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now());
+      if (typeof stageTrackerClosedToast === 'function') closed.forEach((k, i) => stageTrackerClosedToast(k, closedItems[i]));
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
       if (celebrate) { stageTrackerCelebrateMerges(fresh); return; }
       if (stageTrackerSoundGate()) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
     }
 
-    /* ---- Merge gate: "Merging" held for the toast's lifetime (#15245) ----
-       Operator: "I have seen some items go straight to merge without
-       showing in the Merge gate column as 'merging' for at least as long
-       as the merge toast is open." The sweep merges inside one pass, so a
-       PR can go from 060/090/095 to merged between two polls and the
-       intermediate state is never on screen. The payload's merge_gate now
-       says merging (with merging_since) while the merge call is in flight;
-       the SPA keeps a hold per PR from the first moment it saw merging —
-       or, for a merge it never saw coming, from the poll that reported it
-       merged — and until STAGE_TRACKER_MERGING_HOLD_MS (the merge
-       banner's lifetime) has passed the row stays on the board at 100
-       "Merging" (its last item, synthesised when the payload dropped it)
-       and the merge is not counted as fresh. When the hold ends the merge
-       is re-read: the row advances to ✓, the banner opens, the chip bumps.
-       A refused merge (merge_gate.state merge-failed) drops the hold at
-       once and the pill says why. All pure except the schedule/release
-       pair; run under node by stage_tracker_merging_hold_test.go. */
+    /* ---- Merge gate: "Merging" bridged until the merged fact (#15245, #15808) ----
+       Operator (#15245): "I have seen some items go straight to merge
+       without showing in the Merge gate column as 'merging'." The sweep
+       merges inside one pass, so a PR can go from 060/090/095 to merged
+       between two polls. The payload's merge_gate says merging (with
+       merging_since) while the merge call is in flight; when the payload
+       then drops the PR before the merged fact (recently_merged / the
+       ledger) has landed, the SPA keeps a hold per PR — from the moment
+       it saw merging — and until the hold window has passed the row stays
+       on the board at 100 "Merging" (its last item, synthesised), the
+       gate saying it is waiting for GitHub to confirm.
+       Operator (#15808): the hold used to be a fixed 30 s mask over the
+       merged fact itself — "Merging · merge landed" sat there while the
+       bee waited — and a row that vanished without the SPA seeing merged
+       never celebrated. Now the hold only bridges the gap: the moment the
+       merged fact is in a payload the hold drops, the merge is fresh and
+       the celebration launches (bee, then the odometer on its landing,
+       #15763). The window is dashboard.stage_tracker.merged_hold_s
+       (payload merged_hold_ms; default 8 s, floor 3 s), a ceiling, not a
+       delay. A refused merge (merge-failed) drops the hold at once. All
+       pure except the schedule/release pair; run under node by
+       stage_tracker_merging_hold_test.go. */
     const STAGE_TRACKER_MERGE_QUEUE = 100;
+    const STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS = 8000;
+    const STAGE_TRACKER_MERGING_HOLD_MIN_MS = 3000;
+    var _stageTrackerMergingHoldMs = STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS;
     var _stageTrackerMergingHold = {};
     var _stageTrackerPRItems = {};
+    // PR key → the last item ever seen for it (survives the payload
+    // dropping it: the closed toast's reason, the hold's row).
+    var _stageTrackerPRLast = {};
+    var _stageTrackerClosedNoted = {};
     var _stageTrackerMergingHoldTimer = 0;
+    // Pure: the hold window from a payload's merged_hold_ms (clamped to the
+    // floor), else the value in force.
+    function stageTrackerMergingHoldMsOf(d, cur) {
+      const n = d && typeof d === 'object' ? Number(d.merged_hold_ms) : 0;
+      if (!(n > 0)) return cur || STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS;
+      return Math.max(STAGE_TRACKER_MERGING_HOLD_MIN_MS, n);
+    }
+    function stageTrackerMergingHoldMs() { return _stageTrackerMergingHoldMs || STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS; }
     // Pure: PR key → item for one payload (the last open item a hold
     // synthesises its row from).
     function stageTrackerPRItemsOf(d) {
@@ -21787,21 +21962,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of ((d && Array.isArray(d.items)) ? d.items : [])) if (it && it.kind === 'pr') out[stageTrackerPRKey(it.repo, it.number)] = it;
       return out;
     }
-    // Pure: whether a hold is still inside its minimum window at nowMs.
-    function stageTrackerMergingHoldLive(hold, nowMs) { return !!hold && nowMs < hold.since + STAGE_TRACKER_MERGING_HOLD_MS; }
-    // Pure: the holds after one payload. prevState / rawState are the
-    // merge-state maps (PR key → merged?) before and after it; prevItems the
-    // PR items of the previous payload.
+    // Pure: whether a hold is still inside its window at nowMs.
+    function stageTrackerMergingHoldLive(hold, nowMs) { return !!hold && nowMs < hold.since + stageTrackerMergingHoldMs(); }
+    // Pure: the holds after one payload. rawState is the merge-state map
+    // (PR key → merged?) after it.
     //   • a PR the payload shows at merge_gate.state 'merging' opens (or
     //     keeps) a hold from merging_since (else from now, else the one it had)
-    //   • a PR shown at 'merge-failed' — or open at any other state after a
-    //     hold the payload no longer backs — drops its hold at once
-    //   • a PR open before and merged now with no hold opens one from now,
-    //     from its last open item, so "Merging" shows before ✓
-    //   • a hold whose window has passed is dropped (its merge, if any, is
-    //     then read as fresh)
-    function stageTrackerMergingHoldNext(prev, d, prevState, rawState, prevItems, nowMs) {
-      prev = prev || {}; prevState = prevState || {}; rawState = rawState || {}; prevItems = prevItems || {};
+    //   • a PR shown at 'merge-failed' — or open at any other state — drops
+    //     its hold at once
+    //   • a held PR the payload dropped keeps its hold while the window is
+    //     live and the merged fact is still missing; the merged fact (or
+    //     the window's end) drops it — the merge is then read as fresh
+    function stageTrackerMergingHoldNext(prev, d, rawState, nowMs) {
+      prev = prev || {}; rawState = rawState || {};
       const out = {};
       const items = stageTrackerPRItemsOf(d);
       for (const key of Object.keys(items)) {
@@ -21814,39 +21987,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // 'merge-failed' or any other open state: no hold.
       }
       for (const key of Object.keys(prev)) {
-        if (out[key] || items[key]) continue;
+        if (out[key] || items[key] || rawState[key] === true) continue;
         if (stageTrackerMergingHoldLive(prev[key], nowMs)) out[key] = prev[key];
-      }
-      for (const key of Object.keys(rawState)) {
-        // prev[key]: it was held and the window already passed — no second hold.
-        if (rawState[key] !== true || prevState[key] !== false || out[key] || prev[key] || items[key] || !prevItems[key]) continue;
-        out[key] = { since: nowMs, item: prevItems[key], path: '' };
       }
       return out;
     }
-    // Pure: rawState with every PR under a live hold read as still open;
-    // until is the earliest ms at which a masked hold ends (0 when none).
-    function stageTrackerMergingHoldMask(rawState, holds, nowMs) {
-      const state = Object.assign({}, rawState || {});
+    // Pure: the earliest ms at which a live hold ends (0 when none).
+    function stageTrackerMergingHoldUntil(holds, nowMs) {
       let until = 0;
-      const held = [];
       for (const key of Object.keys(holds || {})) {
         const h = holds[key];
-        if (state[key] !== true || !stageTrackerMergingHoldLive(h, nowMs)) continue;
-        state[key] = false;
-        held.push(key);
-        const end = h.since + STAGE_TRACKER_MERGING_HOLD_MS;
+        if (!stageTrackerMergingHoldLive(h, nowMs)) continue;
+        const end = h.since + stageTrackerMergingHoldMs();
         if (!until || end < until) until = end;
       }
-      return { state, held: held.sort(), until };
+      return until;
     }
     // Pure: the row a held PR shows while the payload no longer lists it —
-    // its last open item at 100 "Merging", the gate saying the merge landed.
+    // its last item at 100 "Merging", the gate waiting for GitHub's word.
     function stageTrackerMergingHoldItem(hold, key) {
       const base = hold && hold.item ? hold.item : { kind: 'pr' };
       const mg = Object.assign({}, base.merge_gate || {}, { state: 'merging', merging_since: new Date(hold.since).toISOString(), held: true, sweep_running: false, next_sweep_at: '', soak_until: '', soak_remaining_seconds: 0 });
       if (hold.path) mg.merge_path = hold.path;
-      return Object.assign({}, base, { stage: STAGE_TRACKER_MERGE_QUEUE, stage_slug: 'merge-queue', stage_label: 'stage/100-merge-queue', merge_gate: mg, caption: 'Merging now — the merge landed; ✓ follows', actor: 'hive', stage_actor: Object.assign({}, base.stage_actor || {}, { kind: 'hive', login: '', why: 'hive merged it; the row advances to ✓ in a moment' }), soak_remaining_seconds: 0, modifiers: (Array.isArray(base.modifiers) ? base.modifiers : []).filter(m => m !== 'stalled' && m !== 'blocked'), held_merging: true });
+      return Object.assign({}, base, { stage: STAGE_TRACKER_MERGE_QUEUE, stage_slug: 'merge-queue', stage_label: 'stage/100-merge-queue', merge_gate: mg, caption: 'Merging — waiting for GitHub to confirm; ✓ follows', actor: 'hive', stage_actor: Object.assign({}, base.stage_actor || {}, { kind: 'hive', login: '', why: 'hive issued the merge; the row advances to ✓ once GitHub confirms' }), soak_remaining_seconds: 0, modifiers: (Array.isArray(base.modifiers) ? base.modifiers : []).filter(m => m !== 'stalled' && m !== 'blocked'), held_merging: true });
     }
     // Pure: the payload as rendered — its items plus a synthesised row for
     // every live hold the payload dropped; d itself when there is none.
@@ -21862,7 +22025,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Object.assign({}, d, { items: d.items.concat(extra) });
     }
     // Stateful: when the earliest live hold ends, re-read the last payload so
-    // the held merges come through as fresh and the rows advance to ✓.
+    // the synthesised row leaves the board.
     function stageTrackerMergingHoldSchedule(inMs) {
       if (_stageTrackerMergingHoldTimer) return;
       _stageTrackerMergingHoldTimer = setTimeout(stageTrackerMergingHoldRelease, Math.max(50, inMs + 50));
@@ -21872,6 +22035,55 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!_stageTracker || typeof _stageTracker !== 'object') return;
       stageTrackerNoteMerges(_stageTracker);
       renderStageTracker();
+    }
+
+    /* ---- Closed, not merged: a neutral word on the way out (#15808) ----
+       Operator: #15793 "vanished" at 11:46:54 and read as a silent merge;
+       it had been closed as superseded by #15783. Items only list open
+       work, so the SPA learns of a close the same way it learns of a
+       merge: a side list (recently_closed) names the PRs that left closed.
+       Every PR this tab saw open that the list now says closed gets one
+       info toast — "#15793 closed · superseded by #15783", the reason read
+       from the row's last caption — with the standard countdown; no bee,
+       no odometer. */
+    const STAGE_TRACKER_CLOSED_REASON_MAX = 72;
+    // Pure: PR keys the tab saw open (prevState false, or carried open) that
+    // d.recently_closed lists, not merged, not listed open now, not yet noted.
+    function stageTrackerNewlyClosed(d, prevState, rawState, items, noted) {
+      const list = d && Array.isArray(d.recently_closed) ? d.recently_closed : [];
+      if (!list.length || !prevState) return [];
+      const out = [];
+      for (const c of list) {
+        if (!c || !c.repo || !c.number) continue;
+        const key = stageTrackerPRKey(c.repo, c.number);
+        if (prevState[key] !== false || rawState[key] === true || (items && items[key]) || (noted && noted[key]) || out.indexOf(key) >= 0) continue;
+        out.push(key);
+      }
+      return out.sort();
+    }
+    // Pure: why a closed PR left, from its last item — "superseded by
+    // #15783" when the row said so, else its caption's first clause.
+    function stageTrackerClosedReason(it) {
+      if (!it) return 'closed without merging';
+      const sup = Number(it.superseded_by) || Number(it.superseded && it.superseded.by) || 0;
+      const cap = String(it.caption || '');
+      const m = cap.match(/superseded by #(\d+)/i) || cap.match(/duplicate of #(\d+)/i);
+      if (sup > 0) return 'superseded by #' + sup;
+      if (m) return (m[0].toLowerCase().startsWith('dup') ? 'duplicate of #' : 'superseded by #') + m[1];
+      let clause = cap.split(/[;—]|\. /)[0].trim();
+      if (!clause) return 'closed without merging';
+      if (clause.length > STAGE_TRACKER_CLOSED_REASON_MAX) clause = clause.slice(0, STAGE_TRACKER_CLOSED_REASON_MAX - 1).trimEnd() + '…';
+      return clause;
+    }
+    // Pure: the toast's words.
+    function stageTrackerClosedToastText(key, it) {
+      const n = Number(String(key || '').slice(String(key || '').indexOf('/pr#') + 4)) || 0;
+      return (n ? '#' + n + ' ' : '') + 'closed · ' + stageTrackerClosedReason(it);
+    }
+    // Stateful: one neutral toast for a PR that left the board closed.
+    function stageTrackerClosedToast(key, it) {
+      if (typeof showToast !== 'function') return null;
+      return showToast(stageTrackerClosedToastText(key, it), 'info');
     }
 
     /* ---- tracker-cues: merged — pinned row, glyph flight, "Merged" chip ---
@@ -21952,8 +22164,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGED_LIST_MAX = 20;
     const STAGE_TRACKER_MERGE_BANNER_MS = 30000;
     const STAGE_TRACKER_MERGE_BANNER_MAX = 5;
-    // The merge gate's minimum "Merging" dwell is the merge banner's lifetime (#15245).
-    const STAGE_TRACKER_MERGING_HOLD_MS = STAGE_TRACKER_MERGE_BANNER_MS;
     function stageTrackerCelebrateSetting() {
       try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_KEY) !== '0'; } catch { return true; }
     }
@@ -22074,12 +22284,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Merges whose glyph is still on its way: the count holds them back
     // until stageTrackerCelebrateTick lands them.
     var _stageTrackerCelebratePending = {};
-    // Merges the merge-gate hold (#15245) still masks as open: the server
-    // counts them already, the SPA has not read them as fresh yet, so no
-    // glyph is pending for them. Without this the drum rolled on the poll
-    // that brought the merge — a full banner-lifetime before the bee
-    // launched — and the landing found nothing left to roll.
-    var _stageTrackerMergedHeld = {};
     // Stateful: fold one payload into the state and redraw the chip. The
     // count only bumps (pop + zap) through stageTrackerCelebrateTick; a
     // plain reload draws the server's number without a flourish.
@@ -22098,13 +22302,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return stageTrackerMergedChip.node;
     }
     // Pure: how many merges the server already counts whose bump the chip
-    // still owes the bee — a glyph pending or in the air, or a merge the
-    // merge-gate hold masks until its flight can launch — so the landing
+    // still owes the bee — a glyph pending or in the air — so the landing
     // is when it bumps.
-    function stageTrackerMergedHoldback(state, pending, held) {
+    function stageTrackerMergedHoldback(state, pending) {
       const known = {};
       for (const e of ((state && state.server && state.server.recent) || [])) known[stageTrackerMergedIdent(e.repo, e.number)] = true;
-      const keys = Object.assign({}, held || {}, pending || {});
+      const keys = Object.assign({}, pending || {});
       let n = 0;
       for (const key of Object.keys(keys)) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
       return n;
@@ -22260,18 +22463,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Stateful: whether a celebration glyph is in the air or about to be
     // (stageTrackerCelebrateMerges staggers the launches; a merge is
-    // pending from the payload that brought it, or masked by the merge
-    // gate's hold until then). The drum and the zap wait on this; the
-    // flight's own end — its animationend, or stageTrackerAfter's timer
-    // at STAGE_TRACKER_CELEBRATE_FLY_MS when the event never fires — is
-    // what clears it.
-    // A merge the merge-gate hold still masks counts as a flight to come:
-    // its glyph launches when the hold ends and re-reads it as fresh.
-    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0 || Object.keys(_stageTrackerMergedHeld).length > 0; }
+    // pending from the payload that brought it). The drum and the zap
+    // wait on this; the flight's own end — its animationend, or
+    // stageTrackerAfter's timer at STAGE_TRACKER_CELEBRATE_FLY_MS when the
+    // event never fires — is what clears it. (The merge-gate hold no
+    // longer masks a known merge, #15808: the glyph is pending from the
+    // payload that brings the merged fact.)
+    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0; }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
       const now = Date.now();
-      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending, _stageTrackerMergedHeld));
+      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending));
       // Never backwards within a tab: a server that has not caught up yet
       // (or lost a merge) does not make the number drop.
       if (txt.count > _stageTrackerMergedShown || tick) _stageTrackerMergedShown = Math.max(_stageTrackerMergedShown, txt.count);
@@ -22404,13 +22606,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const startAt = now + i * STAGE_TRACKER_CELEBRATE_STAGGER_MS;
         if (rowKey) _stageTrackerCelebrating[rowKey] = { key, kind: 'merged', until: startAt + STAGE_TRACKER_CELEBRATE_PIN_MS };
         const number = Number(key.slice(key.indexOf('/pr#') + 4)) || 0;
-        stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
+        const banner = stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
         setTimeout(() => {
           const row = rowKey && el ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
           if (row) celebrateRow(row, { kind: 'merged', key, number });
-          else stageTrackerCelebrateTick(key);
+          else celebrateDetached(key, banner);
         }, i * STAGE_TRACKER_CELEBRATE_STAGGER_MS);
       });
+    }
+    // Pure: where a row-less glyph takes off — the banner's ✓ when it has
+    // a box, else the bottom centre of the panel (or the viewport). Null
+    // when nothing has a box (no layout, e.g. a hidden tab).
+    function stageTrackerDetachedOrigin(bannerRect, panelRect, vw, vh) {
+      const ok = r => !!r && r.width > 0 && r.height > 0;
+      if (ok(bannerRect)) return bannerRect;
+      if (ok(panelRect)) return { left: panelRect.left + panelRect.width / 2 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF, top: Math.min(panelRect.top + panelRect.height, vh) - 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, width: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, height: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF };
+      if (vw > 0 && vh > 0) return { left: vw / 2 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF, top: vh - 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, width: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, height: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF };
+      return null;
+    }
+    // Stateful: celebrate a merge whose row is not on the board (below the
+    // fold, filtered, another page, already evicted — hivecommons/hive#15808:
+    // #15707's toast showed, but no bee and no count). The glyph flies from
+    // the toast's ✓ (else the panel's foot) to the chip; the count rolls
+    // when it lands, exactly as for a drawn row. The toast, the bee and the
+    // odometer are one pipeline: a merged fact that reaches here has all three.
+    function celebrateDetached(key, banner, preview) {
+      const rect = el => el && typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+      const ico = banner && typeof banner.querySelector === 'function' ? banner.querySelector('.merge-banner-ico') : null;
+      const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+      const from = stageTrackerDetachedOrigin(rect(ico) || rect(banner), rect(document.getElementById('activity-monitor-panel')), vw, vh);
+      if (!from) { stageTrackerCelebrateTick(key, preview); return { flew: false, lands: false }; }
+      return stageTrackerFlyGlyph(from, key, preview);
     }
     // Pure: the rows a render must keep although the payload dropped them —
     // every celebrating row still inside its pin window, as the node it
@@ -22472,13 +22698,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (kind !== 'merged') return { flew: false };
       const cap = rowEl.querySelector('.ham-seg.cap');
-      if (!cap || _stageTrackerFlights >= STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS || typeof cap.getBoundingClientRect !== 'function') {
+      if (!cap || typeof cap.getBoundingClientRect !== 'function') return celebrateDetached(key, null, preview);
+      return stageTrackerFlyGlyph(cap.getBoundingClientRect(), key, preview);
+    }
+    // Stateful: fly the glyph from a box to the chip (or fade it in place
+    // under reduced motion; count at once over the flight cap). Landing
+    // calls stageTrackerCelebrateTick, which rolls the odometer (#15763).
+    function stageTrackerFlyGlyph(from, key, preview) {
+      if (!from || _stageTrackerFlights >= STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS) {
         stageTrackerCelebrateTick(key, preview);
         return { flew: false, lands: false };
       }
       const reduced = stageTrackerReducedMotion();
       const chip = stageTrackerMergedChip();
-      const from = cap.getBoundingClientRect();
       const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
       const to = reduced ? { lands: false, dx: 0, dy: 0 } : stageTrackerFlightTarget(from, chip && typeof chip.getBoundingClientRect === 'function' ? chip.getBoundingClientRect() : null, vw, vh);
       const glyph = document.createElement('span');
@@ -22520,7 +22752,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { number: num, head: `${num ? '#' + num + ' ' : ''}merged${b.preview ? ' (test)' : ''}`, text: `${b.title || b.repo || ''}${paren ? ' (' + paren + ')' : ''}`.trim() };
     }
     // Stateful: a persistent banner, bottom right, for one merge — stays
-    // until dismissed or STAGE_TRACKER_MERGE_BANNER_MS, stacked when
+    // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
+    // duration, STAGE_TRACKER_MERGE_BANNER_MS at the default), stacked when
     // several, with a "show row" link while the row is on the board.
     function stageTrackerMergeBanner(b) {
       if (!document.body) return null;
@@ -22539,7 +22772,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
-      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), STAGE_TRACKER_MERGE_BANNER_MS);
+      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), stageTrackerMergeBannerMs());
       return el;
     }
     function stageTrackerMergeBannerDismiss(el) {
@@ -23095,7 +23328,81 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + stageTrackerConfirmSectionHtml(state.skippedConfirms)
         + stageTrackerCelebrateSectionHtml(state.celebrate !== false, state.celebrateGlyph)
         + stageTrackerNoteTuckSectionHtml(state.noteTuck !== false)
+        + stageTrackerTimingSectionHtml(state.timing || {})
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
+    }
+    // Pure: the Toasts & timing section (hivecommons/hive#15813) — the info
+    // and error toast durations and the contributor lane's pre-merge soak.
+    // Values are the hive's (every browser sees the same), written through
+    // the dashboard's config overlay so they survive a reload and a roll.
+    function stageTrackerTimingSectionHtml(t) {
+      const num = (id, action, value, min, max, unit, label) => `<label class="overview-settings-field">${label} <span class="sts-timing-unit">(${unit})</span><input type="number" class="sts-timing-input" id="${id}" min="${min}" max="${max}" step="1" value="${esc(String(value))}" data-change-action="${action}" data-arg-types="t" aria-label="${label} in ${unit}"></label>`;
+      const info = stageTrackerToastSecondsValid(t.toastInfoS) || STAGE_TRACKER_TOAST_DEFAULT_S.info;
+      const error = stageTrackerToastSecondsValid(t.toastErrorS) || STAGE_TRACKER_TOAST_DEFAULT_S.error;
+      const soak = Number(t.soakMinutes) >= 1 ? Math.round(Number(t.soakMinutes)) : STAGE_TRACKER_SOAK_DEFAULT_MIN;
+      return `<section class="overview-settings-section" id="sts-timing" aria-labelledby="sts-timing-title">
+          <div class="overview-settings-card-title" id="sts-timing-title">Toasts &amp; timing</div>
+          <p class="sts-hint">How long the tracker's toasts stay: result and waiting-on-you toasts use the info duration, failed actions the error duration, and the merge banner twice the info duration. ${STAGE_TRACKER_TOAST_MIN_S}–${STAGE_TRACKER_TOAST_MAX_S} s; every toast keeps its × and pauses while hovered. Saved for the whole hive (dashboard.stage_tracker.toast_info_s / toast_error_s).</p>
+          <div class="sts-row">${num('sts-toast-info', 'stageTrackerToastInfoChange', info, STAGE_TRACKER_TOAST_MIN_S, STAGE_TRACKER_TOAST_MAX_S, 's', 'Info toast')}${num('sts-toast-error', 'stageTrackerToastErrorChange', error, STAGE_TRACKER_TOAST_MIN_S, STAGE_TRACKER_TOAST_MAX_S, 's', 'Error toast')}<span class="text-muted" id="sts-toast-note">${t.fallback ? 'Saved in this browser only — the hive refused the write.' : 'Defaults ' + STAGE_TRACKER_TOAST_DEFAULT_S.info + ' s / ' + STAGE_TRACKER_TOAST_DEFAULT_S.error + ' s.'}</span></div>
+          <p class="sts-hint">The contributor lane holds a green head this long before it merges (auto_merge.contributor_lane.soak_minutes, default ${STAGE_TRACKER_SOAK_DEFAULT_MIN}). The lane re-reads it on every pass, so a running soak follows the new window too — a head counts as soaked once it has been green for this long.</p>
+          <div class="sts-row">${num('sts-soak', 'stageTrackerSoakChange', soak, 1, 100000, 'minutes', 'Pre-merge soak')}</div>
+        </section>`;
+    }
+    const STAGE_TRACKER_SOAK_DEFAULT_MIN = 30;
+    // The settings the Timing section shows: the tracker payload's block
+    // (the hive's values), with the browser fallback when a write failed.
+    function stageTrackerTimingState() {
+      const st = (_stageTracker && _stageTracker.settings) || {};
+      const local = stageTrackerToastLocal();
+      return {
+        toastInfoS: stageTrackerToastSeconds('info', st, local),
+        toastErrorS: stageTrackerToastSeconds('error', st, local),
+        soakMinutes: st.soak_minutes,
+        fallback: !!(local && local.fallback),
+      };
+    }
+    function stageTrackerTimingHeaders() {
+      return Object.assign({ 'Content-Type': 'application/json' }, typeof _inceptionAuthHeaders === 'function' ? _inceptionAuthHeaders() : {});
+    }
+    // Save one toast duration: the hive first (PUT /api/config/dashboard),
+    // this browser's localStorage only when that write is refused.
+    async function stageTrackerSaveToastSeconds(kind, input) {
+      const secs = stageTrackerToastSecondsValid(input && input.value);
+      if (!secs) { if (input) input.value = String(stageTrackerToastSeconds(kind, _stageTracker && _stageTracker.settings, stageTrackerToastLocal())); return false; }
+      if (input) input.value = String(secs);
+      const field = 'toast_' + kind + '_s';
+      let saved = false;
+      try {
+        const r = await fetch('/api/config/dashboard', { method: 'PUT', headers: stageTrackerTimingHeaders(), body: JSON.stringify({ stage_tracker: { [field]: secs } }) });
+        saved = !!(r && r.ok);
+      } catch { saved = false; }
+      if (saved) {
+        if (_stageTracker) { _stageTracker.settings = Object.assign({}, _stageTracker.settings, { [field]: secs }); }
+        try { localStorage.removeItem(STAGE_TRACKER_TOAST_KEY); } catch {}
+      } else if (!(window.hiveKioskMode && window.hiveKioskMode())) {
+        try { localStorage.setItem(STAGE_TRACKER_TOAST_KEY, JSON.stringify(Object.assign({}, stageTrackerToastLocal() || {}, { [kind]: secs, fallback: true }))); } catch {}
+      }
+      stageTrackerRenderSettings();
+      if (typeof showToast === 'function') showToast(saved ? (kind === 'error' ? 'Error' : 'Info') + ' toasts now stay ' + secs + ' s' : 'Could not save to the hive — ' + secs + ' s applies in this browser only', saved ? 'success' : 'warning');
+      return saved;
+    }
+    function stageTrackerToastInfoChange(input) { return stageTrackerSaveToastSeconds('info', input); }
+    function stageTrackerToastErrorChange(input) { return stageTrackerSaveToastSeconds('error', input); }
+    // Save the contributor lane's soak through the auto-merge config
+    // endpoint (the same write the Settings page makes).
+    async function stageTrackerSoakChange(input) {
+      const mins = Math.round(Number(input && input.value));
+      if (!isFinite(mins) || mins < 1) { if (input) input.value = String(stageTrackerTimingState().soakMinutes || STAGE_TRACKER_SOAK_DEFAULT_MIN); return false; }
+      let ok = false, msg = '';
+      try {
+        const r = await fetch('/api/config/auto-merge', { method: 'PUT', headers: stageTrackerTimingHeaders(), body: JSON.stringify({ contributor_lane: { soak_minutes: mins } }) });
+        ok = !!(r && r.ok);
+        if (!ok && r) { try { const j = await r.json(); msg = j && j.error ? j.error : ''; } catch {} }
+      } catch (e) { msg = e && e.message ? e.message : ''; }
+      if (ok && _stageTracker) _stageTracker.settings = Object.assign({}, _stageTracker.settings, { soak_minutes: mins });
+      stageTrackerRenderSettings();
+      if (typeof showToast === 'function') showToast(ok ? 'Pre-merge soak is now ' + mins + ' min — applies on the lane\'s next pass' : 'Could not save the soak' + (msg ? ': ' + msg : ''), ok ? 'success' : 'error');
+      return ok;
     }
     // Pure: the Merges section — the "Celebrate merges" toggle, the glyph.
     function stageTrackerCelebrateSectionHtml(on, glyph) {
@@ -23103,7 +23410,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const opts = Object.keys(STAGE_TRACKER_CELEBRATE_GLYPHS).map(id => `<option value="${esc(id)}"${id === glyphId ? ' selected' : ''}>${esc(STAGE_TRACKER_CELEBRATE_GLYPHS[id])}${id === STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT ? ' (default)' : ''}</option>`).join('');
       return `<section class="overview-settings-section" id="sts-celebrate" aria-labelledby="sts-celebrate-title">
           <div class="overview-settings-card-title" id="sts-celebrate-title">Merges</div>
-          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a glyph (the bee) rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count rolls up like an odometer, and a banner at the bottom right names the merge until dismissed (or 30 s). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
+          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a glyph (the bee) rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count rolls up like an odometer, and a banner at the bottom right names the merge until dismissed (or twice the info toast duration — see Toasts &amp; timing). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
           <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange" data-arg-types="c"${on ? ' checked' : ''}>Celebrate merges <span class="text-muted">(default on)</span></label><label class="overview-settings-field">Glyph <select class="ham-select" id="sts-celebrate-glyph" data-change-action="stageTrackerCelebrateGlyphChange" data-arg-types="v" aria-label="Celebration glyph">${opts}</select></label><button type="button" class="hv-btn btn-sm" data-action="stageTrackerTestCelebration" data-stop="1" title="Close this dialog and play one celebration on a row in view — the count does not change">Test celebration</button></div>
         </section>`;
     }
@@ -23174,7 +23481,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), timing: stageTrackerTimingState(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }
@@ -23395,7 +23702,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        rises. All three land on the Activity Monitor with the Waiting on you
        filter (?filter=waiting-on-you deep-links to the same view). */
     const STAGE_TRACKER_WAITING_TOAST_GAP_MS = 10 * 60 * 1000;
-    const STAGE_TRACKER_WAITING_TOAST_MS = 12000;
     const STAGE_TRACKER_WAITING_TOOLTIP_MAX = 5;
     const STAGE_TRACKER_WAITING_TOAST_NUMBERS = 3;
     const STAGE_TRACKER_WAITING_TOAST_KEY = 'hive-waiting-on-you-toast-at';
@@ -23471,7 +23777,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (nowMs - last < STAGE_TRACKER_WAITING_TOAST_GAP_MS) return;
       try { localStorage.setItem(STAGE_TRACKER_WAITING_TOAST_KEY, String(nowMs)); } catch {}
       if (typeof showToast !== 'function') return;
-      showToast(stageTrackerWaitingToastText(w), 'warning', { actionLabel: 'Show', onAction: showWaitingOnYou, autoDismissMs: STAGE_TRACKER_WAITING_TOAST_MS });
+      showToast(stageTrackerWaitingToastText(w), 'warning', { actionLabel: 'Show', onAction: showWaitingOnYou, autoDismissMs: stageTrackerToastMs('info') });
     }
 
     function stageTrackerWaitingToastText(w) {
@@ -23501,6 +23807,164 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerSaveFilter();
       return true;
     }
+    /* ---- Pop out & full screen -------------------------------------------
+       Two header buttons next to the settings gear (hivecommons/hive#15829)
+       for an operator who wants the activity monitor on another monitor
+       while they do other work. ⧉ opens the SPA in a named popup window on
+       `?popout=1#section-activity-monitor-section`; boot.js reads the flag
+       before first paint and css/popout.css hides every piece of chrome and
+       every other section, so the new window is the tracker and nothing
+       else. The bearer token is in localStorage, so the popup is already
+       signed in. ⛶ toggles the Fullscreen API on the section itself (and
+       `f` does the same while focus is inside the tracker); Esc exits
+       natively and the label flips through the fullscreenchange event.
+       Nothing is persisted: the only state is the URL of the popup. */
+    const STAGE_TRACKER_POPOUT_PARAM = 'popout';
+    const STAGE_TRACKER_POPOUT_WINDOW_NAME = 'hive-activity-monitor';
+    const STAGE_TRACKER_POPOUT_FEATURES = 'popup,width=1600,height=900';
+    const STAGE_TRACKER_POPOUT_HASH = '#section-activity-monitor-section';
+    const STAGE_TRACKER_POPOUT_TITLE = 'Hive · Activity Monitor';
+    const STAGE_TRACKER_FULLSCREEN_KEY = 'f';
+    const STAGE_TRACKER_FULLSCREEN_LABELS = {
+      enter: { text: '⛶', title: 'Full screen — fill the screen with the activity monitor (f, Esc exits)' },
+      exit: { text: '⛶ Exit full screen', title: 'Exit full screen (Esc or f)' },
+    };
+    var _stageTrackerPopoutHiveId = '';
+
+    // Pure: the pop-out URL for the window the operator is on. Keeps the
+    // origin, path and any other query (theme, style…), drops kiosk so the
+    // attended layout wins, and lands on the activity monitor section.
+    function stageTrackerPopoutUrl(href) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      url.searchParams.set(STAGE_TRACKER_POPOUT_PARAM, '1');
+      url.searchParams.delete('kiosk');
+      url.searchParams.delete('filter');
+      url.hash = STAGE_TRACKER_POPOUT_HASH;
+      return url.toString();
+    }
+    // Pure: the main-dashboard URL a pop-out falls back to when the browser
+    // refuses to close it (a tab the operator opened directly, not a popup).
+    function stageTrackerDashboardUrl(href) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      url.searchParams.delete(STAGE_TRACKER_POPOUT_PARAM);
+      url.hash = STAGE_TRACKER_POPOUT_HASH;
+      return url.toString();
+    }
+    // Pure: the pop-out window title; the hive id joins once /api/status
+    // has delivered it.
+    function stageTrackerPopoutTitle(hiveId) {
+      const id = String(hiveId || '').trim();
+      return id ? STAGE_TRACKER_POPOUT_TITLE + ' · ' + id : STAGE_TRACKER_POPOUT_TITLE;
+    }
+    function stageTrackerPopoutMode() {
+      return !!(window.hivePopoutMode && window.hivePopoutMode());
+    }
+    function stageTrackerPopoutSyncTitle(hiveId) {
+      if (hiveId !== undefined) _stageTrackerPopoutHiveId = hiveId || '';
+      if (!stageTrackerPopoutMode()) return;
+      document.title = stageTrackerPopoutTitle(_stageTrackerPopoutHiveId);
+    }
+    function openStageTrackerPopout() {
+      const url = stageTrackerPopoutUrl(window.location.href);
+      if (!url) return null;
+      let win = null;
+      try { win = window.open(url, STAGE_TRACKER_POPOUT_WINDOW_NAME, STAGE_TRACKER_POPOUT_FEATURES); } catch { win = null; }
+      if (!win) {
+        if (typeof showToast === 'function') showToast('The browser blocked the pop-out window — allow pop-ups for this site and try again.', 'error');
+        return null;
+      }
+      try { win.focus(); } catch {}
+      return win;
+    }
+    // ⤶ Return to dashboard: bring the opener forward and close this
+    // pop-out. A window the operator navigated to by hand cannot be
+    // closed by script, so it navigates back to the full dashboard instead.
+    function stageTrackerReturnToDashboard() {
+      try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch {}
+      try { window.close(); } catch {}
+      if (!window.closed) {
+        const url = stageTrackerDashboardUrl(window.location.href);
+        if (url) window.location.assign(url);
+      }
+    }
+
+    // The whole document goes full screen (not the section) so the
+    // body-level toasts — waiting on you, merge celebrations — stay
+    // visible; body.ham-fullscreen then applies the pop-out layout.
+    function stageTrackerFullscreenTarget() {
+      return document.documentElement;
+    }
+    function stageTrackerFullscreenButton() {
+      return document.getElementById('activity-monitor-fullscreen');
+    }
+    function stageTrackerIsFullscreen() {
+      return !!(document.fullscreenElement && document.fullscreenElement === stageTrackerFullscreenTarget()) && document.body.classList.contains('ham-fullscreen');
+    }
+    // Pure: label + title for the ⛶ button given the current state.
+    function stageTrackerFullscreenLabel(isFull) {
+      return isFull ? STAGE_TRACKER_FULLSCREEN_LABELS.exit : STAGE_TRACKER_FULLSCREEN_LABELS.enter;
+    }
+    function stageTrackerRenderFullscreenButton() {
+      // Esc (or the browser) leaving full screen must drop the layout too.
+      if (!document.fullscreenElement) document.body.classList.remove('ham-fullscreen');
+      const full = stageTrackerIsFullscreen();
+      const btn = stageTrackerFullscreenButton();
+      if (!btn) return;
+      const label = stageTrackerFullscreenLabel(full);
+      btn.textContent = label.text;
+      btn.title = label.title;
+      btn.setAttribute('aria-label', label.title);
+      btn.setAttribute('aria-pressed', full ? 'true' : 'false');
+    }
+    function toggleStageTrackerFullscreen() {
+      const target = stageTrackerFullscreenTarget();
+      if (!target) return Promise.resolve(false);
+      let p;
+      if (stageTrackerIsFullscreen()) {
+        document.body.classList.remove('ham-fullscreen');
+        p = document.exitFullscreen ? document.exitFullscreen() : Promise.resolve();
+      } else if (target.requestFullscreen) {
+        document.body.classList.add('ham-fullscreen');
+        p = target.requestFullscreen();
+      } else {
+        if (typeof showToast === 'function') showToast('This browser does not support full screen here.', 'error');
+        return Promise.resolve(false);
+      }
+      return Promise.resolve(p).then(() => { stageTrackerRenderFullscreenButton(); return true; }, (err) => {
+        document.body.classList.remove('ham-fullscreen');
+        stageTrackerRenderFullscreenButton();
+        if (typeof showToast === 'function') showToast('Full screen was refused: ' + ((err && err.message) || err), 'error');
+        return false;
+      });
+    }
+    // Pure: should this keydown toggle full screen? Only a bare `f` with
+    // focus inside the tracker (or anywhere, in a pop-out — the whole page
+    // is the tracker), never while typing in a field.
+    function stageTrackerFullscreenHotkey(ev, inTracker, typing, popout) {
+      if (!ev || ev.key !== STAGE_TRACKER_FULLSCREEN_KEY) return false;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return false;
+      if (typing) return false;
+      return !!(inTracker || popout);
+    }
+    document.addEventListener('keydown', function(e) {
+      const t = e.target;
+      const tag = ((t && t.tagName) || '').toLowerCase();
+      const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || !!(t && t.isContentEditable);
+      const section = document.getElementById('activity-monitor-section');
+      const inTracker = !!(section && t && t.nodeType === 1 && section.contains(t)) || stageTrackerIsFullscreen();
+      if (!stageTrackerFullscreenHotkey(e, inTracker, typing, stageTrackerPopoutMode())) return;
+      const overlay = document.getElementById('activity-monitor-settings-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) return;
+      e.preventDefault();
+      toggleStageTrackerFullscreen();
+    });
+    document.addEventListener('fullscreenchange', stageTrackerRenderFullscreenButton);
+    document.addEventListener('DOMContentLoaded', function() {
+      stageTrackerRenderFullscreenButton();
+      stageTrackerPopoutSyncTitle();
+    });
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
       const m = cadence.match(/^(\d+)(m|h)$/);
@@ -41055,6 +41519,7 @@ function burnAreaChart() {
       if (hiveIdBadge) hiveIdBadge.textContent = hiveId;
       const ocHiveId = document.getElementById('oc-hive-id');
       if (ocHiveId) ocHiveId.textContent = hiveId;
+      if (typeof stageTrackerPopoutSyncTitle === 'function') stageTrackerPopoutSyncTitle(hiveId);
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderProviderStrip(document.getElementById('oc-providers'), data.providers);
@@ -47305,7 +47770,7 @@ function burnAreaChart() {
       const el = document.getElementById("project-name");
       if (el && repoDisplay) {
         el.textContent = "for " + repoDisplay;
-        document.title = "Hive Dashboard for " + repoDisplay;
+        if (!(window.hivePopoutMode && window.hivePopoutMode())) document.title = "Hive Dashboard for " + repoDisplay;
       }
       const ocEl = document.getElementById("oc-project-name");
       if (ocEl && repoDisplay) ocEl.textContent = repoDisplay;
@@ -62549,6 +63014,7 @@ function burnAreaChart() {
     function showNPSSurvey(status) {
       if (_npsShownThisLoad || _npsCard) return;
       if (window.hiveKioskMode && window.hiveKioskMode()) return;
+      if (window.hivePopoutMode && window.hivePopoutMode()) return;
       _npsShownThisLoad = true;
       const maxChars = Number(status && status.max_feedback_chars) || 0;
       let selected = null;
@@ -62695,6 +63161,8 @@ function burnAreaChart() {
       const topBtn = document.getElementById('welcome-topbar-btn');
       if (topBtn) topBtn.style.display = '';
       // Kiosk displays (#15594) are unattended: nothing can dismiss a dialog.
+      // A pop-out (#15829) is the tracker alone; the welcome tour belongs to the main window.
+      if (window.hivePopoutMode && window.hivePopoutMode()) return;
       if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 

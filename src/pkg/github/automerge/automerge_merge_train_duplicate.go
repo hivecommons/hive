@@ -1,6 +1,8 @@
 package automerge
 
 import (
+	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -14,6 +16,10 @@ import (
 // autoMergeReasonMergeTrainDuplicate is the tick-stat bucket for a PR held
 // out of the train because another open PR fixes the same issue.
 const autoMergeReasonMergeTrainDuplicate = "merge-train-duplicate"
+
+// autoMergeReasonMergeTrainClaimConflict buckets the candidates held by an
+// undecided same-issue claim across lanes (hivecommons/hive#15810).
+const autoMergeReasonMergeTrainClaimConflict = "merge-train-claim-conflict"
 
 // mergeTrainDuplicateCandidate is one open PR declaring `Fixes #N`, as the
 // one-PR-per-issue rule reads it (hivecommons/hive#15395).
@@ -113,7 +119,8 @@ func mergeTrainDuplicateReason(h mergeTrainDuplicateHold) string {
 // planDuplicateHolds runs the one-PR-per-issue rule over the lane's
 // candidates before the trains are grouped: the held PRs leave the
 // candidate list and the plan remembers who each one yields to.
-func (c *Engine) planDuplicateHolds(plan *mergeTrainPlan, lane, owner, repo, displayRepo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) []*gh.PullRequest {
+func (c *Engine) planDuplicateHolds(ctx context.Context, plan *mergeTrainPlan, lane, owner, repo, displayRepo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) []*gh.PullRequest {
+	prs = c.planClaimConflicts(ctx, plan, owner, repo, displayRepo, prs, prefilter)
 	byIssue := map[int][]mergeTrainDuplicateCandidate{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || !mergeTrainCandidate(prefilter(pr)) {
@@ -179,4 +186,150 @@ func mergeTrainDuplicateOf(reason string) int {
 		return 0
 	}
 	return train.Front
+}
+
+// mergeTrainClaimConflict is a lane candidate held because another open PR
+// of the repository — one this lane does not evaluate, so the one-PR-per-
+// issue winner above could not see it — claims the same issue and nobody
+// has decided which one lands (hivecommons/hive#15810).
+type mergeTrainClaimConflict struct {
+	Number, Other, Issue int
+}
+
+// mergeTrainClaimConflictReason is the stage reason recorded on a candidate
+// held by an undecided same-issue claim:
+// merge-train:claim-conflict#<other>:<issue>/0:0/0:
+func mergeTrainClaimConflictReason(h mergeTrainClaimConflict) string {
+	return prstage.MergeTrain{State: prstage.MergeTrainStateClaimConflict, Front: h.Other, Position: h.Issue}.Reason()
+}
+
+// mergeTrainAdoptionPair reports whether a or b declares that it supersedes
+// the other (`Supersedes #N`): an adoption copy and its original are one
+// change in flight, not two competing fixes.
+func mergeTrainAdoptionPair(a, b *gh.PullRequest) bool {
+	return hgithub.PRSupersedes(a.GetBody(), b.GetNumber()) || hgithub.PRSupersedes(b.GetBody(), a.GetNumber())
+}
+
+// rememberClaimants keeps the full open-PR list the legacy /pulls listing
+// returned for fullRepo this pass, before any event narrowing, so a
+// targeted (webhook-nudged) pass still sees every claimant.
+func (c *Engine) rememberClaimants(fullRepo string, prs []*gh.PullRequest) {
+	if c == nil {
+		return
+	}
+	c.claimantsMu.Lock()
+	defer c.claimantsMu.Unlock()
+	if c.claimants == nil {
+		c.claimants = map[string][]*gh.PullRequest{}
+	}
+	c.claimants[fullRepo] = slices.Clone(prs)
+}
+
+// claimantsForConflicts is the set of open PRs the claim-conflict gate
+// groups — the whole repository, never the lane's event-narrowed list:
+// the forge-state snapshot when one is wired, else the full /pulls list
+// the lane's openPullRequests just fetched for this repo (remembered
+// before narrowing to targets); the lane's own list only when neither is
+// available (a bare Engine in tests).
+func (c *Engine) claimantsForConflicts(ctx context.Context, owner, repo string, prs []*gh.PullRequest) []*gh.PullRequest {
+	if c == nil {
+		return prs
+	}
+	if c.openPRs == nil {
+		c.claimantsMu.Lock()
+		all, ok := c.claimants[owner+"/"+repo]
+		c.claimantsMu.Unlock()
+		if ok && len(all) > 0 {
+			return all
+		}
+		return prs
+	}
+	all, skip, err := c.openPullRequests(ctx, owner, repo, nil)
+	if err != nil || skip != "" || len(all) == 0 {
+		return prs
+	}
+	return all
+}
+
+// planClaimConflicts holds every lane candidate whose closing issue another
+// open PR of the repository also claims, unless a human decision is
+// recorded for the candidate's head. Candidates of this lane that claim
+// the same issue are left to the one-PR-per-issue winner rule, which sees
+// them both; the gate exists for the pair the lanes split — the hive's
+// own PR in the self lane and a trusted human's PR in the trusted lane
+// both marched toward merge for hivecommons/hive#15773 because each lane
+// saw only its own (hivecommons/hive#15810).
+func (c *Engine) planClaimConflicts(ctx context.Context, plan *mergeTrainPlan, owner, repo, displayRepo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) []*gh.PullRequest {
+	candidate := map[int]bool{}
+	for _, pr := range prs {
+		if pr != nil && pr.GetNumber() > 0 && mergeTrainCandidate(prefilter(pr)) {
+			candidate[pr.GetNumber()] = true
+		}
+	}
+	if len(candidate) == 0 {
+		return prs
+	}
+	byIssue := map[int][]*gh.PullRequest{}
+	for _, pr := range c.claimantsForConflicts(ctx, owner, repo, prs) {
+		if pr == nil || pr.GetNumber() <= 0 || (pr.State != nil && pr.GetState() != "open") {
+			continue
+		}
+		for _, issue := range mergeTrainClosedIssues(pr, displayRepo) {
+			byIssue[issue] = append(byIssue[issue], pr)
+		}
+	}
+	held := map[int]mergeTrainClaimConflict{}
+	for _, pr := range prs {
+		n := pr.GetNumber()
+		if !candidate[n] {
+			continue
+		}
+		for _, issue := range mergeTrainClosedIssues(pr, displayRepo) {
+			for _, other := range byIssue[issue] {
+				o := other.GetNumber()
+				if o == n || candidate[o] || mergeTrainAdoptionPair(pr, other) {
+					continue
+				}
+				if _, ok := c.recordedDecisionFor(ctx, owner, repo, n, pr.GetBase().GetRef(), pr.GetHead().GetSHA()); ok {
+					c.info("merge train: same-issue claim conflict decided; admitting", "repo", displayRepo, "pr", n, "other", o, "issue", issue, "lane", plan.lane)
+					continue
+				}
+				held[n] = mergeTrainClaimConflict{Number: n, Other: o, Issue: issue}
+				c.info("same-issue claim conflict undecided: #"+strconv.Itoa(n)+" vs #"+strconv.Itoa(o), "repo", displayRepo, "pr", n, "other", o, "issue", issue, "lane", plan.lane)
+				break
+			}
+			if _, done := held[n]; done {
+				break
+			}
+		}
+	}
+	if len(held) == 0 {
+		return prs
+	}
+	plan.claimConflicts = held
+	kept := make([]*gh.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if _, h := held[pr.GetNumber()]; !h {
+			kept = append(kept, pr)
+		}
+	}
+	return kept
+}
+
+// claimConflictOf reports the open PR this candidate is held behind by an
+// undecided same-issue claim, false when it is not held this pass.
+func (p *mergeTrainPlan) claimConflictOf(number int) (mergeTrainClaimConflict, bool) {
+	if p == nil || p.claimConflicts == nil {
+		return mergeTrainClaimConflict{}, false
+	}
+	h, ok := p.claimConflicts[number]
+	return h, ok
+}
+
+// mergeTrainClaimConflictSkip records the hold and returns the stage reason.
+func (c *Engine) mergeTrainClaimConflictSkip(plan *mergeTrainPlan, number int) string {
+	h, _ := plan.claimConflictOf(number)
+	reason := mergeTrainClaimConflictReason(h)
+	c.debug("automerge skip", "repo", plan.displayRepo, "pr", number, "reason", reason, "lane", plan.lane, "other", strconv.Itoa(h.Other))
+	return reason
 }

@@ -172,6 +172,10 @@ func stageTrackerApplyMergeTrain(it *StageTrackerItem) {
 		stageTrackerApplyDuplicateHold(it, mt)
 		return
 	}
+	if mt.State == prstage.MergeTrainStateClaimConflict {
+		stageTrackerApplyClaimConflict(it, mt)
+		return
+	}
 	mt.ID = it.BaseRef + "#" + strconv.Itoa(mt.Front)
 	it.MergeTrain = mt
 	parsed, _ := prstage.ParseMergeTrain(it.Reason)
@@ -206,6 +210,41 @@ func stageTrackerApplyDuplicateHold(it *StageTrackerItem, mt *StageTrackerMergeT
 	if !slices.Contains(it.Modifiers, modNeedsDecision) {
 		it.Modifiers = append(it.Modifiers, modNeedsDecision)
 	}
+}
+
+// stageTrackerApplyClaimConflict decorates a PR the sweep held because an
+// open PR in another lane claims the same issue and nobody has decided
+// which lands (hivecommons/hive#15810): the gate reads
+// "claim-conflict:<other>" with the other PR and the issue on the gate,
+// the row rides no train, the caption says "held · duplicate of #<other>
+// · needs decision", and it wears needs-decision so the row offers the
+// keep / close choice by name.
+func stageTrackerApplyClaimConflict(it *StageTrackerItem, mt *StageTrackerMergeTrain) {
+	parsed, _ := prstage.ParseMergeTrain(it.Reason)
+	if it.MergeGate == nil {
+		it.MergeGate = &StageTrackerMergeGate{}
+	}
+	it.MergeGate.State = MergeGateStateClaimConflict(mt.Front)
+	it.MergeGate.Reason = parsed.Sentence()
+	it.MergeGate.DuplicateOf = mt.Front
+	it.MergeGate.DuplicateIssue = mt.Position
+	it.MergeTrain = nil
+	if !slices.Contains(it.Modifiers, modNeedsDecision) {
+		it.Modifiers = append(it.Modifiers, modNeedsDecision)
+	}
+}
+
+// stageTrackerClaimConflictCaption is the row caption of a PR held on an
+// undecided same-issue claim, "" for every other row.
+func stageTrackerClaimConflictCaption(it *StageTrackerItem) string {
+	if it == nil || it.MergeGate == nil {
+		return ""
+	}
+	other := mergeGateClaimConflictOf(it.MergeGate.State)
+	if other <= 0 {
+		return ""
+	}
+	return prstage.ClaimConflictCaption(other)
 }
 
 // stageTrackerLeftTrainNote is the muted hover note on a PR the view

@@ -121,6 +121,15 @@ The monospace **engine enforce · N anomalies** strip describes the [central sta
 
 ### Monitor controls and detailed reference
 
+#### Pop out and full screen (⧉ / ⛶ on the card header)
+
+Two buttons sit beside the ⚙ gear on the card header for working with the monitor on its own ([#15829](https://github.com/hivecommons/hive/issues/15829)):
+
+- **⧉ Pop out** opens the dashboard in a new browser window named `hive-activity-monitor` (1600×900 by default; drag it to another monitor). The window loads `?popout=1#section-activity-monitor-section`: no sidebar, topbar, notices, chat or other sections — just the tracker filling the viewport, with live updates, toasts, sounds, the Merged bee and the ⚙ settings all working. It uses the same saved sign-in as the main window, so there is no second login; its title is `Hive · Activity Monitor · <hive id>`; and reloading it keeps the layout because the flag lives in the URL. The small **⤶ Return to dashboard** pill brings the main window forward and closes the pop-out (a tab you opened by hand on that URL navigates back to the full dashboard instead). If the browser blocks the popup, a toast says so — allow pop-ups for the dashboard's origin and try again.
+- **⛶ Full screen** puts the page into the browser's full-screen mode with the same tracker-only layout; the button reads **⛶ Exit full screen** while active, and **Esc** leaves as usual. With focus inside the monitor (or anywhere in a pop-out) the **f** key toggles it too; it is ignored while typing in a field or with a modifier held.
+
+Neither mode changes any saved preference. Kiosk mode (`?kiosk=1`, [Streaming the activity monitor](../streaming-the-activity-monitor.md)) is the unattended cousin of pop-out: same layout, no cursor, no controls.
+
 #### Filter chips (Needs human / On hold / labels)
 
 The label row under the toolbar starts with two synthetic chips, then one chip per label the listed items carry. **🙋 Needs human** means a person's decision or action is the *only* thing that advances the row: an issue at `015` triage-needed, `045` or `085` needs-decision, a PR at `090` ready-for-human-merge, a PR at `071`/`072` whose author is a human, or any row wearing a `needs human` / `needs human decision` / `unauthorized` pill.
