@@ -3,11 +3,9 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -368,65 +366,6 @@ func TestDriveRebaseMergeForeignHeadFailsClosed(t *testing.T) {
 	res := rebaseMergeFailedResult(f)
 	if res.Action != rowActionRefused || res.Why != rebasemerge.FailForeignHead || len(res.Options) != 2 || res.Options[0].Action != decisionActionMergeNow || res.Options[1].Action != decisionActionCloseSuperseded {
 		t.Fatalf("failed result = %+v", res)
-	}
-}
-
-// The signing step (hivecommons/hive#15182): the fixer's plain-git rebase
-// of a contributor PR is sealed as a GitHub-signed head before the
-// follow-through judges it, so it does not settle as foreign-head; the next
-// tick reads the signed head. A head the hive cannot sign still fails
-// closed on CommitByHive's verdict.
-func TestDriveRebaseMergeSignsFixerRebaseFirst(t *testing.T) {
-	const (
-		approved = "feedfacefeedfacefeedfacefeedfacefeedface"
-		rebased  = "0123456789abcdef0123456789abcdef01234567"
-		signed   = "5190ed5190ed5190ed5190ed5190ed5190ed5190"
-	)
-	cases := []struct {
-		name      string
-		signErr   error
-		signed    string
-		wantState string
-		wantFail  string
-	}{
-		{name: "signed", signed: signed, wantState: rebasemerge.StateRebasing},
-		{name: "cannot sign", signErr: errors.New("creating the signed commit in alice/r: 403"), wantState: rebasemerge.StateFailed, wantFail: rebasemerge.FailForeignHead},
-		{name: "not a fixer rebase", wantState: rebasemerge.StateFailed, wantFail: rebasemerge.FailForeignHead},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			store := useRebaseMergeStore(t)
-			mock := &repoItemDecisionMock{prForeign: true}
-			srv := newRepoItemDecisionServer(t, mock)
-			srv.operatorActionStore = newOperatorActionStore(filepath.Join(t.TempDir(), "ops.json"))
-			now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
-			prevNow := rebaseMergeNow
-			rebaseMergeNow = func() time.Time { return now }
-			t.Cleanup(func() { rebaseMergeNow = prevNow })
-			var calls []string
-			prevSign := rebaseMergeSignFixerRebase
-			rebaseMergeSignFixerRebase = func(_ context.Context, _ *ghpkg.Client, repo string, number int, prev, head string) (string, error) {
-				calls = append(calls, repo+"#"+strconv.Itoa(number)+" "+prev+"->"+head)
-				return tc.signed, tc.signErr
-			}
-			t.Cleanup(func() { rebaseMergeSignFixerRebase = prevSign })
-
-			f := rebasemerge.Arm("testorg/testrepo", 8, "writer", "main", approved, false, now)
-			f.Kicked(now, "fixer")
-			_ = store.Put(f)
-			now = now.Add(5 * time.Minute)
-			srv.driveRebaseMerge(context.Background(), store, f, ghpkg.PRMergeState{State: "open", HeadSHA: rebased, BaseRef: "main", MergeableState: "clean", FromFork: true, MaintainerCanModify: true})
-			f, _ = store.Get("testorg/testrepo", 8)
-			if len(calls) != 1 || calls[0] != "testorg/testrepo#8 "+approved+"->"+rebased {
-				t.Fatalf("sign calls = %q", calls)
-			}
-			if f.State != tc.wantState || f.FailReason != tc.wantFail {
-				t.Fatalf("follow-through = %+v", f)
-			}
-			if len(mock.merges) != 0 {
-				t.Fatalf("nothing merges on the unsigned head: %v", mock.merges)
-			}
-		})
 	}
 }
 

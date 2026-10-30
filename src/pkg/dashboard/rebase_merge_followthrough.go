@@ -45,12 +45,6 @@ var rebaseAttemptsStore = func() *rebasemerge.Attempts { return rebasemerge.Shar
 // rebaseMergeNow is the clock (swapped in tests).
 var rebaseMergeNow = time.Now
 
-// rebaseMergeSignFixerRebase seals the fixer's plain-git rebase of a
-// contributor PR as a GitHub-signed commit (swapped in tests).
-var rebaseMergeSignFixerRebase = func(ctx context.Context, gh *ghpkg.Client, repo string, number int, prevHead, head string) (string, error) {
-	return gh.SignFixerRebase(ctx, repo, number, prevHead, head)
-}
-
 // rebaseMergeFollowThroughLabel / Consequence are the option text the
 // decision menu shows instead of "Approve & merge as maintainer" when the
 // PR needs a rebase first.
@@ -255,27 +249,6 @@ func (s *Server) driveRebaseMerge(ctx context.Context, store *rebasemerge.Store,
 	}
 	obs := rebasemerge.Observation{Now: now, Head: st.HeadSHA, State: st.State, Merged: st.Merged, MergeableState: st.MergeableState, CIRed: st.CIRed}
 	if head := strings.TrimSpace(st.HeadSHA); head != "" && head != f.ApprovedHead && head != f.RebasedHead && !f.HiveAuthored && !st.Merged {
-		// The fixer rebases with plain git, so its head is unsigned and
-		// CommitByHive would not count it (hivecommons/hive#15182). Seal it
-		// as a GitHub-signed commit first; the next tick reads the signed
-		// head. A head the hive cannot sign falls through to the verdict
-		// below and fails closed.
-		prev := nonEmptyString(f.RebasedHead, f.ApprovedHead)
-		signed, err := rebaseMergeSignFixerRebase(ctx, gh, f.Repo, f.Number, prev, head)
-		switch {
-		case err == nil && signed != "":
-			if s.logger != nil {
-				s.logger.Info("rebase-then-merge: signed the fixer's rebase", "repo", f.Repo, "number", f.Number, "rebased_head", head, "signed_head", signed, "parent", prev)
-			}
-			return
-		case ghpkg.IsSignedHeadMoved(err):
-			if s.logger != nil {
-				s.logger.Info("rebase-then-merge: head moved while signing the fixer's rebase; waiting", "repo", f.Repo, "number", f.Number, "head", head, "error", err)
-			}
-			return
-		case err != nil && s.logger != nil:
-			s.logger.Warn("rebase-then-merge: cannot sign the fixer's rebase; the head counts only if GitHub says the hive committed it", "repo", f.Repo, "number", f.Number, "head", head, "from_fork", st.FromFork, "error", err)
-		}
 		// The approval was bound to ApprovedHead. Before the new head can
 		// count as "the rebase", make sure the hive produced it; a read
 		// error leaves the decision to the next tick rather than guessing.

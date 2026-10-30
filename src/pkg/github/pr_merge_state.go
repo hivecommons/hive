@@ -117,9 +117,7 @@ func (c *Client) GetPRMergeState(ctx context.Context, repo string, number int) (
 // email-only match also requires the commit's signature to be verified by
 // GitHub, which binds the signing key to the committer address only
 // (hivecommons/hive#15182); the author is free text GitHub never vouches
-// for, so no email-only author match counts. The fixer's plain-git rebase of
-// a contributor PR is therefore sealed by SignFixerRebase first, as an App
-// commit GitHub signs, before this verdict reads it. A head a person pushed
+// for, so no email-only author match counts. A head a person pushed
 // after a rebase-then-merge approval is new content the approval never
 // covered, so the follow-through fails closed on it (hivecommons/hive#15104).
 func (c *Client) CommitByHive(ctx context.Context, repo, sha string) (bool, error) {
