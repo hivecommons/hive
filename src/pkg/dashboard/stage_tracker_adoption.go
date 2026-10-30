@@ -52,6 +52,10 @@ type StageTrackerAdoption struct {
 	// Action is the row action that lifts the hold ("decide:adopt"), ""
 	// when nothing is the owner's to decide.
 	Action string `json:"action,omitempty"`
+	// QueuedBy is the operator whose Adopt now is waiting for the sweep:
+	// the row is in its acted state ("Adopting… (queued by @x)") and no
+	// blocker or adopt action is shown.
+	QueuedBy string `json:"queued_by,omitempty"`
 	// Text is the plain-words pill/tooltip: "waiting on @hanthor
 	// (maintainer, offline 26h) — adopt?".
 	Text string `json:"text"`
@@ -116,15 +120,26 @@ func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 		out.Text = stageTrackerAdoptionText(it.Author, *out, now)
 		return out
 	}
+	if rec.AdoptedHead != "" && (it.Head == "" || rec.Adopted(it.Head) || rec.AdoptedInPlace()) {
+		return nil
+	}
+	if by, ok := rec.AdoptionForced(); ok {
+		// An operator pressed Adopt now and the sweep has not landed yet:
+		// the row reads as acted on, whatever held adoption before.
+		out := &StageTrackerAdoption{Author: it.Author, Policy: policy, Due: true, QueuedBy: by, Nudges: rec.NudgeCount}
+		if !rec.AdoptForcedAt.IsZero() {
+			since := rec.AdoptForcedAt
+			out.Since = &since
+		}
+		out.Text = stageTrackerAdoptionText(it.Author, *out, now)
+		return out
+	}
 	if rec.NudgeCount == 0 || rec.NudgeStart().IsZero() {
 		return nil
 	}
 	if it.Head != "" && rec.NudgeHead != "" && rec.NudgeHead != it.Head {
 		// The head moved since the nudge: the 072 clock restarts on the
 		// next sweep; nothing to say about adoption yet.
-		return nil
-	}
-	if rec.AdoptedHead != "" && (it.Head == "" || rec.Adopted(it.Head) || rec.AdoptedInPlace()) {
 		return nil
 	}
 	since := rec.NudgeStart()
@@ -165,6 +180,9 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 	}
 	if a.BlockedBy == stagelabels.AdoptBlockedAuthorPerson {
 		return who + " pushed this PR themselves — not adopted: the hive asks them, not adopts"
+	}
+	if a.QueuedBy != "" {
+		return "Adopting… (queued by @" + a.QueuedBy + "; the hive opens its copy on the next stage pass)"
 	}
 	var facts []string
 	if a.AuthorMaintainer {

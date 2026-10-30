@@ -69,6 +69,10 @@ const takeoverAdoptNowDisabledHold = "release the hold first"
 // takeoverAdoptNowDisabledOff is the reason when adoption is off on this hive.
 const takeoverAdoptNowDisabledOff = "adoption is disabled (governor.labels.stage.adoption.enabled)"
 
+// takeoverAdoptNowQueued is the reason once Adopt now was pressed and the
+// sweep has not landed yet: the action is spent, not offered again.
+const takeoverAdoptNowQueued = "adoption already queued"
+
 // stageTrackerRerouteCandidates returns the lookup for the online clankers a
 // reroute may target, excluding the PR's author. Tests inject
 // rerouteCandidates.
@@ -102,7 +106,11 @@ func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 		}
 	}
 	held := slices.Contains(it.Modifiers, modHold)
+	_, forcedPending := rec.AdoptionForced()
+	forcedPending = forcedPending && hasRec
 	switch {
+	case forcedPending:
+		out.AdoptNowReason = takeoverAdoptNowQueued
 	case !adoptionEnabled:
 		out.AdoptNowReason = takeoverAdoptNowDisabledOff
 	case held:
@@ -210,10 +218,12 @@ func takeoverDecisionOptions(t *StageTrackerTakeover, held bool) []StageTrackerD
 	if held && rerouteWhy == "" {
 		rerouteWhy = "Release the hold first"
 	}
-	return []StageTrackerDecisionOption{
-		decisionOption(decisionActionAdoptNow, "Adopt now — hive takes it over", t.AdoptNow && !held, adoptWhy),
-		decisionOption(decisionActionReroute, "Reroute to another clanker", t.Reroute && !held, rerouteWhy),
+	out := []StageTrackerDecisionOption{}
+	if t.ForcedBy == "" {
+		// Spent once pressed: the row says "Adopting… (queued)" instead.
+		out = append(out, decisionOption(decisionActionAdoptNow, "Adopt now — hive takes it over", t.AdoptNow && !held, adoptWhy))
 	}
+	return append(out, decisionOption(decisionActionReroute, "Reroute to another clanker", t.Reroute && !held, rerouteWhy))
 }
 
 // stageTrackerTakeoverCaption appends the reroute pill text to the caption.
