@@ -287,8 +287,8 @@ func TestDecisionCarrierRefusesChainBrokenByContentCommit(t *testing.T) {
 	changed := []*gh.CommitFile{refreshFile("a.go", "blob9", "@@ +")}
 	api := &fakeBaseRefreshRepos{
 		commits: map[string]*gh.RepositoryCommit{
-			"h2": refreshCommit("h2", app, "h1", "tip2"),
-			"h1": refreshCommit("h1", app, "c0de", "tip1"),
+			"h2":   refreshCommit("h2", app, "h1", "tip2"),
+			"h1":   refreshCommit("h1", app, "c0de", "tip1"),
 			"c0de": refreshCommit("c0de", "someone", "aaaa"),
 		},
 		compares: map[string]*gh.CommitsComparison{
