@@ -14,6 +14,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -141,6 +142,42 @@ type mergeTrainMember struct {
 	// that is not moving. A head the lane leaves to a person's merge
 	// (mergeTrainHumanMergeReason) is not even a member.
 	Blocked bool
+	// Readiness is the member's merge-gate readiness as the lane last saw
+	// it (mergeTrainReadiness*): a ready head (green, approved, soaking or
+	// waiting for a sweep) leads over one the lane has not evaluated at
+	// this head, which leads over one still at CI / Review. The front of a
+	// train is always a ready member when the train has one
+	// (hivecommons/hive#15741 at CI / Review led #15748 and #15755, both
+	// queued at 080, and nothing merged).
+	Readiness int
+}
+
+// Readiness tiers. The zero value is unknown; mergeTrainReadinessRank
+// puts them in merge order (ready, unknown, unready).
+const (
+	// mergeTrainReadinessUnknown: the lane has not evaluated this head on
+	// its normal path (a new PR, or one parked behind a front since it
+	// was pushed).
+	mergeTrainReadinessUnknown = 0
+	// mergeTrainReadinessReady: the lane last saw this head at the merge
+	// gate — green and approved, soaking or waiting on a sweep.
+	mergeTrainReadinessReady = 1
+	// mergeTrainReadinessUnready: the lane last saw this head short of the
+	// merge gate — CI running, review pending.
+	mergeTrainReadinessUnready = 2
+)
+
+// mergeTrainReadinessRank is a tier's place in merge order: a ready head
+// leads, one the lane has not evaluated comes next (so it gets evaluated
+// and sorted), one seen short of the gate trails.
+func mergeTrainReadinessRank(tier int) int {
+	switch tier {
+	case mergeTrainReadinessReady:
+		return 0
+	case mergeTrainReadinessUnready:
+		return 2
+	}
+	return 1
 }
 
 // mergeTrainGroup is one train: the ordered members (front first) and the
@@ -273,6 +310,9 @@ func groupMergeTrains(members []mergeTrainMember) []mergeTrainGroup {
 			sort.SliceStable(ms, func(a, b int) bool {
 				if ms[a].Blocked != ms[b].Blocked {
 					return !ms[a].Blocked
+				}
+				if ra, rb := mergeTrainReadinessRank(ms[a].Readiness), mergeTrainReadinessRank(ms[b].Readiness); ra != rb {
+					return ra < rb
 				}
 				ra, rb := mergeTrainStateRank(ms[a].MergeableState), mergeTrainStateRank(ms[b].MergeableState)
 				if ra != rb {
@@ -418,6 +458,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 				MergeableState: pr.GetMergeableState(),
 				Fork:           c.isForkPR(pr),
 				Blocked:        c.mergeTrainHeadBlocked(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
+				Readiness:      c.mergeTrainHeadReadiness(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
 			})
 		}
 	}
@@ -820,10 +861,13 @@ type mergeTrainState struct {
 }
 
 // mergeTrainVerdict is the remembered lane verdict for one head: Blocked
-// heads never front; HumanMerge heads are not train members at all.
+// heads never front; HumanMerge heads are not train members at all;
+// Readiness orders the members that do ride (mergeTrainReadiness*).
 type mergeTrainVerdict struct {
 	sha        string
+	blocked    bool
 	humanMerge bool
+	readiness  int
 }
 
 // mergeTrainBlockingReason reports whether a lane's verdict means the head
@@ -835,6 +879,24 @@ func mergeTrainBlockingReason(reason string) bool {
 		return true
 	}
 	return isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) || classifyCIReason(reason) == ciReasonRed
+}
+
+// mergeTrainReadinessOf reads a lane verdict as a readiness tier: a merge
+// (""), a soak, a merge-queue wait or a release hold is ready — the head
+// would merge but for its turn; CI pending, no reviewer verdict yet or a
+// review gate still waiting is unready; any other reason says nothing
+// about readiness (unknown).
+func mergeTrainReadinessOf(reason string) int {
+	switch {
+	case reason == "", strings.HasPrefix(reason, prstage.ContributorLaneReasonSoaking),
+		stageengine.MergeQueueReason(reason):
+		return mergeTrainReadinessReady
+	case classifyCIReason(reason) == ciReasonPending, reason == prstage.ContributorLaneReasonNoVerdict,
+		reason == prstage.AutoMergeReasonReviewGatePrefix+prstage.ReviewGateOutcomeAwaiting,
+		reason == prstage.AutoMergeReasonReviewGatePrefix+prstage.ReviewGateOutcomeNoBundle:
+		return mergeTrainReadinessUnready
+	}
+	return mergeTrainReadinessUnknown
 }
 
 // mergeTrainHumanMergeReason reports whether a lane's verdict means a
@@ -856,27 +918,28 @@ func mergeTrainVerdictKey(lane, owner, repo string, number int) string {
 	return lane + "|" + owner + "/" + repo + "#" + strconv.Itoa(number)
 }
 
-// noteMergeTrainOutcome remembers, per lane and head, whether the lane's
-// verdict blocks it from fronting a train or excludes it altogether; any
-// other verdict clears the mark. Keyed by lane so the trusted-author lane's
-// "untrusted-author-role" for a PR the contributor lane admits never
-// touches the contributor lane's train.
+// noteMergeTrainOutcome remembers, per lane and head, the lane's verdict
+// on the head: whether it blocks it from fronting a train or excludes it
+// altogether, and its readiness tier. A verdict that says none of those
+// (a handoff, an error) clears the mark. Keyed by lane so the
+// trusted-author lane's "untrusted-author-role" for a PR the contributor
+// lane admits never touches the contributor lane's train.
 func (c *Engine) noteMergeTrainOutcome(lane, owner, repo string, number int, sha, reason string) {
 	if c == nil || number <= 0 {
 		return
 	}
 	key := mergeTrainVerdictKey(lane, owner, repo, number)
-	human := mergeTrainHumanMergeReason(reason)
+	v := mergeTrainVerdict{sha: sha, blocked: mergeTrainBlockingReason(reason), humanMerge: mergeTrainHumanMergeReason(reason), readiness: mergeTrainReadinessOf(reason)}
 	c.mergeTrainMu.Lock()
 	defer c.mergeTrainMu.Unlock()
-	if (!human && !mergeTrainBlockingReason(reason)) || strings.TrimSpace(sha) == "" {
+	if (!v.humanMerge && !v.blocked && v.readiness == mergeTrainReadinessUnknown) || strings.TrimSpace(sha) == "" {
 		delete(c.mergeTrainVerdicts, key)
 		return
 	}
 	if c.mergeTrainVerdicts == nil {
 		c.mergeTrainVerdicts = map[string]mergeTrainVerdict{}
 	}
-	c.mergeTrainVerdicts[key] = mergeTrainVerdict{sha: sha, humanMerge: human}
+	c.mergeTrainVerdicts[key] = v
 }
 
 func (c *Engine) mergeTrainVerdictFor(lane, owner, repo string, number int, sha string) (mergeTrainVerdict, bool) {
@@ -892,8 +955,35 @@ func (c *Engine) mergeTrainVerdictFor(lane, owner, repo string, number int, sha 
 // mergeTrainHeadBlocked reports whether this exact head was last seen by
 // the lane unable to merge on its own: it does not front a train.
 func (c *Engine) mergeTrainHeadBlocked(lane, owner, repo string, number int, sha string) bool {
-	_, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha)
-	return ok
+	v, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha)
+	return ok && (v.blocked || v.humanMerge)
+}
+
+// mergeTrainHeadReadiness is the readiness tier the lane last saw this
+// exact head at (mergeTrainReadiness*): the lane's own verdict on the
+// head first; else the stage store's resolved stage for the PR when a
+// lane evaluated it on its normal path (a stage at or past the merge gate
+// is ready, one short of it unready); unknown when the PR has only ever
+// been parked behind a front, or never seen.
+func (c *Engine) mergeTrainHeadReadiness(lane, owner, repo string, number int, sha string) int {
+	if v, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha); ok {
+		return v.readiness
+	}
+	store := c.stageStoreOrShared()
+	if store == nil {
+		return mergeTrainReadinessUnknown
+	}
+	rec, ok := store.Get(stagelabels.Key(owner+"/"+repo, number))
+	if !ok || rec.Stage == stagelabels.None {
+		return mergeTrainReadinessUnknown
+	}
+	if _, parked := prstage.ParseMergeTrain(rec.Reason); parked {
+		return mergeTrainReadinessUnknown
+	}
+	if rec.Stage.Number() >= stagelabels.AwaitingMergeAdmission.Number() {
+		return mergeTrainReadinessReady
+	}
+	return mergeTrainReadinessUnready
 }
 
 // mergeTrainHeadHumanMerge reports whether this exact head was last seen

@@ -356,6 +356,38 @@ gate, saying it will wait for a human. The rule exists because a ⚠️-titled
 PR was auto-merged by the trusted-author lane while its owner was still
 deciding whether to ship it.
 
+### Merge train: ready PRs lead
+
+Every lane groups its candidates on one base whose changed files overlap
+into a **merge train** (`auto_merge.merge_train.*`, [#15117](https://github.com/hivecommons/hive/issues/15117))
+and merges one front at a time; the siblings park at stage/080 with lane
+reason `merge-train:queued-behind#<front>:<pos>/<size>:…` and, the moment
+the front merges, are update-branched (`behind`) or handed to the rebase
+resolver (`dirty`) so the next front is evaluated on a current base. Hive's
+own repo also runs the current-base gate (`require_current_base`), which
+holds a behind head until the update lands; the two cooperate — the train
+refreshes, the gate waits for the refresh.
+
+The train's order is **readiness first**. Each pass the lane sorts the
+members by what it last saw of their heads: a head at the merge gate —
+green, approved, soaking or waiting on a sweep — leads; a head the lane has
+not evaluated since it was pushed comes next (so it is evaluated and
+sorted); a head still at CI / Review trails; a blocked head (red required
+check, terminal hold) trails everything and never fronts. Within a tier the
+old tiebreak holds (clean-mergeable first, then oldest, then number). The
+order is recomputed every pass, so a member that turns green moves up and
+one that turns red moves back. The front of a train is therefore always a
+ready member when the train has one; a train whose every member is still
+short of the gate has a *provisional* front, and the Activity Monitor says
+so rather than reading "1st in the merge queue".
+
+This replaced the age-first order after hive's own #15741, still at CI /
+Review, led #15748 and #15755 — both green and queued at 080 — and nothing
+merged until its checks finished. In the Activity Monitor only members at
+080 and beyond ride a train chip in the *Merge queue* column; a member still
+at CI / Review keeps its chevron in its own column with a muted
+"train · joins behind #N when green" note.
+
 ### Trusted-author auto-merge
 
 `auto_merge.trusted_authors` is a third, default-off sweep tier for
