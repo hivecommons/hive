@@ -42,7 +42,8 @@ function load() {
     function setSectionSummary() {}
     function contributorsSectionSummary() { return ''; }
     function formatNumber(n) { return Number(n).toLocaleString('en-US'); }
-    function renderKnowledge() {}
+    var knowledgeRenders = 0;
+    function renderKnowledge() { knowledgeRenders++; }
     function fetchBeadSynthStatus() {}
     function fetchFactHistory() {}
     function stageTrackerNoteMerges() {}
@@ -230,6 +231,8 @@ test('knowledge uses numeric layer fact totals, independent of formatting and di
   assert.equal(delta(badge), '↓ -2');
   await knowledge(api, { enabled: true });
   assert.equal(badge.textContent, 1021);
+  assert.equal(badge.attrs['aria-label'], 'Knowledge fact count unavailable');
+  assert.equal(api.ctx._kbInitialLoad, false);
   await knowledge(api, stats());
   assert.equal(badge.textContent, 0);
   assert.equal(delta(badge), undefined);
@@ -238,6 +241,33 @@ test('knowledge uses numeric layer fact totals, independent of formatting and di
   await knowledge(api, { enabled: false, layers: [] });
   assert.equal(delta(badge), undefined, 'disabling priming is not fact deletion');
   assert.equal(api.timers.size, 0);
+});
+
+test('an unhealthy Knowledge layer still loads and refreshes known facts without a synthetic delta', async () => {
+  const api = load(), badge = api.badge(IDS[3]);
+  const partial = { enabled: true, layers: [
+    { type: 'project', total_pages: 5, healthy: true },
+    { type: 'global', healthy: false },
+  ] };
+  await knowledge(api, partial);
+  assert.equal(badge.textContent, 5);
+  assert.equal(delta(badge), undefined);
+  assert.equal(badge.attrs['aria-label'], '5 facts known; some layer counts unavailable');
+  assert.equal(api.ctx.knowledgeRenders, 1, 'first load renders despite the unhealthy remote');
+  assert.equal(api.ctx._kbInitialLoad, false);
+  assert.equal(api.ctx._kbCache.layers[1].healthy, false);
+  assert.ok(Array.isArray(api.ctx._kbCache._documents), 'document fetch still reaches the cache');
+  await knowledge(api, stats(7));
+  assert.equal(badge.textContent, 7);
+  assert.equal(delta(badge), undefined, 'partial -> complete seeds a new baseline');
+  await knowledge(api, stats(10));
+  assert.equal(delta(badge), '↑ +3');
+  await knowledge(api, partial);
+  assert.equal(badge.textContent, 5, 'known facts refresh when a layer later becomes unhealthy');
+  assert.equal(delta(badge), undefined, 'missing remote counts are not fact deletion');
+  assert.equal(api.timers.size, 0);
+  assert.equal(api.ctx._kbCache.layers[1].healthy, false);
+  assert.equal(api.ctx.knowledgeRenders, 3, 'changed layer sets keep rendering');
 });
 
 test('reduced motion keeps static signed feedback; hidden tabs advance without animation', () => {

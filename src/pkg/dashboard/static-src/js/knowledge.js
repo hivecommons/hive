@@ -238,21 +238,24 @@
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
         if (!r.ok) return;
         const prev = _kbCache;
-        const next = await r.json();
-        const kbBadge = document.getElementById('knowledge-sidebar-badge');
-        const kbFacts = kbSidebarFactCount(next);
-        if (kbFacts === null) {
-          navCountDelta(kbBadge, null);
-          return;
-        }
-        _kbCache = next;
+        _kbCache = await r.json();
         _kbCache._documents = (docsR && docsR.ok) ? await docsR.json() : [];
         setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
+        const kbBadge = document.getElementById('knowledge-sidebar-badge');
         if (kbBadge) {
+          const kbFacts = kbSidebarFactCount(_kbCache);
+          const kbShown = kbTotalFactsFromStats(_kbCache);
+          const hasLayers = Array.isArray(_kbCache.layers);
+          const title = kbFacts !== null ? kbFactsLabel(kbShown) : hasLayers
+            ? kbFactsLabel(kbShown) + ' known; some layer counts unavailable'
+            : 'Knowledge fact count unavailable';
           // Toggling priming changes what the badge shows, not stored facts.
           if (prev && prev.enabled !== _kbCache.enabled) navCountDelta(kbBadge, null);
-          setSidebarCountBadge(kbBadge, kbFacts, kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
-          navCountDelta(kbBadge, kbFacts, kbFactsLabel(kbFacts));
+          // Partial layer stats still refresh the section and its known
+          // facts. Only the delta baseline needs a complete numeric total.
+          if (kbFacts !== null || hasLayers) setSidebarCountBadge(kbBadge, _kbCache.enabled ? kbShown : 0, title);
+          else kbBadge.title = title;
+          navCountDelta(kbBadge, kbFacts, title);
         }
         if (_kbInitialLoad && _kbCache && _kbCache.enabled) {
           _kbSetupView = 'none';

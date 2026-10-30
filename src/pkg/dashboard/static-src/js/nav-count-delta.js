@@ -21,6 +21,7 @@
         _navCountDeltas.set(badge.id, state);
       }
       if (!Number.isSafeInteger(count) || count < 0) {
+        if (label) state.label = label;
         state.clear();
         state.count = null;
         return;
