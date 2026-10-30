@@ -122,6 +122,23 @@ assert.ok(h.includes('decision pending on #15647'), h);
 assert.ok(h.includes('Let hive decide lives on its row'), h);
 // The PR's own row still carries the button.
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(prRow, ctx)), 1);
+// Nested under the issue (stage_tracker_links.go sets nested_under): the PR
+// is in items but stageTrackerVisible folds it into the issue's sub-row, so
+// no chip — the issue keeps its button when no sub-row is drawn (one
+// covering PR) and yields it to the sub-row when several are.
+const nested = Object.assign({}, prRow, { nested_under: 15320 });
+_stageTracker = { items: [issue, nested] };
+a = stageTrackerLeadActionOnRow(issue, ctx);
+assert.ok(a && !a.passive, 'a nested PR is not its own row: ' + JSON.stringify(a));
+assert.strictEqual(buttons(stageTrackerLeadActionHtml(issue, ctx)), 1, 'the issue row keeps its only decision button');
+assert.strictEqual(stageTrackerLeadActionOnRow(issue, ctx, [asking]), null, 'drawn as a sub-row, the sub-row carries it');
+// A render records the drawn rows; the chip follows them, not the items:
+// the PR hidden by the filter leaves the button on the issue, the PR drawn
+// as a row turns it into the chip.
+_stageTracker = { items: [issue, prRow], rows: [issue] };
+assert.ok(!stageTrackerLeadActionOnRow(issue, ctx).passive, 'the PR not drawn: no chip');
+_stageTracker = { items: [issue, nested], rows: [issue, nested] };
+assert.strictEqual(stageTrackerLeadActionOnRow(issue, ctx).passive, 15647, 'the PR drawn (Pull requests view aside, a row is a row): chip');
 // A server-marked lead that is not Let hive decide is named as itself.
 const merging = Object.assign({}, asking, { decision_needed: { question: 'Merge?', options: [{ action: 'decide:merge-now', label: 'Merge now', enabled: true, lead: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } });
 const issue2 = Object.assign({}, issue, { number: 15321, linked_prs: [merging] });

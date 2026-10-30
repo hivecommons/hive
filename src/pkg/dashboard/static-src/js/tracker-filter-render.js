@@ -83,6 +83,9 @@
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
+      // The rows this view draws, for stageTrackerPRListedOwnRow: a covered
+      // issue defers to its PR's row only when that row is actually drawn.
+      if (_stageTracker) _stageTracker.rows = visible;
       const ordered = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
       const grouping = _stageTrackerGroup === 'repo';
       const page = grouping

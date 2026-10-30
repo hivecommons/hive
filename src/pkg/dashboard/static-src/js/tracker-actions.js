@@ -491,10 +491,24 @@
     // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
     // Pure: is the covering PR also a row of its own in the tracker (a
-    // top-level item, not a sub-row)? Then only that row carries the button.
+    // top-level row, not a sub-row)? Then only that row carries the button.
+    // Reads the rows the last render drew (_stageTracker.rows, set by
+    // stageTrackerRender from stageTrackerVisible), not the payload's items:
+    // a PR nested_under a listed issue is in items but is never its own row
+    // outside the Pull requests view (tracker-filter.js stageTrackerVisible),
+    // and a filter may hide the PR while it shows the issue. Without a
+    // render (the node harness) the items stand in, minus PRs nested under
+    // a listed issue, so the chip never points at a row that is not drawn.
     function stageTrackerPRListedOwnRow(issue, t) {
+      if (!_stageTracker) return false;
       const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'pr', number: t.number });
-      return !!_stageTracker && Array.isArray(_stageTracker.items) && _stageTracker.items.some(it => stageTrackerItemKey(it) === key);
+      let rows = _stageTracker.rows;
+      if (!Array.isArray(rows)) {
+        const items = Array.isArray(_stageTracker.items) ? _stageTracker.items : [];
+        const issues = new Set(items.filter(it => it && it.kind === 'issue').map(it => it.repo + '#' + it.number));
+        rows = items.filter(it => it && !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
+      }
+      return rows.some(it => it && stageTrackerItemKey(it) === key);
     }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
