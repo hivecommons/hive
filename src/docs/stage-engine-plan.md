@@ -63,7 +63,7 @@ without moving its logic.
   `ModeShadow` it calls `Options.Legacy` and the shadow recorder; in `ModeOff`
   it returns without doing anything.
 - `transition_table.go`: `Expected(kind, from, to)` generated from the
-  mermaid diagram (`src/docs/labels-and-control-signals.md:229`) plus
+  mermaid diagram (`src/docs/labels-and-control-signals/stage-labels.md:120`) plus
   `stagelabels.IsRegression` rules; `transition_table_test.go` asserts the
   table matches the diagram (parse the fenced block).
 - Adapters (no logic moved yet):
@@ -184,7 +184,7 @@ report mode / anomalies. The original scope follows.
   mismatch count (shadow) and anomaly count.
 - Docs: `labels-and-control-signals.md` (mermaid stays; "How a stage is
   written" section replaces the direct-write paragraph at
-  `src/docs/labels-and-control-signals.md:313-316`), `dashboard-sections.md`,
+  `src/docs/labels-and-control-signals/reference.md:313-316`), `dashboard-sections.md`,
   `config-layering.md`, ADR-0025 status → Accepted when enforce is default.
 - Changelog fragment.
 
