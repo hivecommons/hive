@@ -362,6 +362,8 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "toastCountdownBar"),
 		jsFunc(t, html, "toastCountdownCancel"),
 		jsFunc(t, html, "stageTrackerMergeBanner"),
+		jsFunc(t, html, "toastCountdownBar"),
+		jsFunc(t, html, "toastCountdownCancel"),
 		jsFunc(t, html, "stageTrackerMergeBannerDismiss"),
 		jsFunc(t, html, "hamBannerDismiss"),
 		jsFunc(t, html, "hamBannerShowRow"),
@@ -418,6 +420,8 @@ function el(tag, attrs) {
     get outerHTML() { return '<div class="' + e.className + '"></div>'; },
     querySelector(sel) { return e.querySelectorAll(sel)[0] || null; },
     querySelectorAll(sel) { const out = []; const unesc = v => v.replace(/\\(.)/g, '$1'); const m = sel.match(/^\[([\w-]+)="(.*)"\]$/); const word = sel.match(/^\[([\w-]+)~="(.*)"\]\[data-ham-key\]$/); const cls = sel.match(/^\.([\w-]+)/); const capOfRow = sel === '.ham-row[data-ham-key] .ham-seg.cap'; const walk = n => { for (const c of n.children) { if (capOfRow) { if (c.classList.contains('cap') && c.closest('.ham-row') && c.closest('.ham-row').classList.contains('ham-row')) out.push(c); } else if (m && c.attrs[m[1]] === unesc(m[2])) out.push(c); else if (word && c.attrs['data-ham-key'] != null && String(c.attrs[word[1]] || '').split(' ').includes(unesc(word[2]))) out.push(c); else if (!m && !word && cls && c.classList.contains(cls[1]) && (!sel.includes('[data-at]') || c.attrs['data-at'] != null)) out.push(c); walk(c); } }; walk(e); return out; },
+    matches() { return false; },
+    contains(node) { return node === e || e.children.some(c => c.contains(node)); },
     closest(sel) { let n = e; while (n) { if (n.attrs && n.attrs['data-ham-key'] != null) return n; n = n.parentNode; } return null; },
     matches() { return false; }, contains(x) { return x === e || e.children.some(c => c.contains(x)); },
   };
