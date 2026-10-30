@@ -58,6 +58,7 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 - [Operator reference](operator-reference.md)
 - [GitHub webhooks: cadence, patch and reconcile](webhooks.md) — polling fallback, webhook patch and reconcile, and the state-accuracy guarantees.
 - [Dashboard sections explained](dashboard-sections.md) — what each dashboard section shows and what to do about it.
+- [Activity monitor copy inventory](dashboard-copy-inventory.md) — every operator-visible string builder in the activity monitor, with before/after word counts and the hover budget.
 - [Hive on your iPhone Home Screen](ios-widget.md) — a Home Screen widget with issue/PR counts and sparklines (Scriptable, no server change).
 - [Dashboard settings explained](settings.md) — what each Settings tab controls and where each setting is documented.
 - [Maintainer commands](maintainer-commands.md) — slash commands for un-parking
@@ -67,6 +68,7 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 - [Security model](security-model.md) — agent safety control inventory, threats, enforcement modes, residual gaps and operator audit checklist.
 - [Hive trust levels vs Copilot assisted permissions](copilot-permissions-comparison.md) — what GitHub's per-action permission mode (GA 2026-10-26) does, what Hive's levels, lanes, proxy and gates do, and where each covers ground the other does not.
 - [Data collection and telemetry](telemetry.md)
+- [Monitoring a hive with Prometheus and Grafana](monitoring.md)
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Community and support](community.md)
 - [Documentation map](documentation-map.md)

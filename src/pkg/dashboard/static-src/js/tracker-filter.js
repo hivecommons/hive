@@ -38,20 +38,26 @@
       return { number: 0, text: 'no linked issue' };
     }
     // Pure: the chip(s) beside a closed issue in a PR row's issue slot.
-    // `closed` when nothing more is known; `closed by #N` linking to the
-    // merged PR that closed it (the server's merged ledger) when another PR
-    // delivered the issue — the open PR on this row is then a duplicate
-    // (hivecommons/hive#15232). A not-planned close adds an "issue closed
-    // (not planned)" chip: the PR may be moot (hivecommons/hive#14655).
+    // `closed by #N` linking to the merged PR that closed it (GitHub's
+    // closedByPullRequestsReferences, else the server's merged ledger) when
+    // another PR delivered the issue — the open PR on this row is then a
+    // follow-up or a duplicate (hivecommons/hive#15232). When no merged
+    // closer is known the chip still says the issue closed while THIS PR is
+    // unmerged, so the row cannot read as the issue having been closed by
+    // an unmerged PR: the hive only ever closes an issue after its PR has
+    // merged. A not-planned close adds an "issue closed (not planned)"
+    // chip: the PR may be moot (hivecommons/hive#14655).
     function stageTrackerClosedChipHtml(item, slot) {
+      // Inline (not a module const): the UI test lifts this function alone.
+      const unmergedTip = 'Issue #' + slot.number + ' is closed, but this PR is still open and unmerged: it did not close the issue. A person or another merged PR did (the hive closes an issue only after its PR merges); this hive could not name the closer.';
       const notPlanned = String(slot.state_reason || '') === 'not_planned';
       const by = Number(slot.closed_by) || 0;
       let chip;
       if (by > 0 && by !== Number(item.number)) {
         const url = stageTrackerItemURL(item.repo, by, 'pull', item.url);
-        chip = `<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="${esc(url)}" target="_blank" rel="noopener" title="${esc('Issue #' + slot.number + ' was closed by the merge of #' + by + '; this PR is still open against it')}">closed by #${by}</a>`;
+        chip = `<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="${esc(url)}" target="_blank" rel="noopener" title="${esc('Issue #' + slot.number + ' was closed by the merge of #' + by + '; this PR is still open against it and merging it will not close anything')}">closed by #${by}</a>`;
       } else {
-        chip = '<span class="ham-badge ham-issue-closed-chip">closed</span>';
+        chip = `<span class="ham-badge ham-issue-closed-chip" title="${esc(unmergedTip)}">closed · this PR unmerged</span>`;
       }
       return chip + (notPlanned ? ' <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned" title="The issue this PR closes was closed as not planned; the PR may be moot.">issue closed (not planned)</span>' : '');
     }
@@ -67,6 +73,8 @@
     function stageTrackerNeedsAttention(item) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const n = Number(item.stage) || 0;
+      // An advisory is a note, not work (hivecommons/hive#15381).
+      if (item && item.advisory) return false;
       if (stageTrackerRegressionHandled(item)) return false;
       return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
     }
@@ -109,7 +117,7 @@
     // cannot disagree. Stage/modifier based: labels alone (needs-signal,
     // hold, …) never qualify a row. A held row is paused, not waiting.
     function stageTrackerItemNeedsHuman(item) {
-      if (!item || stageTrackerItemOnHold(item)) return false;
+      if (!item || item.advisory || stageTrackerItemOnHold(item)) return false;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.some(m => STAGE_TRACKER_NEEDS_HUMAN_MODS.indexOf(m) >= 0)) return true;
       const n = Number(item.stage) || 0;
@@ -139,6 +147,7 @@
       f.labels = Array.isArray(f.labels) ? f.labels.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : [];
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
+      f.waitingOnYou = !!f.waitingOnYou;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -152,7 +161,7 @@
 
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
-      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.waitingOnYou || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -160,6 +169,7 @@
     function stageTrackerMatches(item, f, ctx) {
       ctx = ctx || {};
       if (f.kind !== 'all' && item.kind !== f.kind) return false;
+      if (f.waitingOnYou && !item.waiting_on_you) return false;
       if (f.repo && item.repo !== f.repo) return false;
       if (f.q) {
         const q = f.q.trim().toLowerCase();
@@ -419,6 +429,7 @@
         case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
         case 'needsHuman': f.needsHuman = value === 'toggle' ? !f.needsHuman : !!value; break;
         case 'onHold': f.onHold = value === 'toggle' ? !f.onHold : !!value; break;
+        case 'waitingOnYou': f.waitingOnYou = value === 'toggle' ? !f.waitingOnYou : !!value; break;
         case 'labelsClear': f.labels = []; f.needsHuman = false; f.onHold = false; break;
         case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
         case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
@@ -443,6 +454,8 @@
       setVal('activity-monitor-size', f.size);
       const att = document.getElementById('activity-monitor-attention');
       if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const wait = document.getElementById('activity-monitor-waiting');
+      if (wait) wait.setAttribute('aria-pressed', f.waitingOnYou ? 'true' : 'false');
       const dir = document.getElementById('activity-monitor-dir');
       if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
@@ -616,6 +629,7 @@
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
+      ctx.noteTuck = stageTrackerNoteTuckSetting();
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
@@ -645,6 +659,7 @@
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      stageTrackerRenderWaiting(d, nowMs);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
@@ -675,8 +690,11 @@
       // A merge train's rows carry a header line and a rail (#15117); the
       // row renderer sees its neighbours to close the rail on the last one.
       const pageItems = stageTrackerAdoptOrphanPRs(page.rows.map(e => grouping ? e.item : e));
+      // Every train on the page, so a queue word can name its train when
+      // there is more than one and each train's rows share a rail accent.
+      const trains = typeof stageTrackerTrainIndex === 'function' ? stageTrackerTrainIndex(pageItems) : { count: 0, index: {} };
       const itemRow = (it, i) => {
-        const near = Object.assign({}, ctx, { prevRow: i > 0 && pageItems[i - 1] ? pageItems[i - 1] : null, nextRow: pageItems[i + 1] ? pageItems[i + 1] : null });
+        const near = Object.assign({}, ctx, { prevRow: i > 0 && pageItems[i - 1] ? pageItems[i - 1] : null, nextRow: pageItems[i + 1] ? pageItems[i + 1] : null, trains: trains.count, trainIndex: trains.index });
         return { key: stageTrackerItemKey(it), html: stageTrackerRowHtml(it, stages, near) };
       };
       const rowOf = (e, i) => grouping && !e.item
@@ -744,6 +762,7 @@
       try {
         if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadGrouping();
         if (!_stageTrackerSig && !_stageTrackerEtag) { stageTrackerLoadFilter(); stageTrackerSoundInit(); }
+        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerApplyUrlFilter();
         const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
         if (r.status === 304) {
           // A 304 carries no body, so take generated_at/source from the headers or the "updated" chip goes amber on a quiet hive.
@@ -803,9 +822,9 @@
       "adoption-undone": {"kind": "reason", "plain": "the hive's copy was closed without merging and the adoption was undone", "detail": "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
       "adoption/supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "already-fixed": {"kind": "rule", "plain": "the issue was already fixed by a merged PR; closed as superseded", "detail": "The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it."},
-      "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
-      "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
-      "approved": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
+      "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
+      "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
+      "approved": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
       "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "author-online": {"kind": "reason", "plain": "the author's clanker or hive is connected, so hive won't take the PR over", "detail": "Adoption is for authors whose clanker or hive has gone offline; this author's is connected, so the hive leaves the PR with them."},
       "behind": {"kind": "reason", "plain": "the branch is behind the base branch", "detail": "The branch is behind the base branch and must be updated before it can merge."},
@@ -821,6 +840,7 @@
       "ci-red": {"kind": "reason", "plain": "CI is failing on this branch", "detail": "Required checks are failing on this branch; nothing merges until they are green."},
       "close-as-duplicate": {"kind": "action", "plain": "closed as a duplicate", "detail": "Closed because an older item already tracks the same work."},
       "close-duplicate": {"kind": "action", "plain": "closed as a duplicate", "detail": "Closed because an older item already tracks the same work."},
+      "close-not-now": {"kind": "action", "plain": "declined for now; closed as not planned", "detail": "The hive declined the proposal for now and closed it as not planned, with the reason and what evidence would reopen it."},
       "close-superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
       "closed": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
       "comment-decision": {"kind": "action", "plain": "recorded the decision on GitHub", "detail": "The hive posted the decision as a `/hive decision` comment, the way a maintainer would."},
@@ -853,16 +873,21 @@
       "labels-remove": {"kind": "action", "plain": "removed labels", "detail": "The hive removed labels from the item."},
       "link": {"kind": "action", "plain": "cross-linked a related item", "detail": "The hive left a comment linking a related issue or PR."},
       "llm-delegate": {"kind": "rule", "plain": "decided by the hive's model under the owner's rules", "detail": "No mechanical rule applied, so the hive's model decided under the owner's standing rules; the same safety rails applied."},
-      "mergeable-as-is": {"kind": "rule", "plain": "mergeable and green as it is; handed to the merge gate", "detail": "The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge gate takes it as it is."},
+      "mergeable-as-is": {"kind": "rule", "plain": "mergeable and green as it is; handed to the merge queue", "detail": "The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge queue takes it as it is."},
       "needs-human": {"kind": "reason", "plain": "marked needs-human; a person must remove the label", "detail": "The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed."},
       "no-effect": {"kind": "reason", "plain": "the decision hasn't taken effect", "detail": "The hive recorded this decision, but what it was supposed to cause has not happened within the expected time."},
       "no-new-commit": {"kind": "reason", "plain": "no new commit has been pushed", "detail": "The hive gave direction, but no new commit has been pushed yet."},
       "not-closed-yet": {"kind": "reason", "plain": "the close didn't land", "detail": "The hive decided to close it, but it is still open; the close call did not land."},
-      "not-merged-yet": {"kind": "reason", "plain": "the merge gate hasn't merged it", "detail": "The hive approved it but the merge gate has not merged it; its lane reason says what still blocks it."},
+      "not-merged-yet": {"kind": "reason", "plain": "the merge queue hasn't merged it", "detail": "The hive approved it but the merge queue has not merged it; its lane reason says what still blocks it."},
+      "not-now": {"kind": "action", "plain": "declined for now; closed as not planned", "detail": "The hive declined the proposal for now and closed it as not planned, with the reason and what evidence would reopen it."},
+      "operator-action": {"kind": "action", "plain": "told the spoke owner what to do; nothing for an agent here", "detail": "The hive named the spoke owner and the one action they take (for example re-authenticate the provider). The item stays parked, gets no approved-direction, and clears when the report stops recurring."},
+      "one-pr-per-issue": {"kind": "rule", "plain": "two PRs fix the same issue; the merge queue keeps one", "detail": "Two open PRs declare the same closing issue. The merge queue carries one PR per issue — a green head first, then the earlier-opened — and the other closes as superseded with credit."},
       "owner-only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
       "owner_only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
       "park-label-stuck": {"kind": "reason", "plain": "stage/045-needs-decision is still on the issue; the scanner skips it until that label clears", "detail": "The hive approved the issue and applied approved-direction, but the stage/045-needs-decision park label was never removed, so the scanner still skips the issue. Lift the park (it removes the label through the hive's audited label path) or re-evaluate the issue so the stage engine re-reads it."},
       "prefer-contributor": {"kind": "rule", "plain": "a contributor's PR and a hive PR do the same work", "detail": "A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current."},
+      "proposal-approve-evidence": {"kind": "rule", "plain": "a proposal backed by an incident or a repeated class; approved", "detail": "The hive-filed proposal names an incident it would have prevented, or prior instances of the same class fixed one at a time, so its cost is justified and it is approved as proposed."},
+      "proposal-not-now": {"kind": "rule", "plain": "a hive-filed proposal with no incident or recurrence behind it; declined for now", "detail": "The proposal shows neither an incident it would have prevented nor a repeated class it would end, so its value is speculative. The hive declines it for now and closes it as not planned; re-propose with evidence."},
       "quarantine-flaky": {"kind": "action", "plain": "quarantined the flaky test", "detail": "The flaky test is quarantined with a retry and a deflake task is filed."},
       "rail-hold": {"kind": "rule", "plain": "the item is on hold", "detail": "The item carries the hold label; the hive never acts on a held item until a person releases the hold."},
       "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
@@ -878,7 +903,8 @@
       "return-to-contributor": {"kind": "rule", "plain": "the author's clanker or hive is connected; returned to them with the fix list", "detail": "The author's clanker or hive is connected (or has picked the rework up), so the hive hands the PR back to them with the exact fix list instead of adopting it."},
       "review-backlog": {"kind": "rule", "plain": "the PR closed without merging, so the issue stays open", "detail": "The fixing PR closed unmerged; the issue stays open and is re-triaged rather than auto-closed."},
       "reviewer-verdict:request_changes": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
-      "self-decision-read-as-changes": {"kind": "reason", "plain": "hive's own decision comment was read as a reviewer asking for changes", "detail": "The merge gate read the hive's own `/hive decision` comment as a reviewer asking for changes, so the decision blocked the PR it meant to advance (hivecommons/hive#14822). A new commit or a maintainer merge clears it."},
+      "self-decision-read-as-changes": {"kind": "reason", "plain": "hive's own decision comment was read as a reviewer asking for changes", "detail": "The merge queue read the hive's own `/hive decision` comment as a reviewer asking for changes, so the decision blocked the PR it meant to advance (hivecommons/hive#14822). A new commit or a maintainer merge clears it."},
+      "selfreport-operator-action": {"kind": "rule", "plain": "a spoke self-report only its operator can fix; not code work", "detail": "The issue is a fleet self-report (expired login, credentials, disk, network, App setup) whose remedy is on the reporting spoke. The hive tells that spoke's owner what to do and keeps it out of the actionable set; no agent is sent to code."},
       "sentinel": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "sentinel-alert": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},

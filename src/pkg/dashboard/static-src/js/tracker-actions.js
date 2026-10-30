@@ -29,11 +29,12 @@
       const it = rows[0];
       const total = Number(it.dco_total) || 0;
       const of = total > 0 ? ' of ' + total + ' commit' + (total === 1 ? '' : 's') : ' commit' + (Number(it.dco_unsigned) === 1 ? '' : 's');
-      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by, so GitHub refuses the merge where DCO is required. "Re-author as hive PR" is the separate choice for that; approving never re-authors by itself.';
+      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by (DCO). "Re-author as hive PR" is the separate choice for that; approving does not re-author.';
     }
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
+      'decide:close-read': 'Close (read)',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:merge-now': 'Approve & merge as maintainer', 'decide:queue-merge': 'Approve — let hive merge',
       'decide:re-author': 'Re-author as hive PR',
@@ -180,7 +181,7 @@
       return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor: (window._lastStatus && window._lastStatus.governor) || null };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
-    // "Needs human decision" pill on the Merge gate column) decides itself;
+    // "Needs human decision" pill on the Merge queue column) decides itself;
     // an issue row decides a nested PR parked at 085 when it has one (its
     // own stage is only mirrored from that PR), else itself when parked at
     // 045. null when nothing on the row is waiting on a person.
@@ -190,10 +191,12 @@
     function stageTrackerPRParked(it) {
       return !!it && (!!it.superseded || (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0 || !!it.manual_merge || !!it.human_merge_reason);
     }
-    // Pure: the parked nested PRs of an issue row, as row items.
+    // Pure: the parked nested PRs of an issue row, as row items. An adopted
+    // original whose hive copy is listed under the issue is not parked —
+    // its "changes requested" belongs to the pair the copy now carries.
     function stageTrackerParkedNestedPRs(item) {
       if (!item || item.kind === 'pr') return [];
-      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && stageTrackerPRParked(lp)).map(lp => stageTrackerLinkedPRItem(item, lp));
+      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && stageTrackerPRParked(lp) && (!!lp.superseded || stageTrackerLinkedPROpen(lp, item))).map(lp => stageTrackerLinkedPRItem(item, lp));
     }
     function stageTrackerDecisionTarget(item) {
       if (!item) return null;
@@ -220,18 +223,18 @@
     }
     // Pure: who carries a direction on these PRs — the hive's own author
     // agent, or (a clanker-authored PR, hivecommons/hive#15159) the owning
-    // contributor's hive, which is nudged with the text.
+    // contributor's clanker, which is nudged with the text.
     function stageTrackerDirectionCarrier(items) {
       const list = (items || []).filter(it => it && it.kind === 'pr');
       if (!list.length || !list.every(it => it.author_kind === 'clanker')) return 'the author agent';
       const authors = Array.from(new Set(list.map(it => String(it.author || '').replace(/^@/, '')).filter(Boolean)));
-      if (authors.length === 1) return "@" + authors[0] + "'s hive";
-      return "the contributor's hive";
+      if (authors.length === 1) return "@" + authors[0] + "'s clanker";
+      return "the contributor's clanker";
     }
     // Pure: the decision choices for one decision target. On an issue
     // parked at 045 the verbs are /hive approve and /hive decision. On a PR
     // parked at 085, Approve posts the /lgtm + /approve commands as the
-    // operator (the merge gate decides from there — nothing merges here),
+    // operator (the merge queue decides from there — nothing merges here),
     // Close as superseded names the PR that won, and Give direction is the
     // /hive decision fix lane.
     function stageTrackerDecideOptions(item, ctx) {
@@ -390,6 +393,11 @@
       // hold): the ask the row makes has its answer first.
       const triage = stageTrackerTriageNeeded(item);
       if (triage) out.push({ id: 'accept-triage', label: 'Accept triage', hint: stageTrackerTriageHint(item, ctx, ctx.nowMs, ctx.governor), enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, lead: true });
+      // An advisory issue (hivecommons/hive#15381) asks for one thing:
+      // read it, then close it. "Close (read)" leads; it is the existing
+      // decision close path with the verdict `close-read`.
+      const advisory = typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
+      if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: advisory.empty ? 'nothing found · closes as completed' : 'advisory acknowledged · closes as completed', lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
       for (const a of lead) out.push(a);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
@@ -410,6 +418,55 @@
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
       return out;
+    }
+    // Pure: the one action a row leads with, rendered inline on the row
+    // header so the ask the caption makes has its answer in sight
+    // (hivecommons/hive#15456: "waiting for a maintainer's triage" with
+    // Accept triage hidden behind ⋯). The ⋯ menu's `lead` entry first
+    // (Accept triage, the server's lead answer such as Merge now, Close
+    // (read)); else the first Decide… option (Let hive decide, carrying the
+    // decide target); else Adopt, Adopt now or Let hive decide — all N
+    // PRs. null when the row asks nothing of the viewer here. Disabled
+    // entries are returned as-is so the button can say why.
+    function stageTrackerLeadAction(item, ctx) {
+      if (!item) return null;
+      const actions = stageTrackerRowActions(item, ctx);
+      const lead = actions.find(a => a.lead);
+      if (lead) return lead;
+      const decide = actions.find(a => a.id === 'decide');
+      if (decide && Array.isArray(decide.submenu) && decide.submenu.length) {
+        const o = decide.submenu.find(x => x.enabled) || decide.submenu[0];
+        const enabled = !!decide.enabled && !!o.enabled;
+        return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
+      }
+      for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
+        const a = actions.find(x => x.id === id);
+        if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
+      }
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: whether the server says the next move is the maintainer's.
+    function stageTrackerMaintainerMoved(item) {
+      return !!item && (item.actor === 'maintainer' || !!(item.new && item.new.next_mover === 'maintainer'));
+    }
+    // A console warning on a development host only (localhost, 127.0.0.1).
+    function stageTrackerDevWarn(msg) {
+      const host = typeof window !== 'undefined' && window.location ? String(window.location.hostname || '') : '';
+      if ((host === 'localhost' || host === '127.0.0.1') && typeof console !== 'undefined' && console.warn) console.warn('[tracker] ' + msg);
+    }
+    // The inline lead button for a row: a real <button> carrying the same
+    // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
+    // '' when the row has no lead. Click handling is delegated in
+    // stageTrackerWireRowActions and runs runRowAction, the menu's path.
+    function stageTrackerLeadActionHtml(item, ctx) {
+      const a = stageTrackerLeadAction(item, ctx);
+      if (!a) return '';
+      const label = String(a.label || a.id);
+      const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
+      const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
+      const state = a.enabled ? (tip ? ` title="${esc(tip)}"` : '') : ` aria-disabled="true" title="${esc(tip)}"`;
+      return `<button type="button" class="ham-lead-act${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
     }
     // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
     // the server lists them in decision_needed.options (a capability gap
@@ -470,8 +527,35 @@
       // One click for the whole selection: each item is decided on its own
       // (a nested PR sub-row by its own number), summed up in one toast.
       out.push(Object.assign({}, submenu[0], { label: 'Let hive decide (' + items.length + ' selected)', hint: 'per item' }));
+      // Accept triage for every selected issue waiting on a maintainer's
+      // triage, one click (hivecommons/hive#15475: four "Triage needed"
+      // rows selected, no bulk Accept triage). Rows that are not — PRs, issues past 015 —
+      // are skipped, and the count says so ("3 of 4"). It leads the bar
+      // and the menu when the whole selection is triage, as on one row.
+      const triage = stageTrackerSelectionTriage(items, per);
+      if (triage) { if (triage.lead) out.unshift(triage); else out.push(triage); }
       for (const id of STAGE_TRACKER_SEL_ACTIONS) out.push(Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'needs-human' ? '…' : id === 'copy' ? 's' : '') }, judge(id)));
       return out;
+    }
+    // Pure: the selection's Accept triage entry, or null when no selected
+    // row is waiting on triage. `per` is the per-item flat action map
+    // stageTrackerSelectionActions built; enabled when every eligible row
+    // allows it (the first reason otherwise), `lead` when every selected
+    // row is eligible.
+    function stageTrackerSelectionTriage(items, per) {
+      const eligible = per.filter(p => p.flat['accept-triage']);
+      if (!eligible.length) return null;
+      const blocked = eligible.find(p => !p.flat['accept-triage'].enabled);
+      const all = eligible.length === items.length;
+      return {
+        id: 'accept-triage',
+        label: 'Accept triage (' + (all ? items.length + ' selected' : eligible.length + ' of ' + items.length) + ')',
+        hint: all ? 'per issue' : 'skips the ' + (items.length - eligible.length) + ' not waiting on triage',
+        enabled: !blocked,
+        why: blocked ? blocked.flat['accept-triage'].why + ' (' + stageTrackerRefOf(blocked.it) + ')' : '',
+        lead: all,
+        count: eligible.length,
+      };
     }
     function stageTrackerMenuItemHtml(a) {
       const dis = a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`;
@@ -629,6 +713,20 @@
           stageTrackerSelect(row.dataset.hamKey, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
         }
       });
+      // The row's inline lead button runs the same path as its ⋯ entry.
+      el.addEventListener('click', e => {
+        const b = e.target.closest ? e.target.closest('.ham-lead-act[data-ham-act]') : null;
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        if (b.getAttribute('aria-disabled') === 'true') return;
+        // The one row (or nested PR) the button sits on, never the selection.
+        const sub = b.closest('[data-ham-sub-key]');
+        const row = b.closest('.ham-row[data-ham-key]');
+        const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+        const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
+        if (!item) return;
+        stageTrackerDecisionRun(item, b.dataset.hamAct);
+      });
       // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
       // buttons) selects it too.
       el.addEventListener('click', e => {
@@ -696,26 +794,54 @@
       if (lead > 0 && STAGE_TRACKER_MERGE_ACTIONS.indexOf(out[0].id) < 0) out.unshift(out.splice(lead, 1)[0]);
       return out;
     }
-    // Pure: the popover markup.
+    // Pure: drop any sentence already said earlier in the text, so a hover
+    // never repeats itself (hivecommons/hive#15394).
+    function stageTrackerSayOnce(parts) {
+      const seen = new Set();
+      const out = [];
+      for (const part of parts) {
+        const keep = [];
+        for (const raw of String(part || '').split(/(?<=[.?!])\s+|\s+—\s+(?=[A-Z@])|\s+·\s+/)) {
+          const key = raw.trim().replace(/[.?!]+$/, '').toLowerCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          keep.push(raw.trim());
+        }
+        if (keep.length) out.push(keep.join(' · '));
+      }
+      return out;
+    }
+    // Pure: the popover markup — one sentence of state, one primary action,
+    // "More ⋯" for the rest, who asked and when, and everything technical
+    // behind one collapsed Details (hivecommons/hive#15394).
     function stageTrackerDecisionPopHtml(item, options, nowMs, tip) {
       const d = item.decision_needed || {};
       const ref = stageTrackerRefOf(item);
       const sinceMs = Date.parse(d.since || item.stage_since || '');
       const meta = ['Asked by ' + (d.asked_by || 'the hive'), sinceMs ? agentNowAgo(nowMs - sinceMs) : ''].filter(Boolean).join(' · ');
-      const buttons = options.map(o => `<button type="button" class="ham-decision-act${o.danger ? ' ham-menu-danger' : ''}${o.id === 'decide:delegate' || (o.id === options[0].id && STAGE_TRACKER_MERGE_ACTIONS.indexOf(o.id) >= 0) ? ' ham-decision-lead' : ''}" data-ham-act="${esc(o.id)}"${o.enabled ? (o.consequence ? ` title="${esc(o.consequence)}"` : '') : ` aria-disabled="true" title="${esc(o.why)}"`}>${esc(o.label)}</button>`).join('');
-      // Each option's consequence in plain words, so the choice is made
-      // knowing what happens next (hivecommons/hive#15078).
-      const consequences = options.filter(o => o.consequence).map(o => `<li><b>${esc(o.label)}</b> — ${esc(o.consequence)}</li>`).join('');
-      // Order (owner): WHAT it is waiting on → WHAT you can do → WHO asked, when.
+      // The one recommended action: the first the viewer may take, else the
+      // lead option greyed with its reason. Short verbs here; the ⋯ menu
+      // keeps the full labels.
+      const shortLabel = { 'decide:merge-now': 'Merge it', 'decide:queue-merge': 'Let hive merge it', 'decide:direction': 'Send back' };
+      const primary = options.length ? (options.find(o => o.enabled) || options[0]) : null;
+      const lead = primary ? `<button type="button" class="ham-decision-act ham-decision-lead${primary.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(primary.id)}"${primary.enabled ? (primary.consequence ? ` title="${esc(primary.consequence)}"` : '') : ` aria-disabled="true" title="${esc(primary.why)}"`}>${esc(shortLabel[primary.id] || primary.label)}</button>` : '';
+      const more = options.length > 1 ? `<button type="button" class="ham-decision-act ham-decision-more" data-ham-more="1" title="All actions for this row">More ⋯</button>` : '';
+      const question = d.question || '';
+      const said = typeof stageTrackerSayOnce === 'function' ? stageTrackerSayOnce([question, d.blocker, d.detail, tip]) : [question, d.blocker, d.detail, tip].filter(Boolean);
+      const details = question ? said.slice(1) : said;
+      const fold = details.length ? `<details class="ham-decision-details"><summary>Details</summary>${details.map(x => `<p class="ham-decision-blocker">${esc(x)}</p>`).join('')}</details>` : '';
+      // The PR the reviewer named as already carrying this change
+      // (hivecommons/hive#15499): a chip under the question so the person
+      // sees what "close as a no-op" is measured against.
+      const redundantOf = Number(d.redundant_of) || 0;
+      const redundantChip = redundantOf ? `<p class="ham-decision-redundant"><span class="ham-chip" title="${esc('A reviewer found this change already on the base through #' + redundantOf)}">redundant of #${redundantOf}</span></p>` : '';
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
-        <p class="ham-decision-q">${esc(d.question || '')}</p>
+        <p class="ham-decision-q">${esc(question)}</p>${redundantChip}
         ${typeof stageTrackerPresenceTip === 'function' && stageTrackerPresenceTip(item, nowMs) ? `<p class="ham-decision-presence">${stageTrackerPresenceDotHtml(item, nowMs)}${esc(stageTrackerPresenceTip(item, nowMs))}</p>` : ''}
-        ${d.blocker ? `<p class="ham-decision-blocker">${esc(d.blocker)}</p>` : ''}
-        ${buttons ? `<div class="ham-decision-acts">${buttons}</div>` : ''}
-        ${consequences ? `<ul class="ham-decision-consequences">${consequences}</ul>` : ''}
+        ${lead || more ? `<div class="ham-decision-acts">${lead}${more}</div>` : ''}
         <p class="ham-decision-meta">${esc(meta)}</p>
-        ${tip ? `<p class="ham-decision-stage">${esc(tip)}</p>` : ''}
+        ${fold}
       </div>`;
     }
     // Run a popover action down the row context menu's path.
@@ -773,7 +899,7 @@
       p.onKey = e => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseDecisionPop(true); return; }
         if (e.key === 'Tab' && el.contains(e.target)) {
-          const acts = Array.from(el.querySelectorAll('.ham-decision-act'));
+          const acts = Array.from(el.querySelectorAll('.ham-decision-act, .ham-decision-details > summary'));
           const last = acts[acts.length - 1], first = acts[0];
           if ((!e.shiftKey && e.target === last) || (e.shiftKey && (e.target === first || e.target === el))) stageTrackerCloseDecisionPop(true);
         }
@@ -782,6 +908,15 @@
       el.addEventListener('pointerleave', () => stageTrackerDecisionPopLeave());
       el.addEventListener('focusin', () => { p.pinned = true; clearTimeout(p.timer); });
       el.addEventListener('click', e => {
+        const moreBtn = e.target.closest('[data-ham-more]');
+        if (moreBtn) {
+          // "More ⋯" hands over to the row's own menu, anchored on the trigger.
+          e.preventDefault(); e.stopPropagation();
+          const anchor = stageTrackerDecisionTrigger(key) || trigger;
+          stageTrackerCloseDecisionPop(false);
+          stageTrackerOpenMenu([p.item], { anchor, restore: anchor });
+          return;
+        }
         const b = e.target.closest('[data-ham-act]');
         if (!b || b.getAttribute('aria-disabled') === 'true') return;
         e.preventDefault(); e.stopPropagation();
@@ -873,9 +1008,11 @@
     }
     // Pure: the selection bar — count, Clear, and the shared actions
     // (disabled ones keep their tooltip, so aria-disabled rather than disabled).
+    // An entry flagged `lead` (Accept triage when every selected row waits
+    // on triage) renders as the row header's lead button, not a chip.
     function stageTrackerSelBarHtml(items, actions) {
       if (!items.length) return '';
-      const btn = a => `<button type="button" class="ham-chip" data-action="hamSelAction" data-arg0="${esc(a.id)}" data-arg-types="s,t"${a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`}>${esc(a.label)}</button>`;
+      const btn = a => `<button type="button" class="${a.lead ? 'ham-lead-act' : 'ham-chip'}" data-action="hamSelAction" data-arg0="${esc(a.id)}" data-arg-types="s,t"${a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`}>${esc(a.label)}</button>`;
       return `<span class="ham-sel-count">${items.length} selected</span><button type="button" class="ham-chip" data-action="hamSelClear">Clear</button>${actions.map(btn).join('')}`;
     }
     function stageTrackerRenderSelBar() {
@@ -939,12 +1076,14 @@
       }
       return null;
     }
-    // Pure: one line for the result toast.
+    // Pure: one line for the result toast. A bulk Accept triage sums up as
+    // "Accepted 4 issues" (the per-row toasts carry the rest).
     function stageTrackerActionSummary(label, results, id) {
       const n = results.length;
       const fails = results.filter(r => !r.ok);
       const ok = n - fails.length;
       let msg = label + ': ' + (id === 'decide:delegate' || id === 'decide:delegate-all' ? stageTrackerDelegateTally(results) : ok + '/' + n + ' done');
+      if (id === 'accept-triage' && n > 1) msg = 'Accepted ' + ok + (fails.length ? ' of ' + n : '') + ' issue' + (ok === 1 && !fails.length ? '' : 's');
       const debounced = results.some(r => r.ok && r.data && (r.data.status === 'debounced' || r.data.status === 'in-progress'));
       if (debounced) msg += ' (a rescan was already running — the next one is queued by the hive)';
       if (fails.length) {
@@ -1056,6 +1195,7 @@
         const keys = stageTrackerPendingKeys(it, rows);
         const pend = stageTrackerSetPending(keys, stageTrackerActingCaption(id, it));
         pending.push(pend);
+        stageTrackerClearActionFailure(it);
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
@@ -1079,8 +1219,16 @@
           // row's next state (the gate, or "Rebasing · attempt n/2") is
           // the tracker's to show, so "Approving…" must not linger beside
           // the ✓ waiting for it (#15103).
+          if (result.action === 'refused') stageTrackerNoteActionFailure(it, id, result.outcome || 'refused');
           if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT || result.action === 'refused' || result.action === 'approved') stageTrackerClearPending(pend);
-          else { if (typeof stageTrackerDecidePending === 'function') stageTrackerDecidePending(pend, result, stageTrackerItemByKey(_stageTracker, stageTrackerTargetKey(result.target))); stageTrackerArmPending(pend, result.target); }
+          else {
+            if (typeof stageTrackerDecidePending === 'function') stageTrackerDecidePending(pend, result, stageTrackerItemByKey(_stageTracker, stageTrackerTargetKey(result.target)));
+            // Closed / merged: the terminal caption stays on the chevron
+            // until the row leaves the list on the next tracker poll.
+            const terminal = stageTrackerTerminalCaption(result);
+            if (terminal) { pend.caption = terminal; pend.decided = true; }
+            stageTrackerArmPending(pend, result.target);
+          }
           if (result.action !== STAGE_TRACKER_ACTION_NOOP && result.action !== STAGE_TRACKER_ACTION_NO_EFFECT && typeof stageTrackerNoteOwnerEvent === 'function') stageTrackerNoteOwnerEvent(stageTrackerTargetKey(result.target) || stageTrackerItemKey(it), STAGE_TRACKER_ACTION_WORDS[result.action] || stageTrackerActionLabel(id));
           if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(result, it, { id, rowRef: stageTrackerRefOf(it) }));
           // An issue decided per PR: one toast per PR as well, each on its
@@ -1093,6 +1241,7 @@
           const error = e && e.message ? e.message : 'network error';
           results.push({ item: it, ok: false, error });
           stageTrackerClearPending(pend);
+          stageTrackerNoteActionFailure(it, id, stageTrackerActionLabel(id) + ' failed: ' + error);
           if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(stageTrackerErrorResult(id, it, error), it, { id, rowRef: stageTrackerRefOf(it) }));
         }
       }
@@ -1126,6 +1275,24 @@
         for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) add({ repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '' });
       }
       return out.sort((a, b) => Number(b.value.split('#')[1]) - Number(a.value.split('#')[1]));
+    }
+    // Pure: the pre-filled winner for "Close as superseded by": the merged
+    // PR the supersession sweep already detected on the row (its closer —
+    // #15303 sat superseded by #15304 with the field empty), else, for a
+    // nested PR with exactly one open sibling under the same issue (two PRs
+    // for one issue), that sibling; '' when neither is known. A closer in
+    // another repo is only named when the sweep spelt it owner/repo.
+    function stageTrackerSupersederDefault(items) {
+      const one = Array.isArray(items) && items.length === 1 ? items[0] : null;
+      if (!one) return '';
+      const sup = one.superseded && typeof one.superseded === 'object' ? one.superseded : null;
+      const closer = sup ? Number(sup.closer_pr) || 0 : 0;
+      if (closer) {
+        const cr = String(sup.closer_repo || '');
+        return (cr.indexOf('/') >= 0 ? cr : String(one.repo || '')) + '#' + closer;
+      }
+      if (Array.isArray(one.siblings) && one.siblings.length === 1) return one.repo + '#' + one.siblings[0];
+      return '';
     }
     // Pure: validates a "superseded by" reference; "" is allowed (no winner named).
     function stageTrackerSupersederValid(s, items) {
@@ -1196,23 +1363,113 @@
       const sentinel = stageTrackerSentinelPreface(items);
       return { title: 'Let hive decide', message: (sentinel ? sentinel + '\n\n' : '') + 'Let the hive decide ' + refs + ' as the owner\'s delegate, under the owner-delegate policy? ' + STAGE_TRACKER_DELEGATE_EXPLANATION, confirmLabel: 'Let hive decide', danger: !!sentinel };
     }
-    // Pure: the preview dialog's text from the plan route's answers —
-    // "Hive would: … Why: …", one block per PR.
+    // The "Let hive decide" preview (hivecommons/hive#15126), redesigned on
+    // operator feedback from hive's own spoke (the dialog for
+    // hivecommons/hive#15332: "yikes - this is a mess … this needs to be
+    // exceedingly simple to understand and act on"). Budget: title + one
+    // subject line; ONE decision sentence; ONE why line; at most two
+    // "then" items; everything else — the sentinel finding, the rails, the
+    // rungs ruled out — behind a single collapsed Details. Two buttons,
+    // [Cancel] [Let hive do that]; "Approve & merge as-is" only when the
+    // plan says the head is mergeable as it is.
     const STAGE_TRACKER_PLAN_BUTTON_DELEGATE = 'Let hive do that';
     const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve & merge as-is';
-    function stageTrackerDelegatePlanText(plans) {
-      return (plans || []).map(pl => {
-        const ref = pl.ref || ('#' + pl.number);
-        const lines = [ref + ' — Hive would: ' + (pl.summary || pl.would || 'decide it')];
-        if (pl.why) lines.push('Why: ' + pl.why);
-        (pl.consequences || []).forEach(c => lines.push('• ' + c));
-        return lines.join('\n');
-      }).join('\n\n');
+    const STAGE_TRACKER_PLAN_TITLE = 'Let hive decide';
+    const STAGE_TRACKER_PLAN_EYEBROW = 'Hive would';
+    const STAGE_TRACKER_PLAN_NEXT_MAX = 2;
+    const STAGE_TRACKER_PLAN_TITLE_MAX = 48;
+    const STAGE_TRACKER_PLAN_RAILS = 'Rails: never merges, never touches held items, never grants secrets; the sentinel label stays with a person.';
+    const STAGE_TRACKER_PLAN_MERGE_WHY = 'Not mergeable as it is';
+    // Pure: the decision sentence without a stale "Hive would:" prefix —
+    // the eyebrow says it once (the duplicated prefix of #15332's dialog).
+    function stageTrackerPlanSentence(pl) {
+      let text = String(pl.summary || pl.would || 'decide it').trim().replace(/^(hive would:\s*)+/i, '');
+      if (!text) text = 'decide it';
+      text = text.charAt(0).toUpperCase() + text.slice(1);
+      return /[.!?]$/.test(text) ? text : text + '.';
     }
-    // Pure: can "Approve & merge as-is" run — every plan lists merge-now as
-    // an enabled alternative.
+    function stageTrackerPlanTruncate(text, max) {
+      text = String(text || '').trim();
+      return text.length > max ? text.slice(0, max - 1).replace(/\s+\S*$/, '') + '…' : text;
+    }
+    // Pure: one view model for every decision the preview can show — a
+    // PR or an issue; direction, adopt, close, approve, recommend-only.
+    //   { title, subject, finding, decisions: [{ ref, sentence, why, next[] }],
+    //     ruledOut[], rails, mergeable, mergeWhy, danger }
+    function stageTrackerDelegatePlanView(plans, sentinel) {
+      plans = plans || [];
+      // One item: "repo#N · title"; a batch names each item on its own
+      // block instead, so no reference is printed twice.
+      let subject = plans.length + ' items';
+      if (plans.length === 1) {
+        subject = plans[0].ref || ('#' + plans[0].number);
+        if (plans[0].title) subject += ' · ' + stageTrackerPlanTruncate(plans[0].title, STAGE_TRACKER_PLAN_TITLE_MAX);
+      }
+      const decisions = plans.map(pl => ({
+        ref: pl.ref || ('#' + pl.number),
+        sentence: stageTrackerPlanSentence(pl),
+        why: pl.why ? String(pl.why).trim() : '',
+        next: (pl.consequences || []).slice(0, STAGE_TRACKER_PLAN_NEXT_MAX).map(String),
+      }));
+      const ruledOut = [].concat(...plans.map(pl => (pl.ladder && pl.ladder.ruled_out) || []));
+      const mergeable = stageTrackerDelegatePlanMergeable(plans);
+      return {
+        title: STAGE_TRACKER_PLAN_TITLE,
+        subject,
+        finding: sentinel || '',
+        decisions,
+        ruledOut,
+        rails: STAGE_TRACKER_PLAN_RAILS,
+        mergeable,
+        mergeWhy: mergeable ? '' : (stageTrackerDelegatePlanMergeReason(plans) || STAGE_TRACKER_PLAN_MERGE_WHY),
+        showMerge: stageTrackerDelegatePlanOffersMerge(plans),
+        danger: !!sentinel,
+      };
+    }
+    // Pure: the dialog's inner HTML from the view model. The Details
+    // disclosure is the only place the finding, the rails and the ruled-out
+    // rungs appear; it is collapsed by default.
+    function stageTrackerDelegatePlanHtml(view) {
+      const esc = hiveDialogEscape;
+      const blocks = view.decisions.map(d => {
+        const multi = view.decisions.length > 1;
+        return '<div class="ham-plan-decision">'
+          + (multi ? '<div class="ham-plan-ref">' + esc(d.ref) + '</div>' : '')
+          + '<div class="ham-plan-eyebrow">' + esc(STAGE_TRACKER_PLAN_EYEBROW) + '</div>'
+          + '<p class="ham-plan-sentence">' + esc(d.sentence) + '</p>'
+          + (d.why ? '<p class="ham-plan-why"><span class="ham-plan-label">Why</span> ' + esc(d.why) + '</p>' : '')
+          + (d.next.length ? '<div class="ham-plan-label">Then</div><ol class="ham-plan-next">' + d.next.map(n => '<li>' + esc(n) + '</li>').join('') + '</ol>' : '')
+          + '</div>';
+      }).join('');
+      const details = []
+        .concat(view.finding ? ['<p class="ham-plan-finding">' + esc(view.finding) + '</p>'] : [])
+        .concat(view.ruledOut.length ? ['<div class="ham-plan-label">Why not the others</div><ul class="ham-plan-ruled-out">' + view.ruledOut.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul>'] : [])
+        .concat(['<p class="ham-plan-rails">' + esc(view.rails) + '</p>']);
+      return '<div id="hive-dialog-title" class="hive-dialog-title">' + esc(view.title) + '</div>'
+        + '<div class="ham-plan-subject">' + esc(view.subject) + (view.finding ? ' <span class="ham-plan-chip" title="' + esc(view.finding) + '">⚠ Sentinel</span>' : '') + '</div>'
+        + '<div class="hive-dialog-body ham-plan-body">' + blocks + '</div>'
+        + '<details class="ham-plan-details"><summary>Details</summary>' + details.join('') + '</details>'
+        + '<div class="hive-dialog-buttons">'
+        + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>'
+        + (view.showMerge ? '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"' + (view.mergeable ? '' : ' aria-disabled="true" disabled title="' + esc(view.mergeWhy) + '"') + '>' + esc(STAGE_TRACKER_PLAN_BUTTON_MERGE) + '</button>' : '')
+        + '<button type="button" class="hv-btn ' + (view.danger ? 'btn-danger' : 'btn-primary') + ' hive-dialog-btn primary" data-initial-focus>' + esc(STAGE_TRACKER_PLAN_BUTTON_DELEGATE) + '</button>'
+        + '</div>';
+    }
+    // Pure: the preview's visible words — everything outside Details and
+    // the buttons. Kept for the three-second budget test.
+    function stageTrackerDelegatePlanVisibleText(html) {
+      return String(html).replace(/<details[\s\S]*?<\/details>/g, ' ').replace(/<div class="hive-dialog-buttons">[\s\S]*$/, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    // Pure: does the dialog offer "Approve & merge as-is" at all — only
+    // when every plan says the head is mergeable as it is (the ladder's
+    // mergeable-as-is rung, or green and conflict-free without a ladder).
+    function stageTrackerDelegatePlanOffersMerge(plans) {
+      return (plans || []).length > 0 && plans.every(pl => pl.mergeable_as_is === true && (pl.alternatives || []).some(a => a.action === 'decide:merge-now'));
+    }
+    // Pure: can "Approve & merge as-is" run — offered, and every plan lists
+    // merge-now as an enabled alternative (merge rights).
     function stageTrackerDelegatePlanMergeable(plans) {
-      return (plans || []).length > 0 && plans.every(pl => (pl.alternatives || []).some(a => a.action === 'decide:merge-now' && a.enabled !== false));
+      return stageTrackerDelegatePlanOffersMerge(plans) && plans.every(pl => (pl.alternatives || []).some(a => a.action === 'decide:merge-now' && a.enabled !== false));
     }
     function stageTrackerDelegatePlanMergeReason(plans) {
       for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === 'decide:merge-now' && a.enabled === false && a.reason_if_disabled) return a.reason_if_disabled;
@@ -1225,33 +1482,23 @@
         const r = await fetch(req.url + '/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) return { ref: stageTrackerRefOf(item), number: item.number, error: data.error || ('HTTP ' + r.status) };
-        return Object.assign({ ref: stageTrackerRefOf(item) }, data);
+        return Object.assign({ ref: stageTrackerRefOf(item) + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : '') }, data);
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }
-    // The three-button preview: resolves { chosen } for Let hive do that,
-    // { chosen, mergeNow: true } for Approve & merge as-is, null on Cancel.
+    // The preview: resolves { chosen } for Let hive do that, { chosen,
+    // mergeNow: true } for Approve & merge as-is, null on Cancel.
     function stageTrackerDelegatePlanDialog(plans, sentinel) {
-      const text = (sentinel ? sentinel + '\n\n' : '') + stageTrackerDelegatePlanText(plans);
-      const mergeable = stageTrackerDelegatePlanMergeable(plans);
-      const mergeWhy = mergeable ? '' : (stageTrackerDelegatePlanMergeReason(plans) || 'Needs merge rights on this repo');
+      const view = stageTrackerDelegatePlanView(plans, sentinel);
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
         hiveRememberModalOpen(overlay);
-        overlay.innerHTML = `<div class="hive-dialog ham-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
-          <div id="hive-dialog-title" class="hive-dialog-title">Let hive decide — preview</div>
-          <div class="hive-dialog-body ham-plan-body">${hiveDialogEscape(text)}</div>
-          <p class="ham-plan-note">${hiveDialogEscape(STAGE_TRACKER_DELEGATE_EXPLANATION)}</p>
-          <div class="hive-dialog-buttons">
-            <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>
-            <button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"${mergeable ? '' : ' aria-disabled="true" disabled'}${mergeWhy ? ` title="${hiveDialogEscape(mergeWhy)}"` : ''}>${STAGE_TRACKER_PLAN_BUTTON_MERGE}</button>
-            <button type="button" class="hv-btn ${sentinel ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${STAGE_TRACKER_PLAN_BUTTON_DELEGATE}</button>
-          </div></div>`;
+        overlay.innerHTML = '<div class="hive-dialog ham-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">' + stageTrackerDelegatePlanHtml(view) + '</div>';
         document.body.appendChild(overlay);
         const would = plans.map(pl => pl.would || '?').filter((v, i, a) => a.indexOf(v) === i).join('/');
         hiveWireDialog(overlay, resolve, null, '.primary', '.cancel', close => close({ chosen: STAGE_TRACKER_PLAN_BUTTON_DELEGATE + ' · previewed ' + would }));
         const merge = overlay.querySelector('.ham-plan-merge');
-        if (merge && mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: STAGE_TRACKER_PLAN_BUTTON_MERGE + ' · previewed ' + would, mergeNow: true }); });
+        if (merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: STAGE_TRACKER_PLAN_BUTTON_MERGE + ' · previewed ' + would, mergeNow: true }); });
       });
     }
     // Let hive decide → plan → preview → act. Returns the delegate payload,
@@ -1296,7 +1543,7 @@
           return (await stageTrackerAsk(id, 'confirm', { title: 'Close as partially addressed', message: 'Label ' + refs + ' hive/partially-addressed and close ' + (items.length > 1 ? 'them' : 'it') + ' as ' + who + '? The remaining work stays described in the closing comment; nothing is merged.', confirmLabel: 'Close as partial', danger: true })) ? {} : null;
         case 'decide:approve':
           if (prs) {
-            return (await stageTrackerAsk(id, 'confirm', { title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
+            return (await stageTrackerAsk(id, 'confirm', { title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge queue takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
           }
           return (await stageTrackerAsk(id, 'confirm', { title: 'Approve direction', message: 'Record "/hive approve" on ' + refs + ' as ' + who + '? The hive un-parks the issue' + (items.length > 1 ? 's' : '') + ' and carries on; nothing is merged.', confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:direction': {
@@ -1308,9 +1555,7 @@
         }
         case 'decide:close-superseded': {
           const options = stageTrackerSupersederOptions(_stageTracker, items);
-          // A nested PR with exactly one open sibling under the same issue
-          // (two PRs for one issue): the sibling is the likely winner.
-          const sibling = items.length === 1 && Array.isArray(items[0].siblings) && items[0].siblings.length === 1 ? items[0].repo + '#' + items[0].siblings[0] : '';
+          const sibling = stageTrackerSupersederDefault(items);
           const by = await hivePrompt({ title: 'Close as superseded by', label: 'Which pull request supersedes ' + refs + '? (#number, owner/repo#number or URL; leave empty if none)', placeholder: options.length ? options[0].value : '#123', defaultValue: sibling, options, validate: s => stageTrackerSupersederValid(s, items) });
           if (by == null) return null;
           const v = await stageTrackerAsk(id, 'prompt', { title: 'Close as superseded', label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
@@ -1320,15 +1565,17 @@
           const v = await stageTrackerAsk(id, 'prompt', { title: stageTrackerActionLabel(id), label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
           return v == null ? null : { comment: v };
         }
+        case 'decide:close-read':
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Close (read)', message: 'Close ' + refs + ' as read, as ' + who + '? It is an advisory for maintainers — nothing waits on it; the issue closes as completed with a note that you read it.', confirmLabel: 'Close' })) ? {} : null;
         case 'decide:merge-now': {
           const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
           if (items.some(stageTrackerNeedsRebase)) {
             return (await stageTrackerAsk(id, 'confirm', { title: STAGE_TRACKER_REBASE_MERGE_LABEL, message: preface + refs + ' is behind ' + base + ' (needs a rebase), so GitHub would refuse a plain merge. Record your approval as ' + who + ' and have the hive rebase it onto ' + base + ', wait for CI, then merge it with your approval on record? You get a toast when it lands or if the rebase conflicts.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & rebase-merge', danger: true })) ? {} : null;
           }
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now via hive\'s identity, attributed to ' + who + '? The merge gate parked it for a human because its author is not a trusted merger on this repo; this is you taking that call. The head you see is the head that merges — a push in between makes GitHub refuse.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now, credited to ' + who + '? Hive left this merge to a person; this is you taking that call. The version you see is the one that merges.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
         }
         case 'decide:queue-merge':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Record your approval on ' + refs + ' as the owner decision, as ' + who + '? This is the trust override for this head: hive\'s merge sweep merges it as-is on the next tick once CI is green, respecting soak, and will not adopt or re-author it. The dashboard merges nothing itself.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is on its next pass once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:re-author': {
           const caveat = stageTrackerDCOCaveat(items);
           return (await stageTrackerAsk(id, 'confirm', { title: 'Re-author as hive PR', message: preface + 'Have the hive re-author ' + refs + ' as ' + who + '?' + (caveat || ' Its head cannot merge as-is.') + ' The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. Nothing is merged as-is, and the author\'s commits stay attributed.', confirmLabel: 'Re-author', danger: true })) ? {} : null;
@@ -1393,11 +1640,17 @@
     // toast says why in plain words and carries the next actions.
     const STAGE_TRACKER_ACTION_NO_EFFECT = 'no-effect';
     const STAGE_TRACKER_RESULT_TOAST_MAX = 5;
+    // An informational result toast ("adopted", "/lgtm posted", a no-op)
+    // closes itself after this long, with the countdown bar and hover /
+    // focus pause every timed toast gets; it still leaves earlier on × or
+    // when the tracker reports the target in a new state. Errors and
+    // toasts carrying next-action buttons wait for the operator instead.
+    const STAGE_TRACKER_RESULT_TOAST_MS = 15000;
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
-      'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…',
+      'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
@@ -1408,6 +1661,39 @@
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };
+    // Once the server has answered, a terminal action's caption says so
+    // until the tracker drops the row ("Closed · leaving list"); the row
+    // cannot come back meanwhile because the server filters an
+    // operator-closed item out of its next snapshots (hivecommons/hive#15436).
+    const STAGE_TRACKER_TERMINAL_CAPTIONS = { closed: 'Closed · leaving list', merged: 'Merged · leaving list' };
+    function stageTrackerTerminalCaption(result) {
+      return STAGE_TRACKER_TERMINAL_CAPTIONS[result && result.action] || '';
+    }
+    // The ledger name of a row action id (the inverse of the badge's
+    // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    // A failed or refused action is noted on the row at once, so the
+    // history badge turns red and its hover's first line names the reason
+    // — the server's ledger only sees 5xx and refused answers, and a
+    // network error never reaches it (hivecommons/hive#15436). Keyed by
+    // item; the next action on the row, or a newer server record, replaces it.
+    var _stageTrackerActionFailures = {};
+    function stageTrackerNoteActionFailure(item, id, why, now) {
+      const key = stageTrackerItemKey(item);
+      const at = new Date(typeof now === 'number' ? now : Date.now()).toISOString();
+      _stageTrackerActionFailures[key] = { action: STAGE_TRACKER_ACTION_LEDGER_NAME[stageTrackerActionBase(id)] || stageTrackerActionBase(id), actor: (typeof window !== 'undefined' && window._hiveUser) || '', at, outcome: 'failed', detail: why, progress: why, state: 'failed' };
+      return _stageTrackerActionFailures[key];
+    }
+    function stageTrackerClearActionFailure(item) { delete _stageTrackerActionFailures[stageTrackerItemKey(item)]; }
+    // Pure: the client-noted failure for an item when it is newer than the
+    // server's record (or there is none); null otherwise.
+    function stageTrackerActionFailureOf(item) {
+      const f = item ? _stageTrackerActionFailures[stageTrackerItemKey(item)] : null;
+      if (!f) return null;
+      const srv = item.last_operator_action;
+      if (srv && (Date.parse(srv.at || '') || 0) >= (Date.parse(f.at) || 0)) return null;
+      return f;
+    }
     function stageTrackerActingCaption(id, item) {
       if (id === 'decide:merge-now' && item && stageTrackerNeedsRebase(item)) return 'Rebasing, then merging…';
       return STAGE_TRACKER_ACTING_CAPTIONS[stageTrackerActionBase(id)] || 'acting…';
@@ -1493,9 +1779,10 @@
       return String(text || '').replace(STAGE_TRACKER_RFC3339_RE, m => { const ms = Date.parse(m); return isNaN(ms) ? m : agentNowClockTime(ms, nowMs) + (formatDashboardDate(new Date(ms)) === formatDashboardDate(nowMs) ? ' today' : ''); });
     }
     let _stageTrackerResultToasts = [];
-    // Build and show the persistent result toast; it leaves on × or when
-    // the tracker reports the target in a new state (see
-    // stageTrackerResultToastsSync).
+    // Build and show the result toast; it leaves on ×, when the tracker
+    // reports the target in a new state (see stageTrackerResultToastsSync)
+    // or, for a plain informational result, after
+    // STAGE_TRACKER_RESULT_TOAST_MS (see stageTrackerResultToastTimed).
     function stageTrackerResultToast(result, item, ctx) {
       const text = stageTrackerResultText(result, item, ctx);
       const container = document.getElementById('toast-container');
@@ -1533,10 +1820,17 @@
       }
       if (container) container.appendChild(el);
       makeToastSticky(el);
+      if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));
       const key = stageTrackerTargetKey(result.target) || stageTrackerItemKey(item);
       const entry = { el, key, state: stageTrackerItemState(stageTrackerItemByKey(_stageTracker, key)), result, text };
       if (text.type !== 'error') _stageTrackerResultToasts.push(entry);
       return entry;
+    }
+    // Pure: does a result toast close itself? Errors need acknowledging
+    // and a toast offering next actions is a prompt, so both stay until
+    // the operator answers; everything else is information and times out.
+    function stageTrackerResultToastTimed(text) {
+      return text.type !== 'error' && !(text.options && text.options.length);
     }
     // Pure: has the toast's target left the state it was shown in?
     function stageTrackerResultToastStale(entry, d) {
@@ -1625,6 +1919,17 @@
         }
       }
     }
+    // Pure: the row's advisory block when it is one (tracker-row.js owns the
+    // detection for the chevron; here only the server's flag counts).
+    function stageTrackerAdvisoryOf(item) {
+      return item && item.kind !== 'pr' && item.advisory && typeof item.advisory === 'object' ? item.advisory : null;
+    }
+    // A row action whose target mapping came up empty says so instead of
+    // returning silently (hivecommons/hive#15436).
+    function stageTrackerNothingToActOn(id, rows) {
+      const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
+      if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
+    }
     async function runRowAction(action, row) {
       let items = Array.isArray(row) ? row.slice() : (row ? [row] : []);
       const id = action;
@@ -1664,6 +1969,19 @@
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
         if (!items.length) return { toasts: [], pending: [] };
+      } else if (id === 'accept-triage') {
+        // Accept triage acts on the issues waiting on it; a bulk selection
+        // may carry PRs or issues past 015, which are skipped and counted
+        // out in the menu label ("3 of 4").
+        items = items.filter(stageTrackerTriageNeeded);
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+      } else if (id === 'decide:close-read') {
+        // Close (read) acts on the advisory row itself: an advisory is not
+        // a decision park, so it has no decision target
+        // (hivecommons/hive#15436 — the click used to map to nothing and
+        // return without a request, a dialog or a toast).
+        items = items.filter(stageTrackerAdvisoryOf);
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
         // only mirrored from it); dedupe when the PR row is selected too.
@@ -1675,7 +1993,7 @@
         // deciding just that PR ("Decide PR #N › Let hive decide").
         items = [].concat(...items.map(it => id === 'decide:delegate' ? stageTrackerDelegateTargets(it) : [stageTrackerDecisionTarget(it)]))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
-        if (!items.length) return { toasts: [], pending: [] };
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
       const payload = await stageTrackerActionPayload(items, id);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };

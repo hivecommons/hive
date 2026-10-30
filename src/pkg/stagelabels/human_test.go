@@ -670,3 +670,31 @@ func TestRouteHumanChangeRequesterWinsOverParks(t *testing.T) {
 		t.Fatalf("self-authored route = %+v", r)
 	}
 }
+
+// hivecommons/hive#15499: the same reviewer question re-asked on a new head
+// is not a new entry comment; a different question is.
+func TestEntryCommentRepeatsDecisionAcrossHeads(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	key := Key("o/r", 15499)
+	st.Observe(key, NeedsDecision, "verdict:decision-requested")
+	st.MarkEntryCommentedCause(key, "h1", EntryCause([]string{"reviewer question: close as a no-op?"}))
+	st.MarkEntryCommentedDecisionKey(key, "redundant-of:15427")
+	rec, _ := st.Get(key)
+	if !rec.EntryCommentRepeatsDecision("redundant-of:15427") || rec.EntryCommentRepeatsDecision("redundant-of:1") || rec.EntryCommentRepeatsDecision("") {
+		t.Fatalf("after first entry: %+v", rec)
+	}
+	// A new head (merge-from-base) resets the per-head cause list but not
+	// the decision identity.
+	st.MarkEntryCommented(key, "h2")
+	if rec, _ = st.Get(key); !rec.EntryCommentRepeatsDecision("redundant-of:15427") {
+		t.Fatalf("new head lost the decision identity: %+v", rec)
+	}
+	// The 50↔85 flap #15499 showed (re-review on each head, then the same
+	// verdict) keeps the identity: it is still the one question.
+	st.Observe(key, ReviewPending, "")
+	st.Observe(key, NeedsDecision, "verdict:decision-requested")
+	if rec, _ = st.Get(key); !rec.EntryCommentRepeatsDecision("redundant-of:15427") {
+		t.Fatalf("stage flap lost the decision identity: %+v", rec)
+	}
+}

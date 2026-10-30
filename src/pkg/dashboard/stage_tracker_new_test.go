@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestWebhookOpenedItemInsertedIntoTracker(t *testing.T) {
 	s.statusMu.Unlock()
 	opened := now.Add(-90 * time.Second)
 
-	triage := github.RepoWorkIssue{Repo: "acme/console", Number: 15092, Title: "Add a thing", Author: "kanrenibm", Labels: []string{"enhancement", "help wanted"}, CreatedAt: opened, UpdatedAt: opened, Bucket: "reporter_triage", Reason: "Awaiting maintainer triage label"}
+	triage := github.RepoWorkIssue{Repo: "acme/console", Number: 15092, Title: "Add a thing", Author: "kanrenibm", AuthorIsHuman: true, Labels: []string{"enhancement", "help wanted"}, CreatedAt: opened, UpdatedAt: opened, Bucket: "reporter_triage", Reason: "Awaiting maintainer triage label"}
 	n := s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{
 		// A contributor's issue the reporter gate has not admitted: the
 		// classifier offers the reporter_triage row.
@@ -55,8 +56,14 @@ func TestWebhookOpenedItemInsertedIntoTracker(t *testing.T) {
 	if it.Stage != 0 || it.StageSlug != StageTrackerNewSlug || it.New == nil {
 		t.Fatalf("#15092 = stage %d slug %q new %+v, want 000-new", it.Stage, it.StageSlug, it.New)
 	}
-	if it.New.NextMover != StageTrackerMoverMaintainer || !strings.Contains(it.Caption, "New · waiting for a maintainer's triage (add `triage/accepted`)") || it.Actor != StageTrackerMoverMaintainer {
+	if it.New.NextMover != StageTrackerMoverMaintainer || it.Caption != stageTrackerTriageNeededCaption || it.Actor != StageTrackerMoverMaintainer {
 		t.Fatalf("#15092 caption %q actor %q new %+v, want the maintainer's triage as next mover", it.Caption, it.Actor, it.New)
+	}
+	// A sidelined row keeps the reporter's kind: the work-bucket copy of the
+	// issue carries AuthorIsHuman, so the row does not read as an unknown
+	// author just because the gate parked it.
+	if it.AuthorKind != authorKindHuman {
+		t.Fatalf("#15092 author_kind = %q, want %q on a reporter_triage row", it.AuthorKind, authorKindHuman)
 	}
 	if it.StageSince == nil || !it.StageSince.Equal(opened) {
 		t.Fatalf("#15092 since = %v, want the opened time %v", it.StageSince, opened)
@@ -64,13 +71,26 @@ func TestWebhookOpenedItemInsertedIntoTracker(t *testing.T) {
 	if len(it.New.Gates) != 3 || it.New.Gates[0].Name != "triage" || it.New.Gates[0].State != StageTrackerGateNext || it.New.Gates[1].Name != "actionable" || it.New.Gates[2].Name != "claimed" {
 		t.Fatalf("#15092 gates = %+v, want triage (next) → actionable → claimed", it.New.Gates)
 	}
-	if it.New.NextPassAt == nil || it.New.NextPassInSeconds != 7*60 || !strings.Contains(it.Caption, "next pass in 7m") {
+	// The hold is decided before the awaiting label lands (hivecommons/hive#15437
+	// read "New" with labels: null): the row carries the needs-triage
+	// modifier the label would yield, so the Open chevron reads "Triage
+	// needed" and Accept triage leads.
+	if !slices.Contains(it.Modifiers, modNeedsTriage) {
+		t.Fatalf("#15092 modifiers = %v, want %s on a reporter_triage row without the label", it.Modifiers, modNeedsTriage)
+	}
+	if !it.New.TriagePending() {
+		t.Fatalf("#15092 new = %+v, want TriagePending", it.New)
+	}
+	if it.New.NextPassAt == nil || it.New.NextPassInSeconds != 7*60 {
 		t.Fatalf("#15092 next pass = %v / %ds caption %q, want the governor's kick in 7m", it.New.NextPassAt, it.New.NextPassInSeconds, it.Caption)
 	}
 
 	it = trackerItem(t, resp, "issue", 15095)
 	if it.New == nil || it.New.NextMover != StageTrackerMoverHive || it.Caption != "New · waiting for the stage-label pass (→ 010 actionable), then the scanner (next pass in 7m)" {
 		t.Fatalf("#15095 = %+v caption %q, want the stage-label pass as next mover", it.New, it.Caption)
+	}
+	if slices.Contains(it.Modifiers, modNeedsTriage) || it.New.TriagePending() {
+		t.Fatalf("#15095 (admitted reporter) modifiers = %v, must not read triage needed", it.Modifiers)
 	}
 	if it.New.Gates[0].Name != "triage" || it.New.Gates[0].State != StageTrackerGateDone {
 		t.Fatalf("#15095 gates = %+v, want triage already done", it.New.Gates)
@@ -148,7 +168,7 @@ func TestStageTrackerNewState(t *testing.T) {
 	triage := base
 	triage.Bucket = "reporter_triage"
 	n = stageTrackerNewState(triage, false, filter, gov, now)
-	if n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != "New · waiting for a maintainer's triage (add `triage/accepted` or `kind/approved`); the hive's next pass in 5m" {
+	if n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != stageTrackerTriageNeededCaption || n.NextMoverText != "a maintainer's triage (add `triage/accepted` or `kind/approved`)" {
 		t.Fatalf("reporter_triage issue = %+v", n)
 	}
 	// The accept label already on (the row menu's Accept triage, before the
@@ -169,7 +189,7 @@ func TestStageTrackerNewState(t *testing.T) {
 	}
 	labelled := base
 	labelled.Modifiers = []string{modNeedsTriage}
-	if n = stageTrackerNewState(labelled, false, nil, FrontendGovernor{}, now); n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != "New · waiting for a maintainer's triage (add `triage/accepted`)" || n.NextPassAt != nil {
+	if n = stageTrackerNewState(labelled, false, nil, FrontendGovernor{}, now); n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != stageTrackerTriageNeededCaption || n.NextPassAt != nil {
 		t.Fatalf("needs-triage issue without a governor kick = %+v", n)
 	}
 	pr := StageTrackerItem{Kind: "pr", Stage: 0, CreatedAt: &opened}
@@ -265,6 +285,7 @@ func TestStageTrackerNewRowRendering(t *testing.T) {
 		jsFunc(t, html, "stageTrackerOpenSince"),
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerNewState"),
+		jsFunc(t, html, "stageTrackerOpenTriageNeeded"),
 		jsFunc(t, html, "stageTrackerNewLines"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTOR_NONE"),
 		jsFunc(t, html, "stageTrackerStageActor"),
@@ -280,28 +301,39 @@ const now = Date.parse('2026-10-20T12:00:00Z');
 const stages = [{ number: 10, label: 'Actionable', short: 'Actionable' }, { number: 20, label: 'Claimed', short: 'Claimed' }, { number: 30, label: 'PR in progress', short: 'PR in progress' }, { number: 50, label: 'Review pending', short: 'CI / Review' }, { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' }, { number: 100, label: 'Merge queue', short: 'Merge queue' }];
 const fresh = { repo: 'hivecommons/hive', number: 15092, kind: 'issue', title: 'Add a thing', author: 'kanrenibm', author_kind: 'human', stage: 0, stage_slug: '000-new',
   stage_since: '2026-10-20T11:52:00Z', created_at: '2026-10-20T11:52:00Z', labels: ['enhancement', 'help wanted'], bucket: 'reporter_triage',
-  caption: 'New · waiting for a maintainer\'s triage (add ` + "`triage/accepted`" + `); the hive\'s next pass in 7m',
+  caption: 'Triage needed — accept or close',
   new: { since: '2026-10-20T11:52:00Z', next_mover: 'maintainer', next_mover_text: 'a maintainer\'s triage (add ` + "`triage/accepted`" + `)', next_pass_at: '2026-10-20T12:07:00Z', next_pass_in_s: 420,
     gates: [{ name: 'triage', state: 'next', text: 'a maintainer accepts triage (triage/accepted)' }, { name: 'actionable', state: 'later', text: 'the stage-label pass marks it 010 actionable' }, { name: 'claimed', state: 'later', text: 'the scanner claims it (020)' }],
-    text: 'New · waiting for a maintainer\'s triage (add ` + "`triage/accepted`" + `); the hive\'s next pass in 7m' } };
+    text: 'Triage needed — accept or close' } };
 
-assert.strictEqual(stageTrackerHeadline(fresh), 'New');
+// A reporter-trust hold reads "Triage needed" in the Open column even
+// before the needs-triage label has landed (hivecommons/hive#15437: the row
+// said "New" and the ask lived only in the caption).
+assert.strictEqual(stageTrackerHeadline(fresh), 'Triage needed');
 assert.strictEqual(stageTrackerActorKind(fresh), 'human', 'a maintainer-gated new issue asks for a human move');
 const segs = stageTrackerSegments(fresh, stages, now);
 assert.strictEqual(segs[0].state, 'active');
 assert.ok(segs[0].isNew, 'the Open segment is flagged new');
-assert.strictEqual(segs[0].short, 'New · since 8m', segs[0].short);
+assert.strictEqual(segs[0].short, 'Triage needed · since 8m', segs[0].short);
 const strip = stageTrackerStripItems(fresh, stages, null, now, {});
 assert.ok(/<li class="ham-seg active ham-open-new"/.test(strip), strip);
-assert.ok(strip.includes('<span class="ham-seg-t">New · since 8m</span>'), strip);
+assert.ok(strip.includes('<span class="ham-seg-t">Triage needed · since 8m</span>'), strip);
 const chevronTip = /title="([^"]*)"/.exec(strip)[1];
-assert.ok(chevronTip.startsWith('New — Next: a maintainer&#39;s triage') || chevronTip.startsWith('New — Next: a maintainer\'s triage'), chevronTip);
+assert.ok(chevronTip.startsWith('Triage needed — Next: a maintainer&#39;s triage') || chevronTip.startsWith('Triage needed — Next: a maintainer\'s triage'), chevronTip);
+// With the label on (modifiers carry needs-triage) the word is the same.
+const labelled = Object.assign({}, fresh, { labels: ['needs-triage'], modifiers: ['needs-triage'] });
+assert.strictEqual(stageTrackerSegments(labelled, stages, now)[0].short, 'Triage needed · since 8m');
+assert.strictEqual(stageTrackerHeadline(labelled), 'Triage needed');
+// An admitted reporter's new issue still reads New.
+const admitted = Object.assign({}, fresh, { bucket: '', new: Object.assign({}, fresh.new, { next_mover: 'hive', gates: [{ name: 'triage', state: 'done' }, { name: 'actionable', state: 'next' }] }) });
+assert.strictEqual(stageTrackerSegments(admitted, stages, now)[0].short, 'New · since 8m');
+assert.strictEqual(stageTrackerHeadline(admitted), 'New');
 assert.ok(chevronTip.includes('next hive pass in 7m'), chevronTip);
 assert.ok(chevronTip.includes('Gates ahead: triage (next) → actionable → claimed'), chevronTip);
 assert.ok(chevronTip.includes('Next move: human'), chevronTip);
 const tip = stageTrackerTooltip(fresh, now);
 const lines = tip.split('\n');
-assert.strictEqual(lines[0], 'New');
+assert.strictEqual(lines[0], 'Triage needed');
 assert.ok(lines.some(l => l.startsWith('Next: a maintainer') && l.endsWith('next hive pass in 7m')), tip);
 assert.ok(lines.includes('Gates ahead: triage (next) → actionable → claimed'), tip);
 assert.ok(lines.includes('  claimed: the scanner claims it (020)'), tip);
@@ -326,7 +358,7 @@ for (const it of [
   assert.ok(!s.includes('>New'), JSON.stringify(it) + ' → ' + s);
   assert.notStrictEqual(stageTrackerHeadline(it), 'New');
 }
-assert.strictEqual(stageTrackerHeadline({ kind: 'issue', stage: 0, caption: 'No stage recorded yet', labels: ['needs-triage'], modifiers: ['needs-triage'] }), 'Open');
+assert.strictEqual(stageTrackerHeadline({ kind: 'issue', stage: 0, caption: 'No stage recorded yet', labels: ['needs-triage'], modifiers: ['needs-triage'] }), 'Triage needed');
 assert.deepStrictEqual(stageTrackerNewLines({ stage: 0 }, now), []);
 `
 	cmd := exec.Command(node, "-")

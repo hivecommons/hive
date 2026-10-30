@@ -1,0 +1,1 @@
+- Stop filing `unclassified_error_repeated` self-reports for GitHub 502/503/504 transient failures (e.g. the self-authored automerge sweep's `fetch-pr` skip); the caller retries on its next tick and the WARN stays in local logs ([#15365](https://github.com/hivecommons/hive/issues/15365)).

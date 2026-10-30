@@ -25,6 +25,27 @@ func TestNormalizeAndFamily(t *testing.T) {
 	}
 }
 
+func TestCanonicalFoldsSpellings(t *testing.T) {
+	cases := map[string]string{
+		"gpt-6.1-sol":                   "gpt-6.1-sol",
+		"openai-codex/gpt-6.1-sol":      "gpt-6.1-sol",
+		"openai-codex/gpt-5.6-sol:high": "gpt-5.6-sol",
+		"claude-opus-5.5":               "claude-opus-5.5",
+		"claude-opus-5-5":               "claude-opus-5.5",
+		"anthropic/claude-opus-5":       "claude-opus-5",
+		"Claude-Sonnet-5-5":             "claude-sonnet-5.5",
+		"gpt-6-astra":                   "gpt-6-astra",
+		"lemonade/qwen-3":               "qwen-3",
+		"":                              Unknown,
+		"auto":                          Unknown,
+	}
+	for in, want := range cases {
+		if got := Canonical(in); got != want {
+			t.Errorf("Canonical(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
 func TestSameFamily(t *testing.T) {
 	if same, known := SameFamily("claude-fable-5", "claude-opus-4-6"); !same || !known {
 		t.Fatalf("same family: got same=%v known=%v", same, known)

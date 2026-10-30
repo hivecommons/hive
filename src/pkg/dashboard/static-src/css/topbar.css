@@ -112,10 +112,12 @@
     }
     /* Drawer toggle. Hidden on desktop; the ≤1024px block flips it to
        inline-flex. It lives with the project title so the center run-state
-       group remains visually anchored. */
+       group remains visually anchored. No negative margin: .oc-topbar-left
+       clips overflow, so anything pulled past its left edge is cut off —
+       on phones that showed up as a half-circle hamburger (#15476). */
     #oc-drawer-toggle {
       display: none;
-      margin-left: -10px;
+      flex: 0 0 auto;
     }
     #oc-drawer-backdrop { display: none; }
     .oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
@@ -124,6 +126,10 @@
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
     .oc-topbar-right { position: relative; z-index: 2; justify-self: end; max-width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }
     .oc-health-badge { --nav-chip-color: var(--status-ok); }
+    /* Waiting on you pill (hivecommons/hive#15638): attention colour, hidden at zero, clickable. */
+    .nav-chip--attention, .oc-waiting-on-you { --nav-chip-color: var(--status-attention); }
+    .oc-waiting-on-you { flex: 0 0 auto; cursor: pointer; font-weight: 600; }
+    .oc-waiting-on-you[hidden] { display: none; }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }

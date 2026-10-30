@@ -1,0 +1,1 @@
+- Dashboard: stage-tracker action-result toasts (adopted, posted, held, no-op) now close themselves after 15 s with the countdown bar and hover/focus pause; errors and toasts offering next actions stay until acknowledged.

@@ -184,7 +184,11 @@ type ReviewVerdict struct {
 	Verdict           string
 	DecisionRequested bool
 	DecisionQuestion  string
-	HumanSummaries    []string
+	// RedundantOf is the PR the reviewer named as already carrying this
+	// change (`<!-- hive-redundant-of: #N -->`): the decision is a close,
+	// and for the hive's own PR the lane performs it (hivecommons/hive#15499).
+	RedundantOf    int
+	HumanSummaries []string
 	// HiveAuthoredKnown is true for verdicts read from aggregates that recorded
 	// authorship. The stage fallback normalizer leaves those alone: aggregation
 	// already applied the configured self-authored decision policy.

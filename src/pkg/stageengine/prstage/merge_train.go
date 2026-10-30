@@ -33,8 +33,17 @@ const (
 	MergeTrainStateRebaseExhausted = "rebase-exhausted"
 	// MergeTrainStateFront is never written by the sweep: the dashboard
 	// synthesises it on the PR the siblings name as their front.
-	MergeTrainStateFront     = "front"
-	MergeTrainReasonMaxFiles = 4
+	MergeTrainStateFront = "front"
+	// MergeTrainStateDuplicateOf: the PR declares the same `Fixes #N` as
+	// another open PR the train admitted; it is held out of the train
+	// behind that PR (Front) until a person or the delegate picks one
+	// (hivecommons/hive#15395). Position / Size carry the issue number
+	// as Position and 0 as Size. The stage engine parks it with its
+	// author (070/071/072 by author kind), never on the merge gate, so
+	// the tracker reads "returned" with the gate pill "Duplicate of #N"
+	// rather than "Approved; waiting its turn" (hivecommons/hive#15469).
+	MergeTrainStateDuplicateOf = "duplicate-of"
+	MergeTrainReasonMaxFiles   = 4
 )
 
 // MergeTrain is the decoded form of a merge-train reason.
@@ -177,11 +186,17 @@ func (m MergeTrain) Sentence() string {
 	slot := Ordinal(m.Position) + " of " + strconv.Itoa(m.Size)
 	switch m.State {
 	case MergeTrainStateRebasing:
-		return "front of the merge train, conflicting; the hive is rebasing it onto the base (attempt " + strconv.Itoa(m.Attempt) + "/" + strconv.Itoa(m.MaxAttempts) + "; " + slot + files + ")"
+		return "1st in the merge queue, conflicting; the hive is rebasing it onto the base (attempt " + strconv.Itoa(m.Attempt) + "/" + strconv.Itoa(m.MaxAttempts) + "; " + slot + files + ")"
 	case MergeTrainStateRebaseExhausted:
-		return "front of the merge train, still conflicting after " + strconv.Itoa(m.MaxAttempts) + " rebase attempts; a person decides (" + slot + files + ")"
+		return "1st in the merge queue, still conflicting after " + strconv.Itoa(m.MaxAttempts) + " rebase attempts; a person decides (" + slot + files + ")"
 	case MergeTrainStateFront:
-		return "front of the merge train (" + slot + files + ")"
+		return "1st in the merge queue; merges next (" + slot + files + ")"
+	case MergeTrainStateDuplicateOf:
+		issue := ""
+		if m.Position > 0 {
+			issue = " for issue #" + strconv.Itoa(m.Position)
+		}
+		return "duplicate of #" + strconv.Itoa(m.Front) + issue + "; superseded by #" + strconv.Itoa(m.Front) + " — the merge queue carries one PR per issue; close it or let the delegate decide"
 	}
 	return "behind #" + strconv.Itoa(m.Front) + " in merge train (" + slot + files + ")"
 }

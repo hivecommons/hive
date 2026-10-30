@@ -147,8 +147,8 @@ func TestStageTrackerMergeGateNode(t *testing.T) {
 	for _, want := range []string{
 		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
 		`60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging'`,
-		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';`,
-		`else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;`,
+		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';`,
+		`else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);`,
 		`if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;`,
 		`if (typeof stageTrackerGateCountdownSync === 'function') stageTrackerGateCountdownSync(el, nowMs);`,
 		`.ham-gate-ico { display: inline-flex;`, `.ham-gate-detail {`,
@@ -162,7 +162,7 @@ func TestStageTrackerMergeGateNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"**Merge gate pills — legend**", "Awaiting merge gate", "Ready for auto merge", "**Soaking**", "**Merging**", "next sweep in"} {
+	for _, want := range []string{"**Merge queue pills — legend**", "Awaiting merge gate", "Ready for auto merge", "**Soaking**", "**Merging**", "next pass in"} {
 		if !strings.Contains(string(docs), want) {
 			t.Errorf("docs/dashboard-sections.md missing merge-gate legend %q", want)
 		}
@@ -193,7 +193,7 @@ for (const [n, k] of [[60, 'gate-pending'], [80, 'ready'], [95, 'soaking'], [100
 // Captured 15:11 ET: both rows at 060 reviewed, CI pending. #15042 had a
 // targeted sweep pass on it; #15054 was waiting for the next pass.
 const pr15042 = { repo: 'hivecommons/hive', number: 15042, kind: 'pr', base_ref: 'v6', author_kind: 'hive', stage: 60, stage_slug: 'reviewed', reason: 'check-pending',
-  caption: 'Review swarm approved; a gate is still pending — CI is red (check-pending)',
+  caption: 'Review swarm approved; a gate is still pending — CI running',
   merge_gate: { state: 'gate-pending', reason: 'check-pending', sweep_running: true, last_sweep_at: iso(now - 30000) } };
 const pr15054 = { repo: 'hivecommons/hive', number: 15054, kind: 'pr', base_ref: 'v5', author_kind: 'clanker', stage: 60, stage_slug: 'reviewed', reason: 'required-check-pending:build-and-test',
   caption: 'Review swarm approved; a gate is still pending — check build-and-test still running',
@@ -207,10 +207,10 @@ const merging = { repo: 'hivecommons/hive', number: 15061, kind: 'pr', stage: 10
 let a = stageTrackerMergeGateInfo(pr15042, now), b = stageTrackerMergeGateInfo(pr15054, now);
 assert.strictEqual(a.word, 'Review passed'); assert.strictEqual(b.word, 'Review passed');
 assert.strictEqual(a.cue, 'running'); assert.strictEqual(a.detail, 'CI in progress');
-assert.strictEqual(a.tip, "Review passed, not yet admitted to auto merge — CI in progress; hive's merge sweep is running on this PR now.");
+assert.strictEqual(a.tip, "Review passed, not yet admitted to auto merge — CI in progress; hive is checking this PR now.");
 // The pill uses the operator's wording; the tooltip keeps the lane's full reason.
 assert.strictEqual(b.cue, 'waiting'); assert.strictEqual(b.detail, 'CI in progress');
-assert.ok(b.tip.startsWith('Review passed, not yet admitted to auto merge — CI still running (build-and-test). hive re-checks the gate on its next sweep in 42s.'), b.tip);
+assert.ok(b.tip.startsWith('Review passed, not yet admitted to auto merge — CI running (build-and-test). hive re-checks the gate on its next pass in 42s.'), b.tip);
 assert.ok(b.tip.includes('A GitHub event on the PR (check run, review, push) triggers a pass sooner.') && b.tip.endsWith('Last checked 2m ago.'), b.tip);
 
 // Every row on the gate gets the glyph; the sentence is its title AND aria-label.
@@ -224,7 +224,7 @@ assert.strictEqual(stageTrackerGateCueHtml({ repo: 'r', number: 1, kind: 'pr', s
 assert.strictEqual(stageTrackerGateCueHtml({ repo: 'r', number: 1, kind: 'pr', stage: STAGE_TRACKER_TERMINAL }, now), '', 'merged: no glyph');
 
 // The pill word with the live detail; the waiting row says what it waits for.
-assert.strictEqual(stageTrackerMergeGateWordHtml(ready, now), '<span class="ham-seg-t">Ready for auto merge <span class="ham-gate-detail" data-ham-until="' + (now + 42000) + '" data-ham-until-kind="ready">· next sweep in 42s</span></span>');
+assert.strictEqual(stageTrackerMergeGateWordHtml(ready, now), '<span class="ham-seg-t">Ready for auto merge <span class="ham-gate-detail" data-ham-until="' + (now + 42000) + '" data-ham-until-kind="ready">· next pass in 42s</span></span>');
 // The soak detail carries its clock (data-ham-soak…) so the tick redoes the words and the hover.
 const soakHtml = stageTrackerMergeGateWordHtml(pr15044, now);
 assert.ok(soakHtml.startsWith('<span class="ham-seg-t">Soaking <span class="ham-gate-detail" data-ham-soak="1" data-ham-until="' + (now + 452000) + '" data-ham-until-kind="soaking"'), soakHtml);
@@ -234,19 +234,19 @@ assert.strictEqual(stageTrackerMergeGateWordHtml(merging, now), '<span class="ha
 assert.strictEqual(stageTrackerMergeGateWordHtml({ stage: 50 }, now), '');
 const soak = stageTrackerMergeGateInfo(pr15044, now);
 assert.strictEqual(soak.tip, 'The head must sit the soak window without new commits before the hive merges it · 7m 32s left · soak ends ' + stageTrackerClockText(now + 452000) + ' Last checked 1m ago.');
-assert.strictEqual(stageTrackerMergeGateInfo(ready, now).tip, "Approved and green; waiting for hive's merge sweep — next sweep in 42s. A GitHub event on the PR (check run, review, push) triggers a pass sooner. Last checked 10s ago.");
+assert.strictEqual(stageTrackerMergeGateInfo(ready, now).tip, "Approved and green; waiting for hive's next merge pass — next pass in 42s. A GitHub event on the PR (check run, review, push) triggers a pass sooner. Last checked 10s ago.");
 assert.strictEqual(stageTrackerMergeGateInfo(merging, now).tip, 'Admitted and soaked; hive is merging it now (GitHub merge queue / merge window). Last checked 1s ago.');
 
 // Without merge_gate (older server) the stage alone picks the word and a plain sentence.
 const old = stageTrackerMergeGateInfo({ stage: 80 }, now);
 assert.deepStrictEqual([old.word, old.detail, old.cue], ['Ready for auto merge', '', 'waiting']);
-assert.strictEqual(old.tip, "Approved and green; waiting for hive's merge sweep. A GitHub event on the PR (check run, review, push) triggers a pass sooner.");
+assert.strictEqual(old.tip, "Approved and green; waiting for hive's next merge pass. A GitHub event on the PR (check run, review, push) triggers a pass sooner.");
 assert.strictEqual(stageTrackerMergeGateInfo({ stage: 95, soak_remaining_seconds: 90 }, now).detail, '2m left', 'legacy soak_remaining_seconds still counts');
 assert.strictEqual(stageTrackerSoakLeft({ merge_gate: { soak_remaining_seconds: 452 } }), ' — 8m left', 'the 095 chevron tooltip reads the mirrored field too');
 
 // Reason words.
-assert.strictEqual(stageTrackerGateReasonText('check-pending'), 'CI still running');
-assert.strictEqual(stageTrackerGateReasonText('required-check-failing:lint'), 'CI is red (lint)');
+assert.strictEqual(stageTrackerGateReasonText('check-pending'), 'CI running');
+assert.strictEqual(stageTrackerGateReasonText('required-check-failing:lint'), 'CI failed: lint');
 assert.strictEqual(stageTrackerGateReasonText('conflicting'), 'branch has conflicts');
 assert.strictEqual(stageTrackerGateReasonText('something-else'), 'something-else', 'unknown tokens pass through');
 assert.strictEqual(stageTrackerGateReasonText(''), '');
@@ -257,9 +257,9 @@ const mk = (until, kind) => ({ attrs: { 'data-ham-until': String(until), 'data-h
 const n1 = mk(now + 42000, 'ready'), n2 = mk(now + 452000, 'soaking');
 const el = { querySelectorAll: () => [n1, n2] };
 stageTrackerGateCountdownSync(el, now + 30000);
-assert.deepStrictEqual([n1.textContent, n2.textContent], ['· next sweep in 12s', '· 8m left']);
+assert.deepStrictEqual([n1.textContent, n2.textContent], ['· next pass in 12s', '· 8m left']);
 stageTrackerGateCountdownSync(el, now + 500000);
-assert.deepStrictEqual([n1.textContent, n2.textContent], ['· sweep due now', '· soak window complete']);
+assert.deepStrictEqual([n1.textContent, n2.textContent], ['· pass due now', '· complete']);
 
 // hivecommons/hive#15103: the fixer's rebase loop guard is the pill while
 // the hive rebases a conflicting PR, spinning on attempt n/2 and asking
@@ -291,6 +291,9 @@ func stageTrackerMergeGateInfoJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_PATH_WORDS") + "\n" +
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_FAILED_SHORT_MAX") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeFailedShort") + "\n" +
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_REFUSAL_DETAIL") + "\n" +
+		jsFunc(t, html, "stageTrackerMergeRefusalFromRaw") + "\n" +
+		jsFunc(t, html, "stageTrackerMergeFailedInfo") + "\n" +
 		jsConstLine(t, html, "STAGE_TRACKER_STAGE_PHRASE") + "\n" +
 		jsFunc(t, html, "stageTrackerStagePhrase") + "\n" +
 		jsFunc(t, html, "stageTrackerCoverReasonText") + "\n" +
@@ -298,7 +301,63 @@ func stageTrackerMergeGateInfoJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerCoveringPR") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfo") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfoFor") + "\n" +
+		stageTrackerTrainQueueJS(t, html) + "\n" +
 		stageTrackerSoakClockJS(t, html)
+}
+
+// stageTrackerTrainQueueJS lifts the merge-queue words the gate pill reads
+// for a train member (hivecommons/hive#15395).
+func stageTrackerTrainQueueJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_FRONT"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_QUEUED"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_REBASING"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_EXHAUSTED"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_GATE_DUPLICATE_PREFIX"),
+		jsFunc(t, html, "stageTrackerGateDuplicateOf"),
+		jsFunc(t, html, "stageTrackerMergeGateStateWord"),
+		jsFunc(t, html, "stageTrackerTrain"),
+		jsFunc(t, html, "stageTrackerOrdinal"),
+		jsFunc(t, html, "stageTrackerShortLeft"),
+		jsFunc(t, html, "stageTrackerTrainPlace"),
+		stageTrackerTrainProvisionalJS(t, html),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STALLED_LEAD"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_HEAD_STALL_WORD"),
+		jsFunc(t, html, "stageTrackerTrainStallWhy"),
+		jsFunc(t, html, "stageTrackerTrainStalledWord"),
+		jsFunc(t, html, "stageTrackerTrainWord"),
+		jsFunc(t, html, "stageTrackerTrainEtaAt"),
+		jsFunc(t, html, "stageTrackerTrainEtaWords"),
+		jsFunc(t, html, "stageTrackerTrainEtaDetail"),
+		jsFunc(t, html, "stageTrackerTrainQueueTip"),
+		jsConstLine(t, html, "STAGE_TRACKER_LEFT_TRAIN_NOTE"),
+		jsFunc(t, html, "stageTrackerLeftTrainNote"),
+		jsFunc(t, html, "stageTrackerTrainLines"),
+	}, "\n")
+}
+
+// stageTrackerTrainProvisionalJS lifts the provisional-slot words: a train
+// member whose own stage is short of the merge gate reads its blocker
+// first and its slot as a suffix.
+func stageTrackerTrainProvisionalJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_READY"),
+		jsConstLine(t, html, "STAGE_TRACKER_PROVISIONAL_STAGE_WORD"),
+		jsFunc(t, html, "stageTrackerTrainProvisional"),
+		jsFunc(t, html, "stageTrackerTrainProvisionalHeadline"),
+		jsFunc(t, html, "stageTrackerTrainProvisionalSuffix"),
+		jsFunc(t, html, "stageTrackerTrainOrdinalOfN"),
+		jsFunc(t, html, "stageTrackerTrainTag"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_TAG_LEAD"),
+		jsFunc(t, html, "stageTrackerTrainTagSuffix"),
+		jsFunc(t, html, "stageTrackerTrainTagTip"),
+		jsFunc(t, html, "stageTrackerTrainIndex"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ACCENTS"),
+		jsFunc(t, html, "stageTrackerTrainAccentClass"),
+	}, "\n")
 }
 
 // stageTrackerSoakClockJS lifts the soak-clock helpers the gate pill reads.
@@ -307,6 +366,7 @@ func stageTrackerSoakClockJS(t *testing.T, html string) string {
 	return jsFunc(t, html, "stageTrackerSoakClock") + "\n" +
 		jsFunc(t, html, "stageTrackerSoakLeftText") + "\n" +
 		jsFunc(t, html, "stageTrackerClockText") + "\n" +
+		jsFunc(t, html, "stageTrackerNextPassWords") + "\n" +
 		jsFunc(t, html, "stageTrackerSoakWords") + "\n" +
 		jsFunc(t, html, "stageTrackerSoakTick")
 }
@@ -355,7 +415,7 @@ assert.ok(!leak.test(pill), 'pill label must not carry the cover reason: ' + pil
 const a = stageTrackerMergeGateInfo(issue15088, now), b = stageTrackerMergeGateInfo(pr15090, now);
 assert.deepStrictEqual([a.word, a.detail, a.cue, a.state], [b.word, b.detail, b.cue, b.state]);
 // The cover reason leads the tooltip — "· at <stage>", not "(PR at <stage>)".
-assert.ok(a.tip.startsWith('Open PR #15090 covers it · its PR is review passed · waiting for merge admission — Review passed, not yet admitted to auto merge — CI still running (build-and-test).'), a.tip);
+assert.ok(a.tip.startsWith('Open PR #15090 covers it · its PR is review passed · waiting for merge admission — Review passed, not yet admitted to auto merge — CI running (build-and-test).'), a.tip);
 assert.ok(!/\(PR at/.test(a.tip), a.tip);
 const glyph = stageTrackerGateCueHtml(issue15088, now);
 assert.ok(glyph.includes('title="' + esc(a.tip) + '"') && glyph.includes('aria-label="' + esc(a.tip) + '"'), glyph);
@@ -391,7 +451,7 @@ assert.strictEqual(stageTrackerCoveringPR(pr15090), null, 'PR rows have no cover
 
 // The cover reason parser.
 assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #15090 covers it (PR at 060-reviewed)' }), 'open PR #15090 covers it · its PR is review passed · waiting for merge admission');
-assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #15090 covers it (PR at stage/080-awaiting-merge-admission)' }), 'open PR #15090 covers it · its PR is at the merge gate');
+assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #15090 covers it (PR at stage/080-awaiting-merge-admission)' }), 'open PR #15090 covers it · its PR is at the merge queue');
 assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #7 covers it' }), 'open PR #7 covers it');
 assert.strictEqual(stageTrackerCoverReasonText({ reason: 'check-pending' }), '');
 assert.strictEqual(stageTrackerCoverReasonText({}), '');

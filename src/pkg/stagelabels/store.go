@@ -100,6 +100,13 @@ type Record struct {
 	AdoptCopyRedHeads     []string  `json:"adopt_copy_red_heads,omitempty"`
 	AdoptReopenedAt       time.Time `json:"adopt_reopened_at,omitempty"`
 	AdoptReopenedFrom     int       `json:"adopt_reopened_from,omitempty"`
+	// AdoptCopyConflicting is set when the hive's copy (AdoptedBy) opened
+	// conflicting with its base because the contributor head could not be
+	// replayed onto it and the fixer's rebase-resolve episode owns the
+	// conflict (hivecommons/hive#15307); cleared when the copy reads
+	// mergeable again. The tracker row reads "Adopting · fixer resolving
+	// conflicts" while it is set.
+	AdoptCopyConflicting bool `json:"adopt_copy_conflicting,omitempty"`
 	// SupersederMergedNotedHead is the original's head for which the
 	// "superseder merged but this PR has moved on" note was posted, so a
 	// diverged original is told once per head rather than every poll.
@@ -135,6 +142,12 @@ type Record struct {
 	// alert cleared, workflow-path fence now the blocker — gets each distinct
 	// cause explained once, not a byte-identical repost and not silence.
 	EntryCommentedCauses []string `json:"entry_commented_causes,omitempty"`
+	// EntryCommentedDecisionKey is the writeback.DecisionKey of the last 085
+	// entry comment: the superseding PR the reviewer named, or the
+	// normalised question. It survives heads and stage flaps, so the same
+	// question re-asked on a merge-from-base head is not re-posted
+	// (hivecommons/hive#15499).
+	EntryCommentedDecisionKey string `json:"entry_commented_decision_key,omitempty"`
 	// History is the item's recent stage transitions, oldest first, capped
 	// at HistoryLimit: each entry is the stage entered, when, and the reason
 	// at entry. The dashboard's Hive activity monitor renders it as the
@@ -271,6 +284,12 @@ type Record struct {
 	// MergeCommitNotedHead is the head the `merge-method/merge` note was
 	// posted for, so the lane explains the merge method once per head.
 	MergeCommitNotedHead string `json:"merge_commit_noted_head,omitempty"`
+	// TrustAnnouncedAt is set on a TrustPromotionKey record when the
+	// contributor lane posted its one "now trusted for contributor-lane
+	// merging in this hive" comment for the author
+	// (hivecommons/hive#15443). Zero while the author is promoted but no
+	// comment has landed yet.
+	TrustAnnouncedAt time.Time `json:"trust_announced_at,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -298,6 +317,12 @@ type Record struct {
 	// HiveHeldWarned is set once the hive-side alert for an item held by
 	// the hive past its dwell has been logged; activity resets it.
 	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+	// LabelsSuppressed is set when the write-back gate kept the stage
+	// labels off the item on GitHub (a contributor PR without the opt-in
+	// label): the stage lives in this record only, so a label-less item
+	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
+	// "PR in progress" while the record said 085).
+	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -857,6 +882,28 @@ func EntryCause(reasons []string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// MarkEntryCommentedDecisionKey records the decision identity of the 085
+// entry comment just posted (or found already explained).
+func (s *Store) MarkEntryCommentedDecisionKey(key, decisionKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.EntryCommentedDecisionKey == decisionKey {
+		return
+	}
+	r.EntryCommentedDecisionKey = decisionKey
+	s.items[key] = r
+	s.dirty = true
+}
+
+// EntryCommentRepeatsDecision reports whether an 085 entry comment with
+// this decision identity was already posted on this PR — on any head: a
+// reviewer re-asking the same question on a new head (one that only
+// merged the base) is not a new decision (hivecommons/hive#15499).
+func (r Record) EntryCommentRepeatsDecision(decisionKey string) bool {
+	return decisionKey != "" && r.EntryCommentedStage == NeedsDecision && r.EntryCommentedDecisionKey == decisionKey
+}
+
 // EntryCommentExplains reports whether an entry comment already posted for
 // this stage on head covered the given cause (EntryCommented itself may be
 // reset by a flap through another stage). Records written before
@@ -1145,6 +1192,7 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
 	r.AdoptMode = AdoptModeSupersede
+	r.AdoptCopyConflicting = false
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	r.AdoptForcedBy, r.AdoptForcedAt = "", time.Time{}
 	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
@@ -1527,6 +1575,22 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptOrphanedBy, r.AdoptOrphanedAt, r.AdoptOrphanCount = 0, time.Time{}, 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	r.SupersededClosedFirst, r.AdoptCopyRedHeads, r.AdoptReopenedFrom = false, nil, 0
+	r.AdoptCopyConflicting = false
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteAdoptCopyConflicting records whether the hive's copy of this
+// adoption is conflicting with its base and in the fixer's hands
+// (hivecommons/hive#15307). No-op when nothing changes.
+func (s *Store) NoteAdoptCopyConflicting(key string, conflicting bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptCopyConflicting == conflicting {
+		return
+	}
+	r.AdoptCopyConflicting = conflicting
 	s.items[key] = r
 	s.dirty = true
 }
@@ -1735,14 +1799,23 @@ func (s *Store) Forget(key string) {
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped
-// listing). Returns how many were dropped.
+// listing). Returns how many were dropped. Author-wide trust-promotion
+// records (TrustPromotionKey) are per contributor, not per item, and
+// dropping one re-announces a promotion, so they outlive maxAge: they are
+// dropped only once unseen for trustPromotionRetention (or maxAge if longer).
 func (s *Store) Prune(maxAge time.Duration) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cutoff := s.now().Add(-maxAge)
+	now := s.now()
+	cutoff := now.Add(-maxAge)
+	trustCutoff := now.Add(-max(maxAge, trustPromotionRetention))
 	n := 0
 	for k, r := range s.items {
-		if r.LastSeen.Before(cutoff) {
+		c := cutoff
+		if strings.HasPrefix(k, trustPromotionKeyPrefix) {
+			c = trustCutoff
+		}
+		if r.LastSeen.Before(c) {
 			delete(s.items, k)
 			n++
 		}
@@ -1751,6 +1824,85 @@ func (s *Store) Prune(maxAge time.Duration) int {
 		s.dirty = true
 	}
 	return n
+}
+
+// trustPromotionKeyPrefix prefixes the per-author records that remember
+// whether the contributor lane announced an author's auto-promotion.
+const trustPromotionKeyPrefix = "trust-promoted:"
+
+// trustPromotionRetention bounds how long an unseen trust-promotion record
+// is kept before Prune drops it.
+const trustPromotionRetention = 180 * 24 * time.Hour
+
+// TrustPromotionKey is the store key for an author's auto-promotion
+// record. Promotion is a property of the author in the hive, not of a PR
+// (hivecommons/hive#15443), so the key carries the login only.
+func TrustPromotionKey(login string) string {
+	return trustPromotionKeyPrefix + strings.ToLower(strings.TrimSpace(login))
+}
+
+// ClaimTrustPromotionAnnouncement records that login is currently
+// auto-promoted and reports whether the caller should post the one
+// author-wide announcement: true exactly once per promotion, for the first
+// caller after the author gained (or regained) it; false when the comment
+// was already posted or another PR of the author claimed it this cycle. The
+// claim is taken before the comment is posted so concurrent PRs by the
+// author cannot both announce; ReleaseTrustPromotionAnnouncement undoes it
+// when the post fails.
+func (s *Store) ClaimTrustPromotionAnnouncement(login string) bool {
+	if s == nil || strings.TrimSpace(login) == "" {
+		return false
+	}
+	key := TrustPromotionKey(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[key]
+	claimed := r.TrustAnnouncedAt.IsZero()
+	now := s.now()
+	if claimed {
+		r.TrustAnnouncedAt = now
+	}
+	r.LastSeen = now
+	s.items[key] = r
+	s.dirty = true
+	return claimed
+}
+
+// ReleaseTrustPromotionAnnouncement forgets a claim whose comment did not
+// land, so the next PR by the author announces instead.
+func (s *Store) ReleaseTrustPromotionAnnouncement(login string) {
+	if s == nil {
+		return
+	}
+	key := TrustPromotionKey(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.TrustAnnouncedAt.IsZero() {
+		return
+	}
+	r.TrustAnnouncedAt = time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearTrustPromotion forgets the author's promotion (revert or sentinel
+// evidence demoted them) so regaining it is announced once more.
+func (s *Store) ClearTrustPromotion(login string) {
+	if s == nil {
+		return
+	}
+	s.Forget(TrustPromotionKey(login))
+}
+
+// TrustPromotionAnnounced reports whether the author's promotion comment
+// was posted (dashboard and tests).
+func (s *Store) TrustPromotionAnnounced(login string) bool {
+	if s == nil {
+		return false
+	}
+	r, ok := s.Get(TrustPromotionKey(login))
+	return ok && !r.TrustAnnouncedAt.IsZero()
 }
 
 // Keys lists the stored keys, sorted (for tests and the dashboard).
@@ -1945,6 +2097,21 @@ func HiveHeld(r Record, overrides map[string]time.Duration, now time.Time) bool 
 	}
 	d := Dwell(r.Stage, overrides)
 	return d > 0 && r.QuietFor(now) >= d
+}
+
+// NoteLabelsSuppressed records whether the last stage-label write for key
+// was kept off GitHub by the write-back gate. A missing record is left
+// missing.
+func (s *Store) NoteLabelsSuppressed(key string, suppressed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.LabelsSuppressed == suppressed {
+		return
+	}
+	r.LabelsSuppressed = suppressed
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkHiveHeldWarned records that the hive-held alert was logged for key.

@@ -554,8 +554,30 @@ func (p *GitHubProxy) logUpstreamEvent(level slog.Level, msg string, err error, 
 	p.logger.Log(context.Background(), level, msg, attrs...)
 }
 
+// timeoutWarnWindow bounds how often the same timeout message logs at WARN.
+const timeoutWarnWindow = 5 * time.Minute
+
+// logTimeout warns on the first occurrence of a timeout message per window;
+// repeats within the window drop to Debug. Transient upstream timeouts are
+// expected and must not flood WARN consumers such as the fleet self-reporter.
 func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
-	p.logUpstreamEvent(slog.LevelWarn, msg, err, attrs...)
+	// Non-timeout errors (EOF, reset) log nothing, so they must not consume
+	// the WARN window ahead of the next real timeout.
+	if !isTimeoutError(err) {
+		return
+	}
+	level := slog.LevelDebug
+	now := time.Now()
+	p.timeoutWarnMu.Lock()
+	if last, ok := p.timeoutWarnAt[msg]; !ok || now.Sub(last) >= timeoutWarnWindow {
+		if p.timeoutWarnAt == nil {
+			p.timeoutWarnAt = make(map[string]time.Time)
+		}
+		p.timeoutWarnAt[msg] = now
+		level = slog.LevelWarn
+	}
+	p.timeoutWarnMu.Unlock()
+	p.logUpstreamEvent(level, msg, err, attrs...)
 }
 
 // isClientHangup reports a client that went away (EOF, reset, broken pipe) or

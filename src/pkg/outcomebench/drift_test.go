@@ -10,14 +10,9 @@ import (
 	"testing"
 )
 
-// TestCommittedReportMatchesReadme regenerates the newest committed report
-// from its JSON and asserts the README outcomes block, the markdown and the
-// SVG assets are exactly what the generator emits, so none of them can
-// drift from the data. The PNG cards are checked by size and by the source
-// hash they carry (pixels differ slightly by platform, so bytes are not
-// compared). Fix with: src/scripts/outcome-benchmark.sh --readme (or
-// hivectl evidence benchmark … --readme README.md).
-func TestCommittedReportMatchesReadme(t *testing.T) {
+// TestCommittedReportAssets regenerates the benchmark from its JSON.
+// The hand-written root README has separate snapshot and asset checks.
+func TestCommittedReportAssets(t *testing.T) {
 	docDir := filepath.Join("..", "..", "docs", "benchmarks")
 	reports, err := filepath.Glob(filepath.Join(docDir, "outcomes-*.json"))
 	if err != nil || len(reports) == 0 {
@@ -32,23 +27,6 @@ func TestCommittedReportMatchesReadme(t *testing.T) {
 	var rep Report
 	if err := json.Unmarshal(data, &rep); err != nil {
 		t.Fatalf("%s: %v", latest, err)
-	}
-	want := rep.ReadmeBlock("src/docs/benchmarks")
-
-	readme, err := os.ReadFile(filepath.Join("..", "..", "..", "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := ExtractReadmeBlock(string(readme))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Errorf("README outcomes block drifted from %s; regenerate with src/scripts/outcome-benchmark.sh --readme\n--- README\n%s\n--- regenerated\n%s", latest, got, want)
-	}
-	// The ladder card sits outside the generated block but is still generated.
-	if !strings.Contains(string(readme), rep.HowItWorksPicture("src/docs/benchmarks")) {
-		t.Errorf("README does not embed the how-it-works card: expected\n%s", rep.HowItWorksPicture("src/docs/benchmarks"))
 	}
 	base := strings.TrimSuffix(latest, ".json")
 	check := func(path, want string) {

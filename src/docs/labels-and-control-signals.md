@@ -694,7 +694,7 @@ Below L6 this resolves off for every repo; at L6, PRs can still be opened, revie
 
 **Release or override.** Dashboard repo-card switch or config edit sets `auto_merge: true`/removes the override at L6; enabling is rejected below L6
 
-**Configuration and implementation.** `project.repo_policies[].auto_merge` (`src/pkg/config/repo_policy.go`, `src/pkg/agent/manager_modes.go`, `src/pkg/github/automerge/automerge_sweep.go`, `src/pkg/proxy/rules.go`)
+**Configuration and implementation.** `project.repo_policies[].auto_merge` (`src/pkg/config/repo_policy.go`, `src/crux/agent/manager_modes.go`, `src/pkg/github/automerge/automerge_sweep.go`, `src/crux/proxy/rules.go`)
 
 #### `do-not-merge` and `do-not-merge*`
 
@@ -1184,6 +1184,7 @@ stateDiagram-v2
     s100 --> s070: new head red (backward hop, commented)
     s100 --> s072: contributor head red (backward hop, commented)
     s070 --> s050: fixed head pushed
+    s070 --> s085: the hive's adoption copy (hive/adopt-N) still conflicts with the base after the fixer's two rebase-resolve attempts (rebase-failed-twice)
     s071 --> s050: author pushes a new head
     s072 --> s050: author pushes a new head
     s072 --> s074: contributor agent unavailable (offline / unregistered / grace), adopted in place or superseded
@@ -1192,6 +1193,7 @@ stateDiagram-v2
     s074 --> s100: lane admits the hive's head, soak complete
     s074 --> [*]: superseder merged (original closed); close_first (default) closes the original in the adopting pass instead
     s074 --> s085: close-first copy closed unmerged or red at two heads → original reopened, adoption-copy-failed
+    s074 --> s085: the superseding copy still conflicts with the base after the fixer's two rebase-resolve attempts (adoption-stalled:rebase-failed-twice; Adopt into fresh branch / Close as superseded)
     s074 --> s072: superseder closed unmerged, or contributor pushed over an in-place adoption (handed back; 050 if that head is green)
     s074 --> s085: adopted head unchanged past the dwell with CI idle and a real blocker the hive cannot push past (adoption-stalled:<reason>; a red optional check alone never counts), or the re-home failed
     s085 --> s074: the adoption-stalled reason cleared (CI re-ran, check green, verdict landed); escalation released
@@ -1991,7 +1993,9 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      `adoption-stalled:<lane reason>` (e.g.
      `adoption-stalled:reviewer-verdict:changes_requested`,
      `adoption-stalled:check-failing:unit`,
-     `adoption-stalled:supersede-failed:dco-rehome`) and ONE
+     `adoption-stalled:supersede-failed:dco-rehome`,
+     `adoption-stalled:rebase-failed-twice` when the hive's copy still
+     conflicts after the fixer's two rebase-resolve attempts) and ONE
      `<!-- hive:adoption-stalled head=<sha> reason=<r> -->` comment naming
      the exact blocker (the verdict and its summaries, the red check, or the
      failed re-home). The dwell is measured from the head, not the adoption:
@@ -2041,7 +2045,13 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      table in
      [operator-reference.md](operator-reference.md#what-hive-writes-to-github-and-when)):
      refused, nothing is written and the original stays open on the
-     keep-open path below until the copy merges. `close_first: false` restores the keep-open behaviour
+     keep-open path below until the copy merges. A clanker- or
+     hive-authored original does not need the label: the gate admits its
+     close as `superseded-agent-pr` by policy
+     (`governor.labels.stage.adoption.close_superseded`, `on_adopt` by
+     default, `on_merge` to keep it open until the copy merges), because
+     the copy carries the same commits and sign-off
+     (hivecommons/hive#15526). `close_first: false` restores the keep-open behaviour
      below: the note has no `close_first` field, the original moves to
      `stage/074-adopted-by-hive` (its linked issue mirrors the stage) and
      closes only when the copy merges. The hub drops the PR from the
@@ -2360,6 +2370,9 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `ci-ratchet` | a CI hygiene gate, landed as a ratchet | A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked. |
 | `contributor-offline` | the author hasn't been reachable since the nudge | The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author. |
 | `dedupe` | an older issue already tracks this | An older issue already tracks the same work; one thread keeps it moving. |
+| `proposal-approve-evidence` | a proposal backed by an incident or a repeated class; approved | The hive-filed proposal names an incident it would have prevented, or prior instances of the same class fixed one at a time, so its cost is justified and it is approved as proposed. |
+| `proposal-not-now` | a hive-filed proposal with no incident or recurrence behind it; declined for now | The proposal shows neither an incident it would have prevented nor a repeated class it would end, so its value is speculative. The hive declines it for now and closes it as not planned; re-propose with evidence. |
+| `selfreport-operator-action` | a spoke self-report only its operator can fix; not code work | The issue is a fleet self-report (expired login, credentials, disk, network, App setup) whose remedy is on the reporting spoke. The hive tells that spoke's owner what to do and keeps it out of the actionable set; no agent is sent to code. |
 | `default-approve` | no special rule applies; the hive took its own recommendation | No owner rule singles this issue out, so the hive went with its own recommendation — the reversible choice that keeps work moving. |
 | `default-release` | no special rule applies; a green branch is approved | No owner rule holds this PR back; its branch is green and a merge is reversible, so it is approved. |
 | `design-proposal` | a proposal with clear acceptance criteria, accepted as written | The proposal states concrete acceptance criteria, so it is accepted as written; anything not stated keeps today's behaviour. |
@@ -2367,7 +2380,8 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `flaky-test` | a flaky test, quarantined with a retry | The failure is a flaky test: it is quarantined with a retry and a separate deflake task is filed, so it blocks nothing. |
 | `hive-policy` | this changes the hive's own rules | This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms. |
 | `llm-delegate` | decided by the hive's model under the owner's rules | No mechanical rule applied, so the hive's model decided under the owner's standing rules; the same safety rails applied. |
-| `mergeable-as-is` | mergeable and green as it is; handed to the merge gate | The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge gate takes it as it is. |
+| `mergeable-as-is` | mergeable and green as it is; handed to the merge queue | The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge queue takes it as it is. |
+| `one-pr-per-issue` | two PRs fix the same issue; the merge queue keeps one | Two open PRs declare the same closing issue. The merge queue carries one PR per issue — a green head first, then the earlier-opened — and the other closes as superseded with credit. |
 | `owner-only`, `owner_only` | only the hive owner can do this | This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you. |
 | `prefer-contributor` | a contributor's PR and a hive PR do the same work | A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current. |
 | `rail-hold` | the item is on hold | The item carries the hold label; the hive never acts on a held item until a person releases the hold. |
@@ -2387,7 +2401,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `accept-ratchet` | accepted as a ratchet | Accepted as a ratchet: baseline recorded now, failures only on increases. |
 | `adopt` | hive takes over finishing this PR | Adopt means the hive takes over finishing this PR: it rebases, fixes CI and merges it, keeping the author's commits and sign-off. |
 | `adopt-supersede`, `adopted`, `adoption/supersede`, `supersede`, `supersede-now` | close this PR and open a fresh hive-authored PR with the same commits | Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself. |
-| `approve`, `approve-review`, `approved` | approved for merge | The hive approved it; the merge gate merges it once every check passes. |
+| `approve`, `approve-review`, `approved` | approved for merge | The hive approved it; the merge queue merges it once every check passes. |
 | `close-as-duplicate`, `close-duplicate` | closed as a duplicate | Closed because an older item already tracks the same work. |
 | `close-superseded`, `closed`, `superseded` | closed because another PR carries the work | Closed because another PR carries the same work; the author is credited there. |
 | `comment-decision` | recorded the decision on GitHub | The hive posted the decision as a `/hive decision` comment, the way a maintainer would. |
@@ -2395,6 +2409,8 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `labels-add` | added labels | The hive added labels to the item. |
 | `labels-remove` | removed labels | The hive removed labels from the item. |
 | `link` | cross-linked a related item | The hive left a comment linking a related issue or PR. |
+| `not-now`, `close-not-now` | declined for now; closed as not planned | The hive declined the proposal for now and closed it as not planned, with the reason and what evidence would reopen it. |
+| `operator-action` | told the spoke owner what to do; nothing for an agent here | The hive named the spoke owner and the one action they take (for example re-authenticate the provider). The item stays parked, gets no approved-direction, and clears when the report stops recurring. |
 | `quarantine-flaky` | quarantined the flaky test | The flaky test is quarantined with a retry and a deflake task is filed. |
 | `recommend-only`, `recommended` | recommended only; a person confirms | The hive only recommended; the item stays parked until a person confirms. |
 | `refused` | did not decide | The hive did not decide this item; its safety rails stopped it (for example, the item is on hold). |
@@ -2411,7 +2427,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `author-online` | the author's clanker or hive is connected, so hive won't take the PR over | Adoption is for authors whose clanker or hive has gone offline; this author's is connected, so the hive leaves the PR with them. |
 | `blocker`, `capability`, `human-only` | the hive can't do this itself | The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099). |
 | `behind` | the branch is behind the base branch | The branch is behind the base branch and must be updated before it can merge. |
-| `changes-requested`, `changes_requested`, `contributor-lane:changes-requested`, `human-changes-requested`, `request_changes`, `reviewer-verdict:request_changes` | a reviewer asked for changes; inspect whether the objection is from the swarm or a human | A new commit can address the objection. A trusted human's GitHub APPROVED review on the exact head can override any non-approved **swarm** outcome at the merge review gate, including `changes_requested`/`reject`; for swarm-review purposes, `/hive decision approve` only answers `requires_human`. This does not bypass an independent human change request or any other merge gate. |
+| `changes-requested`, `changes_requested`, `contributor-lane:changes-requested`, `human-changes-requested`, `request_changes`, `reviewer-verdict:request_changes` | a reviewer asked for changes; inspect whether the objection is from the swarm or a human | A new commit can address the objection. A trusted human's GitHub APPROVED review on the exact head can override any non-approved **swarm** outcome at the merge review gate, including `changes_requested`/`reject`; for swarm-review purposes, `/hive decision approve` only answers `requires_human`. This does not bypass an independent human change request or any other merge queue. |
 | `checks-failing`, `ci-failing`, `ci-red`, `red` | CI is failing on this branch | Required checks are failing on this branch; nothing merges until they are green. |
 | `conflict`, `conflicting`, `dirty` | the branch conflicts with the base branch | The branch has merge conflicts with the base branch; it needs a rebase before anything can merge. |
 | `contributor-lane:sentinel-blocked`, `sentinel`, `sentinel-alert`, `sentinel-blocked` | security-sensitive files changed; a maintainer must approve | Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label. |
@@ -2422,8 +2438,8 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `no-effect` | the decision hasn't taken effect | The hive recorded this decision, but what it was supposed to cause has not happened within the expected time. |
 | `no-new-commit` | no new commit has been pushed | The hive gave direction, but no new commit has been pushed yet. |
 | `not-closed-yet` | the close didn't land | The hive decided to close it, but it is still open; the close call did not land. |
-| `not-merged-yet` | the merge gate hasn't merged it | The hive approved it but the merge gate has not merged it; its lane reason says what still blocks it. |
-| `self-decision-read-as-changes` | hive's own decision comment was read as a reviewer asking for changes | The merge gate read the hive's own `/hive decision` comment as a reviewer asking for changes, so the decision blocked the PR it meant to advance (hivecommons/hive#14822). A new commit or a maintainer merge clears it. |
+| `not-merged-yet` | the merge queue hasn't merged it | The hive approved it but the merge queue has not merged it; its lane reason says what still blocks it. |
+| `self-decision-read-as-changes` | hive's own decision comment was read as a reviewer asking for changes | The merge queue read the hive's own `/hive decision` comment as a reviewer asking for changes, so the decision blocked the PR it meant to advance (hivecommons/hive#14822). A new commit or a maintainer merge clears it. |
 | `still-parked` | the item is still waiting on a person | The item is still parked for a person's decision; the recorded decision did not move it. |
 
 A `/hive decision …` comment the hive itself wrote as the owner's delegate (it carries the delegated-decision marker) is never read as a maintainer's command: not as a change request on the PR, not as an approval. [#14822](https://github.com/hivecommons/hive/pull/14822) fixes the parse of `/hive decision approve <rationale>`; the marker guard covers every other decision text the delegate can post, whichever login it was posted under.

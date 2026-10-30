@@ -66,8 +66,10 @@ func TestStageTrackerCloseFirstCopyFailedSaysWhy(t *testing.T) {
 // A closed original (#15184, closed first when its copy #15247 opened)
 // must not ride under its issue as a bare sub-row with an empty ladder:
 // the claims index still names it "open" for a while, and the status
-// enumeration's bucket reason still names it. The live copy keeps the
-// trace as `supersedes` metadata only (hivecommons/hive#15135 follow-up).
+// enumeration's bucket reason still names it. It rides as the muted
+// "superseded · closed · hive adopted → #15247" line while the copy is
+// open (hivecommons/hive#15511), and the live copy keeps the trace as
+// `supersedes` metadata (hivecommons/hive#15135 follow-up).
 func TestStageTrackerClosedSupersededPRNotASubRow(t *testing.T) {
 	now := time.Date(2026, 10, 29, 2, 30, 0, 0, time.UTC)
 	s := newTestServer()
@@ -100,8 +102,11 @@ func TestStageTrackerClosedSupersededPRNotASubRow(t *testing.T) {
 		}
 	}
 	issue := trackerItem(t, resp, "issue", 15183)
-	if len(issue.LinkedPRs) != 1 || issue.LinkedPRs[0].Number != 15247 {
-		t.Fatalf("issue 15183 linked_prs = %+v (want only the live copy #15247)", issue.LinkedPRs)
+	if len(issue.LinkedPRs) != 2 || issue.LinkedPRs[0].Number != 15247 || issue.LinkedPRs[1].Number != 15184 {
+		t.Fatalf("issue 15183 linked_prs = %+v (want the live copy #15247 and the muted closed original)", issue.LinkedPRs)
+	}
+	if c := issue.LinkedPRs[1]; c.State != "closed" || c.SupersededBy != 15247 || c.Caption != "superseded · closed · hive adopted → #15247" || c.Title == "" || c.Stage != 0 {
+		t.Fatalf("closed original must be the muted line, never a bare numbered row: %+v", c)
 	}
 	lp := issue.LinkedPRs[0]
 	if lp.Stage != 70 || lp.Title == "" {
@@ -217,4 +222,58 @@ assert.strictEqual(stageTrackerLinkedPRItem(issue, { number: 2 }).supersedes, nu
 `,
 	}, "\n")
 	runStageTrackerRowActionsScript(t, script)
+}
+
+// hivecommons/hive#15307: a copy the fixer is rebasing reads "Adopting ·
+// fixer resolving conflicts" (one label) at 074 and, once the episode is
+// spent, 085 offers Adopt into fresh branch / Close as superseded.
+func TestStageTrackerAdoptionCopyResolvingConflicts(t *testing.T) {
+	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
+	s, store, status, key := orphanTrackerFixture(t, now, stagelabels.AdoptedByHive, "conflicting", []string{"stage/074-adopted-by-hive", "needs-rebase"})
+	store.MarkAdopted(key, "bc3a6ea", 15123, now.Add(-time.Hour))
+	store.NoteAdoptCopyConflicting(key, true)
+
+	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14947)
+	if it.AdoptedBy != 15123 || it.AdoptedByState != "resolving-conflicts" {
+		t.Fatalf("adopted_by=%d state=%q", it.AdoptedBy, it.AdoptedByState)
+	}
+	if !strings.Contains(it.Caption, "Adopting") || !strings.Contains(it.Caption, "#15123") || !strings.Contains(it.Caption, "fixer is resolving the conflicts") {
+		t.Fatalf("caption = %q", it.Caption)
+	}
+
+	reason := stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonRebaseFailedTwice
+	store.MarkAdoptionEscalated(key, "bc3a6ea", reason)
+	store.Observe(key, stagelabels.NeedsDecision, reason)
+	status.Repos[0].OpenPrs = []any{FrontendPR{PullRequest: github.PullRequest{Number: 14947, Title: "Fix", Author: "thatguywob", HeadSHA: "bc3a6ea", Labels: []string{"author/clanker", "role/contributor", "stage/085-needs-decision", "needs-rebase"}}}}
+	s.UpdateStatus(status)
+	it = trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14947)
+	if !strings.Contains(it.Caption, "Rebase failed twice") || !strings.Contains(it.Caption, "#15123") {
+		t.Fatalf("085 caption = %q", it.Caption)
+	}
+	d := it.DecisionNeeded
+	if d == nil || !strings.Contains(d.Question, "two attempts") || len(d.Options) < 2 || d.Options[0].Action != decisionActionAdopt || d.Options[0].Label != "Adopt into fresh branch" {
+		t.Fatalf("decision_needed = %+v", d)
+	}
+	closeSup := false
+	for _, o := range d.Options {
+		closeSup = closeSup || (o.Action == decisionActionCloseSuperseded && o.Label == "Close as superseded")
+	}
+	if !closeSup {
+		t.Fatalf("Close as superseded missing: %+v", d.Options)
+	}
+
+	// The hive's own copy at 085 rebase-failed-twice gets the same options.
+	copyItem := StageTrackerItem{Repo: "hivecommons/hive", Number: 15123, Kind: "pr", Stage: 85, Reason: stagelabels.LaneReasonRebaseFailedTwice}
+	cd := decisionForPR(copyItem, nil, "", false)
+	if cd.Options[0].Action != decisionActionAdopt || !strings.Contains(cd.Question, "fresh branch") {
+		t.Fatalf("copy decision = %+v", cd)
+	}
+
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, strings.Join([]string{
+		"const assert = require('assert');",
+		jsConstLine(t, html, "STAGE_TRACKER_ADOPTED_BY_HIVE"),
+		jsFunc(t, html, "stageTrackerAdoptedWord"),
+		`assert.strictEqual(stageTrackerAdoptedWord({ adopted_by: 15123, adopted_by_state: 'resolving-conflicts' }), 'Adopting · fixer resolving conflicts');`,
+	}, "\n"))
 }

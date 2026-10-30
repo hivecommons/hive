@@ -28,6 +28,7 @@ import (
 	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/writeback"
 	"gopkg.in/yaml.v3"
 )
@@ -1571,10 +1572,16 @@ type GovernorConfig struct {
 	// CIFailureKickCooldownS (default 600) bounds webhook-triggered kicks
 	// to one per PR head in that window. See docs/operator-reference.md
 	// "Webhook-driven CI failure reaction".
-	CIFailureWebhookKick       *bool `yaml:"ci_failure_webhook_kick,omitempty"`
-	CIFailureKickCooldownS     int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
-	ConserveIntervalMultiplier int   `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int   `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
+	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// MergeTrainStallWarnS is how long, in seconds, a merge train's head
+	// may sit without progressing before the Activity Monitor marks the
+	// train stalled on the queued rows' chips and the dashboard writes one
+	// activity-log warning per hour (default DefaultMergeTrainStallWarnS,
+	// hivecommons/hive#15395).
+	MergeTrainStallWarnS       int `yaml:"merge_train_stall_warn_s,omitempty"`
+	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -1695,6 +1702,20 @@ type GovernorConfig struct {
 	// person's PR is never closed by this rule; it keeps the notice and
 	// the stage/085 decision park. Default on (hivecommons/hive#14965).
 	AutoCloseSuperseded *bool `yaml:"auto_close_superseded,omitempty" json:"auto_close_superseded,omitempty"`
+
+	// Hotspot* tune the merge-hotspot advisor, which scores files that
+	// concurrent PRs keep touching (from merge-train file lists and
+	// rebase-conflict records the hive already holds — no extra GitHub
+	// polling) and files one modularize issue per hotspot for the
+	// ci-maintainer lane through the writeback gate. Zero means the
+	// default; see Hotspot*() accessors. Set hotspot_enabled: false to
+	// keep GET /api/hotspots reporting but never file an issue.
+	HotspotEnabled     *bool `yaml:"hotspot_enabled,omitempty" json:"hotspot_enabled,omitempty"`
+	HotspotWindowDays  int   `yaml:"hotspot_window_days,omitempty" json:"hotspot_window_days,omitempty"`
+	HotspotMinPRs      int   `yaml:"hotspot_min_prs,omitempty" json:"hotspot_min_prs,omitempty"`
+	HotspotMinOverlaps int   `yaml:"hotspot_min_overlaps,omitempty" json:"hotspot_min_overlaps,omitempty"`
+	HotspotMinLines    int   `yaml:"hotspot_min_lines,omitempty" json:"hotspot_min_lines,omitempty"`
+	HotspotRefileDays  int   `yaml:"hotspot_refile_days,omitempty" json:"hotspot_refile_days,omitempty"`
 
 	// ProjectObservability configures what the telemetry and operations agents
 	// recommend for the MANAGED PROJECT. It is deliberately separate from
@@ -2193,6 +2214,52 @@ func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 // with its default (on).
 func (g GovernorConfig) AutoCloseSupersededEnabled() bool {
 	return g.AutoCloseSuperseded == nil || *g.AutoCloseSuperseded
+}
+
+// Defaults for the merge-hotspot advisor (GovernorConfig.Hotspot*).
+const (
+	DefaultHotspotWindowDays  = 7
+	DefaultHotspotMinPRs      = 6
+	DefaultHotspotMinOverlaps = 3
+	DefaultHotspotMinLines    = 800
+	DefaultHotspotRefileDays  = 30
+)
+
+// HotspotIssuesEnabled resolves GovernorConfig.HotspotEnabled (default on).
+func (g GovernorConfig) HotspotIssuesEnabled() bool {
+	return g.HotspotEnabled == nil || *g.HotspotEnabled
+}
+
+func hotspotOrDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
+}
+
+// HotspotWindowDaysOrDefault resolves governor.hotspot_window_days.
+func (g GovernorConfig) HotspotWindowDaysOrDefault() int {
+	return hotspotOrDefault(g.HotspotWindowDays, DefaultHotspotWindowDays)
+}
+
+// HotspotMinPRsOrDefault resolves governor.hotspot_min_prs.
+func (g GovernorConfig) HotspotMinPRsOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinPRs, DefaultHotspotMinPRs)
+}
+
+// HotspotMinOverlapsOrDefault resolves governor.hotspot_min_overlaps.
+func (g GovernorConfig) HotspotMinOverlapsOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinOverlaps, DefaultHotspotMinOverlaps)
+}
+
+// HotspotMinLinesOrDefault resolves governor.hotspot_min_lines.
+func (g GovernorConfig) HotspotMinLinesOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinLines, DefaultHotspotMinLines)
+}
+
+// HotspotRefileDaysOrDefault resolves governor.hotspot_refile_days.
+func (g GovernorConfig) HotspotRefileDaysOrDefault() int {
+	return hotspotOrDefault(g.HotspotRefileDays, DefaultHotspotRefileDays)
 }
 
 // Bounds for AdvisoryConfig.UpdateIntervalS. Exported because the dashboard
@@ -2827,6 +2894,14 @@ type StageAdoptionConfig struct {
 	// profile on this hive (another hive posted it; default 15m — no
 	// presence reads as offline).
 	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
+	// OfflineGrace is the stage-stalled escape for an adoption attempt that
+	// opened nothing (the supersede's replay onto the base failed) while
+	// the author's clanker is still offline or unregistered: once the head
+	// has sat that long since the attempt (or the clanker's last heartbeat,
+	// whichever is later) it re-enters adoption instead of staying at
+	// 072/085 for a contributor who cannot act (default 30m;
+	// hivecommons/hive#15307).
+	OfflineGrace string `yaml:"offline_grace,omitempty"`
 	// InPlace lets the hive adopt by pushing to the PR's own branch when
 	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
 	// opening a superseding App PR. nil = true.
@@ -2853,9 +2928,44 @@ type StageAdoptionConfig struct {
 	// AdoptionMaintainerPolicyNever is the pre-#14524 rule: the hive never
 	// takes a maintainer's PR over and releases any adoption of one.
 	MaintainerPolicy string `yaml:"maintainer_policy,omitempty"`
+	// CloseSuperseded says when a supersede adoption closes a clanker- or
+	// hive-authored original once the hive's copy carries its commits
+	// (hivecommons/hive#15526 sat open as "Adopted → #15574 · superseded"
+	// because the write-back gate wanted a repo opt-in label the
+	// contributor_adopt kind requires on items the hive did not author):
+	// AdoptionCloseSupersededOnAdopt (default) closes it in the adopting
+	// pass by policy — an agent's PR the hive re-authored is one logical PR,
+	// so no opt-in label is asked for; AdoptionCloseSupersededOnMerge keeps
+	// it open until the copy merges. Human-authored originals are not
+	// governed here: they close in the adopting pass only when they carry
+	// a writeback opt-in label (writeback.kinds.contributor_adopt), else
+	// when the copy merges.
+	CloseSuperseded string `yaml:"close_superseded,omitempty"`
 	// Supersede tunes supersede-mode adoption (the hive-authored copy from
 	// hive/adopt-<n>).
 	Supersede StageAdoptionSupersedeConfig `yaml:"supersede,omitempty"`
+}
+
+// Values for governor.labels.stage.adoption.close_superseded.
+const (
+	AdoptionCloseSupersededOnAdopt = "on_adopt"
+	AdoptionCloseSupersededOnMerge = "on_merge"
+	DefaultAdoptionCloseSuperseded = AdoptionCloseSupersededOnAdopt
+)
+
+// AdoptionCloseSupersededValues lists the accepted close_superseded values.
+var AdoptionCloseSupersededValues = []string{AdoptionCloseSupersededOnAdopt, AdoptionCloseSupersededOnMerge}
+
+// EffectiveCloseSuperseded normalises CloseSuperseded; empty or unknown
+// reads as the default (on_adopt).
+func (c StageAdoptionConfig) EffectiveCloseSuperseded() string {
+	v := strings.ToLower(strings.TrimSpace(c.CloseSuperseded))
+	for _, p := range AdoptionCloseSupersededValues {
+		if v == p {
+			return p
+		}
+	}
+	return DefaultAdoptionCloseSuperseded
 }
 
 // StageAdoptionSupersedeConfig is governor.labels.stage.adoption.supersede.
@@ -2921,7 +3031,13 @@ func (c StageAdoptionConfig) StrictAttributionEnabled() bool {
 const (
 	DefaultAdoptAfterOffline      = 15 * time.Minute
 	DefaultAdoptAfterUnregistered = 15 * time.Minute
+	DefaultAdoptOfflineGrace      = 30 * time.Minute
 )
+
+// EffectiveOfflineGrace parses OfflineGrace (default 30m).
+func (c StageAdoptionConfig) EffectiveOfflineGrace() time.Duration {
+	return parseDurationOr(c.OfflineGrace, DefaultAdoptOfflineGrace)
+}
 
 // EffectiveAfterOffline parses AfterOffline (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
@@ -4921,6 +5037,15 @@ func (c *Config) CIFailureKickCooldown() time.Duration {
 	return DefaultCIFailureKickCooldownS * time.Second
 }
 
+// MergeTrainStallWarn is the effective governor.merge_train_stall_warn_s as
+// a duration (default one hour).
+func (c *Config) MergeTrainStallWarn() time.Duration {
+	if c != nil && c.Governor.MergeTrainStallWarnS > 0 {
+		return time.Duration(c.Governor.MergeTrainStallWarnS) * time.Second
+	}
+	return DefaultMergeTrainStallWarnS * time.Second
+}
+
 type DashboardIssueBandsConfig struct {
 	WaitingLabels []string `yaml:"waiting_labels,omitempty" json:"waiting_labels,omitempty"`
 	DoneLabels    []string `yaml:"done_labels,omitempty" json:"done_labels,omitempty"`
@@ -5849,6 +5974,7 @@ const (
 	DefaultWebhookWakeDebounceS       = 10
 	DefaultWebhookWakeMinGapS         = 30
 	DefaultCIFailureKickCooldownS     = 600
+	DefaultMergeTrainStallWarnS       = 3600
 	DefaultConserveIntervalMultiplier = 2
 	DefaultOptionalSweepEveryNCycles  = 1
 )
@@ -7956,14 +8082,45 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// HumanMergeTitlePrefixes lists title prefixes (matched after trimming
+	// the title) that mark a PR as one the owner merges by hand; no lane and
+	// no merge train merges it (hivecommons/hive#15442). Unset means the
+	// breaking-change sign, ["⚠️", "⚠"] (U+26A0 with and without VS16); an
+	// explicit empty list switches the title half of the rule off.
+	HumanMergeTitlePrefixes []string `yaml:"human_merge_title_prefixes,omitempty" json:"human_merge_title_prefixes,omitempty"`
+	// HumanMergeLabels lists labels (case-insensitive) with the same effect.
+	// Unset means ["needs-owner-merge"]; an explicit empty list switches the
+	// label half of the rule off.
+	HumanMergeLabels []string `yaml:"human_merge_labels,omitempty" json:"human_merge_labels,omitempty"`
 	// RequireCurrentBase lists owner/repo names whose automerge sweeps only
-	// merge a PR head that already contains the current base branch tip.
-	// A head that is green but was tested against an older base is updated
-	// (GitHub update-branch, a merge commit) and merged once CI is green on
-	// the new head, so a semantic conflict with anything merged since shows
-	// up as red CI instead of a broken base. Empty (the default) keeps the
-	// previous behavior: a green head merges even if the base has moved.
+	// merge a PR head that already contains the current base branch tip
+	// (hivecommons/hive#13634). A head that is green but was tested against
+	// an older base is updated (GitHub update-branch, a merge commit) and
+	// merged once CI is green on the new head, so a semantic conflict with
+	// anything merged since shows up as red CI instead of a broken base.
+	//
+	// This list is the explicit per-repo "on" and its STRICT form: a listed
+	// repo never falls back to merging an un-updated head, even when the App
+	// cannot update the branch (fork head without maintainer edits, branch
+	// protection or a missing contents:write). It wins over SkipCurrentBase
+	// and RequireCurrentBaseDefault. The dashboard's per-repo override
+	// ("Merge only on current base: inherit / on / off") writes this list and
+	// SkipCurrentBase (hivecommons/hive#15335).
 	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
+	// RequireCurrentBaseDefault is the hive-wide default of the gate above
+	// for repos in neither RequireCurrentBase nor SkipCurrentBase. nil/unset
+	// means OFF (hivecommons/hive#15335: the owner kept the fleet default off
+	// — the merge train already update-branches overlapping siblings — and
+	// soaks the gate per repo first). The Features dialog toggle "Merge only
+	// on current base" writes it. A repo gated only by this default merges a
+	// behind head the App cannot update as tested, with one WARN per PR, so
+	// turning the default on does not park every fork PR.
+	RequireCurrentBaseDefault *bool `yaml:"require_current_base_default,omitempty" json:"require_current_base_default,omitempty"`
+	// SkipCurrentBase lists owner/repo names explicitly opted OUT of the
+	// current-base gate: a green head there merges even if the base has
+	// moved, whatever RequireCurrentBaseDefault says. A RequireCurrentBase
+	// entry for the same repo wins over this list.
+	SkipCurrentBase []string `yaml:"skip_current_base,omitempty" json:"skip_current_base,omitempty"`
 	// MergeForwardTrustedHuman lists owner/repo names where a role/trusted
 	// author/human PR that GitHub reports as conflicting ("dirty") gets the
 	// base merged into its same-repo head branch as a new App-authored,
@@ -8412,9 +8569,116 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 	return nil
 }
 
-// RequireCurrentBaseFor reports whether repo (owner/repo, matched
-// case-insensitively) is listed in auto_merge.require_current_base.
+// HumanMergeTitlePrefixesEffective returns auto_merge.human_merge_title_prefixes
+// with the default applied when the key is unset (nil). An explicit empty
+// list stays empty.
+func (a AutoMergeConfig) HumanMergeTitlePrefixesEffective() []string {
+	if a.HumanMergeTitlePrefixes == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeTitlePrefixes...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeTitlePrefixes)), a.HumanMergeTitlePrefixes...)
+}
+
+// HumanMergeLabelsEffective returns auto_merge.human_merge_labels with the
+// default applied when the key is unset (nil). An explicit empty list stays
+// empty.
+func (a AutoMergeConfig) HumanMergeLabelsEffective() []string {
+	if a.HumanMergeLabels == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeLabels...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeLabels)), a.HumanMergeLabels...)
+}
+
+// HumanMergeRule is the configured human-merge rule the automerge lanes
+// and the dashboard share.
+func (a AutoMergeConfig) HumanMergeRule() prstage.HumanMergeRule {
+	return prstage.HumanMergeRule{TitlePrefixes: a.HumanMergeTitlePrefixesEffective(), Labels: a.HumanMergeLabelsEffective()}
+}
+
+// RequireCurrentBaseFor reports whether the automerge lanes must see a head
+// that contains the current base tip before merging into repo (owner/repo,
+// matched case-insensitively). Resolution order: an explicit
+// auto_merge.require_current_base entry (on, strict), then
+// auto_merge.skip_current_base (off), then
+// auto_merge.require_current_base_default (unset means off).
 func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return false
+	}
+	if v := a.CurrentBaseOverrideFor(key); v != nil {
+		return *v
+	}
+	return a.CurrentBaseDefaultEnabled()
+}
+
+// CurrentBaseDefaultEnabled reports auto_merge.require_current_base_default
+// with its unset value resolved (off).
+func (a AutoMergeConfig) CurrentBaseDefaultEnabled() bool {
+	return a.RequireCurrentBaseDefault != nil && *a.RequireCurrentBaseDefault
+}
+
+// CurrentBaseOverrideFor returns the explicit per-repo setting of the
+// current-base gate: true when repo is in auto_merge.require_current_base,
+// false when it is in auto_merge.skip_current_base (and not in the former),
+// nil when the repo inherits the hive-wide default.
+func (a AutoMergeConfig) CurrentBaseOverrideFor(repo string) *bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return nil
+	}
+	if repoListSet(a.RequireCurrentBase)[key] {
+		v := true
+		return &v
+	}
+	if repoListSet(a.SkipCurrentBase)[key] {
+		v := false
+		return &v
+	}
+	return nil
+}
+
+// SetCurrentBaseOverride records the dashboard's per-repo tri-state for the
+// current-base gate: true adds repo to require_current_base, false adds it
+// to skip_current_base, nil removes it from both so it inherits the default.
+// The repo is removed from the other list in every case, so a repo is never
+// in both. repo should be owner/repo; matching is case-insensitive.
+func (a *AutoMergeConfig) SetCurrentBaseOverride(repo string, value *bool) {
+	if a == nil {
+		return
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return
+	}
+	drop := func(list []string) []string {
+		out := list[:0:0]
+		for _, r := range list {
+			if !strings.EqualFold(strings.TrimSpace(r), repo) {
+				out = append(out, r)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	a.RequireCurrentBase = drop(a.RequireCurrentBase)
+	a.SkipCurrentBase = drop(a.SkipCurrentBase)
+	switch {
+	case value == nil:
+	case *value:
+		a.RequireCurrentBase = append(a.RequireCurrentBase, repo)
+	default:
+		a.SkipCurrentBase = append(a.SkipCurrentBase, repo)
+	}
+}
+
+// RequireCurrentBaseStrictFor reports whether repo is explicitly listed in
+// auto_merge.require_current_base. A strict repo never merges a head the App
+// could not bring up to date; a repo gated only by the default falls back to
+// merging the green head as tested when update-branch is unavailable.
+func (a AutoMergeConfig) RequireCurrentBaseStrictFor(repo string) bool {
 	return repoListSet(a.RequireCurrentBase)[strings.ToLower(strings.TrimSpace(repo))]
 }
 

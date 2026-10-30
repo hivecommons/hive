@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -34,10 +35,14 @@ type repoItemDecisionMock struct {
 	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
-	prMergeState string
-	updates      int
-	prRedCI      bool
-	prNoCI       bool
+	prFork bool
+	// prNoMaintainerEdits clears maintainer_can_modify on PR #8.
+	prNoMaintainerEdits bool
+	workflowPath        string
+	prMergeState        string
+	updates             int
+	prRedCI             bool
+	prNoCI              bool
 	// priorComments are the comment bodies GET /comments lists (a prior
 	// delegated decision makes a repeat click a no-op).
 	priorComments []string
@@ -61,6 +66,8 @@ type repoItemDecisionMock struct {
 	// already-fixed rung of hivecommons/hive#15289.
 	prBody             string
 	fixedIssueClosedBy int
+	// issueTitle / issueBody shape issue #7 (empty = untitled, no body).
+	issueTitle, issueBody string
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -82,7 +89,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.issueLabels {
 				labels = append(labels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "title": m.issueTitle, "body": m.issueBody, "labels": labels, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/issues/8") || strings.HasSuffix(path, "/issues/9")):
 			n := 8
 			if strings.HasSuffix(path, "/issues/9") {
@@ -100,7 +107,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				http.NotFound(w, r)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": []map[string]any{{"number": m.fixedIssueClosedBy, "url": "https://example.test/pr/" + strconv.Itoa(m.fixedIssueClosedBy), "merged": true, "mergedAt": "2026-10-28T11:00:00Z"}}}}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": []map[string]any{{"number": m.fixedIssueClosedBy, "url": "https://github.com/testorg/testrepo/pull/" + strconv.Itoa(m.fixedIssueClosedBy), "merged": true, "mergedAt": "2026-10-28T11:00:00Z"}}}}}}})
 		case r.Method == http.MethodGet && m.fixedIssueClosedBy > 0 && strings.HasSuffix(path, "/pulls/"+strconv.Itoa(m.fixedIssueClosedBy)):
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": m.fixedIssueClosedBy, "state": "closed", "merged": true, "merged_at": "2026-10-28T11:00:00Z", "merge_commit_sha": "25de3ba24fa0c0ffee0000000000000000000000", "user": map[string]any{"login": "hive[bot]", "type": "Bot"}, "head": map[string]any{"sha": "cafecafecafecafecafecafecafecafecafecafe"}, "base": map[string]any{"ref": "main"}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/90"):
@@ -128,7 +135,19 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.prLabels {
 				prLabels = append(prLabels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
+			headRepo := "testorg/testrepo"
+			if m.prFork {
+				headRepo = "someone/testrepo"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "maintainer_can_modify": !m.prNoMaintainerEdits,
+				"head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface", "repo": map[string]any{"full_name": headRepo}},
+				"base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "testorg/testrepo"}}})
+		case r.Method == http.MethodGet && strings.Contains(path, "/compare/"):
+			files := []map[string]string{}
+			if m.workflowPath != "" {
+				files = append(files, map[string]string{"filename": m.workflowPath})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
 		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/update-branch"):
 			m.updates++
 			w.WriteHeader(http.StatusAccepted)
@@ -214,6 +233,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 	srv.deps.Config.HiveID = "h1"
 	srv.deps.GHClient = github.NewClient("token", "testorg", []string{"testrepo"}, slog.Default(), ghSrv.URL)
 	srv.deps.GHClient.SetAppBotLogin("hive[bot]")
+	// The PR-detail cache is process-global and keyed by repo+number, so a PR
+	// #8 cached by another test (with a different author or labels) would
+	// answer GetPRAuthor/GetPRState here instead of this mock. A zero TTL
+	// turns cache reads off for this client (hivecommons/hive#15461).
+	srv.deps.GHClient.SetPRDetailTTLFunc(func() time.Duration { return 0 })
 	store := review.NewHumanChangeRequests("")
 	prev := repoItemDecisionChangeRequests
 	repoItemDecisionChangeRequests = func() review.HumanChangeRequestStore { return store }
@@ -317,6 +341,32 @@ func TestRepoItemDecisionCloseWontFixCommentsAndCloses(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(decisionAuditActions(srv), ","), auditRepoItemDecisionClose) {
 		t.Fatalf("audit missing %s: %v", auditRepoItemDecisionClose, decisionAuditActions(srv))
+	}
+}
+
+// close-read (hivecommons/hive#15381): an advisory issue is closed as
+// completed through the same comment + close path; a PR is refused.
+func TestRepoItemDecisionCloseReadClosesAsCompleted(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"triage/advisory"}}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecision(t, srv, 7, "writer", `{"decision":"close-read"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("close-read: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "Closed as read (advisory acknowledged) by @writer") {
+		t.Fatalf("comments = %v", mock.comments)
+	}
+	if len(mock.edits) != 1 || mock.edits[0]["state"] != "closed" || mock.edits[0]["state_reason"] != issueStateReasonCompleted {
+		t.Fatalf("edits = %v", mock.edits)
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "closed" || resp.Result == nil || resp.Result.Outcome != "Closed as read (advisory acknowledged)." {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"close-read","type":"pr"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("close-read on a PR: code=%d want 400 body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -683,5 +733,55 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 	// The legacy builder keeps the same shape for callers without facts.
 	if got := repoItemDecisionResult("o/r", 1, "pr", repoItemDecisionApprove, "", "", "", nil); got.Outcome != "Approved #1." {
 		t.Fatalf("legacy = %+v", got)
+	}
+}
+
+// The real hivecommons/hive#15381 shape (a dedupe-checklist advisory: the
+// triage/advisory label, a "Decision required: no" body, bot author) closes
+// as completed with the acknowledgement comment; on a paused repo the same
+// request is a 200 refused result whose Outcome says why, and nothing is
+// written (hivecommons/hive#15436).
+func TestRepoItemDecisionCloseReadAdvisoryFixtureAndPausedRefusal(t *testing.T) {
+	mock := &repoItemDecisionMock{
+		issueLabels: []string{"help wanted", "agent/dedupe", "triage/advisory"},
+		issueTitle:  "triage: duplicate and overlapping open issues/PRs to consolidate",
+		issueBody:   "<!-- hive:dedupe-checklist repo=hivecommons/hive -->\nDecision required: no\n\n## Summary\n\nTriage pass over the 28 open issues and 12 open PRs. Found 0 near-duplicate pairs.",
+	}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecision(t, srv, 7, "writer", `{"decision":"close-read","type":"issue"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("close-read: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "closed" || resp.Result == nil || resp.Result.Action != rowActionClosed {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "Closed as read (advisory acknowledged) by @writer") {
+		t.Fatalf("comments = %v", mock.comments)
+	}
+	if len(mock.edits) != 1 || mock.edits[0]["state"] != "closed" || mock.edits[0]["state_reason"] != issueStateReasonCompleted {
+		t.Fatalf("edits = %v", mock.edits)
+	}
+
+	// Paused repo: refused with a reason, nothing posted.
+	mock.comments, mock.edits = nil, nil
+	srv.deps.Config.Project.PausedRepos = []config.RepoPause{{Repo: "testrepo", By: "clubanderson", Reason: "release freeze"}}
+	t.Cleanup(func() { srv.deps.Config.Project.PausedRepos = nil })
+	w = postRepoItemDecision(t, srv, 7, "writer", `{"decision":"close-read","type":"issue"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("paused close-read: code=%d body=%s", w.Code, w.Body.String())
+	}
+	resp = repoItemDecisionResponse{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != rowActionRefused || resp.Result == nil || resp.Result.Action != rowActionRefused {
+		t.Fatalf("paused resp = %+v", resp)
+	}
+	if !strings.HasPrefix(resp.Result.Outcome, "Close refused: repo paused") || !strings.Contains(resp.Result.Outcome, "release freeze") {
+		t.Fatalf("outcome = %q, want the pause and its reason", resp.Result.Outcome)
+	}
+	if len(mock.comments)+len(mock.edits) != 0 {
+		t.Fatalf("a refused close must write nothing: comments=%v edits=%v", mock.comments, mock.edits)
 	}
 }

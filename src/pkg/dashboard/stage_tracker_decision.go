@@ -6,8 +6,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -46,6 +48,15 @@ type StageTrackerDecision struct {
 	// ("contributor-lane:changes-requested", "sentinel-alert", …).
 	Blocker       string `json:"blocker,omitempty"`
 	BlockerReason string `json:"blocker_reason,omitempty"`
+	// Detail is the technical background the popover folds behind one
+	// collapsed "Details" (how to trust the author, the rails, DCO): never
+	// in the first read (hivecommons/hive#15394).
+	Detail string `json:"detail,omitempty"`
+	// RedundantOf is the PR the reviewer named as already carrying this
+	// PR's change (`<!-- hive-redundant-of: #N -->`), when the question is
+	// "close this as a no-op?" (hivecommons/hive#15499). The popover shows
+	// it as a chip and leads with "Close as superseded".
+	RedundantOf int `json:"redundant_of,omitempty"`
 	// Options are the actions that can advance the item, first the one the
 	// owner asked to lead ("Let hive decide"), under the row context menu's
 	// action ids. A disabled option says why; the SPA further greys out
@@ -129,6 +140,38 @@ func stageTrackerVerdictLookup(artifact *review.Artifact) func(repo string, numb
 		for _, item := range artifact.Items {
 			item = item.Normalize()
 			if item.Number != number || !strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) || !review.SameHeadSHA(item.HeadSHA, head) {
+				continue
+			}
+			if !ok || item.RecordedAt.After(match.RecordedAt) {
+				match, ok = item, true
+			}
+		}
+		return match, ok
+	}
+}
+
+// stageTrackerDecisionVerdictLookup is stageTrackerVerdictLookup with the
+// fallback a parked row needs (hivecommons/hive#15499): when the current
+// head has no verdict yet — the hive moved the branch onto a new base and
+// the re-review is in flight — but the PR is parked at 085 on a reviewer's
+// decision, the question that parked it is the newest decision-requested
+// aggregate on any head of the PR. Without it the popover printed "a
+// reviewer handed this PR to a person without a specific question" while
+// the review on the previous head asked a specific one.
+func stageTrackerDecisionVerdictLookup(artifact *review.Artifact) func(repo string, number int, head string, parkedOnDecision bool) (review.Aggregate, bool) {
+	atHead := stageTrackerVerdictLookup(artifact)
+	return func(repo string, number int, head string, parkedOnDecision bool) (review.Aggregate, bool) {
+		if a, ok := atHead(repo, number, head); ok {
+			return a, true
+		}
+		if !parkedOnDecision || artifact == nil || number == 0 {
+			return review.Aggregate{}, false
+		}
+		var match review.Aggregate
+		var ok bool
+		for _, item := range artifact.Items {
+			item = item.Normalize()
+			if item.Number != number || !strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) || !item.DecisionRequested {
 				continue
 			}
 			if !ok || item.RecordedAt.After(match.RecordedAt) {
@@ -238,8 +281,8 @@ func decisionForParked(it StageTrackerItem, held bool) *StageTrackerDecision {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
 	retry := decisionOption(decisionActionRetry, "Re-evaluate now", true, "")
-	retry.Consequence = "re-reads GitHub and re-derives the stage"
-	d.Options = []StageTrackerDecisionOption{retry, decisionDelegateOption(held, "the hive says in plain words what it can and cannot do here"), decisionHoldOption(held)}
+	retry.Consequence = "Re-reads GitHub and recomputes the stage"
+	d.Options = []StageTrackerDecisionOption{retry, decisionDelegateOption(held, "Hive explains what it can do here"), decisionHoldOption(held)}
 	if !slices.Contains(it.Modifiers, modNeedsHuman) {
 		d.Options = append(d.Options, decisionOption(decisionActionNeedsHuman, "Mark needs-human", true, ""))
 	}
@@ -258,61 +301,133 @@ func decisionForParked(it StageTrackerItem, held bool) *StageTrackerDecision {
 func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision {
 	base, approver := stagelabels.HumanApprovedReason(it.Reason)
 	base = strings.TrimSpace(base)
-	_, word, _ := stageTrackerHumanMergeReason(it.Reason)
+	_, _, tip := stageTrackerHumanMergeReason(it.Reason)
 	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: base}
-	if word == "" {
-		word = "policy"
-	}
 	ref := "#" + strconv.Itoa(it.Number)
+	// First read: one sentence of state, one of why (hivecommons/hive#15394).
 	why := stageTrackerUntrustedAuthorWhy(base, it.Author)
-	if why == "" {
-		why = decisionPlainReason(base)
-		if strings.TrimSpace(base) == "" {
-			why = "the hive's merge rules leave this one to a person"
-		}
+	fix := stageTrackerUntrustedAuthorFix(base, it.Author)
+	switch {
+	case why != "":
+		why = "Hive won't merge it alone — " + why + "."
+	case tip != "":
+		why = sentence(tip)
+	default:
+		why = "Hive's merge rules leave this one to a person."
 	}
-	d.Question = "This PR is ready to merge, but the hive will not merge it by itself (" + word + "): " + why + ". Merge it now, let the hive merge it, or send it back?"
-	d.Blocker = "The hive never merges this unattended. A maintainer merges: here, or on GitHub."
+	d.Question = "Ready to merge. " + why
+	details := []string{"Hive never merges this on its own; a maintainer merges here or on GitHub."}
+	if fix != "" {
+		details = append(details, fix)
+	}
 	if approver != "" {
-		d.Blocker = "Approved by @" + approver + "; the hive still never merges this unattended. A maintainer merges: here, or on GitHub."
+		details = append(details, "Approved by @"+approver+".")
 	}
 	admitter := stagelabels.AdmissionLogin(it.AdmittedBy)
+	breaking := strings.EqualFold(base, stageengineprstage.AutoMergeReasonHumanMergeRequired)
+	if breaking {
+		// No approval lets hive merge a breaking change (hivecommons/hive#15442).
+		admitter = ""
+	}
 	if admitter != "" {
 		// A person already took the trust call for this head (#15136):
 		// the lane merges it as-is; nothing is adopted or re-authored.
-		d.Question = "@" + admitter + " approved this head as the owner decision; the hive's merge sweep merges " + ref + " as-is once CI is green and the head has soaked, and will not adopt or re-author it. Merge it now instead, or send it back?"
-		d.Blocker = "Admitted by @" + admitter + " (" + it.AdmittedBy + "). The hive merges this head on its next pass; a new push drops the admission and asks again."
+		d.Question = "@" + admitter + " approved it. Hive merges it on its next pass."
+		details = []string{"Admitted by @" + admitter + " (" + it.AdmittedBy + "). Hive merges this exact version once CI is green; a new push asks again."}
 	}
-	dco := decisionDCOBlocker(it)
-	if dco != "" {
-		d.Blocker += " " + dco
+	if dco := decisionDCOBlocker(it); dco != "" {
+		details = append(details, dco)
 	}
 	if held {
-		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+		details = append(details, decisionHeldBlocker(it.Hold))
 	}
+	d.Detail = stageTrackerSayOnce(d.Question, details...)
 	mergeNow := decisionMergeNowOption(it, held)
 	queue := decisionOption(decisionActionQueueMerge, "Approve — let hive merge", !held, "Release the hold first")
-	queue.Consequence = "records your approval as the trust override for this head; the hive's merge sweep merges " + ref + " as-is on its next pass once CI is green and the head has soaked, and does not adopt it"
+	queue.Consequence = "Hive merges " + ref + " on its next pass"
 	if admitter != "" && !held {
-		queue.Enabled, queue.ReasonIfDisabled = false, "@"+admitter+" already approved this head; the hive merges it on its next pass"
+		queue.Enabled, queue.ReasonIfDisabled = false, "@"+admitter+" already approved it; hive merges it next pass"
 	}
-	if dco != "" {
+	if breaking {
+		// The lanes skip a breaking-titled / needs-owner-merge PR however
+		// it is queued (hivecommons/hive#15442): the merge-now click is the
+		// one path, so queueing is offered greyed with the reason.
+		queue.Enabled, queue.ReasonIfDisabled = false, "Hive never merges a breaking change; merge it as maintainer"
+	}
+	if it.DCOUnsigned > 0 {
 		mergeNow.Consequence += "; " + decisionDCOConsequence(it)
 		queue.Consequence += "; " + decisionDCOConsequence(it)
 	}
-	direction := decisionOption(decisionActionDirection, "Give direction", it.AuthorKind != authorKindHuman, "The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub")
-	direction.Consequence = "asks the author agent for a new head instead of merging"
+	direction := decisionOption(decisionActionDirection, "Give direction", it.AuthorKind != authorKindHuman, "Hive did not open this PR, so it cannot carry a direction to its author; leave a review on GitHub")
+	direction.Consequence = "Asks the author's agent for changes instead"
 	closeSup := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
-	closeSup.Consequence = "closes " + ref + " unmerged, naming the PR that replaces it"
+	closeSup.Consequence = "Closes " + ref + ", naming the PR that replaces it"
 	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
-	closeWontfix.Consequence = "closes " + ref + " unmerged"
-	delegate := decisionDelegateOption(held, "the hive answers at once why it will not merge this itself and lists these options; it never merges it")
+	closeWontfix.Consequence = "Closes " + ref + " without merging"
+	delegate := decisionDelegateOption(held, "Hive explains and recommends; merges nothing")
 	d.Options = []StageTrackerDecisionOption{mergeNow, queue}
-	if dco != "" {
+	if it.DCOUnsigned > 0 {
 		d.Options = append(d.Options, decisionReauthorOption(it, ref, held))
 	}
 	d.Options = append(d.Options, delegate, direction, closeSup, closeWontfix, decisionHoldOption(held))
 	return d
+}
+
+// stageTrackerSayOnce joins parts into one text, dropping any sentence
+// that already appeared in lead or earlier in the parts, so a hover never
+// says the same thing twice (hivecommons/hive#15394).
+func stageTrackerSayOnce(lead string, parts ...string) string {
+	seen := map[string]bool{}
+	for _, sent := range stageTrackerSentences(lead) {
+		seen[sent] = true
+	}
+	var out []string
+	for _, part := range parts {
+		var keep []string
+		for _, sent := range stageTrackerSentences(part) {
+			if seen[sent] {
+				continue
+			}
+			seen[sent] = true
+			keep = append(keep, sentence(sent))
+		}
+		if len(keep) > 0 {
+			out = append(out, strings.Join(keep, " "))
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// stageTrackerSentences splits text on sentence ends and normalises each
+// sentence (trimmed, trailing punctuation dropped, lower-cased first rune)
+// for say-it-once comparison.
+func stageTrackerSentences(text string) []string {
+	var out []string
+	for _, raw := range strings.FieldsFunc(text, func(r rune) bool { return r == '.' || r == '?' || r == '!' }) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		r := []rune(raw)
+		r[0] = unicode.ToLower(r[0])
+		out = append(out, string(r))
+	}
+	return out
+}
+
+// sentence capitalises a clause and ends it with a full stop.
+func sentence(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	s = string(r)
+	if !strings.HasSuffix(s, ".") && !strings.HasSuffix(s, "?") && !strings.HasSuffix(s, "!") {
+		s += "."
+	}
+	return s
 }
 
 // decisionDCOBlocker says, before anyone presses Approve, that the head
@@ -323,13 +438,13 @@ func decisionDCOBlocker(it StageTrackerItem) string {
 	if it.DCOUnsigned <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("Merging as-is may not be possible: %d of %s no Signed-off-by, so a required DCO check refuses the merge. Re-author as hive PR is the separate choice for that; an Approve never re-authors by itself.",
+	return fmt.Sprintf("%d of %s no Signed-off-by, so a required DCO check refuses the merge. Re-author as hive PR is the separate choice for that; an Approve never re-authors by itself.",
 		it.DCOUnsigned, pluralCommitsHave(it.DCOTotal))
 }
 
 // decisionDCOConsequence is the short DCO caveat under the merge options.
 func decisionDCOConsequence(it StageTrackerItem) string {
-	return fmt.Sprintf("%d of %s no Signed-off-by, so GitHub refuses the merge where DCO is required", it.DCOUnsigned, pluralCommitsHave(it.DCOTotal))
+	return fmt.Sprintf("%d of %s no Signed-off-by (DCO)", it.DCOUnsigned, pluralCommitsHave(it.DCOTotal))
 }
 
 // pluralCommitsHave renders "3 commits have" / "1 commit has" for the DCO
@@ -356,9 +471,9 @@ func decisionReauthorOption(it StageTrackerItem, ref string, held bool) StageTra
 		if it.Author != "" {
 			who = "@" + it.Author
 		}
-		o.ReasonIfDisabled = "The hive does not re-author a person's PR; ask " + who + " to sign off (git commit -s --amend, then push), or merge on GitHub if DCO is not required there"
+		o.ReasonIfDisabled = "Hive does not re-author a person's PR; ask " + who + " to sign off and push"
 	}
-	o.Consequence = "the hive re-homes " + ref + "'s commits on a hive-owned, signed-off branch and opens a superseding PR; " + ref + " is closed when that one merges; nothing is merged as-is"
+	o.Consequence = "Hive reopens " + ref + " as a signed-off hive PR; nothing is merged as-is"
 	return o
 }
 
@@ -378,7 +493,7 @@ func decisionMergeNowOption(it StageTrackerItem, held bool) StageTrackerDecision
 		return opt
 	}
 	opt := decisionOption(decisionActionMergeNow, "Approve & merge as maintainer", !held, "Release the hold first")
-	opt.Consequence = "merges " + ref + " into " + into + " now via hive's identity, attributed to you"
+	opt.Consequence = "Merges " + ref + " into " + into + " now, credited to you"
 	return opt
 }
 
@@ -417,8 +532,8 @@ func decisionForUnauthorized(it StageTrackerItem, held bool) *StageTrackerDecisi
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
 	retry := decisionOption(decisionActionRetry, "Re-evaluate now", true, "")
-	retry.Consequence = "re-reads GitHub; the hive resumes and clears the label once the step is done"
-	d.Options = []StageTrackerDecisionOption{retry, decisionDelegateOption(held, "the hive says in plain words which step it may not take and what would let it"), decisionHoldOption(held)}
+	retry.Consequence = "Re-reads GitHub; hive resumes once the step is done"
+	d.Options = []StageTrackerDecisionOption{retry, decisionDelegateOption(held, "Hive explains which step it may not take"), decisionHoldOption(held)}
 	if !slices.Contains(it.Modifiers, modNeedsHuman) {
 		d.Options = append(d.Options, decisionOption(decisionActionNeedsHuman, "Mark needs-human", true, ""))
 	}
@@ -446,10 +561,10 @@ func decisionForWaitingOnAuthor(it StageTrackerItem, held bool) *StageTrackerDec
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
 	closeSup := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
-	closeSup.Consequence = "closes " + ref + " unmerged, naming the PR that replaces it"
+	closeSup.Consequence = "Closes " + ref + ", naming the PR that replaces it"
 	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
-	closeWontfix.Consequence = "closes " + ref + " unmerged"
-	d.Options = []StageTrackerDecisionOption{decisionDelegateOption(held, "the hive weighs waiting against closing and says so in plain words; it never rewrites the PR"), closeSup, closeWontfix, decisionHoldOption(held)}
+	closeWontfix.Consequence = "Closes " + ref + " without merging"
+	d.Options = []StageTrackerDecisionOption{decisionDelegateOption(held, "Hive weighs waiting against closing; never rewrites the PR"), closeSup, closeWontfix, decisionHoldOption(held)}
 	return d
 }
 
@@ -550,7 +665,7 @@ func decisionLaneRule(base string) bool {
 		stageengineprstage.AutoMergeReasonHumanMergePath, stageengineprstage.AutoMergeReasonHumanMergePathEvidence,
 		stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence,
 		stageengineprstage.AutoMergeReasonMergeRefusedReview, stageengineprstage.AutoMergeReasonMergeRefusedMethod,
-		stageengineprstage.AutoMergeReasonNoAppBotLogin:
+		stageengineprstage.AutoMergeReasonNoAppBotLogin, stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return true
 	}
 	return false
@@ -574,6 +689,8 @@ func decisionPlainReason(base string) string {
 		return "the hive could not read its changed files"
 	case stageengineprstage.AutoMergeReasonHumanMergePath, stageengineprstage.AutoMergeReasonHumanMergePathEvidence:
 		return "it touches files a person must merge"
+	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
+		return "it is a breaking change (⚠️ title or needs-owner-merge label) — the owner merges it"
 	case stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence:
 		return "the hive could not confirm the author's merge intent"
 	case stageengineprstage.AutoMergeReasonMergeRefusedReview:
@@ -616,6 +733,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	laneRule := decisionLaneRule(base)
 	adoptionLane, adoptionStalled := strings.CutPrefix(base, stagelabels.LaneReasonAdoptionStalledPrefix)
 	forkGuard, forkGuarded := strings.CutPrefix(base, stageengineprstage.StageReasonForkGuard)
+	// hivecommons/hive#15307: the hive's adoption copy (or the original it
+	// supersedes) after the fixer's two rebase-resolve attempts failed.
+	rebaseFailedTwice := lower == stagelabels.LaneReasonRebaseFailedTwice || (adoptionStalled && adoptionLane == stagelabels.LaneReasonRebaseFailedTwice)
 	reviewerDeferred := lower == stageengine.StageReasonVerdictRequiresHuman || lower == stageengine.StageReasonDecisionRequested
 
 	// WHAT it is waiting on: the question, most specific source first. A
@@ -632,6 +752,13 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	case verdict != nil && strings.TrimSpace(verdict.DecisionQuestion) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = strings.TrimSpace(verdict.DecisionQuestion)
+		if !verdict.RecordedAt.IsZero() {
+			t := verdict.RecordedAt
+			d.Since = &t
+		}
+	case verdict != nil && verdict.RedundantOf > 0:
+		d.AskedBy = decisionAskedByReviewer
+		d.Question = "A reviewer found this PR's change already on the base through #" + strconv.Itoa(verdict.RedundantOf) + ". Close it as superseded, or give direction?"
 		if !verdict.RecordedAt.IsZero() {
 			t := verdict.RecordedAt
 			d.Since = &t
@@ -666,6 +793,8 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Question = "The security check flagged " + reason + at + ". Accept it as is, give direction, or close it?"
 	case lower == stagelabels.LaneReasonAdoptionChildClosedTwice:
 		d.Question = "The hive's copies of this PR were closed without merging twice within an hour, so the hive stopped opening copies. Reopen the last copy (#" + strconv.Itoa(it.AdoptedBy) + "), give direction, or close it?"
+	case rebaseFailedTwice:
+		d.Question = "The hive adopted this PR but its fixer could not resolve the conflicts with the base in two attempts. Adopt the commits into a fresh branch, give direction, or close it as superseded?"
 	case lower == stagelabels.LaneReasonAdoptionCopyFailed:
 		d.Question = "The hive's copy of this PR (#" + strconv.Itoa(it.AdoptedBy) + ") failed, so this PR was reopened. Ask the hive to supersede it again, give direction, or close it?"
 	case adoptionStalled:
@@ -731,11 +860,39 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	if stageTrackerNeedsRebase(it) && !sentinel {
 		d.Options = slices.Insert(d.Options, 2, decisionMergeNowOption(it, held))
 	}
+	if rebaseFailedTwice {
+		// The two answers to a rebase nobody could finish lead, as they do
+		// for merge-now (rebaseMergeFailureOptions).
+		d.Options = slices.Insert(d.Options, 0, decisionOption(decisionActionAdopt, rebasemerge.OptionAdoptFreshLabel, true, ""))
+	}
 	if selfHold != nil {
 		// Release leads: it is the one action that answers the question.
 		d.Options = append([]StageTrackerDecisionOption{decisionHoldOption(true)}, d.Options[:len(d.Options)-1]...)
 	}
+	if verdict != nil && verdict.RedundantOf > 0 && selfHold == nil {
+		// The reviewer named the PR that already carries this change
+		// (hivecommons/hive#15499): closing as superseded is the answer
+		// to that question, so it leads and says which PR.
+		d.RedundantOf = verdict.RedundantOf
+		d.Options = decisionLeadWithCloseSuperseded(d.Options, verdict.RedundantOf)
+	}
 	return d
+}
+
+// decisionLeadWithCloseSuperseded moves "Close as superseded" to the front
+// of opts with the superseding PR named in its consequence.
+func decisionLeadWithCloseSuperseded(opts []StageTrackerDecisionOption, redundantOf int) []StageTrackerDecisionOption {
+	lead := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
+	lead.Consequence = "Closes this PR as superseded by #" + strconv.Itoa(redundantOf) + ", which already carries its change."
+	out := make([]StageTrackerDecisionOption, 0, len(opts)+1)
+	out = append(out, lead)
+	for _, o := range opts {
+		if o.Action == decisionActionCloseSuperseded {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // decisionHoldReason is the hold's plain-words reason for the popover.
@@ -795,7 +952,7 @@ func decisionForTriage(it StageTrackerItem, held bool) *StageTrackerDecision {
 	}
 	d.Options = []StageTrackerDecisionOption{
 		decisionOption(decisionActionAcceptTriage, "Accept triage", true, ""),
-		decisionDelegateOption(held, "the hive triages it as the owner's delegate: accepts it, or says in plain words why not"),
+		decisionDelegateOption(held, "Hive triages it for you, or explains why not"),
 		decisionHoldOption(held),
 	}
 	if !slices.Contains(it.Modifiers, modNeedsHuman) {
@@ -820,15 +977,15 @@ func decisionForNeedsHuman(it StageTrackerItem, held bool) *StageTrackerDecision
 	// operator, on an issue it records /hive approve and un-parks it.
 	resolve := decisionOption(decisionActionApprove, "Resolve — lift needs-human", !held, "Release the hold first")
 	if it.Kind == "pr" {
-		resolve.Consequence = "lifts needs-human and posts /lgtm + /approve as you; the merge gate takes it from there"
+		resolve.Consequence = "Lifts needs-human and approves as you; hive merges"
 	} else {
-		resolve.Consequence = "lifts needs-human and records /hive approve as you; the hive carries on"
+		resolve.Consequence = "Lifts needs-human and approves as you; hive carries on"
 	}
 	d.Options = []StageTrackerDecisionOption{resolve}
 	// A needs-human PR still waiting on its contributor's clanker offers
 	// the takeover actions too (hivecommons/hive#15038).
 	d.Options = append(d.Options, takeoverDecisionOptions(it.Takeover, held)...)
-	d.Options = append(d.Options, decisionDelegateOption(held, "the hive reviews it as the owner's delegate and either lifts needs-human or says in plain words why it kept it"), decisionHoldOption(held))
+	d.Options = append(d.Options, decisionDelegateOption(held, "Hive reviews it and lifts needs-human, or explains why not"), decisionHoldOption(held))
 	return d
 }
 

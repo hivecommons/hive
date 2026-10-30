@@ -26,7 +26,20 @@ const (
 	maxKeyBytes = 200
 	// maxDiagnosticsBytes bounds the attribute excerpt attached to the
 	// observation; the tracker scrubs and bounds again on storage.
-	maxDiagnosticsBytes = 512
+	//
+	// Sized to outlive agent.manager's "pane content at timeout" WARN
+	// (src/crux/agent/manager.go), whose head_500/tail_500 attrs are each up
+	// to 500 runes and can run ~1500 bytes apiece when the pane is full of
+	// multi-byte box-drawing characters (❯, ╰─, ...). diagnostics below
+	// writes attrs in record order and stops at the first one that would
+	// cross this cap, so a value too small for head_500 alone drops tail_500
+	// — the pane's CURRENT state, and the only field useful for diagnosing a
+	// stuck CLI — every single time. That is exactly what happened at 512
+	// bytes: hivecommons/hive#14586 and #15311 both self-reported this WARN
+	// with no usable excerpt attached. 4096 comfortably fits both fields plus
+	// the preceding flags with room to spare, while staying well under the
+	// tracker's own 8KiB storage bound.
+	maxDiagnosticsBytes = 4096
 	// minLevel is the lowest level the feed observes.
 	minLevel = slog.LevelWarn
 )
@@ -101,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -158,6 +171,23 @@ func rateLimitedError(r slog.Record) bool {
 		return true
 	})
 	return limited
+}
+
+// upstreamUnavailableError reports whether the record's error attribute is a
+// GitHub 502/503/504 (fleetreport.IsGitHubUpstreamUnavailable). Callers such
+// as the self-authored automerge sweep ("fetch-pr") log a per-site message and
+// retry on their next tick, so a GitHub-side blip is not a hive defect
+// (hivecommons/hive#15365). The WARN stays in local logs.
+func upstreamUnavailableError(r slog.Record) bool {
+	unavailable := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" && fleetreport.IsGitHubUpstreamUnavailable(a.Value.String()) {
+			unavailable = true
+			return false
+		}
+		return true
+	})
+	return unavailable
 }
 
 // Classifier errors stay in local logs only: transport errors can expose the

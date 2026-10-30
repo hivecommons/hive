@@ -85,6 +85,10 @@ type DeltaContext struct {
 	// ChangedLines is the known delta size, 0 when unknown.
 	ChangedLines int
 	DiffKnown    bool
+	// BaseDiffEmpty is set when the PR itself has no diff against its base
+	// (hivecommons/hive#15499); the delta is trivial whatever the compare
+	// from the previous head shows.
+	BaseDiffEmpty bool `json:"base_diff_empty,omitempty"`
 }
 
 // DeltaReviewInfo is recorded on an aggregate produced by a delta re-review,
@@ -195,6 +199,15 @@ func planDelta(pr PullRequest, artifact Artifact, opts DispatchOptions, now time
 		PreviousPerspectives: prior.Perspectives,
 		PreviousFindings:     prior.Findings,
 	}
+	if pr.BaseDiffEmpty {
+		// The PR has no diff against its base: the new head only absorbed
+		// base commits (a merge-from-base shows them in the compare from
+		// the previous head, so the delta looks non-trivial). Nothing new
+		// to read; the prior verdict stands (hivecommons/hive#15499).
+		ctx.DiffKnown = true
+		ctx.BaseDiffEmpty = true
+		return deltaModeTrivial, ctx, prior
+	}
 	diff := pr.DeltaDiff
 	if diff == nil || !diff.Known || !SameHeadSHA(diff.PreviousHead, prior.HeadSHA) {
 		return deltaModeDelta, ctx, prior
@@ -250,6 +263,9 @@ func restampAggregate(prior Aggregate, pr PullRequest, ctx DeltaContext, now tim
 	note := fmt.Sprintf("re-stamped from %s: delta touches %d file(s), %d line(s), none previously flagged", shortSHA(ctx.PreviousHead), len(ctx.Files), ctx.ChangedLines)
 	if ctx.DiffKnown && len(ctx.Files) == 0 {
 		note = fmt.Sprintf("re-stamped from %s: identical tree", shortSHA(ctx.PreviousHead))
+	}
+	if ctx.BaseDiffEmpty {
+		note = fmt.Sprintf("re-stamped from %s: PR has no diff against its base", shortSHA(ctx.PreviousHead))
 	}
 	agg.Delta = &DeltaReviewInfo{PreviousHead: ctx.PreviousHead, Trivial: true, ChangedLines: ctx.ChangedLines, Note: note}
 	agg.Reasons = append(append([]string(nil), prior.Reasons...), "delta re-review: "+note)

@@ -674,3 +674,19 @@ func TestValidateRejectsBadExtension(t *testing.T) {
 		t.Fatal("expected bare repo to fail")
 	}
 }
+
+// hivecommons/hive#15499: a hive-authored PR whose reviewer found its
+// change already on the base (hive-redundant-of) is not a question the
+// hive answers by approving; the aggregate keeps the decision and names
+// the superseding PR for the closer.
+func TestAggregateReportsKeepsRedundantOfDecisionOnHiveAuthoredPR(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "close this as a no-op?"
+	r.RedundantOf = 15427
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+	if got.Verdict != VerdictRequiresHuman || !got.DecisionRequested || got.RedundantOf != 15427 || got.MergeEligible {
+		t.Fatalf("aggregate = %+v, want requires_human with redundant_of 15427", got)
+	}
+}

@@ -5,14 +5,21 @@
        Review, 085/090 on Merge gate) light the chevron they branch from in
        their own words, so every strip is the same width. An issue parked on
        a person (045) lights Actionable with the decision word. */
-    /* The sticky chip bar's height (the header strip sticks beneath it). */
-    #activity-monitor-section { --ham-sticky-bar-h: 34px; }
+    /* The sticky chip bar's height (the header strip sticks beneath it):
+       the Merged pill (--ham-merged-bee tall, no taller than its
+       neighbouring chips) plus the bar's own vertical padding. */
+    #activity-monitor-section { --ham-sticky-bar-h: 36px; }
     /* Layers for the merge flight glyph and the merged-toast stack. Both are
        appended to document.body, not to #activity-monitor-section, so these must be
        :root-scoped — scoped to the section they resolved to nothing, the
        stack fell back to z-index:auto and the chat FAB (9000) covered the
        lowest toast's close × and text. Above the FAB and the modal chrome. */
     :root { --z-cue-flight: 10000; --z-merge-banner: 10001; }
+    /* The merge glyph's size (hivecommons/hive#15398: at --fs-lg the bee
+       was "so small i can't see what it is") and the halo that lifts an
+       emoji off either theme's panel: a soft shadow in the text colour, so
+       it is a light glow on dark and a dark shadow on light. */
+    :root { --cue-flight-size: var(--fs-3xl); --cue-flight-halo: drop-shadow(0 0 2px color-mix(in srgb, var(--text) 45%, transparent)) drop-shadow(0 1px 2px color-mix(in srgb, var(--surface-0) 40%, transparent)); }
     .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
     .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-repo-filter { position: static; flex: 0 1 auto; gap: 0; min-width: 0; white-space: nowrap; }
@@ -23,6 +30,7 @@
     .ham-chips { display: inline-flex; gap: var(--sp-1); }
     .ham-chip { border: var(--line-width) solid var(--line); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); font-size: var(--fs-xs); cursor: pointer; }
     .ham-chip[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+    .ham-chip--waiting[aria-pressed="true"] { color: var(--status-attention); border-color: var(--status-attention); }
     .ham-chip:hover { color: var(--text); border-color: var(--line-strong); }
     .ham-chip[hidden] { display: none; }
     .ham-chip .ham-chip-n { color: var(--text-faint); margin-left: var(--sp-1); }
@@ -102,20 +110,29 @@
        is left and gives way to the chip, which lives in the cap cell. */
     .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - 6 * var(--sp-1)) / 2 + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
     .ham-head-cols .ham-seg.ham-head-lead.ham-head-wide { flex: 1 1 0; }
-    .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; flex-direction: column; }
+    /* The PR cell is one line: connector, author icon + #N + title, lineage
+       chip and base pill sit side by side; the lineage chip gives way first
+       (flex-shrink 2), then the title (1), the pills and the connector never shrink
+       (hivecommons/hive "consolidate from 3 lines of text to 1"). */
+    .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: var(--sp-2); min-width: 0; overflow: hidden; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-linked-ico, .ham-head-cols .ham-seg.ham-head-pr > .ham-badge { flex: 0 0 auto; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage, .ham-head-cols .ham-seg.ham-head-pr > .ham-adopted-from { display: block; flex: 0 2 auto; min-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage > .ham-author-ico { vertical-align: text-bottom; margin-right: var(--sp-1); }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line { flex: 0 1 auto; }
     /* The chip hugs the bottom of the title block (align-items: flex-end
        inside the stretched cap cell): on a two-line title it sits on the
        second line, directly over the strip it describes, never up at the
        previous entry's edge. */
     .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; align-items: flex-end; justify-content: flex-end; padding: 0; }
     .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
-    .ham-head-main { display: flex; flex: 1; align-items: flex-start; gap: var(--sp-3); min-width: 0; }
-    .ham-pr-ref { display: inline-flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; max-width: 100%; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
+    .ham-head-main { display: flex; flex: 1; align-items: center; gap: var(--sp-3); min-width: 0; overflow: hidden; }
+    .ham-head-main > .ham-badge { flex: 0 0 auto; }
+    .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
     .ham-pr-ref:hover { color: var(--text); }
     .ham-linked-ico { color: var(--text-faint); font-size: var(--fs-xs); margin-right: var(--sp-1); }
     .ham-pr-ref:hover .ham-pr-num { text-decoration: underline; }
     .ham-pr-num { flex: 0 0 auto; white-space: nowrap; }
-    .ham-pr-title { min-width: 0; white-space: normal; overflow-wrap: anywhere; color: var(--text-faint); }
+    .ham-pr-title { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-faint); }
     /* Author kind is the one coloured legend: hive blue / clanker purple
        (the author/* label colours), human teal. */
     .ham-author-ico { width: 13px; height: 13px; flex: 0 0 auto; color: var(--text-faint); }
@@ -128,7 +145,7 @@
     .ham-kind-ico { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-faint); }
     .ham-ref { flex: 0 0 auto; color: var(--muted); text-decoration: none; white-space: nowrap; }
     .ham-ref:hover { text-decoration: underline; color: var(--text); }
-    .ham-title { color: var(--text); white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    .ham-title { flex: 0 1 auto; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     /* Issue slot of a PR row that has no open issue: muted placeholder. */
     .ham-no-issue .ham-kind-ico { opacity: 0.55; }
     .ham-no-issue-t { color: var(--text-faint); font-style: italic; }
@@ -156,7 +173,7 @@
     .ham-repo-tint-4 { --ham-repo-tint: var(--ham-repo-tint-4); }
     .ham-repo-tint-5 { --ham-repo-tint: var(--ham-repo-tint-5); }
     .ham-repo-chip.ham-repo-primary { --ham-repo-tint: var(--text-muted); }
-    .ham-pr-line { display: inline-flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; max-width: 100%; }
+    .ham-pr-line { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; }
     /* Group-by-repo header row: sticky under the column header while its
        rows scroll, caret toggle, chip, owner/repo, counts, and a mini
        per-column distribution (bar height steps ham-gd-1..4 from the group's
@@ -167,13 +184,24 @@
        order under one header line, joined by a thin rail on the left. Muted,
        hairline weights: the rail says "these move together", nothing more. */
     .ham-train-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) 0 var(--sp-5); margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); min-width: 0; position: relative; }
-    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
-    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--line-strong); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
+    /* One rail colour per train (--ham-train-accent, cycled by .ham-train-k0..k3
+       from stageTrackerTrainIndex) runs from the header through every member
+       row, so two trains on one page tell apart at a glance. */
+    .ham-train-head, .ham-row.ham-train { --ham-train-accent: var(--line-strong); }
+    .ham-train-head.ham-train-k0, .ham-row.ham-train.ham-train-k0 { --ham-train-accent: var(--blue); }
+    .ham-train-head.ham-train-k1, .ham-row.ham-train.ham-train-k1 { --ham-train-accent: var(--purple); }
+    .ham-train-head.ham-train-k2, .ham-row.ham-train.ham-train-k2 { --ham-train-accent: var(--cyan); }
+    .ham-train-head.ham-train-k3, .ham-row.ham-train.ham-train-k3 { --ham-train-accent: var(--amber); }
+    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--ham-train-accent, var(--line-strong)); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
+    /* The train icon (hivecommons/hive issue 15395): 14px, currentColor, so it reads at chip size. */
+    .ham-train-icon { width: 14px; height: 14px; flex: 0 0 auto; vertical-align: -2px; }
+    .ham-seg-t .ham-col-ico { display: inline-block; margin-right: 0.3em; }
     .ham-train-files { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ham-row.ham-train { padding-left: var(--sp-5); position: relative; }
-    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
+    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
     .ham-row.ham-train-last::before { bottom: 50%; }
-    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--line-strong); }
+    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
@@ -271,6 +299,15 @@
     .ham-seg.active.merged { background: var(--green); color: var(--surface-0); animation: none; }
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
+    .ham-holder { font-weight: normal; }
+    /* The holder's offline / not-registered state is muted: a flag, not an alarm. */
+    .ham-holder-presence { margin-right: 0; color: var(--text-faint); font-weight: normal; }
+    .ham-holder-presence.ham-presence-offline { --ham-presence-color: var(--text-faint); }
+    /* A word with a holder ("PR in progress · @bob's clanker") stays on one
+       line: the stage word keeps its width and the name gives way with an
+       ellipsis before anything wraps (hivecommons/hive#15541). */
+    .ham-seg-t.ham-has-holder, .ham-detour.ham-has-holder { display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%; white-space: nowrap; }
+    .ham-has-holder > .ham-holder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
@@ -299,6 +336,10 @@
        it a move but the next pass" (hivecommons/hive#15094). */
     .ham-seg.active.ham-open-new { background: var(--blue); color: var(--surface-0); }
     .ham-seg.active.ham-open-new .ham-seg-t::before { content: '✦'; margin-right: var(--sp-1); }
+    /* Advisory (hivecommons/hive#15381): a note for maintainers, not
+       work — muted, never stale-tinted, read then close. */
+    .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
+    .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
@@ -311,7 +352,10 @@
        after the word ("next sweep in 42s", "7m left") is muted. */
     .ham-gate-ico { display: inline-flex; align-items: center; margin-right: var(--sp-1); cursor: help; }
     .ham-gate-ico .ham-ico { width: 12px; height: 12px; }
-    .ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    /* The detail is a fixed short phrase; should a long one ever reach it
+       (hivecommons/docs#512 drew a raw GitHub URL across the column) it is
+       clipped with an ellipsis rather than overflowing the chip. */
+    .ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; display: inline-block; vertical-align: bottom; max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------
        Owner request: a viewer must always read where an item stands,
@@ -344,19 +388,75 @@
     .cue-acting > .ham-strip-row .ham-seg.active { background-image: repeating-linear-gradient(-45deg, transparent 0 6px, color-mix(in srgb, var(--surface-0) 28%, transparent) 6px 12px); background-size: 34px 100%; animation: cue-acting-stripes 1.1s linear infinite; }
     .ham-sub-superseded { opacity: .55; }
     .ham-sub-superseded .ham-row-head { min-height: 0; }
-    .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); }
+    .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); flex: 0 0 auto; white-space: nowrap; }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
+    /* The Let hive decide preview. One decision, readable in three seconds
+       (operator feedback on the dialog, issue 15397): subject line,
+       eyebrow, one bold sentence, one muted why, a short "then" list; the
+       rest lives under a collapsed Details. */
+    .ham-plan-dialog .hive-dialog-title { margin-bottom: var(--sp-2); }
+    .ham-plan-subject { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-6); }
+    .ham-plan-chip { display: inline-flex; align-items: center; padding: var(--sp-1) var(--sp-4); border: var(--line-width) solid color-mix(in srgb, var(--status-error) 45%, transparent); border-radius: var(--r-pill); background: color-mix(in srgb, var(--status-error) 12%, transparent); color: var(--status-error); font-size: var(--fs-xs); font-weight: var(--fw-semibold); white-space: nowrap; }
+    .ham-plan-body { white-space: normal; font-size: var(--fs-base); color: var(--text); margin-bottom: var(--sp-5); }
+    .ham-plan-decision + .ham-plan-decision { margin-top: var(--sp-6); padding-top: var(--sp-5); border-top: var(--line-width) solid var(--line-subtle); }
+    .ham-plan-ref { color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-2); }
+    .ham-plan-eyebrow, .ham-plan-label { color: var(--text-faint); font-size: var(--fs-xs); font-weight: var(--fw-semibold); letter-spacing: .04em; text-transform: uppercase; }
+    .ham-plan-sentence { margin: var(--sp-1) 0 var(--sp-4); font-size: var(--fs-md); font-weight: var(--fw-semibold); line-height: 1.4; color: var(--text); }
+    .ham-plan-why { margin: 0 0 var(--sp-4); color: var(--muted); }
+    .ham-plan-why .ham-plan-label { margin-right: var(--sp-2); }
+    .ham-plan-next { margin: var(--sp-1) 0 0; padding-left: 1.4em; color: var(--muted); }
+    .ham-plan-next li + li { margin-top: var(--sp-1); }
+    .ham-plan-details { margin-bottom: var(--sp-6); font-size: var(--fs-sm); color: var(--muted); }
+    .ham-plan-details > summary { cursor: pointer; color: var(--text-faint); font-size: var(--fs-sm); }
+    .ham-plan-details > summary:hover { color: var(--text); }
+    .ham-plan-details > :not(summary) { margin: var(--sp-3) 0 0; }
+    .ham-plan-details .ham-plan-label { margin-top: var(--sp-4); }
+    .ham-plan-finding { color: var(--status-error); }
+    .ham-plan-ruled-out { padding-left: 1.4em; }
+    .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .ham-lineage:hover { color: var(--text); }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
     .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
     .cue-acting-cap { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
     .cue-acting-spin { width: 10px; height: 10px; margin-right: 0; }
+    /* Action in flight on a lit chevron (merge gate, decision, hold,
+       re-run — any step): the progress caption REPLACES the stage word.
+       Owner screenshot (dark theme): "Queuing for merge…" sat in muted grey
+       on top of the amber stripes, unreadable, while "Ready for human merge
+       · untrusted author" still showed beside it and wrapped to four lines.
+       Now the word, its glyphs and the gate detail hide for the duration;
+       what stays is one caption on an opaque plate (page surface under
+       page text: ≥ 15:1 in both themes, see the contrast test) above the
+       stripes and the pulse overlay, on one line with an ellipsis. */
+    .cue-acting > .ham-strip-row > .ham-strip > .ham-seg.active:not(.cap) > :not(.cue-acting-cap) { display: none; }
+    .ham-seg.active > .cue-acting-cap { display: inline-block; position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-seg.active > .cue-acting-cap > .cue-acting-spin { vertical-align: -1px; margin-right: var(--sp-2); }
     .cue-event { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; padding-left: var(--sp-5); font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; animation: cue-event-in 0.4s ease-out; }
     .cue-event-who { font-weight: var(--fw-medium); color: var(--text); }
     .cue-event-age { color: var(--text-faint); white-space: nowrap; }
     .cue-event.cue-event-fading { opacity: 0.55; }
     .cue-setback .cue-event-who { color: var(--status-error); }
     .cue-merged .cue-event-who { color: var(--green); }
+    /* Hive note, show then tuck: with auto-collapse on the line is
+       [icon][body]; tucking wipes the body away from its right edge
+       (clip-path) while the text slides a few px left and fades, so it
+       reads as sliding into the ⬡-i icon. The line keeps one fixed height
+       either way so the chevrons above never shift. The icon is the only
+       click target; hover shows its tooltip (the whole note and its age).
+       Reduced motion: an instant toggle. */
+    .cue-event.cue-event-tuckable { display: flex; align-items: center; gap: 0; height: 1.6em; line-height: 1.6em; overflow: hidden; }
+    .cue-event-ico { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 1.6em; height: 1.6em; margin: 0 var(--sp-1) 0 0; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; transition: color 200ms ease-in-out, background 200ms ease-in-out; }
+    .cue-event-ico:hover, .cue-event-ico:focus-visible { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+    .cue-event-ico:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: 1px; }
+    .cue-event-ico-svg { width: 1em; height: 1em; }
+    .cue-event-tucked .cue-event-ico { color: var(--text); }
+    .cue-event-body { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: 1; transform: none; clip-path: inset(0 0 0 0); transition: clip-path 400ms ease-in-out, opacity 350ms ease-in-out, transform 400ms ease-in-out; }
+    .cue-event-tucked .cue-event-body { opacity: 0; transform: translateX(-8px); clip-path: inset(0 100% 0 0); pointer-events: none; }
+    .cue-event-tuckable .cue-event-who { margin-right: var(--sp-1); }
+    @media (prefers-reduced-motion: reduce) { .cue-event-body, .cue-event-ico { transition: none; } }
+    .ham-rm-preview .cue-event-body { transition: none; }
     @keyframes cue-acting-stripes { to { background-position: 34px 0; } }
     @keyframes cue-event-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
     /* Merged: the row is pinned for a moment, its ✓ cell glows, a small
@@ -377,28 +477,67 @@
        the overlay goes and the plain text shows. Static characters and
        digits that fell (the day rollover) just sit. The text underneath is
        the real width (tabular-nums), so the pill never jiggles; reduced
-       motion or the first draw sets the text outright. */
+       motion or the first draw sets the text outright.
+       Owner (2026-10-29, issue 15398): the glyph is drawn at
+       --cue-flight-size with --cue-flight-halo (see the tokens above), and
+       the rightmost wheel spins a full turn (a longer strip, same
+       transition) so a +1 reads as a roll, not a nudge. */
     .cue-merged .ham-seg.cap { color: var(--amber); animation: cue-cap-glow 1.6s ease-out both; }
     .cue-merged { background: color-mix(in srgb, var(--amber) 8%, transparent); transition: background 300ms ease; }
-    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--fs-lg); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 2000ms) cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--cue-flight-size); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); filter: var(--cue-flight-halo); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 2000ms) cubic-bezier(0.22, 0.61, 0.36, 1) both; }
     .cue-flight.cue-flight-fade { animation: cue-flight-fade var(--cue-fly-ms, 2000ms) ease-out both; }
     .ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1); display: flex; justify-content: flex-end; align-items: center; min-height: var(--ham-sticky-bar-h); box-sizing: border-box; padding: var(--sp-1) var(--sp-2); background: var(--panel); }
     .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); cursor: pointer; }
+    /* The Merged pill (hivecommons/hive issue 15398 follow-up — "where is my
+       odometer look and feel?"): the all-time count is a drum of wheels at
+       rest, always — a .ham-odo-col per digit — and a wheel that changes
+       (.ham-odo-roll) slides its strip through the digits it passes
+       (--odo-shift) over --odo-ms; reduced motion swaps instantly (no
+       transition; the strip is drawn at its end).
+       Owner (2026-10-29, issue 15543): "the odometer is too big of font.
+       the animation is perfect though." The first drum drew 18 px bold
+       monospace digits in per-digit near-black cells with bevels and inner
+       shadows, taller than every other chip in the bar. The roll is
+       untouched; the drum is now a quiet metric: digits at the chip's own
+       type size (--fs-xs), semibold, --text, tabular-nums, spaced by
+       letter-spacing, on ONE shallow inset track (a few per cent of black
+       over the panel, a --line-subtle hairline, --r corners) with faint
+       dividers; no glow, no bevel; the pill is the chips' height. The bee
+       keeps its 28 px hit area (--ham-merged-bee) but draws the dashboard's
+       bee glyph (the version card's oc-version-bee-* parts) at the chip's
+       icon weight instead of a filled hexagon. */
+    :root { --ham-merged-bee: 28px; --ham-odo-digit: var(--fs-xs); --ham-odo-track: color-mix(in srgb, var(--panel) 95%, black); --ham-odo-divider: color-mix(in srgb, var(--text) 10%, transparent); }
+    .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--ham-merged-bee); box-sizing: border-box; padding-top: 0; padding-bottom: 0; color: var(--text); cursor: pointer; }
     .ham-merged-count:hover { border-color: var(--line-strong); }
-    .ham-merged-count .ham-merged-ico { width: 12px; height: 12px; color: var(--amber); }
-    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
-    .ham-merged-count .ham-merged-sub { color: var(--text-faint); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
+    .ham-merged-count .ham-merged-ico { flex: 0 0 auto; width: var(--ham-merged-bee); height: calc(var(--ham-merged-bee) - 2 * var(--line-width)); padding: calc(var(--ham-merged-bee) / 6) calc(var(--ham-merged-bee) / 10); box-sizing: border-box; color: var(--accent); overflow: visible; }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-body { fill: var(--accent); stroke: var(--panel); }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-wing { fill: color-mix(in srgb, var(--text) 35%, transparent); stroke: var(--panel); }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-stripe { stroke: var(--panel); }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-head { fill: var(--text-muted); }
+    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--ham-odo-digit); color: var(--text); }
+    .ham-merged-count .ham-merged-sub { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--fs-xs); padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
-    .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; }
-    .ham-merged-count .ham-odo-rolling { color: transparent; }
-    .ham-odo { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; white-space: pre; pointer-events: none; }
-    .ham-merged-count .ham-merged-n .ham-odo { color: var(--text); }
-    .ham-merged-count .ham-merged-sub .ham-odo { left: var(--sp-2); color: var(--text-faint); }
+    .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; display: inline-flex; align-items: center; }
+    /* The drum: one wrap of columns per counter, laid out inline (it is the
+       element's only content, so it sets the width). */
+    .ham-odo { display: inline-flex; align-items: stretch; white-space: pre; pointer-events: none; }
     .ham-odo-static, .ham-odo-col, .ham-odo-d { display: block; height: 1.25em; line-height: 1.25; }
+    .ham-odo-static { align-self: center; }
     .ham-odo-col { overflow: hidden; }
-    .ham-odo-strip { display: block; transform: translateY(0); transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }
-    .ham-odo-run .ham-odo-strip { transform: translateY(var(--odo-shift, 0%)); }
+    .ham-odo-d { text-align: center; }
+    .ham-odo-strip { display: block; transform: translateY(var(--odo-shift, 0%)); }
+    .ham-odo-run .ham-odo-roll .ham-odo-strip { transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }
+    .ham-odo:not(.ham-odo-run) .ham-odo-roll .ham-odo-strip { transform: translateY(0); }
+    /* The all-time count's track: one shallow inset behind every wheel,
+       a hairline round it, faint dividers between digits, the digits
+       spaced a little wider than the label's letters. Light mode is the
+       same rule — the track and divider tokens mix from the theme. */
+    .ham-merged-count .ham-merged-n .ham-odo { gap: 0; padding: 0 var(--sp-1); border-radius: var(--r); border: var(--line-width) solid var(--line-subtle); background: var(--ham-odo-track); }
+    .ham-merged-count .ham-merged-n .ham-odo-col { position: relative; min-width: 0.8em; height: 1.5em; line-height: 1.5; padding: 0 0.04em; letter-spacing: 0; color: var(--text); }
+    .ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left: var(--line-width) solid var(--ham-odo-divider); }
+    .ham-merged-count .ham-merged-n .ham-odo-col .ham-odo-d { height: 1.5em; line-height: 1.5; }
+    body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col { color: var(--text); }
+    body.light-mode .ham-merged-count .ham-merged-n .ham-odo { --ham-odo-track: color-mix(in srgb, var(--panel) 96%, black); }
     .ham-merged-pop { position: absolute; right: var(--sp-2); top: calc(var(--full-size) - var(--sp-1)); min-width: 22rem; max-width: 34rem; max-height: 60vh; overflow: auto; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); background: var(--panel-strong); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); z-index: var(--z-cue-flight); }
     .ham-merged-pop-head { display: flex; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-3); font-weight: var(--fw-semibold); }
     .ham-merged-pop-head .ham-merged-pop-sum { color: var(--text-faint); font-weight: var(--fw-medium); }
@@ -409,6 +548,15 @@
     .ham-merged-list .ham-merged-meta { color: var(--text-faint); white-space: nowrap; font-size: var(--fs-xs); }
     .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
     .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
+    /* Merge queue chip + popover (hivecommons/hive issue 15395): the train in merge order. */
+    .ham-queue-chip .ham-queue-n { margin-left: var(--sp-1); font-variant-numeric: tabular-nums; }
+    .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
+    .ham-queue-train:first-of-type { margin-top: 0; }
+    .ham-queue-stalled { color: var(--yellow); }
+    /* Inside a lit chevron the word keeps the chevron's ink: ochre on the
+       amber fill was invisible, so a stalled train's chevrons read empty
+       (just the ⟳ and the actor glyph). */
+    .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
     .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
@@ -427,7 +575,7 @@
     @keyframes cue-flight { 0% { opacity: 0; transform: translate(0, 0) scale(0.9); } 12% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.08), calc(var(--cue-dy, 0px) * 0.1)) scale(1.1); } 55% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.45 + 10px), calc(var(--cue-dy, 0px) * 0.62)) scale(1.05); } 100% { opacity: var(--cue-end-opacity, 0.25); transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.7); } }
     @keyframes cue-flight-fade { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
     @keyframes cue-count-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
-    @media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; } .ham-odo-strip { transition: none; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } .merge-banner, .merge-banner.merge-banner-out { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; } .ham-odo-strip { transition: none !important; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } .merge-banner, .merge-banner.merge-banner-out { animation: none; } }
     .ham-rm-preview .cue-flight { animation-name: cue-flight-fade; }
     @media (prefers-reduced-motion: reduce) { .cue-working .ham-seg.active .ham-active-ico, .cue-spin, .cue-acting .ham-seg.active, .cue-event { animation: none; } }
     @keyframes ham-breathe-human { 0%, 100% { opacity: 0; } 50% { opacity: 0.55; } }
@@ -507,9 +655,10 @@
     .ham-decision-pop p { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; }
     .ham-decision-head { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-redundant { margin: 0; }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-capability-gap { color: var(--amber); }
-    .ham-decision-meta, .ham-decision-stage { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-decision-meta { font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-decision-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-2); }
     .ham-decision-act { padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
     .ham-decision-act:hover, .ham-decision-act:focus-visible { background: var(--panel-strong); outline: none; border-color: var(--line-strong); }
@@ -517,9 +666,21 @@
     .ham-decision-act.ham-menu-danger { color: var(--red); }
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
-    .ham-decision-consequences { margin: 0 0 var(--sp-1); padding-left: var(--sp-4); font-size: var(--fs-xs); color: var(--text-muted); }
-    .ham-decision-consequences li { margin: 0; overflow-wrap: anywhere; }
-    .ham-decision-consequences b { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-act.ham-decision-more { color: var(--text-muted); }
+    /* The row's inline lead action (the ⋯ menu's lead entry, in sight): a
+       small primary pill in the chip slot, the popover lead's recipe, the
+       row's cue colour; dashed and faint with its reason when the viewer
+       may not take it. */
+    .ham-lead-act { padding: 0 var(--sp-3); border: var(--line-width) solid var(--cue-state, var(--accent)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cue-state, var(--accent)) 10%, transparent); color: var(--cue-state, var(--accent)); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.4; cursor: pointer; white-space: nowrap; }
+    .ham-lead-act:hover, .ham-lead-act:focus-visible { background: color-mix(in srgb, var(--cue-state, var(--accent)) 22%, transparent); outline: none; }
+    .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
+    .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+    .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
+    /* The technical background folds behind one collapsed Details. */
+    .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
+    .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
+    .ham-decision-details > summary:focus-visible { outline: var(--line-width) solid var(--accent); outline-offset: var(--sp-1); border-radius: var(--r-sm); }
+    .ham-decision-details[open] > summary { color: var(--text-muted); }
     .ham-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid color-mix(in srgb, var(--accent) 45%, var(--line-subtle)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: var(--fs-xs); }
     .ham-selbar[hidden] { display: none; }
     .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }

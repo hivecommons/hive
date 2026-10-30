@@ -17,6 +17,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func mtMember(n int, state string, created time.Time, files ...string) mergeTrainMember {
@@ -198,34 +199,34 @@ func newMergeTrainEngine(t *testing.T, srvURL string, policy MergeTrainPolicy, r
 func TestPlanMergeTrainsSiblingsAndFront(t *testing.T) {
 	t0 := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
 	api := &mergeTrainAPI{
-		files: map[int][]string{10: {"tracker.go", "index.html"}, 11: {"tracker.go"}, 12: {"index.html", "x.go"}, 13: {"readme.md"}},
-		state: map[int]string{10: "clean", 11: "dirty", 12: "behind"},
+		files: map[int][]string{10: {"tracker.go", "index.html"}, 11: {"tracker.go"}, 12: {"index.html", "x.go"}, 13: {"readme.md"}, 14: {"x.go"}},
+		state: map[int]string{10: "clean", 11: "behind", 12: "behind", 14: "clean"},
 	}
 	srv := newMergeTrainServer(t, api)
 	defer srv.Close()
 	c, logs := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, nil)
 	// The list API carries no mergeable state; the planner reads it.
-	prs := []*gh.PullRequest{mtPR(13, t0, ""), mtPR(11, t0.Add(time.Minute), ""), mtPR(10, t0.Add(2*time.Minute), ""), mtPR(12, t0.Add(3*time.Minute), "")}
+	prs := []*gh.PullRequest{mtPR(13, t0, ""), mtPR(11, t0.Add(time.Minute), ""), mtPR(10, t0.Add(2*time.Minute), ""), mtPR(12, t0.Add(3*time.Minute), ""), mtPR(14, t0.Add(4*time.Minute), "")}
 	prefilter := func(pr *gh.PullRequest) string {
 		if pr.GetNumber() == 11 {
-			return "label:needs-rebase" // admitted: the label is what the train repairs
+			return "label:needs-rebase" // admitted: a merely-behind head is what the train updates
 		}
 		return ""
 	}
 	plan := c.planMergeTrains(context.Background(), "self", "acme/widget", "acme", "widget", prs, prefilter)
-	if !plan.isFront(10) || !plan.isSibling(11) || !plan.isSibling(12) || plan.isSibling(13) || plan.isFront(13) {
-		t.Fatalf("front/siblings wrong: front10=%v sib11=%v sib12=%v 13 in train=%v", plan.isFront(10), plan.isSibling(11), plan.isSibling(12), plan.isSibling(13) || plan.isFront(13))
+	if !plan.isFront(10) || !plan.isSibling(11) || !plan.isSibling(12) || !plan.isSibling(14) || plan.isSibling(13) || plan.isFront(13) {
+		t.Fatalf("front/siblings wrong: front10=%v sib11=%v sib12=%v sib14=%v 13 in train=%v", plan.isFront(10), plan.isSibling(11), plan.isSibling(12), plan.isSibling(14), plan.isSibling(13) || plan.isFront(13))
 	}
 	g, _ := plan.group(10)
-	if !reflect.DeepEqual(g.Order, []int{10, 12, 11}) {
-		t.Fatalf("order = %v, want clean, behind, dirty", g.Order)
+	if !reflect.DeepEqual(g.Order, []int{10, 14, 11, 12}) {
+		t.Fatalf("order = %v, want clean (earliest first), then behind", g.Order)
 	}
-	reason := c.mergeTrainSkip(plan, 11)
+	reason := c.mergeTrainSkip(plan, 12)
 	mt, ok := prstage.ParseMergeTrain(reason)
-	if !ok || mt.State != prstage.MergeTrainStateQueuedBehind || mt.Front != 10 || mt.Position != 3 || mt.Size != 3 {
+	if !ok || mt.State != prstage.MergeTrainStateQueuedBehind || mt.Front != 10 || mt.Position != 4 || mt.Size != 4 {
 		t.Fatalf("sibling reason %q parsed %+v", reason, mt)
 	}
-	if got := mt.Sentence(); !strings.Contains(got, "behind #10 in merge train (3rd of 3, overlapping files: index.html, tracker.go)") {
+	if got := mt.Sentence(); !strings.Contains(got, "behind #10 in merge train (4th of 4, overlapping files: index.html, tracker.go, x.go)") {
 		t.Fatalf("sentence = %q", got)
 	}
 	// A clean front is the lane's to merge on its normal path.
@@ -245,13 +246,18 @@ func TestPlanMergeTrainsSiblingsAndFront(t *testing.T) {
 	if api.gets <= gets {
 		t.Fatalf("mergeable state must be re-read each pass")
 	}
-	// A new front is a transition.
+	// A new front is a transition — and a head that went conflicting on
+	// its own leaves the train and its count (hivecommons/hive#15395).
 	api.mu.Lock()
 	api.state[10] = "dirty"
 	api.mu.Unlock()
 	plan = c.planMergeTrains(context.Background(), "self", "acme/widget", "acme", "widget", prs, prefilter)
-	if !plan.isFront(12) {
-		t.Fatalf("expected #12 to lead once #10 went dirty; order %v", plan.groups[0].Order)
+	if !plan.isFront(14) || plan.isSibling(10) || plan.isFront(10) {
+		t.Fatalf("expected #14 to lead and #10 to drop out once #10 went dirty; groups %+v", plan.groups)
+	}
+	// #11 only ever overlapped #10, so it is no longer anyone's sibling.
+	if g, _ := plan.group(14); !reflect.DeepEqual(g.Order, []int{14, 12}) || plan.isSibling(11) {
+		t.Fatalf("order = %v (11 sibling=%v), want the conflicting #10 gone", g.Order, plan.isSibling(11))
 	}
 	if n := strings.Count(logs.String(), "msg=\"merge train\""); n != 2 {
 		t.Fatalf("transition lines = %d, want 2", n)
@@ -350,38 +356,105 @@ func TestMergeTrainFrontRebaseLoopGuard(t *testing.T) {
 		return nil
 	})
 	c, logs := newMergeTrainEngine(t, srv.URL, MergeTrainPolicy{Enabled: true, MaxRebaseAttempts: 2}, resolver)
-	// #29 merged earlier on this base: the dirty front is "behind" it.
-	c.noteMergeTrainFrontMerged("acme", "widget", "v5", 29)
 	prs := []*gh.PullRequest{mtPR(30, t0, ""), mtPR(31, t0.Add(time.Minute), "")}
-	var states []string
-	for pass := 0; pass < 4; pass++ {
-		plan := c.planMergeTrains(context.Background(), "self", "acme/widget", "acme", "widget", prs, func(*gh.PullRequest) string { return "" })
-		reason, handled := c.mergeTrainFront(context.Background(), plan, prs[0])
-		if !handled {
-			t.Fatalf("pass %d: dirty front with a resolver must be handled", pass)
-		}
-		mt, ok := prstage.ParseMergeTrain(reason)
-		if !ok {
-			t.Fatalf("pass %d: reason %q", pass, reason)
-		}
-		states = append(states, mt.State+":"+strconv.Itoa(mt.Attempt)+"/"+strconv.Itoa(mt.MaxAttempts))
+	// Two heads that arrived conflicting on their own are nobody's train:
+	// the planner carries neither (hivecommons/hive#15395, #15307).
+	if plan := plan0(c, prs); plan.isFront(30) || plan.isSibling(31) || len(plan.groups) != 0 {
+		t.Fatalf("conflicting outsiders must not form a train: %+v", plan.groups)
 	}
-	want := []string{"rebasing:1/2", "rebasing:2/2", "rebase-exhausted:2/2", "rebase-exhausted:2/2"}
-	if !reflect.DeepEqual(states, want) {
-		t.Fatalf("states = %v, want %v", states, want)
+	// #29 merged earlier on this base and the train asked for #30's rebase
+	// as its sibling: #30 is the train's own repair, so it stays a member
+	// while the loop guard has attempts left.
+	c.noteMergeTrainFrontMerged("acme", "widget", "v5", 29)
+	c.bumpMergeTrainAttempts("acme", "widget", 30, 29)
+	c.bumpMergeTrainAttempts("acme", "widget", 31, 29)
+	plan := plan0(c, prs)
+	if !plan.isFront(30) || !plan.isSibling(31) {
+		t.Fatalf("members under repair must ride the train: %+v", plan.groups)
+	}
+	reason, handled := c.mergeTrainFront(context.Background(), plan, prs[0])
+	if !handled {
+		t.Fatal("dirty front under repair with a resolver must be handled")
+	}
+	mt, ok := prstage.ParseMergeTrain(reason)
+	if !ok || mt.State+":"+strconv.Itoa(mt.Attempt)+"/"+strconv.Itoa(mt.MaxAttempts) != "rebasing:2/2" {
+		t.Fatalf("reason %q parsed %+v", reason, mt)
+	}
+	// Guard spent on #30: it leaves the train, and #31 alone is no train —
+	// the conflicting path for a person takes them, not a train slot.
+	plan = plan0(c, prs)
+	if len(plan.groups) != 0 {
+		t.Fatalf("exhausted members must leave the train: %+v", plan.groups)
+	}
+	if _, handled := c.mergeTrainFront(context.Background(), plan, prs[0]); handled {
+		t.Fatal("a PR outside every train is never handled as a front")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if calls != 2 {
-		t.Fatalf("resolver calls = %d, want 2 (loop guard)", calls)
+	if calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1 (loop guard)", calls)
 	}
 	if !strings.Contains(logs.String(), "rebase requested for the front") {
 		t.Fatalf("missing rebase log\n%s", logs.String())
 	}
-	// The exhausted reason classifies to a human stage with the action.
-	mt, _ := prstage.ParseMergeTrain(mergeTrainFrontReason(&plan0(c, prs).groups[0], prstage.MergeTrainStateRebaseExhausted, 2, 2))
+	// The exhausted reason still classifies to a human stage with the action.
+	g := mergeTrainGroup{Base: "v5", Order: []int{30, 31}, OverlapFiles: []string{"a.go"}}
+	mt, _ = prstage.ParseMergeTrain(mergeTrainFrontReason(&g, prstage.MergeTrainStateRebaseExhausted, 2, 2))
 	if mt.Sentence() == "" || !strings.Contains(mt.Sentence(), "after 2 rebase attempts") {
 		t.Fatalf("exhausted sentence = %q", mt.Sentence())
+	}
+}
+
+// TestPlanMergeTrainsExcludesReturnedAndConflicting: hive's own #15307
+// (mergeable CONFLICTING, stage 072 returned-to-contributor) was counted
+// "queued-behind#15424:4/6" and drew the train's idle comments
+// (hivecommons/hive#15395). A PR at 072 — by label or by the stage store —
+// or one GitHub says is conflicting on its own is neither a member nor
+// part of the queue's size.
+func TestPlanMergeTrainsExcludesReturnedAndConflicting(t *testing.T) {
+	t0 := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	api := &mergeTrainAPI{
+		files: map[int][]string{15424: {"a.go"}, 15307: {"a.go"}, 15430: {"a.go"}, 15431: {"a.go"}},
+		state: map[int]string{15424: "clean", 15307: "dirty", 15430: "clean", 15431: "behind"},
+	}
+	srv := newMergeTrainServer(t, api)
+	defer srv.Close()
+	c, logs := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, RebaseResolverFunc(func(context.Context, RebaseRequest) error { return nil }))
+	c.stageStore = stagelabels.NewStore("", func() time.Time { return t0 })
+	c.stageStore.Observe(stagelabels.Key("acme/widget", 15431), stagelabels.ReturnedToContributor, "ci-red")
+	// A front merged on this base and other members were rebased: #15307
+	// is still an outsider — the train never asked for its rebase.
+	c.noteMergeTrainFrontMerged("acme", "widget", "v5", 15300)
+	returned := mtPR(15430, t0.Add(2*time.Minute), "")
+	returned.Labels = []*gh.Label{{Name: gh.Ptr(stagelabels.ReturnedToContributor.Label())}}
+	prs := []*gh.PullRequest{mtPR(15424, t0, ""), mtPR(15307, t0.Add(time.Minute), ""), returned, mtPR(15431, t0.Add(3*time.Minute), "")}
+	plan := plan0(c, prs)
+	for _, n := range []int{15307, 15430, 15431} {
+		if plan.isSibling(n) || plan.isFront(n) {
+			t.Errorf("#%d must be out of every train: %+v", n, plan.groups)
+		}
+	}
+	if len(plan.groups) != 0 {
+		t.Fatalf("only #15424 is left, and one PR is no train: %+v", plan.groups)
+	}
+	for _, want := range []string{"why=returned-to-contributor", "why=conflicting"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("missing skip log %q\n%s", want, logs.String())
+		}
+	}
+	// With a clean partner the survivors form the train and the size counts
+	// members only: 2, not 4.
+	api.mu.Lock()
+	api.state[15307] = "clean"
+	api.mu.Unlock()
+	plan = plan0(c, prs)
+	g, ok := plan.group(15424)
+	if !ok || !reflect.DeepEqual(g.Order, []int{15424, 15307}) {
+		t.Fatalf("train = %+v", plan.groups)
+	}
+	mt, _ := prstage.ParseMergeTrain(c.mergeTrainSkip(plan, 15307))
+	if mt.Size != 2 || mt.Position != 2 {
+		t.Fatalf("size/position = %d/%d, want 2/2", mt.Size, mt.Position)
 	}
 }
 
@@ -396,14 +469,19 @@ func TestMergeTrainFrontNoResolverFallsThroughOnce(t *testing.T) {
 	defer srv.Close()
 	c, logs := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, nil)
 	prs := []*gh.PullRequest{mtPR(40, t0, ""), mtPR(41, t0.Add(time.Minute), "")}
+	// Without a resolver no dirty head is under repair, so two conflicting
+	// heads are no train at all and the lane's conflicting path takes them.
 	for i := 0; i < 2; i++ {
 		plan := plan0(c, prs)
+		if len(plan.groups) != 0 {
+			t.Fatalf("no resolver: conflicting heads form no train: %+v", plan.groups)
+		}
 		if r, handled := c.mergeTrainFront(context.Background(), plan, prs[0]); handled || r != "" {
 			t.Fatalf("no resolver: front must fall through, got handled=%v %q", handled, r)
 		}
 	}
-	if n := strings.Count(logs.String(), "no rebase resolver is wired"); n != 1 {
-		t.Fatalf("no-resolver line logged %d times, want once\n%s", n, logs.String())
+	if n := strings.Count(logs.String(), "why=conflicting"); n != 2 {
+		t.Fatalf("skip line logged %d times, want once per head\n%s", n, logs.String())
 	}
 	// Without a resolver a sibling's dirty state after the merge is a no-op.
 	plan := plan0(c, prs)
@@ -472,21 +550,121 @@ func TestMergeTrainBlockedHeadMemory(t *testing.T) {
 		}
 	}
 	c := &Engine{}
-	c.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "not-mergeable")
-	if !c.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") || c.mergeTrainHeadBlocked("acme", "widget", 7, "sha2") {
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "not-mergeable")
+	if !c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") || c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha2") {
 		t.Fatal("the exact head is blocked, a new head is not")
 	}
-	c.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "")
-	if c.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") {
+	if c.mergeTrainHeadBlocked("trusted", "acme", "widget", 7, "sha1") {
+		t.Fatal("one lane's verdict is not another lane's")
+	}
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "")
+	if c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") {
 		t.Fatal("a clean verdict clears the mark")
 	}
-	c.noteMergeTrainOutcome("acme", "widget", 7, "", "not-mergeable")
-	if c.mergeTrainHeadBlocked("acme", "widget", 7, "") {
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "", "not-mergeable")
+	if c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "") {
 		t.Fatal("no sha, no mark")
 	}
 	var nilEngine *Engine
-	nilEngine.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "not-mergeable")
-	if nilEngine.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") {
+	nilEngine.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "not-mergeable")
+	if nilEngine.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") {
 		t.Fatal("nil engine blocks nothing")
+	}
+}
+
+// TestMergeTrainHumanMergeNeverMember: a PR the lane leaves to a person
+// (untrusted author, no linked issue, the title/label human-merge rule,
+// a human-merge path) is not a train member at all — not a front, not a
+// sibling — so the PRs behind it form their own train with a head that can
+// merge. hive's #15425 (untrusted author, parked at 090) fronted a train of
+// three and the two behind it waited on a merge that was never coming.
+func TestMergeTrainHumanMergeNeverMember(t *testing.T) {
+	for reason, want := range map[string]bool{
+		"":                          false,
+		"soaking":                   false,
+		"check-pending":             false,
+		"not-mergeable":             false,
+		"untrusted-author-role":     true,
+		"author-permission-missing": true,
+		prstage.ContributorLaneReasonNoLinkedIssue: true,
+		prstage.ContributorLaneReasonClaimTier:     true,
+		prstage.AutoMergeReasonHumanMergeRequired:  true,
+		prstage.ContributorLaneReasonWorkflowPath:  true,
+		prstage.AutoMergeReasonMergeRefusedReview:  true,
+	} {
+		if got := mergeTrainHumanMergeReason(reason); got != want {
+			t.Fatalf("mergeTrainHumanMergeReason(%q) = %v, want %v", reason, got, want)
+		}
+	}
+	t0 := time.Now()
+	api := &mergeTrainAPI{files: map[int][]string{60: {"a.go"}, 61: {"a.go"}, 62: {"a.go"}}, state: map[int]string{60: "clean", 61: "clean", 62: "clean"}}
+	srv := newMergeTrainServer(t, api)
+	defer srv.Close()
+	c, _ := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, nil)
+	prs := []*gh.PullRequest{mtPR(60, t0, "clean"), mtPR(61, t0.Add(time.Minute), "clean"), mtPR(62, t0.Add(2*time.Minute), "clean")}
+	// The oldest, cleanest PR is an untrusted author's: the lane said so.
+	c.noteMergeTrainOutcome("self", "acme", "widget", 60, "sha60", prstage.ContributorLaneReasonNoLinkedIssue)
+	plan := plan0(c, prs)
+	if plan.isFront(60) || plan.isSibling(60) {
+		t.Fatalf("a human-merge PR rides no train: front=%v sibling=%v", plan.isFront(60), plan.isSibling(60))
+	}
+	if !plan.isFront(61) || !plan.isSibling(62) {
+		t.Fatalf("the PRs behind it form their own train: front61=%v sib62=%v groups=%d", plan.isFront(61), plan.isSibling(62), len(plan.groups))
+	}
+	// The same verdict from another lane does not touch this lane's train.
+	c2, _ := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, nil)
+	c2.noteMergeTrainOutcome("trusted", "acme", "widget", 60, "sha60", "untrusted-author-role")
+	if plan := plan0(c2, prs); !plan.isFront(60) {
+		t.Fatal("another lane's verdict must not evict the member from this lane's train")
+	}
+	// A new head starts clean: the lane re-judges it.
+	c.noteMergeTrainOutcome("self", "acme", "widget", 60, "sha60", "")
+	if plan := plan0(c, prs); !plan.isFront(60) {
+		t.Fatal("a clean verdict re-admits the PR")
+	}
+}
+
+// TestPlanMergeTrainsExcludesUnderRepair: hive's own #15405 led a train's
+// header as "1st: #15405" while a maintainer's changes-requested had it at
+// 070 fixing. A PR at 070 / 071 / 085 — by label or by the stage store —
+// is somebody's to repair and takes no slot; the survivors form the train
+// among themselves.
+func TestPlanMergeTrainsExcludesUnderRepair(t *testing.T) {
+	t0 := time.Date(2026, 10, 30, 20, 0, 0, 0, time.UTC)
+	api := &mergeTrainAPI{
+		files: map[int][]string{15405: {"operator-reference.md"}, 15406: {"operator-reference.md"}, 15407: {"operator-reference.md"}, 15408: {"operator-reference.md"}},
+		state: map[int]string{15405: "clean", 15406: "clean", 15407: "clean", 15408: "clean"},
+	}
+	srv := newMergeTrainServer(t, api)
+	defer srv.Close()
+	c, logs := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, RebaseResolverFunc(func(context.Context, RebaseRequest) error { return nil }))
+	c.stageStore = stagelabels.NewStore("", func() time.Time { return t0 })
+	c.stageStore.Observe(stagelabels.Key("acme/widget", 15407), stagelabels.NeedsDecision, "rebase-failed-twice")
+	fixing := mtPR(15405, t0, "")
+	fixing.Labels = []*gh.Label{{Name: gh.Ptr(stagelabels.Fixing.Label())}}
+	needsAuthor := mtPR(15408, t0.Add(3*time.Minute), "")
+	needsAuthor.Labels = []*gh.Label{{Name: gh.Ptr(stagelabels.NeedsAuthor.Label())}}
+	prs := []*gh.PullRequest{fixing, mtPR(15406, t0.Add(time.Minute), ""), mtPR(15407, t0.Add(2*time.Minute), ""), needsAuthor}
+	plan := plan0(c, prs)
+	for _, n := range []int{15405, 15407, 15408} {
+		if plan.isSibling(n) || plan.isFront(n) {
+			t.Errorf("#%d is under repair and must be out of every train: %+v", n, plan.groups)
+		}
+	}
+	if len(plan.groups) != 0 {
+		t.Fatalf("only #15406 is left, and one PR is no train: %+v", plan.groups)
+	}
+	for _, want := range []string{"why=fixing", "why=needs-decision", "why=needs-author"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("missing skip log %q\n%s", want, logs.String())
+		}
+	}
+	// Once the fixer is done (label gone) the two clean PRs form the train
+	// and #15405 leads it by age.
+	fixing.Labels = nil
+	plan = plan0(c, prs)
+	g, ok := plan.group(15405)
+	if !ok || !reflect.DeepEqual(g.Order, []int{15405, 15406}) {
+		t.Fatalf("train = %+v", plan.groups)
 	}
 }

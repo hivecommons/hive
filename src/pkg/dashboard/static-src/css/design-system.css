@@ -80,6 +80,10 @@
     .oc-nav-count { margin-left: auto; flex: none; order: 1; }
     /* x/y pills (Overview, Governor) stay hidden until their feed has loaded. */
     .oc-nav-count[hidden] { display: none; }
+    /* second Activity Monitor badge: items waiting on the operator, attention colour until zero. */
+    .oc-nav-count--waiting:not([data-zero]) + .oc-nav-count { margin-left: var(--sp-1); }
+    .oc-nav-count--waiting:not([data-zero]) { --component-status: var(--status-attention); background: color-mix(in srgb, var(--component-status) 16%, transparent); border-color: color-mix(in srgb, var(--component-status) 50%, transparent); color: var(--component-status); }
+    .oc-nav-count--waiting[data-zero] { display: none; }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }

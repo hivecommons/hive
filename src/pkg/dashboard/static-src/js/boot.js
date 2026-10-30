@@ -5,10 +5,30 @@
 // for toggle labels; the DOMContentLoaded hook below guarantees it runs
 // once the topbar/sidebar buttons exist, so the label and body class always
 // sync from storage.
+// Kiosk mode (#15594): `?kiosk=1` turns the dashboard into an unattended
+// display for a headless streamer (src/deploy/stream). It is a pure
+// presentation flag — it grants nothing, hides the chrome (sidebar, topbar,
+// avatar menu, chat FAB, notices) and every section except the Hive activity
+// monitor, suppresses the welcome/NPS dialogs and the toast hover-pause, and
+// never writes to localStorage so a rolled SPA can't inherit stale state.
+// The class is set here, before first paint, so the chrome never flashes.
+(function(){
+  var kiosk=false;
+  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; } catch(e) {}
+  window.HIVE_KIOSK=kiosk;
+  window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  if(kiosk){
+    document.body.classList.add('kiosk-mode');
+    if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
+  }
+})();
 (function(){
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
   if(m==='classic')m='dark';
+  // A kiosk (#15594) is a broadcast surface with no operator to flip the
+  // toggle; it always renders dark unless the URL says otherwise.
+  if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
   document.body.style.opacity='0';
