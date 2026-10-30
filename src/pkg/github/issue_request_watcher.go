@@ -1287,9 +1287,9 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	}
 	// Every issue the hive files names its filer in the title (`[reviewer]
 	// Review backlog (security): …`). Hive-internal filers and the watcher
-	// both land here, so a caller cannot forget it; TitleFor is idempotent
+	// both land here, so a caller cannot forget it; AgentIssueTitle is idempotent
 	// for a title an agent already tagged.
-	title = issueshape.TitleFor(req.TitleFiler(), title)
+	title = issueshape.AgentIssueTitle(req.TitleFiler(), title)
 	// Same posture and same placement as validateRepoRef above: a request that
 	// is still carrying its template cannot become a useful issue, and unlike a
 	// bad repo ref it would SUCCEED, leaving a human to triage an empty report

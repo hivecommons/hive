@@ -103,26 +103,36 @@ func TestUnchosenOptionList(t *testing.T) {
 	}
 }
 
-// Every issue the hive files names its filer in the title; TitleFor is the
-// one helper that adds the tag, and it never adds a second one.
-func TestTitleForTagsOnceAndKeepsExistingTag(t *testing.T) {
+// Every issue the hive files names its filer in the title; AgentIssueTitle
+// is the one helper that adds the tag, it puts the tag first, and it never
+// adds a second one.
+func TestAgentIssueTitleTagsOnceAndTagFirst(t *testing.T) {
 	cases := []struct{ agent, title, want string }{
 		{"reviewer", "Review backlog (security): token logged", "[reviewer] Review backlog (security): token logged"},
 		{"Reviewer", "  Review backlog (style): x  ", "[reviewer] Review backlog (style): x"},
 		{"reviewer", "[reviewer] Review backlog (security): token logged", "[reviewer] Review backlog (security): token logged"},
-		{"tester", "[Tests] v5 test failure on 4536f90", "[Tests] v5 test failure on 4536f90"},
-		{"dashboard", "[ACMM L0] Add CI/CD pipeline", "[ACMM L0] Add CI/CD pipeline"},
+		{"reviewer", "[Reviewer]Review backlog (security): x", "[reviewer] Review backlog (security): x"},
+		{"dedupe", "triage: duplicate and overlapping open issues/PRs to consolidate", "[dedupe] triage: duplicate and overlapping open issues/PRs to consolidate"},
+		{"ci-maintainer", "refactor: src/a.go is a merge hotspot — split into 4 units", "[ci-maintainer] refactor: src/a.go is a merge hotspot — split into 4 units"},
 		{"selfreport", "[selfreport] unclassified_error_repeated: x", "[selfreport] unclassified_error_repeated: x"},
-		{"governor", "refactor: src/a.go is a merge hotspot — split into 4 units", "[governor] refactor: src/a.go is a merge hotspot — split into 4 units"},
+		// Another hive filer already tagged it: never a second tag.
+		{"governor", "[selfreport] relayed by the hub", "[selfreport] relayed by the hub"},
+		// The tag comes first, before an emoji the title opens with.
+		{"governor", "🐝 Hive Advisory Report", "[governor] 🐝 Hive Advisory Report"},
+		{"reviewer", "🐛 [reviewer] decision lost on refresh", "[reviewer] 🐛 decision lost on refresh"},
+		{"governor", "🐝 [selfreport] relayed", "[selfreport] 🐝 relayed"},
+		// A filer-chosen bracket that is not a filer name is the subject.
+		{"dashboard", "[ACMM L0] Add CI/CD pipeline", "[dashboard] [ACMM L0] Add CI/CD pipeline"},
+		{"tester", "[Tests] v5 test failure on 4536f90", "[tester] [Tests] v5 test failure on 4536f90"},
 		{"", "untagged stays untagged", "untagged stays untagged"},
 		{"scanner", "", ""},
 	}
 	for _, tc := range cases {
-		if got := TitleFor(tc.agent, tc.title); got != tc.want {
-			t.Errorf("TitleFor(%q, %q) = %q, want %q", tc.agent, tc.title, got, tc.want)
+		if got := AgentIssueTitle(tc.agent, tc.title); got != tc.want {
+			t.Errorf("AgentIssueTitle(%q, %q) = %q, want %q", tc.agent, tc.title, got, tc.want)
 		}
-		if again := TitleFor(tc.agent, TitleFor(tc.agent, tc.title)); again != tc.want {
-			t.Errorf("TitleFor is not idempotent for (%q, %q): %q", tc.agent, tc.title, again)
+		if again := AgentIssueTitle(tc.agent, AgentIssueTitle(tc.agent, tc.title)); again != tc.want {
+			t.Errorf("AgentIssueTitle is not idempotent for (%q, %q): %q", tc.agent, tc.title, again)
 		}
 	}
 }
@@ -136,14 +146,23 @@ func TestStripAgentPrefixAndSameTitle(t *testing.T) {
 	if got := StripAgentPrefix("  no tag here "); got != "no tag here" {
 		t.Fatalf("StripAgentPrefix(untagged) = %q", got)
 	}
-	if got := AgentPrefix("[Scanner] split x.go"); got != "scanner" {
+	if got := StripAgentPrefix("[ACMM L0] Add CI/CD pipeline"); got != "[ACMM L0] Add CI/CD pipeline" {
+		t.Fatalf("StripAgentPrefix must keep a non-filer bracket: %q", got)
+	}
+	if got := AgentPrefix("[scanner] split x.go"); got != "scanner" {
 		t.Fatalf("AgentPrefix = %q", got)
 	}
-	if AgentPrefix("plain") != "" || HasAgentPrefix("plain") {
-		t.Fatal("untagged title reported a tag")
+	if AgentPrefix("plain") != "" || HasAgentPrefix("plain") || AgentPrefix("[Tests] failure") != "" || AgentPrefix("🐛 [reviewer] x") != "" {
+		t.Fatal("a title without a leading filer tag reported one")
 	}
 	if !SameTitle("Review backlog (security): x", "[reviewer] Review backlog (security): x") {
 		t.Fatal("legacy untagged title must match its tagged successor")
+	}
+	if !SameTitle("[ACMM L0] Add CI/CD pipeline", "[dashboard] [ACMM L0] Add CI/CD pipeline") {
+		t.Fatal("legacy ACMM gap title must match its tagged successor")
+	}
+	if !SameTitle("🐝 Hive Advisory Report", "[governor] 🐝 Hive Advisory Report") {
+		t.Fatal("legacy advisory title must match its tagged successor")
 	}
 	if SameTitle("[reviewer] Review backlog (security): x", "[reviewer] Review backlog (security): y") {
 		t.Fatal("different subjects must not match")

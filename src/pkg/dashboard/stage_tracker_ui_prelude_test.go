@@ -152,6 +152,8 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerRowHtml"),
 		jsFunc(t, html, "stageTrackerPRIssueSlot"),
 		jsFunc(t, html, "stageTrackerClosedChipHtml"),
+		jsFunc(t, html, "stageTrackerSplitTitleTag"),
+		jsFunc(t, html, "stageTrackerTitleHtml"),
 		jsFunc(t, html, "stageTrackerItemURL"),
 		jsFunc(t, html, "stageTrackerItemKey"),
 		jsFunc(t, html, "stageTrackerMoveAttrs"),
