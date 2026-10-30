@@ -183,16 +183,24 @@
        order under one header line, joined by a thin rail on the left. Muted,
        hairline weights: the rail says "these move together", nothing more. */
     .ham-train-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) 0 var(--sp-5); margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); min-width: 0; position: relative; }
-    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
-    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--line-strong); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
+    /* One rail colour per train (--ham-train-accent, cycled by .ham-train-k0..k3
+       from stageTrackerTrainIndex) runs from the header through every member
+       row, so two trains on one page tell apart at a glance. */
+    .ham-train-head, .ham-row.ham-train { --ham-train-accent: var(--line-strong); }
+    .ham-train-head.ham-train-k0, .ham-row.ham-train.ham-train-k0 { --ham-train-accent: var(--blue); }
+    .ham-train-head.ham-train-k1, .ham-row.ham-train.ham-train-k1 { --ham-train-accent: var(--purple); }
+    .ham-train-head.ham-train-k2, .ham-row.ham-train.ham-train-k2 { --ham-train-accent: var(--cyan); }
+    .ham-train-head.ham-train-k3, .ham-row.ham-train.ham-train-k3 { --ham-train-accent: var(--amber); }
+    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--ham-train-accent, var(--line-strong)); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
     /* The train icon (hivecommons/hive issue 15395): 14px, currentColor, so it reads at chip size. */
     .ham-train-icon { width: 14px; height: 14px; flex: 0 0 auto; vertical-align: -2px; }
     .ham-seg-t .ham-col-ico { display: inline-block; margin-right: 0.3em; }
     .ham-train-files { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ham-row.ham-train { padding-left: var(--sp-5); position: relative; }
-    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
+    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
     .ham-row.ham-train-last::before { bottom: 50%; }
-    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--line-strong); }
+    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
