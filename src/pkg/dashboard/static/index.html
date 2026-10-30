@@ -404,7 +404,7 @@
     .oc-version-manual-pill { white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
     .oc-version-upgrade-note { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
     .oc-version-state-pill { white-space: nowrap; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-    .oc-version-state-pill.is-draining { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); }
+    .oc-version-state-pill.is-draining, .oc-version-state-pill.is-delayed { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); }
     .oc-version-state-pill.is-missed { color: var(--red, var(--danger)); border-color: color-mix(in srgb, var(--red, var(--danger)) 40%, transparent); }
     .oc-version-state-pill.is-done { color: var(--green, var(--success)); }
     .oc-version-history { list-style: none; margin: 0; padding: 0; font-size: var(--fs-xs); color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
@@ -45721,7 +45721,7 @@ function burnAreaChart() {
        state as a pill — with the drain countdown and the agents holding the
        upgrade — and lists the history so a missed window is never silent. */
     function versionStateLabels() {
-      return { scheduled: 'Scheduled', draining: 'Draining', pulling: 'Pulling', rolling: 'Rolling', verifying: 'Verifying', done: 'Upgraded', missed: 'Missed window' };
+      return { scheduled: 'Scheduled', delayed: 'Delayed', draining: 'Draining', pulling: 'Pulling', rolling: 'Rolling', verifying: 'Verifying', done: 'Upgraded', missed: 'Missed window' };
     }
 
     function versionStateLabel(state) {
@@ -45754,7 +45754,7 @@ function burnAreaChart() {
         const agents = versionAgentsInTurnText(st);
         const left = typeof st.drainRemainingS === 'number' && st.drainRemainingS > 0 ? versionFormatDuration(st.drainRemainingS) + ' left' : 'deadline reached';
         text += (agents ? ' · ' + agents : '') + ' · ' + left;
-      } else if (st.state === 'missed' && st.reason) {
+      } else if ((st.state === 'missed' || st.state === 'delayed') && st.reason) {
         text += ' · ' + st.reason;
       } else if (st.state === 'scheduled' && st.nextWindowAt) {
         const at = new Date(st.nextWindowAt);
@@ -46920,7 +46920,6 @@ function burnAreaChart() {
       }, VERSION_CHECK_INTERVAL_MS);
     }
     // startVersionCheck() — deferred to _deferredInit
-
     var _eventSource = null;
     var _eventSourceReconnectTimer = null;
     var _sseLastFrameAtMs = 0;

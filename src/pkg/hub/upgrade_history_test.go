@@ -84,7 +84,7 @@ func TestUpgradeHistoryWindowMissedOneRowPerDay(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("same window must dedupe to one row, got %d", len(got))
 	}
-	if got[0].Trigger != spoke.UpgradeTriggerWindow || got[0].Outcome != spoke.UpgradeOutcomeMissed || got[0].Reason != "spoke still draining" {
+	if got[0].Trigger != spoke.UpgradeTriggerWindow || got[0].Outcome != spoke.UpgradeOutcomeDelayed || got[0].Reason != "spoke still draining" {
 		t.Fatalf("window row = %+v", got[0])
 	}
 	u.windowMissed("h", "551ffc3", "spoke still draining", day1.Add(24*time.Hour))

@@ -63,6 +63,11 @@ func buildUpgradeProgress(in upgradeProgressInput) *spoke.UpgradeProgress {
 		nextWindow = in.Policy.NextWindowAt
 		history = in.Policy.UpgradeHistory
 	}
+	var upgradedAt time.Time
+	if in.Outcome != nil {
+		upgradedAt = in.Outcome.CompletedAt
+	}
+	history = spoke.UpgradeHistoryForDisplay(history, upgradedAt)
 
 	if d := in.Drain; d != nil {
 		turns := d.Turns
@@ -114,7 +119,9 @@ func buildUpgradeProgress(in upgradeProgressInput) *spoke.UpgradeProgress {
 		return p
 	}
 
-	if o := in.Outcome; o != nil && !o.CompletedAt.IsZero() && !in.StartedAt.IsZero() && !o.CompletedAt.Before(in.StartedAt.Add(-time.Minute)) {
+	last, hasLast := latestClosedAttempt(history)
+	if o := in.Outcome; o != nil && !o.CompletedAt.IsZero() && !in.StartedAt.IsZero() &&
+		!o.CompletedAt.Before(in.StartedAt.Add(-time.Minute)) && (!hasLast || !last.EndedAt.After(o.CompletedAt)) {
 		return &spoke.UpgradeProgress{
 			State:        spoke.UpgradeStateDone,
 			Target:       shortSHADashboard(o.TargetSHA),
@@ -126,7 +133,7 @@ func buildUpgradeProgress(in upgradeProgressInput) *spoke.UpgradeProgress {
 		}
 	}
 
-	if last, ok := latestClosedAttempt(history); ok && now.Sub(last.EndedAt) <= upgradeHistoryRecentFor {
+	if hasLast && now.Sub(last.EndedAt) <= upgradeHistoryRecentFor {
 		p := &spoke.UpgradeProgress{
 			State:        last.Outcome,
 			Target:       last.Target,
@@ -140,6 +147,8 @@ func buildUpgradeProgress(in upgradeProgressInput) *spoke.UpgradeProgress {
 		switch last.Outcome {
 		case spoke.UpgradeOutcomeDone:
 			p.Detail = "upgraded to " + orDashDashboard(last.Target) + " " + ago
+		case spoke.UpgradeOutcomeDelayed:
+			p.Detail = "delayed: " + last.Reason
 		default:
 			if last.Trigger == spoke.UpgradeTriggerWindow {
 				p.Detail = "missed window " + ago + ": " + last.Reason
