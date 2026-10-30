@@ -512,7 +512,7 @@ r = stageTrackerReconcile(el, [row(P('o/r', 109, 85))], opts);
 assert.deepStrictEqual(r, { kept: 0, replaced: 1, entered: 0, exited: 0, deferred: 0 }, 'flag off → swapped back');
 assert.ok(!el.children[0].html.includes('entinel'));
 `
-	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+	if out, err := runNodeStdin(node, script); err != nil {
 		t.Fatalf("node sentinel lane fixture failed: %v\n%s", err, out)
 	}
 }

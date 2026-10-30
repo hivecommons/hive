@@ -582,14 +582,32 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 	// between the approval landing and the merge (hivecommons/hive#15136).
 	admitted := s.admitPullRequestHead(repoFull, number, state.HeadSHA, user)
 	if decision == repoItemDecisionQueueMerge {
-		if err := gh.QueuePRAutoMergeWithNote(ctx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment)); err != nil {
+		queued, err := gh.QueuePRAutoMergeWithNoteResult(ctx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment))
+		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
+		released := []string{"admitted"}
+		if !queued.ReviewSubmitted {
+			// The hive's own PR: the App cannot review it, so the operator's
+			// approval is recorded in the hive's store exactly as the plain
+			// Approve decision records it; the self-authored lane merges on
+			// that record once CI is green (hivecommons/hive#15666).
+			event, err := gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
+				HumanChangeRequests: repoItemDecisionChangeRequests(),
+				LiftNeedsHuman:      true,
+				SentinelLabel:       s.sentinelLabel(),
+			})
+			if err != nil {
+				jsonError(w, "recording approval on the hive's own pull request: "+err.Error(), http.StatusBadGateway)
+				return
+			}
+			released = append(repoItemApprovalReleased(event), released...)
+		}
 		label := gh.AutoMergeLabel()
-		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label, "admitted_by", admitted), "", repoFull, number)
+		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label, "admitted_by", admitted, "review_submitted", strconv.FormatBool(queued.ReviewSubmitted)), "", repoFull, number)
 		s.invalidateStageTrackerForWebhook()
-		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA, AdmittedBy: admitted,
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA, AdmittedBy: admitted, Released: released,
 			Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)})
 		return
 	}
@@ -862,7 +880,7 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 	case out.SentinelOpen:
 		out.Next = "The `" + repoItemSentinelLabelOrDefault(facts.SentinelLabel) + "` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's merge sweep will touch it."
 	case facts.Stage == stagelabels.ReadyForHumanMerge.Label():
-		out.Next = "Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer."
+		out.Next = "Hive cannot merge this one (trust or role blocks it): use Approve and let hive merge, merge it now as maintainer, or merge it on GitHub yourself."
 	default:
 		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked" + repoItemSoakNote(facts.SoakMinutes) + "."
 	}

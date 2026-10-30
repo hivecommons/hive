@@ -4816,6 +4816,7 @@ func (s *HubServer) handleContributeLanding(w http.ResponseWriter, r *http.Reque
         <a class="btn primary" href="/get-started#contribute">Contributor quickstart</a>
         <a class="btn" href="%[1]s">Relay docs</a>
         <a class="btn" href="https://hivecommons.dev/discord">Discord</a>
+        <a class="btn" href="https://www.twitch.tv/hivecommons">Live stream (Twitch)</a>
       </div>
     </section>
     <section aria-labelledby="hive-list-title">

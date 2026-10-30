@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -30,5 +31,55 @@ func TestKioskModeWiring(t *testing.T) {
 	}
 	if strings.Contains(html, `localStorage.setItem('hive-kiosk`) {
 		t.Error("kiosk mode must not persist state in localStorage")
+	}
+}
+
+// TestKioskSoundDefault guards the streamer's audio path: in kiosk mode the
+// tracker sounds are on unless the URL says `&sound=off`, the context is
+// resumed at init without waiting for a gesture (the streamer's Chromium
+// allows autoplay), the held-back toast never reaches the stream, and no
+// sound/volume preference is written to localStorage.
+func TestKioskSoundDefault(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`sound=new URL(window.location.href).searchParams.get('sound')!=='off';`,
+		`window.HIVE_KIOSK_SOUND=kiosk&&sound;`,
+		`window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing kiosk sound wiring %q", want)
+		}
+	}
+	if init := jsFunc(t, html, "stageTrackerSoundInit"); !strings.Contains(init, "if (window.hiveKioskMode && window.hiveKioskMode()) { stageTrackerKioskSoundInit(); return; }") {
+		t.Errorf("stageTrackerSoundInit must branch to the kiosk path before touching localStorage:\n%s", init)
+	}
+	kioskInit := jsFunc(t, html, "stageTrackerKioskSoundInit")
+	if strings.Contains(kioskInit, "localStorage") || !strings.Contains(kioskInit, "stageTrackerResumeContext(") {
+		t.Errorf("stageTrackerKioskSoundInit must resume the context and never read localStorage:\n%s", kioskInit)
+	}
+	if held := jsFunc(t, html, "stageTrackerSoundHeldNotice"); !strings.Contains(held, "if (window.HIVE_KIOSK_SOUND) return;") {
+		t.Errorf("stageTrackerSoundHeldNotice must be a no-op on a kiosk:\n%s", held)
+	}
+	for _, fn := range []string{"stageTrackerSetSoundOn", "stageTrackerSetVolume"} {
+		if body := jsFunc(t, html, fn); !strings.Contains(body, "if (!(window.hiveKioskMode && window.hiveKioskMode())) { try { localStorage.setItem(") {
+			t.Errorf("%s must not write localStorage in kiosk mode:\n%s", fn, body)
+		}
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — kiosk sound default was NOT executed by this run")
+	}
+	script := strings.Join([]string{
+		"const assert = require('assert');",
+		jsFunc(t, html, "stageTrackerKioskSoundDefault"),
+		"assert.strictEqual(stageTrackerKioskSoundDefault(true, '?kiosk=1'), true, 'kiosk default is on');",
+		"assert.strictEqual(stageTrackerKioskSoundDefault(true, '?kiosk=1&sound=off'), false, 'sound=off silences');",
+		"assert.strictEqual(stageTrackerKioskSoundDefault(true, '?kiosk=1&sound=on'), true, 'any other value is on');",
+		"assert.strictEqual(stageTrackerKioskSoundDefault(true, ''), true, 'no query → on');",
+		"assert.strictEqual(stageTrackerKioskSoundDefault(false, '?sound=on'), false, 'never outside kiosk mode');",
+	}, "\n")
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("node kiosk sound default fixture failed: %v\n%s", err, out)
 	}
 }

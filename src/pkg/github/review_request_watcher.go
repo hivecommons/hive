@@ -518,6 +518,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// error/retry handling as a real CreateReview failure below.
 	var created *gh.PullRequestReview
 	decisionDeduped := false
+	ownPRNote := ""
 	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 	} else if req.Revise {
@@ -555,8 +556,23 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 			return c.observeReviewSubmit(ctx, owner, repoName, req.Number, body, "", provenance)
 		}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 			var apiErr error
-			created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
-			return effects.Result{Provenance: provenance}, apiErr
+			for {
+				created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+				if !IsOwnPullRequestReviewRefusal(apiErr) || ownPRNote != "" {
+					return effects.Result{Provenance: provenance}, apiErr
+				}
+				// GitHub never lets the App approve or request changes on
+				// its own pull request (422), and no retry changes that:
+				// post the same text once more as a COMMENT review so the
+				// verdict still lands on the PR (hivecommons/hive#15666).
+				// The verdict itself is recorded below as asked.
+				ownPRNote = fmt.Sprintf("%s downgraded to COMMENT: GitHub refuses a review on the App's own pull request", apiEvent)
+				commentEvent, _, _ := reviewEventToAPI("comment")
+				reviewReq.Event = gh.Ptr(commentEvent)
+				if reviewReq.Body == nil {
+					reviewReq.Body = gh.Ptr(contributorCommentBody(""))
+				}
+			}
 		})
 	}
 	if errors.Is(err, errReviseNotAllowlisted) {
@@ -565,6 +581,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		// the file aside so it is not re-attempted on every tick.
 		c.denyReviewRequest(path, req, err.Error(), nowFn)
 		return
+	}
+	if err == nil && ownPRNote != "" {
+		_, state, _ = reviewEventToAPI("comment")
+		c.logger.Warn("review-request watcher: own-PR review refused by GitHub, posted as COMMENT",
+			slog.String("agent", req.Agent), slog.String("repo", req.Repo), slog.Int("number", req.Number))
 	}
 	if err != nil {
 		// Retry with exponential backoff and quarantine at the give-up horizon
@@ -590,6 +611,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	resp.State = state
 	if commentOnlyNote != "" {
 		resp.Note = commentOnlyNote
+	}
+	if ownPRNote != "" {
+		resp.Note = ownPRNote
 	}
 	if sentinelBlockNote != "" {
 		resp.Note = sentinelBlockNote

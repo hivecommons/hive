@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # Headless Activity Monitor streamer (hivecommons/hive#15594).
 #
-# Xvfb ─► Chromium --kiosk ─► (loopback authproxy) ─► dashboard
-#   └────────────── ffmpeg x11grab + silent audio ─► Twitch RTMP
+# Xvfb ──────► Chromium --kiosk ─► (loopback authproxy) ─► dashboard
+#   │              │ tracker sounds (Web Audio)
+#   │              ▼
+#   │     PulseAudio null sink "hive" ─► hive.monitor
+#   │                                        │
+#   └── ffmpeg x11grab ◄────────────────────┘ (-f pulse) ─► Twitch RTMP
+#
+# STREAM_AUDIO=pulse (default) captures the dashboard's merge-zap / new-item
+# buzz through the null sink; STREAM_AUDIO=silent skips PulseAudio, mutes
+# Chromium and synthesises silence with anullsrc (Twitch still needs a track).
 #
 # Every process is supervised here: Chromium and ffmpeg are restarted with
 # backoff when they exit, the page is reloaded every RELOAD_EVERY so a rolled
@@ -24,6 +32,8 @@ FPS="${FPS:-30}"
 BITRATE="${BITRATE:-4500k}"
 X264_PRESET="${X264_PRESET:-veryfast}"
 RELOAD_EVERY="${RELOAD_EVERY:-30m}"
+STREAM_AUDIO="${STREAM_AUDIO:-pulse}"          # pulse | silent
+PULSE_SINK_NAME="${PULSE_SINK_NAME:-hive}"
 DISPLAY_NUM="${DISPLAY_NUM:-:99}"
 AUTHPROXY_LISTEN="${AUTHPROXY_LISTEN:-127.0.0.1:8099}"
 RUN_DIR="${RUN_DIR:-/run/stream}"
@@ -32,8 +42,14 @@ BACKOFF_MAX=60
 KEYINT=$(( FPS * 2 ))                          # Twitch wants a 2 s keyframe interval
 BUFSIZE="$(( ${BITRATE%k} * 2 ))k"
 
+case "$STREAM_AUDIO" in pulse|silent) ;; *) echo "STREAM_AUDIO must be 'pulse' or 'silent' (got '$STREAM_AUDIO')" >&2; exit 1 ;; esac
+
 export DISPLAY="$DISPLAY_NUM" AUTHPROXY_LISTEN DASHBOARD_URL DASHBOARD_TOKEN
 mkdir -p "$RUN_DIR/profile"; rm -f "$RUN_DIR/done"
+# Per-user PulseAudio under RUN_DIR: the pod's only writable volume besides
+# HOME, and the socket path Chromium and ffmpeg both resolve via PULSE_SERVER.
+export XDG_RUNTIME_DIR="$RUN_DIR/pulse" PULSE_SERVER="unix:$RUN_DIR/pulse/native"
+mkdir -p "$XDG_RUNTIME_DIR"; chmod 0700 "$XDG_RUNTIME_DIR"
 PROGRESS="$RUN_DIR/ffmpeg-progress.txt"
 : > "$PROGRESS"
 log() { printf '%s stream: %s\n' "$(date -u +%FT%TZ)" "$*"; }
@@ -49,6 +65,29 @@ for _ in $(seq 1 50); do xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && bre
 xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 || { log "Xvfb failed to start"; exit 1; }
 log "Xvfb up on $DISPLAY_NUM (${VIDEO_SIZE})"
 
+# ---- 1b. PulseAudio null sink (STREAM_AUDIO=pulse) --------------------------
+if [ "$STREAM_AUDIO" = pulse ]; then
+  # Foreground child under the supervisor (not --start/--daemonize, which
+  # drops the --load list). -n: no default.pa, so no udev/ALSA probing in a
+  # pod; only the native socket and the null sink are loaded.
+  # --exit-idle-time=-1 keeps it alive between Chromium restarts.
+  pulseaudio --exit-idle-time=-1 --disallow-exit --realtime=no --high-priority=no \
+    --log-target=stderr --log-level=error -n \
+    --load="module-native-protocol-unix socket=$RUN_DIR/pulse/native" \
+    --load="module-null-sink sink_name=$PULSE_SINK_NAME sink_properties=device.description=$PULSE_SINK_NAME" \
+    > >(sed -u 's/^/pulseaudio: /') 2>&1 &
+  pids+=($!)
+  for _ in $(seq 1 50); do pactl info >/dev/null 2>&1 && break; sleep 0.2; done
+  pactl info >/dev/null 2>&1 || { log "pulseaudio failed to start"; exit 1; }
+  pactl list sinks short | awk '{print $2}' | grep -qx "$PULSE_SINK_NAME" \
+    || pactl load-module module-null-sink "sink_name=$PULSE_SINK_NAME" "sink_properties=device.description=$PULSE_SINK_NAME" >/dev/null
+  for _ in $(seq 1 50); do pactl list sinks short | awk '{print $2}' | grep -qx "$PULSE_SINK_NAME" && break; sleep 0.2; done
+  pactl list sinks short | awk '{print $2}' | grep -qx "$PULSE_SINK_NAME" || { log "pulseaudio sink $PULSE_SINK_NAME did not appear"; exit 1; }
+  pactl set-default-sink "$PULSE_SINK_NAME"
+  pactl set-sink-mute "$PULSE_SINK_NAME" 0; pactl set-sink-volume "$PULSE_SINK_NAME" 100%
+  log "pulseaudio up; default sink $PULSE_SINK_NAME (ffmpeg captures ${PULSE_SINK_NAME}.monitor)"
+fi
+
 # ---- 2. authproxy (adds Authorization: Bearer, token stays off-screen) ------
 authproxy -listen "$AUTHPROXY_LISTEN" &
 pids+=($!)
@@ -58,6 +97,8 @@ KIOSK_URL="http://$AUTHPROXY_LISTEN$DASHBOARD_PATH"
 log "authproxy up; kiosk URL $KIOSK_URL -> ${DASHBOARD_URL%%\?*} (token $([ -n "$DASHBOARD_TOKEN" ] && echo set || echo UNSET))"
 
 # ---- 3. Chromium kiosk, restarted with backoff ------------------------------
+CHROMIUM_AUDIO_FLAGS=()
+[ "$STREAM_AUDIO" = silent ] && CHROMIUM_AUDIO_FLAGS=(--mute-audio)
 chromium_loop() {
   local backoff=$BACKOFF_MIN
   while :; do
@@ -65,7 +106,7 @@ chromium_loop() {
     log "chromium starting"
     chromium \
       --kiosk --no-first-run --no-default-browser-check --disable-gpu \
-      --autoplay-policy=no-user-gesture-required --mute-audio \
+      --autoplay-policy=no-user-gesture-required ${CHROMIUM_AUDIO_FLAGS[@]+"${CHROMIUM_AUDIO_FLAGS[@]}"} \
       --window-size="${VIDEO_SIZE/x/,}" --window-position=0,0 --force-device-scale-factor=1 \
       --disable-infobars --disable-session-crashed-bubble --noerrdialogs --hide-scrollbars \
       --disable-features=TranslateUI,MediaRouter --check-for-update-interval=31536000 \
@@ -102,6 +143,9 @@ sink() {
     *)    printf -- '%s' "$STREAM_OUTPUT" ;;
   esac
 }
+# Audio input for ffmpeg: the null sink's monitor, or synthesised silence.
+AUDIO_IN=(-f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100")
+[ "$STREAM_AUDIO" = pulse ] && AUDIO_IN=(-thread_queue_size 1024 -f pulse -i "${PULSE_SINK_NAME}.monitor")
 ffmpeg_loop() {
   local backoff=$BACKOFF_MIN out limit=() rc=0
   out="$(sink)" || exit 1
@@ -110,15 +154,15 @@ ffmpeg_loop() {
   sleep 5
   while :; do
     local started=$SECONDS
-    log "ffmpeg starting (${VIDEO_SIZE}@${FPS}, ${BITRATE} CBR, keyint ${KEYINT}, sink ${out%%/*}…)"
+    log "ffmpeg starting (${VIDEO_SIZE}@${FPS}, ${BITRATE} CBR, keyint ${KEYINT}, audio ${STREAM_AUDIO}, sink ${out%%/*}…)"
     # shellcheck disable=SC2086
     ffmpeg -nostdin -y -hide_banner -loglevel warning -progress "$PROGRESS" \
-      -f x11grab -framerate "$FPS" -video_size "$VIDEO_SIZE" -draw_mouse 0 -i "$DISPLAY_NUM" \
-      -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+      -thread_queue_size 1024 -f x11grab -framerate "$FPS" -video_size "$VIDEO_SIZE" -draw_mouse 0 -i "$DISPLAY_NUM" \
+      "${AUDIO_IN[@]}" \
       -c:v libx264 -preset "$X264_PRESET" -tune zerolatency -pix_fmt yuv420p \
       -b:v "$BITRATE" -minrate "$BITRATE" -maxrate "$BITRATE" -bufsize "$BUFSIZE" \
       -g "$KEYINT" -keyint_min "$KEYINT" -sc_threshold 0 -r "$FPS" \
-      -c:a aac -b:a 128k -ar 44100 -shortest "${limit[@]}" \
+      -c:a aac -b:a 128k -ac 2 -ar 44100 -shortest "${limit[@]}" \
       $out > >(sed -u "s#${TWITCH_STREAM_KEY:-__none__}#***#g") 2>&1 && rc=0 || rc=$?
     if (( STREAM_SECONDS > 0 )); then
       if (( rc != 0 )); then log "ffmpeg bounded run FAILED (exit $rc)"; exit "$rc"; fi
