@@ -1,0 +1,1 @@
+- The hold guard no longer re-applies `hold` over a dashboard Approve: when a trusted merger approved the PR's current head through the hive's own decision record and the hive removed the sentinel/hold gate label on their behalf, the guard accepts that head instead of reading the hive's lift as unreviewed drift ([#15644](https://github.com/hivecommons/hive/issues/15644)).
