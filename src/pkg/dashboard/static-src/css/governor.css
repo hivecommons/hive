@@ -19,10 +19,14 @@
     /* RUNNING tile cost rotor (#15614): the four window phrases share one
        grid cell, so the tile is always as wide as its widest phrase and the
        amount + window crossfades in place while the agent count stays put.
-       nowrap + ellipsis is the fallback when the tile is narrower still. */
-    .fleet-run-stat .val, .fleet-run-stat .gm-val { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    .fleet-run-count { color: var(--text); }
-    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; vertical-align: bottom; max-width: 100%; overflow: hidden; color: var(--text); }
+       The host is a flex row — count fixed, rotor shrinks — so the host
+       itself never overflows: a text-overflow ellipsis on the host would be
+       painted at the rotor's left edge, showing up as a stray dot between
+       "$" and the digits ("$.1,010"). Only the phrase ellipsizes. */
+    .fleet-run-stat .val, .fleet-run-stat .gm-val { display: flex; align-items: baseline; white-space: nowrap; overflow: hidden; min-width: 0; }
+    /* pre keeps the trailing space of "N · " that flex would otherwise trim. */
+    .fleet-run-count { flex: none; white-space: pre; color: var(--text); }
+    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text); }
     .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
     .fleet-cost-rotor .fcr-phrase.is-cur { opacity: 1; transform: translateY(0); }
     .fleet-cost-rotor .fcr-phrase.is-out { opacity: 0; transform: translateY(-0.5em); }
