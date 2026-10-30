@@ -183,16 +183,24 @@
        order under one header line, joined by a thin rail on the left. Muted,
        hairline weights: the rail says "these move together", nothing more. */
     .ham-train-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) 0 var(--sp-5); margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); min-width: 0; position: relative; }
-    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
-    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--line-strong); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
+    /* One rail colour per train (--ham-train-accent, cycled by .ham-train-k0..k3
+       from stageTrackerTrainIndex) runs from the header through every member
+       row, so two trains on one page tell apart at a glance. */
+    .ham-train-head, .ham-row.ham-train { --ham-train-accent: var(--line-strong); }
+    .ham-train-head.ham-train-k0, .ham-row.ham-train.ham-train-k0 { --ham-train-accent: var(--blue); }
+    .ham-train-head.ham-train-k1, .ham-row.ham-train.ham-train-k1 { --ham-train-accent: var(--purple); }
+    .ham-train-head.ham-train-k2, .ham-row.ham-train.ham-train-k2 { --ham-train-accent: var(--cyan); }
+    .ham-train-head.ham-train-k3, .ham-row.ham-train.ham-train-k3 { --ham-train-accent: var(--amber); }
+    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--ham-train-accent, var(--line-strong)); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
     /* The train icon (hivecommons/hive issue 15395): 14px, currentColor, so it reads at chip size. */
     .ham-train-icon { width: 14px; height: 14px; flex: 0 0 auto; vertical-align: -2px; }
     .ham-seg-t .ham-col-ico { display: inline-block; margin-right: 0.3em; }
     .ham-train-files { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ham-row.ham-train { padding-left: var(--sp-5); position: relative; }
-    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
+    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
     .ham-row.ham-train-last::before { bottom: 50%; }
-    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--line-strong); }
+    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
@@ -291,6 +299,9 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
     .ham-holder { font-weight: normal; }
+    /* The holder's offline / not-registered state is muted: a flag, not an alarm. */
+    .ham-holder-presence { margin-right: 0; color: var(--text-faint); font-weight: normal; }
+    .ham-holder-presence.ham-presence-offline { --ham-presence-color: var(--text-faint); }
     /* A word with a holder ("PR in progress · @bob's clanker") stays on one
        line: the stage word keeps its width and the name gives way with an
        ellipsis before anything wraps (hivecommons/hive#15541). */
@@ -427,6 +438,24 @@
     .cue-event.cue-event-fading { opacity: 0.55; }
     .cue-setback .cue-event-who { color: var(--status-error); }
     .cue-merged .cue-event-who { color: var(--green); }
+    /* Hive note, show then tuck: with auto-collapse on the line is
+       [icon][body]; tucking wipes the body away from its right edge
+       (clip-path) while the text slides a few px left and fades, so it
+       reads as sliding into the ⬡-i icon. The line keeps one fixed height
+       either way so the chevrons above never shift. The icon is the only
+       click target; hover shows its tooltip (the whole note and its age).
+       Reduced motion: an instant toggle. */
+    .cue-event.cue-event-tuckable { display: flex; align-items: center; gap: 0; height: 1.6em; line-height: 1.6em; overflow: hidden; }
+    .cue-event-ico { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 1.6em; height: 1.6em; margin: 0 var(--sp-1) 0 0; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; transition: color 200ms ease-in-out, background 200ms ease-in-out; }
+    .cue-event-ico:hover, .cue-event-ico:focus-visible { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+    .cue-event-ico:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: 1px; }
+    .cue-event-ico-svg { width: 1em; height: 1em; }
+    .cue-event-tucked .cue-event-ico { color: var(--text); }
+    .cue-event-body { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: 1; transform: none; clip-path: inset(0 0 0 0); transition: clip-path 400ms ease-in-out, opacity 350ms ease-in-out, transform 400ms ease-in-out; }
+    .cue-event-tucked .cue-event-body { opacity: 0; transform: translateX(-8px); clip-path: inset(0 100% 0 0); pointer-events: none; }
+    .cue-event-tuckable .cue-event-who { margin-right: var(--sp-1); }
+    @media (prefers-reduced-motion: reduce) { .cue-event-body, .cue-event-ico { transition: none; } }
+    .ham-rm-preview .cue-event-body { transition: none; }
     @keyframes cue-acting-stripes { to { background-position: 34px 0; } }
     @keyframes cue-event-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
     /* Merged: the row is pinned for a moment, its ✓ cell glows, a small

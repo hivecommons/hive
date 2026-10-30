@@ -966,9 +966,16 @@ func (s *Server) stageDwellOverrides() map[string]time.Duration {
 // 045/085 while its current labels carry no park signal at all — no stage
 // label for the bay, no `needs-human`, no retired needs-decision spelling.
 // The labels are the newer fact: the park lifted and the record is waiting
-// on the engine's next reconcile.
+// on the engine's next reconcile. Not so when the write-back gate kept the
+// labels off the item (a contributor PR without the opt-in label): the
+// labels never carried the park, the record is the only stage there is,
+// and dropping it read the row as an unclassified "PR in progress" for
+// hours while the engine held it at 085.
 func stageTrackerStaleDecisionRecord(rec stagelabels.Record, labels []string) bool {
 	if rec.Stage != stagelabels.NeedsDecision && rec.Stage != stagelabels.IssueNeedsDecision {
+		return false
+	}
+	if rec.LabelsSuppressed {
 		return false
 	}
 	for _, l := range labels {

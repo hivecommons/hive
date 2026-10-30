@@ -354,6 +354,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Caption = stageTrackerReturnedToHiveCaption(it.Caption, it.Author, requesters)
 		}
 		applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
+		// After the New caption: an unclassified clanker PR whose clanker
+		// is offline says what that means for it.
+		it.Caption = stageTrackerOfflineAuthorCaption(it.Caption, it.Presence, it.Stage, adoptionClock, now)
 		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
 		// The sentinel chip is a merge-gate pill too (the trusted-author
 		// notice and the real alert alike): sentinel_alert stays truthful

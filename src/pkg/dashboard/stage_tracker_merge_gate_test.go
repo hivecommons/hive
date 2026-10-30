@@ -147,7 +147,7 @@ func TestStageTrackerMergeGateNode(t *testing.T) {
 	for _, want := range []string{
 		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
 		`60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging'`,
-		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';`,
+		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';`,
 		`else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);`,
 		`if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;`,
 		`if (typeof stageTrackerGateCountdownSync === 'function') stageTrackerGateCountdownSync(el, nowMs);`,
@@ -347,6 +347,14 @@ func stageTrackerTrainProvisionalJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTrainProvisional"),
 		jsFunc(t, html, "stageTrackerTrainProvisionalHeadline"),
 		jsFunc(t, html, "stageTrackerTrainProvisionalSuffix"),
+		jsFunc(t, html, "stageTrackerTrainOrdinalOfN"),
+		jsFunc(t, html, "stageTrackerTrainTag"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_TAG_LEAD"),
+		jsFunc(t, html, "stageTrackerTrainTagSuffix"),
+		jsFunc(t, html, "stageTrackerTrainTagTip"),
+		jsFunc(t, html, "stageTrackerTrainIndex"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ACCENTS"),
+		jsFunc(t, html, "stageTrackerTrainAccentClass"),
 	}, "\n")
 }
 
