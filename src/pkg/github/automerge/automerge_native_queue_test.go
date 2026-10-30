@@ -137,7 +137,7 @@ func (denyNativeQueueBoundary) Execute(context.Context, effects.Claim, func(cont
 }
 
 func TestNativeQueueGateWithdrawsOnlyHiveEntries(t *testing.T) {
-	for _, reason := range []string{"held", "label:hold", "label:do-not-merge", "changes-requested", autoMergeReasonHumanChangesRequested, autoMergeReasonReviewGatePrefix + ReviewGateOutcomeChangesRequested, autoMergeReasonNoHiveQueueApproval, "queue-approval-head-changed", "label-removed", nativeQueueReasonPaused, "draft", "closed"} {
+	for _, reason := range []string{"held", "label:hold", "label:do-not-merge", "changes-requested", autoMergeReasonHumanChangesRequested, autoMergeReasonReviewGatePrefix + ReviewGateOutcomeChangesRequested, autoMergeReasonNoHiveQueueApproval, "queue-approval-head-changed", "label-removed", nativeQueueReasonPaused, "draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath} {
 		// A user account named like the App's slug is not the App.
 		for _, actor := range []string{testHiveAppBotLogin, "maintainer", "another-app[bot]", "", botSlug(testHiveAppBotLogin)} {
 			t.Run(reason+"/"+actor, func(t *testing.T) {
