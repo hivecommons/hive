@@ -19420,7 +19420,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const server = d && Array.isArray(d.options) ? d.options : [];
       const out = [];
       for (const o of server) {
-        if (!o || !o.action || STAGE_TRACKER_GENERIC_ACTIONS.indexOf(o.action) >= 0 || o.action.indexOf('decide:') !== 0 || (taken && taken[o.action])) continue;
+        // A server-marked lead (`lead`) heads the menu even when the
+        // Decide… submenu lists the same verb generically: the row's
+        // answer is this one, with its consequence.
+        if (!o || !o.action || STAGE_TRACKER_GENERIC_ACTIONS.indexOf(o.action) >= 0 || o.action.indexOf('decide:') !== 0 || (taken && taken[o.action] && !o.lead)) continue;
         const allowed = stageTrackerActionAllowed(o.action, ctx);
         const enabled = !!o.enabled && allowed.enabled;
         const why = enabled ? '' : (o.enabled ? allowed.why : (o.reason_if_disabled || 'Not available on this row'));
