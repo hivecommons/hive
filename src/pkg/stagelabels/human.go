@@ -678,3 +678,15 @@ func AlreadyLandedCaption(reason string) (caption string, ok bool) {
 	}
 	return "already landed on the base — closing as superseded", true
 }
+
+// AlreadyLandedAuthorReason is the log reason for an already-landed close
+// of any author's PR (hivecommons/hive#15732): "already-landed:<kind>",
+// so a contributor's or trusted author's close reads apart from the
+// hive's own (LaneReasonAlreadyLanded). An unknown kind reads "unknown".
+func AlreadyLandedAuthorReason(kind authorkind.Kind) string {
+	k := strings.TrimSpace(string(kind))
+	if k == "" {
+		k = "unknown"
+	}
+	return "already-landed:" + k
+}
