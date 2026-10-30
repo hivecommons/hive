@@ -642,21 +642,67 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		in.Author = author
 		in.HiveAuthored = client.IsHiveAuthorLogin(author)
 		in.TrustedAuthor = in.HiveAuthored
-		if err := s.gatherDelegatedPRContext(ctx, repoFull, pr, &in); err != nil {
-			return in, err
-		}
-		if err := s.gatherDelegatedLadderInput(ctx, repoFull, pr, &in); err != nil {
-			return in, err
-		}
 		in.DiffEmpty = ghpkg.PRChangedFilesClaimsEmpty(pr)
 		state := strings.ToLower(pr.GetMergeableState())
 		in.Conflicting = state == "dirty" || (pr.Mergeable != nil && !pr.GetMergeable())
-		green, err := delegatedHeadCIGreen(ctx, api, owner, repoName, pr, in.Conflicting, state)
-		if err != nil {
-			return in, fmt.Errorf("reading checks for %s#%d: %w", repoFull, number, err)
+		// The remaining GitHub reads are independent of one another (the
+		// PR context, the supersession lookup, the head's checks, the file
+		// list, the author's permission); in flight together they cost one
+		// round trip, not five (hivecommons/hive#15773). Each goroutine
+		// writes its own variables; only the context writes into in.
+		var (
+			wg                       sync.WaitGroup
+			ctxErr, supErr, ciErr    error
+			sup                      *delegatedecision.MergedCloser
+			green                    bool
+			files                    []*gh.CommitFile
+			trusted                  bool
+			checkPerm                = !in.TrustedAuthor && author != ""
+			gatherCtx, cancelGathers = context.WithCancel(ctx)
+		)
+		defer cancelGathers()
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			ctxErr = s.gatherDelegatedPRContext(gatherCtx, repoFull, pr, &in)
+		}()
+		go func() {
+			defer wg.Done()
+			sup, supErr = s.delegatedSupersession(gatherCtx, repoFull, pr, in.HiveAuthored)
+		}()
+		go func() {
+			defer wg.Done()
+			green, ciErr = delegatedHeadCIGreen(gatherCtx, api, owner, repoName, pr, in.Conflicting, state)
+		}()
+		go func() {
+			defer wg.Done()
+			files, _, _ = api.PullRequests.ListFiles(gatherCtx, owner, repoName, number, &gh.ListOptions{PerPage: delegatedDecisionGatherLimit})
+		}()
+		if checkPerm {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if perm, _, err := api.Repositories.GetPermissionLevel(gatherCtx, owner, repoName, author); err == nil {
+					switch strings.ToLower(perm.GetPermission()) {
+					case "admin", "write", "maintain":
+						trusted = true
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		if ctxErr != nil {
+			return in, ctxErr
+		}
+		if supErr != nil {
+			return in, supErr
+		}
+		s.gatherDelegatedLadderLocal(repoFull, pr, &in, sup)
+		if ciErr != nil {
+			return in, fmt.Errorf("reading checks for %s#%d: %w", repoFull, number, ciErr)
 		}
 		in.CIGreen = green
-		if files, _, err := api.PullRequests.ListFiles(ctx, owner, repoName, number, &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}); err == nil && len(files) > 0 {
+		if len(files) > 0 {
 			in.LowRiskPaths = true
 			for _, f := range files {
 				if !delegatedLowRiskPath(f.GetFilename()) {
@@ -667,13 +713,8 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 				}
 			}
 		}
-		if !in.TrustedAuthor && author != "" {
-			if perm, _, err := api.Repositories.GetPermissionLevel(ctx, owner, repoName, author); err == nil {
-				switch strings.ToLower(perm.GetPermission()) {
-				case "admin", "write", "maintain":
-					in.TrustedAuthor = true
-				}
-			}
+		if trusted {
+			in.TrustedAuthor = true
 		}
 	}
 	sentinel := s.sentinelLabel()

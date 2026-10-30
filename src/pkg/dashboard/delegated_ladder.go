@@ -20,28 +20,42 @@ import (
 // what the author drives (clanker / hive / person, for the wording), and
 // whether their relay has picked the rework up.
 
-// gatherDelegatedLadderInput fills Input.SupersededBy, AuthorTooling,
-// ReworkPickedUp and RepoPaused for a contributor PR. A supersession
+// The ladder input (Input.SupersededBy, AuthorTooling, ReworkPickedUp,
+// RepoPaused) for a contributor PR comes in two halves: the GitHub half
+// (delegatedSupersession) needs only the PR and runs in flight with the
+// PR-context reads; the local half (gatherDelegatedLadderLocal) needs the
+// context's OwnerAuthor / HumanAuthor and runs after both. A supersession
 // lookup failure aborts the decision: the fallback rung is adoption, and
 // "unknown" must not read as "not superseded".
-func (s *Server) gatherDelegatedLadderInput(ctx context.Context, repoFull string, pr *gh.PullRequest, in *delegatedecision.Input) error {
-	client := s.deps.GHClient
-	in.RepoPaused = client.RepoIsPaused(repoFull)
+
+// delegatedSupersession is the ladder's one GitHub read: the merged PR
+// that already carries this one's fix, nil when none (or hive-authored).
+func (s *Server) delegatedSupersession(ctx context.Context, repoFull string, pr *gh.PullRequest, hiveAuthored bool) (*delegatedecision.MergedCloser, error) {
+	if hiveAuthored {
+		return nil, nil
+	}
+	sup, ok, err := s.deps.GHClient.DetectMergedSupersession(ctx, repoFull, pr)
+	if err != nil {
+		return nil, fmt.Errorf("reading whether %s#%d is already fixed: %w", repoFull, pr.GetNumber(), err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	return &delegatedecision.MergedCloser{PR: sup.Closer, Issue: sup.Issue, SHA: sup.MergeSHA}, nil
+}
+
+// gatherDelegatedLadderLocal fills the ladder fields that need no GitHub
+// call, once the PR context (OwnerAuthor, HumanAuthor) is in.
+func (s *Server) gatherDelegatedLadderLocal(repoFull string, pr *gh.PullRequest, in *delegatedecision.Input, sup *delegatedecision.MergedCloser) {
+	in.RepoPaused = s.deps.GHClient.RepoIsPaused(repoFull)
 	in.AuthorTooling = s.delegatedAuthorTooling(in.Labels, in.OwnerAuthor)
 	if in.HiveAuthored {
-		return nil
+		return
 	}
-	sup, ok, err := client.DetectMergedSupersession(ctx, repoFull, pr)
-	if err != nil {
-		return fmt.Errorf("reading whether %s#%d is already fixed: %w", repoFull, pr.GetNumber(), err)
-	}
-	if ok {
-		in.SupersededBy = &delegatedecision.MergedCloser{PR: sup.Closer, Issue: sup.Issue, SHA: sup.MergeSHA}
-	}
+	in.SupersededBy = sup
 	if !in.PersonAuthored() {
 		in.ReworkPickedUp = s.delegatedReworkPickedUp(repoFull, pr, in.Author, time.Now())
 	}
-	return nil
 }
 
 // delegatedAuthorTooling reads the author-kind labels (names from
