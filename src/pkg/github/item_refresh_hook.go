@@ -3,6 +3,9 @@ package github
 import (
 	"context"
 	"sync"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // ItemRefreshHook is told, with the configured repo name and the item number,
@@ -47,6 +50,8 @@ func (c *Client) unblockIssue(ctx context.Context, repo string, number int) erro
 	if err := c.RemoveLabel(ctx, repo, number, BlockedLabel); err != nil {
 		return err
 	}
+	// The row's since-time restarts at the lift (hivecommons/hive#15779).
+	stagelabels.Shared().NoteUnblocked(stagelabels.Key(repo, number), time.Now())
 	notifyItemRefresh(repo, number, false)
 	return nil
 }
