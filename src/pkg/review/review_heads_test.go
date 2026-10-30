@@ -395,6 +395,7 @@ func TestCombinedHeadPromptFansOutPerPerspective(t *testing.T) {
 		"must NOT fetch the PR or its diff again",
 		"record it ONCE with the --record-verdict command above. Only you call hive-review.",
 		"If sub-agents are unavailable",
+		"cover this whole review, not each sub-agent",
 	}
 	for _, tc := range []struct {
 		name         string
