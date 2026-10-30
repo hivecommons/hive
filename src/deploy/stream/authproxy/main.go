@@ -43,7 +43,7 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/-/authproxy/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.Handle("/", rp)
+	mux.Handle("/", readOnly(rp))
 	srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: dialTimeout}
 	log.Printf("authproxy: %s -> %s (token %s)", *listen, redactURL(*target), yesNo(token != ""))
 	log.Fatal(srv.ListenAndServe())
@@ -95,6 +95,26 @@ func newProxy(target, token string) (*httputil.ReverseProxy, error) {
 		return nil
 	}
 	return rp, nil
+}
+
+// readOnly forwards only GET and HEAD. The bearer this proxy injects is the
+// spoke's shared dashboard token, which the dashboard treats as an unscoped
+// owner; the kiosk is a display and never mutates anything (every POST/PUT/
+// DELETE in the SPA is behind an operator click that a kiosk cannot make).
+// Refusing other methods here means a compromised renderer — Chromium runs
+// --no-sandbox in the pod — can read what the tracker reads but cannot drive
+// agent control, config or settings with the owner's authority.
+func readOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			next.ServeHTTP(w, r)
+		default:
+			log.Printf("authproxy: refused %s %s (kiosk is read-only)", r.Method, r.URL.Path)
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "kiosk proxy is read-only", http.StatusMethodNotAllowed)
+		}
+	})
 }
 
 func envOr(k, def string) string {
