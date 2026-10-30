@@ -799,6 +799,16 @@ The header reports the filtered row count and how many need attention; paginatio
 
 **The counter beside the section name.** The left-menu counter and the header lead (`37 rows (33 issues + 4 PRs on their own row) · 3 need attention`) count *rows* of the default view, not items: every open issue is a row; a pull request is its own row only when it is not drawn under a listed issue. The Overview counter (`33/13`) prints the same open set as issues/PRs, so the two differ by exactly the pull requests that share their issue's row (`9 PRs shown on their issue's row` in the tooltip). The header and tooltip also name the PRs sharing issue rows. Filters and the kind tabs narrow the list and the `showing X–Y of N` line, never the counter.
 
+### How you'll know something is waiting on you
+
+The hive often parks work on a person: a decision asked at **045** / **085**, a PR at **090** ready for a human merge, an approval the hive's GitHub App cannot give (`needs-human`, `unauthorized`), or a contributor who has gone offline past their grace so the operator is the fallback. Those waits used to look like any other row ("PR in progress"); nothing added them up and nothing said so. Three surfaces now read one server block, `/api/stage-tracker` → `waiting_on_human` (`count`, `items[{repo, number, type, kind, since, who}]`), so a human wait is never silent:
+
+- **Sidebar.** A second, orange badge on **Hive activity monitor** carries the waiting-on-you count (the grey badge stays the row count). Its tooltip lists the five longest waits with what each needs and how long it has waited. Hidden at zero.
+- **Topbar.** A **Waiting on you · N** pill sits beside **Health**, hidden at zero. Click it to land on the activity monitor with the **Waiting on you** filter applied; `?filter=waiting-on-you` on the dashboard URL does the same (for links from chat or a notification).
+- **Toast.** When the count rises between two polls, one in-app toast says **N items need your decision — #15312, #15433 …** with a **Show** action that applies the filter. At most one toast per ten minutes; none in kiosk mode.
+
+`kind` is one of `needs-decision` (045 / 085 or the `needs-decision` modifier), `ready-for-human-merge` (090), `approve-needed` (`needs-human` / `unauthorized`), `returned-to-contributor-offline` (071 / 072 once the author's grace has elapsed — `who` is then the contributor, the operator being their fallback), `other-human-wait` (015 triage). `who` is `operator` for everything the signed-in operator / maintainers must do themselves. Rows on **hold**, advisories, decided rows and PRs nested under a listed issue are not counted: hold is the operator's own choice, an advisory asks for nothing, and a decided row is the hive's to act on next. Each item also carries `waiting_on_you` / `wait_kind`, which is what the **Waiting on you** toolbar chip filters on.
+
 ### Filters, sorting and pagination
 
 Filters run on the cached browser payload and persist across reloads, except the page number:
@@ -806,6 +816,7 @@ Filters run on the cached browser payload and persist across reloads, except the
 - Kind, **Repo**, **Author** kind and search (`#number`, number or title substring, including covering PRs).
 - **Since**: any, over one hour/day/week on the current step, or past that stage's configured dwell. Stalled items always qualify.
 - **Needs attention**: drawn health modifiers or a human-gated stage. Deferred merge-gate pills do not qualify; a handled regression alone does not qualify.
+- **Waiting on you**: only rows the server flagged `waiting_on_you` (see *How you'll know something is waiting on you* above).
 - Synthetic **Needs human** / **On hold** facets and label chips, described below. Stage labels sort numerically, then other labels alphabetically, case-insensitively. Chips within one family OR; families AND; synthetic facets AND with label chips.
 
 **+N more** opens *All labels*, with every label and count, type-to-filter, toggles and **Clear**. Selected labels are promoted into the visible row. **Clear filters** appears whenever the view is narrowed.
