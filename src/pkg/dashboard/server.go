@@ -427,6 +427,13 @@ type Server struct {
 	// selfUpgradeDrain) so /api/status can show the countdown and the agents
 	// holding it (#14856). Guarded by versionMu; nil when not installed.
 	upgradeDrain upgradeDrainSource
+	// upgradeAnnounce is the announced/restarting roll record (#15788);
+	// see upgrade_announce.go. Zero value is usable.
+	upgradeAnnounce upgradeAnnounceStore
+	// startupPhase names the boot phase the process is in while s.status is
+	// still nil, so a dashboard reconnecting onto a fresh pod can show
+	// "starting: <phase>" instead of a bare spinner (#15788).
+	startupPhase atomic.Value
 	// hubPushedDashboardURL is the vanity dashboard URL the hub last delivered
 	// on a heartbeat (#7451). Non-empty means the hub owns hub.dashboard_url:
 	// an operator edit would be reverted by the next push, and until then a
@@ -3699,7 +3706,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.statusMu.RUnlock()
 
 	if status == nil {
-		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
+		statusJSONResponse(w, r, s.initializingStatus())
 		return
 	}
 	now := time.Now().UTC()

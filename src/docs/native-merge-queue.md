@@ -47,8 +47,8 @@ close an issue. The stage observation carries the reason to the dashboard.
 
 When the owning lane rejects a PR because it lost merge eligibility — a hold
 or `do-not-merge`/`needs-human` label, a removed merger label, a missing,
-untrusted or stale queue approval, changes requested, or a draft or closed
-PR — Hive rechecks the entry's enqueuer and withdraws it only if it belongs to
+untrusted or stale queue approval, changes requested, a draft or closed PR, a
+release in progress on the repository, or a human-merge-path hold — Hive rechecks the entry's enqueuer and withdraws it only if it belongs to
 this App (a `Bot` enqueuer whose login matches the App's slug). Every other
 reason, including transient refusals such as `behind`, `not-mergeable`, pending
 checks, a moved head, API read errors, author-routing skips and Hive's own

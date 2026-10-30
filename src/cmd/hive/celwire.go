@@ -144,7 +144,45 @@ func prToEvent(pr github.PullRequest) celtrigger.NormalizedEvent {
 	}
 }
 
-// celMatchedAgents returns the set of agent names that operator-defined CEL rules
+// celSeenSet remembers which repo#number items have already been surfaced as
+// "opened", so issue.opened / pr.opened are edge-triggered per hive process
+// instead of re-matching every eval cycle while the item stays actionable.
+type celSeenSet struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+// firstSight reports whether key is new, recording it as seen.
+func (s *celSeenSet) firstSight(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen == nil {
+		s.seen = make(map[string]struct{})
+	}
+	if _, ok := s.seen[key]; ok {
+		return false
+	}
+	s.seen[key] = struct{}{}
+	return true
+}
+
+// globalCELSeen is the process-wide seen-set used by the eval cycle.
+var globalCELSeen celSeenSet
+
+// celMatchedAgents is the level-triggered form of celMatchedAgentsOnce: every
+// enumerated item is evaluated every call.
+func celMatchedAgents(
+	engine *celtrigger.Engine,
+	actionable *github.ActionableResult,
+	cfg *config.Config,
+	gov *governor.Governor,
+	isPaused func(string) bool,
+	logger *slog.Logger,
+) []string {
+	return celMatchedAgentsOnce(engine, actionable, cfg, gov, isPaused, logger, nil)
+}
+
+// celMatchedAgentsOnce returns the set of agent names that operator-defined CEL rules
 // select for the items enumerated this cycle, after applying the governor's own
 // gating. The result is intended to be UNIONED into the governor's due-agents set
 // — it is strictly additive and never removes a governor-selected agent.
@@ -154,15 +192,19 @@ func prToEvent(pr github.PullRequest) celtrigger.NormalizedEvent {
 // (cadence-pause / budget / on-demand / kick-channel). A CEL match therefore
 // never bypasses a paused agent or an exhausted budget.
 //
+// When seen is non-nil, an issue or PR is evaluated only the first time it is
+// enumerated; later cycles skip it. A nil seen evaluates every item every call.
+//
 // Cheap and nil-safe: a nil engine, nil actionable, or empty rules returns an
 // empty result with zero per-item work.
-func celMatchedAgents(
+func celMatchedAgentsOnce(
 	engine *celtrigger.Engine,
 	actionable *github.ActionableResult,
 	cfg *config.Config,
 	gov *governor.Governor,
 	isPaused func(string) bool,
 	logger *slog.Logger,
+	seen *celSeenSet,
 ) []string {
 	if engine == nil || engine.Len() == 0 || actionable == nil || cfg == nil {
 		return nil
@@ -178,7 +220,7 @@ func celMatchedAgents(
 
 	consider := func(ev celtrigger.NormalizedEvent, source string) {
 		for _, agentName := range engine.MatchAgents(ev) {
-			if _, seen := candidates[agentName]; seen {
+			if _, dup := candidates[agentName]; dup {
 				continue
 			}
 			candidates[agentName] = candidate{source: source, number: ev.Number}
@@ -186,9 +228,15 @@ func celMatchedAgents(
 	}
 
 	for _, iss := range actionable.Issues.Items {
+		if seen != nil && !seen.firstSight(fmt.Sprintf("issue:%s#%d", iss.Repo, iss.Number)) {
+			continue
+		}
 		consider(issueToEvent(iss), celSourceIssue)
 	}
 	for _, pr := range actionable.PRs.Items {
+		if seen != nil && !seen.firstSight(fmt.Sprintf("pr:%s#%d", pr.Repo, pr.Number)) {
+			continue
+		}
 		consider(prToEvent(pr), celSourcePR)
 	}
 

@@ -359,6 +359,8 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "celebrateDetached"),
 		jsFunc(t, html, "stageTrackerMergeBannerNumber"),
 		jsFunc(t, html, "stageTrackerMergeBannerText"),
+		jsFunc(t, html, "toastCountdownBar"),
+		jsFunc(t, html, "toastCountdownCancel"),
 		jsFunc(t, html, "stageTrackerMergeBanner"),
 		jsFunc(t, html, "stageTrackerMergeBannerDismiss"),
 		jsFunc(t, html, "hamBannerDismiss"),
@@ -417,6 +419,7 @@ function el(tag, attrs) {
     querySelector(sel) { return e.querySelectorAll(sel)[0] || null; },
     querySelectorAll(sel) { const out = []; const unesc = v => v.replace(/\\(.)/g, '$1'); const m = sel.match(/^\[([\w-]+)="(.*)"\]$/); const word = sel.match(/^\[([\w-]+)~="(.*)"\]\[data-ham-key\]$/); const cls = sel.match(/^\.([\w-]+)/); const capOfRow = sel === '.ham-row[data-ham-key] .ham-seg.cap'; const walk = n => { for (const c of n.children) { if (capOfRow) { if (c.classList.contains('cap') && c.closest('.ham-row') && c.closest('.ham-row').classList.contains('ham-row')) out.push(c); } else if (m && c.attrs[m[1]] === unesc(m[2])) out.push(c); else if (word && c.attrs['data-ham-key'] != null && String(c.attrs[word[1]] || '').split(' ').includes(unesc(word[2]))) out.push(c); else if (!m && !word && cls && c.classList.contains(cls[1]) && (!sel.includes('[data-at]') || c.attrs['data-at'] != null)) out.push(c); walk(c); } }; walk(e); return out; },
     closest(sel) { let n = e; while (n) { if (n.attrs && n.attrs['data-ham-key'] != null) return n; n = n.parentNode; } return null; },
+    matches() { return false; }, contains(x) { return x === e || e.children.some(c => c.contains(x)); },
   };
   return e;
 }
@@ -424,7 +427,7 @@ global.CSS = { escape: s => String(s).replace(/([^\w-])/g, '\\$1') };
 const body = el('body'); const panel = el('div'); const chip = el('button', { id: 'activity-monitor-merged' }); const n = el('span'); n.classList.add('ham-merged-n'); n.textContent = '0'; chip.appendChild(n); const sub = el('span'); sub.classList.add('ham-merged-sub'); chip.appendChild(sub); chip.rect = { left: 500, top: 10, width: 60, height: 20 };
 const pop = el('div', { id: 'activity-monitor-merged-pop' }); pop.hidden = true; const banners = el('div'); const live = el('span');
 const byId = { 'activity-monitor-panel': panel, 'activity-monitor-merged': chip, 'activity-monitor-merged-pop': pop, 'merge-banners': banners, 'activity-monitor-merged-live': live };
-global.document = { body, hidden: false, getElementById(id) { return byId[id] || null; }, createElement(tag) { if (tag === 'template') { const tpl = el('template'); Object.defineProperty(tpl, 'innerHTML', { set(v) { const c = el('p'); c.classList.add('cue-event'); c.attrs['data-cue-key'] = (v.match(/data-cue-key="([^"]*)"/) || [])[1]; c.textContent = v.replace(/<[^>]+>/g, ''); const age = el('span'); age.classList.add('cue-event-age'); age.attrs['data-at'] = (v.match(/data-at="(\d+)"/) || [])[1]; c.appendChild(age); tpl.content = { firstElementChild: c }; } }); return tpl; } return el(tag); } };
+global.document = { body, hidden: false, activeElement: null, getElementById(id) { return byId[id] || null; }, createElement(tag) { if (tag === 'template') { const tpl = el('template'); Object.defineProperty(tpl, 'innerHTML', { set(v) { const c = el('p'); c.classList.add('cue-event'); c.attrs['data-cue-key'] = (v.match(/data-cue-key="([^"]*)"/) || [])[1]; c.textContent = v.replace(/<[^>]+>/g, ''); const age = el('span'); age.classList.add('cue-event-age'); age.attrs['data-at'] = (v.match(/data-at="(\d+)"/) || [])[1]; c.appendChild(age); tpl.content = { firstElementChild: c }; } }); return tpl; } return el(tag); } };
 const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem(k, v) { store[k] = String(v); } };
 const session = {}; global.sessionStorage = { getItem: k => (k in session ? session[k] : null), setItem(k, v) { session[k] = String(v); } };
 let reduced = false; function stageTrackerReducedMotion() { return reduced; }

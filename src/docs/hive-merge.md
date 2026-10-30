@@ -413,6 +413,25 @@ and release/skip reason. `automerge update-branch` and the sweep's
 reasons do not consume the branch-update budget. Ready-only train seating and
 reviewer dispatch scheduling are separate policies.
 
+The review planner observes the durable preparation owner once per destination
+per pass. Only its exact live, CI-green, mergeable head with a verdict still
+owed receives `base-preparation` review priority; it does not need a ready train
+seat. A refreshed head must be the merge of the recorded attempted head and
+base and pass the existing same-patch proof, so an author's content push or
+amended merge cannot inherit that priority.
+Closed, held, retargeted, released and expired owners receive no promotion.
+Observation is read-only and performs GitHub reads outside preparation locks.
+Busy valid reviews are never interrupted. After a confirmed preparation review
+handoff, other non-pending heads promoted by the existing three-cycle starvation
+rule go first as `base-preparation-fairness`; their confirmed service restores
+preparation preference. Unrelated deliveries cannot clear the owed yield. This
+uses the existing dispatch history, survives restarts, and prevents successive
+owners from indefinitely starving aged work. Without an active eligible owner,
+the existing review order is unchanged. Priority is not review approval or merge
+eligibility: normal label, model, current-head verdict and merge gates still run.
+`review swarm kick planned` exposes `priority=base-preparation`; the normal
+waiting reasons continue to expose reviewer/parallel-slot exhaustion.
+
 Human pushes, direct merges and external automation can still move a base.
 Such a move is coalesced until the preparation owner qualifies again; it must
 then refresh and re-pass current-head gates if still behind. This scheduler
@@ -860,7 +879,11 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
 carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
-hold / sentinel alert → `stage/085-needs-decision`, untrusted author with an approve verdict at the
+hold / sentinel alert → `stage/085-needs-decision`, hive-authored PR whose fix
+dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
+with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /
+hand to a person / close as not planned; a stale `decision-answered` cannot pull it
+back to 070 while the head is unchanged, [#15744](https://github.com/hivecommons/hive/issues/15744)), untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
 missing; the dashboard derives a compact **human-merge reason code** from the
@@ -1020,6 +1043,61 @@ recorded trusted decision on a PR's head (the tracker's Approve, or any
 `/hive decision` on it — the downstream gates still judge the merge) is
 what lifts the gate for that PR; closing the other ends it
 ([#15810](https://github.com/hivecommons/hive/issues/15810)).
+
+### Hive-authored superseding PRs auto-merge
+
+Owner rule (@clubanderson): *"if a pr is superseded by a pr that a hive
+agent creates, it should auto merge"* — *"the only exception would be if
+this is sentinel or some other emergent problem with the pr."*
+
+A **hive superseding PR** is a PR the hive App itself authored
+(`@hivecommons-hive[bot]`) whose body declares `Supersedes #N` — the PR a
+takeover, close-first adoption or re-author lead opens to carry a
+contributor's or bot's change. `github.IsHiveSupersedingPR` /
+`github.HiveSupersedingPR` detect it; `PullRequest.Supersedes` carries the
+number. Twice in one morning such PRs (#15649, #15646) parked at
+`stage/085-needs-decision` on a reviewer's security-sensitive
+`requires_human` and the owner had to click approve for work the hive had
+already decided to carry. Under this rule they do not:
+
+- **Reviewer findings go to the fixer.** On a hive superseding PR the
+  aggregate (`review.hiveSupersedingFixRoute`) turns a `requires_human` —
+  a risk-class decision question, a security-sensitive finding, an
+  unresolved escalation — into `changes_requested` with the reason
+  `hive-authored superseding PR: reviewer requires_human routed to the fixer; auto-merges once CI and review are clean`; the fixer
+  addresses it and the swarm re-reviews, exactly like any other finding.
+  A `reject` is not converted: it is an emergent problem with the PR. The
+  stage engine captions the head *"hive-authored superseding PR —
+  auto-merging once CI/review are clean"* (lane reason
+  `hive-superseder:fixer`) rather than "needs your decision", and the
+  reviewer prompts say so (`hiveSupersedingGuidance`).
+- **Green and clean merges with no decision.** Once CI is green and the
+  review has no open findings the PR follows the hive-authored admission
+  path (`stage/080` → merge). The superseded PR is closed as superseded by
+  the existing writeback (`Superseded by #N`) once it merges, as before.
+- **The only exceptions are the hard stops**, computed in one place
+  (`automerge.hiveSupersederHardStop`) and named in the 085 caption
+  (`hive-superseder-hard-stop:<token>`):
+  - `sentinel-unacknowledged` — the sentinel label is on and nobody has
+    acknowledged its finding (`sentinel_acknowledged` in the review
+    evidence bundle; an acknowledged sentinel, as on #15650, is not a
+    stop);
+  - `hold` — a `hold` / decision-class label or a repo/global hold;
+  - `fix-attempts-exhausted` — the fixer spent its cycle cap on the
+    reviewer's findings; reported as `ci-red-after-fixes` when CI is
+    still red, `base-conflict-unresolved` when the head still conflicts;
+  - `base-conflict-unresolved` — the hive's rebase-resolve episode
+    already failed twice.
+
+  A pending check, a first conflict or an ordinary reviewer finding is
+  never a stop. The tracker row reads *"The hive's superseding PR would
+  auto-merge (owner rule), but <stop>"*, and *Let hive decide* answers
+  recommend-only, naming the stop (`delegatedecision.RuleHiveSuperseder`);
+  without a stop it releases the PR under the same rule.
+
+`auto_merge.hive_superseding.auto_merge: false` turns the rule off and
+restores the previous behaviour (a `requires_human` parks the superseding
+PR at 085 like any hive-authored PR).
 
 ### Empty-diff PRs of the hive's own
 

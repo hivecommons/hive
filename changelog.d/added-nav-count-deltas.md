@@ -1,0 +1,1 @@
+- Tracker, online-contributor and Knowledge sidebar count pills briefly show the actual signed increase or decrease on live updates, with directional amber feedback and a static reduced-motion alternative.

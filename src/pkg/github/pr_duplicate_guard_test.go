@@ -49,6 +49,7 @@ type guardServer struct {
 	mu       sync.Mutex
 	created  int
 	comments int
+	edits    int
 }
 
 func (g *guardServer) start(t *testing.T) *httptest.Server {
@@ -177,6 +178,11 @@ func (g *guardServer) start(t *testing.T) *httptest.Server {
 		case r.Method == "POST" && strings.HasSuffix(path, "/comments"):
 			g.mu.Lock()
 			g.comments++
+			g.mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":1}`)
+		case r.Method == "PATCH" && strings.Contains(path, "/issues/comments/"):
+			g.mu.Lock()
+			g.edits++
 			g.mu.Unlock()
 			_, _ = io.WriteString(w, `{"id":1}`)
 		case r.Method == "POST" && strings.HasSuffix(path, "/pulls"):

@@ -1116,6 +1116,27 @@ github:
 - **Merge.** A PR whose rationale (its closing or referencing links, or the request's declared issue list) traces to an untrusted reporter's issue without any `untrusted_require_labels` acceptance label receives `hold` at **every** ACMM level, including L6, together with a marked notice naming the issue reporter (not the PR author). Any one unaccepted untrusted citation holds. A configured acceptance label supplies maintainer sign-off, so accepted issues do not trigger a new reporter-trust PR hold. A human removes the label; Hive never auto-releases a reporter-trust hold — the level-hold release path recognises the notice and leaves the label, and holdguard re-holds on a new head SHA. `github.reporter_trust_hold` follows `reporter_trust.enabled` unless set explicitly; `project.repo_policies[].reporter_trust_hold` overrides per repo; `HIVE_REPORTER_TRUST_HOLD` locks it from the environment, exactly like the #5117 knobs.
 - **Where you see it.** Both halves are edited in the dashboard: **Settings → Labels → Reporter trust** (the switch, the association checkboxes, extra logins, triage labels) and **Settings → Repos** (the hold, with the same all-repos default / per-repo override / inherit rows as #5117). An active gate is stated in the read-only note under **Projects**, and each repo card counts issues **needs triage** separately from generic filter refusals. The issue itself carries `needs-triage` while waiting when Hive had to add it. Holds carry the reason in the PR notice and in the `agent_pr_created` audit entry (`reporter_trust_held`, `reporter_login`, `reporter_association`).
 
+### Notification mode: how much of the hive's bookkeeping becomes email
+
+```yaml
+github:
+  notifications:
+    mode: quiet                                      # default; "normal" posts every note as its own comment/review
+```
+
+Every issue comment and every review the hive posts emails the PR author
+and every watcher of the repository; editing an existing comment notifies
+nobody. In `quiet` mode (the default) the hive's own PR notes — stage
+stalled/regressed, the trusted-human 071 note, the duplicate-PR redirect —
+are sections of one `<!-- hive:status -->` comment per PR that is created
+once and edited afterwards; a "**Reviewed** — no findings" review is
+recorded as a verdict without a GitHub review and a head carries at most
+one hive review; the 071 note @-mentions the author once per cause rather
+than once per head. Nothing is lost: the Activity Monitor, the evidence
+bundle and the stage labels carry the same facts. See
+[operator-reference.md → Notification mode](operator-reference.md#notification-mode-githubnotificationsmode)
+for the full list. `normal` restores the one-comment-per-event behaviour.
+
 ### Tracking and archive issues
 
 Some issues are never meant to be worked or closed: a standing report archive that a workflow appends to every week, a long-lived checklist, a "Keep this issue open" status thread. Mark them with **any one** of the label `hive/tracking`, the body marker `<!-- hive:tracking -->`, or the literal sentence "Keep this issue open" in the body, and the hive treats the issue as a tracking issue.
