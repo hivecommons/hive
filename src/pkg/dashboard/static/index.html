@@ -6716,6 +6716,9 @@
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
   if(m==='classic')m='dark';
+  // A kiosk (#15594) is a broadcast surface with no operator to flip the
+  // toggle; it always renders dark unless the URL says otherwise.
+  if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
   document.body.style.opacity='0';
@@ -10478,6 +10481,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const LAYOUT_TITLES = { dark: 'Switch to Light Mode', light: 'Switch to Dark Mode' };
     function getLayout() {
       let stored = localStorage.getItem(LAYOUT_KEY) || 'light';
+      if (window.hiveKioskMode && window.hiveKioskMode()) { let kt = null; try { kt = new URL(window.location.href).searchParams.get('theme'); } catch (e) {} stored = kt === 'light' ? 'light' : 'dark'; }
       if (stored === 'openclaw') { stored = 'light'; setLayout(stored); }
       if (stored === 'classic') { stored = 'dark'; setLayout(stored); }
       return LAYOUT_MODES.includes(stored) ? stored : 'light';
