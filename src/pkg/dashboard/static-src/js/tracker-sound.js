@@ -402,6 +402,7 @@
         + stageTrackerRepoSectionHtml(state.repoChip, state.group)
         + stageTrackerConfirmSectionHtml(state.skippedConfirms)
         + stageTrackerCelebrateSectionHtml(state.celebrate !== false, state.celebrateGlyph)
+        + stageTrackerNoteTuckSectionHtml(state.noteTuck !== false)
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
     }
     // Pure: the Merges section — the "Celebrate merges" toggle, the glyph.
@@ -415,6 +416,14 @@
         </section>`;
     }
     function stageTrackerCelebrateChange(checked) { stageTrackerSetCelebrate(!!checked); }
+    // Pure: the "Hive notes" section — the auto-collapse toggle.
+    function stageTrackerNoteTuckSectionHtml(on) {
+      return `<section class="overview-settings-section" id="sts-notetuck" aria-labelledby="sts-notetuck-title">
+          <div class="overview-settings-card-title" id="sts-notetuck-title">Hive notes</div>
+          <p class="sts-hint">The "Hive: …" line under a row's chevrons shows for ${Math.round(STAGE_TRACKER_CAPTION_SHOW_MS / 1000)} s when it is new, then slides left into a small ⬡ icon so the list stays quiet; the icon's tooltip keeps the whole note and its age, and a click (or Enter / Space) opens it for another ${Math.round(STAGE_TRACKER_CAPTION_SHOW_MS / 1000)} s. A hidden tab pauses the clock. Off, the line stays open and fades out after two minutes as before.</p>
+          <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-notetuck-on" data-change-action="stageTrackerNoteTuckChange" data-arg-types="c"${on ? ' checked' : ''}>Auto-collapse hive notes <span class="text-muted">(default on)</span></label></div>
+        </section>`;
+    }
     function stageTrackerCelebrateGlyphChange(v) { stageTrackerSetCelebrateGlyph(v); }
     // Pure: the first row whose box is inside the viewport (top edge in
     // view is enough), else the first row at all — so the test plays
@@ -473,7 +482,7 @@
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), noteTuck: stageTrackerNoteTuckSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }

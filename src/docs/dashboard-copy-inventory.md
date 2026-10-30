@@ -143,3 +143,11 @@ Left for a follow-up under the same issue: the ⋯ decision consequences and
 `api_repo_item_decision.go`, `row_action_result.go`,
 `delegated_decision_human_merge.go`) and `STAGE_TRACKER_MERGE_PATH_WORDS.sweep`
 (*automerge sweep* as a merge **path** name on merged rows).
+
+## Hive notes, show then tuck
+
+| Builder | Reaches | Words | Held by |
+|---|---|---:|---|
+| `stageTrackerEventHtml` with auto-collapse on (`tracker-motion.js`) | the row's event line, open for 30 s then tucked into a ⬡-i button | the line itself unchanged; the button adds `aria-label` *Hive note* (2) | `TestStageTrackerNoteTuckNode` |
+| `stageTrackerNoteTitle` | the button's tooltip | the line and its age: *Hive: moved to CI / Review · 2m ago* (≤ line + 3) | same |
+| `stageTrackerNoteTuckSectionHtml` (`tracker-sound.js`) | ⚙ → Hive notes | title (2), hint (≈ 70), *Auto-collapse hive notes (default on)* (5) | `TestStageTrackerNoteTuckWiring` |
