@@ -16,6 +16,20 @@
     /* planning-alert: plans awaiting human review — amber, to draw the eye like
        the "N Issues" / on-hold indicators. */
     .gov-stat .val.planning-alert { color: var(--yellow); }
+    /* RUNNING tile cost rotor (#15614): the four window phrases share one
+       grid cell, so the tile is always as wide as its widest phrase and the
+       amount + window crossfades in place while the agent count stays put.
+       nowrap + ellipsis is the fallback when the tile is narrower still. */
+    .fleet-run-stat .val, .fleet-run-stat .gm-val { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .fleet-run-count { color: var(--text); }
+    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; vertical-align: bottom; max-width: 100%; overflow: hidden; color: var(--text); }
+    .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
+    .fleet-cost-rotor .fcr-phrase.is-cur { opacity: 1; transform: translateY(0); }
+    .fleet-cost-rotor .fcr-phrase.is-out { opacity: 0; transform: translateY(-0.5em); }
+    .fleet-cost-rotor .fcr-window { color: var(--amber); font-weight: 600; }
+    @media (prefers-reduced-motion: reduce) {
+      .fleet-cost-rotor .fcr-phrase { transition: none; transform: none; }
+    }
     .governor-subsection { margin: var(--sp-5) 0 0; }
     .governor-subsection .section-body { overflow: hidden; }
     .gov-pr-models-subheader { width: 100%; display: grid !important; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-3); cursor: pointer; user-select: none; }

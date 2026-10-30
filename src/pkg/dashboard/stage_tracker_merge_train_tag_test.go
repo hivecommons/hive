@@ -107,5 +107,31 @@ assert.deepStrictEqual(rows.map(r => r.key), ['train:hivecommons/hive|v5#15567',
 assert.ok(rows[0].html.includes('class="ham-train-head ham-train-k0"'), rows[0].html);
 assert.ok(rows[3].html.includes('class="ham-train-head ham-train-k1"'), rows[3].html);
 assert.ok(rows[0].html.includes('overlapping: cmd/hive/main.go'), rows[0].html);
+
+// A member under repair left its train (server: merge_train gone,
+// left_train set) — hive's own #15405 led a header as "1st: #15405"
+// while its chevron read "Fixing". The train of two is no train: no
+// header, no ordinal on the survivor; the dropped row's hover says why.
+const fixing = { repo: 'hivecommons/hive', number: 15405, kind: 'pr', title: 'Docs', stage: 70, modifiers: [], reason: 'reviewer-verdict:changes-requested',
+  left_train: { why: 'fixing', note: STAGE_TRACKER_LEFT_TRAIN_NOTE } };
+const alone = { repo: 'hivecommons/hive', number: 15410, kind: 'pr', title: 'Docs', stage: 80, modifiers: [], merge_gate: { state: 'gate-pending', reason: 'awaiting admission', last_sweep_at: '2026-10-30T00:29:30Z' } };
+assert.strictEqual(stageTrackerTrain(fixing), null);
+assert.strictEqual(stageTrackerTrainKey(fixing), '');
+assert.strictEqual(stageTrackerTrainKey(alone), '');
+assert.strictEqual(stageTrackerTrainWord(fixing), '', 'a PR that left the train has no queue word');
+assert.strictEqual(stageTrackerTrainWord(alone), '', 'a lone survivor wears no ordinal');
+assert.strictEqual(stageTrackerTrainIndex([fixing, alone]).count, 0);
+const noTrain = stageTrackerTrainRows([fixing, alone], (it) => ({ key: String(it.number), html: '' }));
+assert.deepStrictEqual(noTrain.map(r => r.key), ['15405', '15410'], 'no header over a train of one');
+assert.strictEqual(stageTrackerTrainRowClass(fixing, null, alone, 0), '');
+assert.strictEqual(stageTrackerLeftTrainNote(fixing), 'left the merge train while being fixed; rejoins when green');
+assert.deepStrictEqual(stageTrackerTrainLines(fixing), ['Merge train: left the merge train while being fixed; rejoins when green']);
+assert.strictEqual(stageTrackerLeftTrainNote(alone), '');
+assert.deepStrictEqual(stageTrackerTrainLines(alone), []);
+// A row that still rides a train never shows the left note, whatever
+// an older payload says.
+assert.strictEqual(stageTrackerLeftTrainNote(Object.assign({}, a2, { left_train: { why: 'fixing' } })), '');
+// No gate chip on the dropped row: nothing says "queued".
+assert.strictEqual(stageTrackerMergeGateInfo(fixing, now, 1), null);
 `)
 }
