@@ -78,6 +78,10 @@ func TestStageTrackerPreparationUnknownAndInvalid(t *testing.T) {
 		{name: "draft", edit: func(it *StageTrackerItem, _ *automerge.BasePreparationSnapshot) { it.Bucket = "draft" }, state: "inactive"},
 		{name: "expired", edit: func(_ *StageTrackerItem, snap *automerge.BasePreparationSnapshot) { snap.Owner.ExpiresAt = now }, state: "inactive"},
 		{name: "closed absent", edit: func(it *StageTrackerItem, _ *automerge.BasePreparationSnapshot) { it.Number = 8 }, state: "unverified"},
+		{name: "expired absent", edit: func(it *StageTrackerItem, snap *automerge.BasePreparationSnapshot) {
+			it.Number = 8
+			snap.Owner.ExpiresAt = now
+		}, state: "inactive"},
 		{name: "store error", readErr: errors.New("unreadable"), state: "unavailable"},
 		{name: "no snapshot", edit: func(_ *StageTrackerItem, snap *automerge.BasePreparationSnapshot) { snap.Present = false }, state: "unavailable"},
 	} {
@@ -146,9 +150,9 @@ const document = {getElementById:()=>chip};
 function stageTrackerQueuePopDraw(){}
 stageTrackerQueueSync([],now,queues);
 assert.strictEqual(chip.hidden,false);
-assert.strictEqual(count.textContent,'0 train · 2 prep tickets');
+assert.strictEqual(count.textContent,'0 train PRs · 2 prep tickets');
 stageTrackerQueueSync([],now,[{state:'unavailable'}]);
-assert.strictEqual(count.textContent,'0 train · prep unknown');
+assert.strictEqual(count.textContent,'0 train PRs · prep unknown');
 stageTrackerQueueSync([],now,[]);
 assert.strictEqual(chip.hidden,true);
 `)

@@ -48,7 +48,8 @@
       const p = item && item.preparation;
       if (!p || p.state === 'inactive') return '';
       const word = stageTrackerPreparationWord(p);
-      return `<span class="ham-badge" title="${esc(word + ' · ticket head ' + p.head_sha + ' · ' + stageTrackerPreparationAge(p, Date.now()) + '. Preparation is not CI, review approval, or a ready merge-train seat.')}">${esc(word)}</span>`;
+      const label = p.state === 'current' ? word : 'Preparation owner · unverified';
+      return `<span class="ham-badge" title="${esc(word + ' · ticket head ' + p.head_sha + ' · ' + stageTrackerPreparationAge(p, Date.now()) + '. Preparation is not CI, review approval, or a ready merge-train seat.')}">${esc(label)}</span>`;
     }
     function stageTrackerPreparationPopHtml(queues, nowMs) {
       return (Array.isArray(queues) ? queues : []).map(q => {
@@ -61,7 +62,7 @@
           return `<li><span class="ham-merged-num">#${Number(p.number) || 0}</span><span class="ham-merged-meta">${esc(meta)}</span></li>`;
         }).join('');
         const observed = Date.parse(q.observed_at || '');
-        return heading + (rows ? `<ol class="ham-merged-list ham-queue-list">${rows}</ol>` : `<div class="ham-empty">${esc(q.message || 'No recorded preparation tickets')}</div>`) + `<div class="ham-merged-pop-foot">Persisted FIFO tickets, not ready train seats or GitHub native queue membership. Owner head changes are unverified here. Read ${esc(Number.isFinite(observed) ? new Date(observed).toISOString() : 'time unknown')}; CI / Review stages remain unchanged.</div>`;
+        return heading + (rows ? `<ol class="ham-merged-list ham-queue-list ham-preparation-list">${rows}</ol>` : `<div class="ham-empty">${esc(q.message || 'No recorded preparation tickets')}</div>`) + `<div class="ham-merged-pop-foot">Persisted FIFO tickets, not ready train seats or GitHub native queue membership. Owner head changes are unverified here. Read ${esc(Number.isFinite(observed) ? new Date(observed).toISOString() : 'time unknown')}; CI / Review stages remain unchanged.</div>`;
       }).join('');
     }
     function stageTrackerQueuePopHtml(items, nowMs, preparation) {
@@ -92,8 +93,7 @@
     var _stageTrackerQueueItems = [];
     var _stageTrackerPreparationQueues = [];
     function stageTrackerQueueChip() { return document.getElementById('activity-monitor-queue'); }
-    // Pure over the DOM: the chip reads the train count and hides with no
-    // train; an open popover is redrawn.
+    // Hide only when neither trains nor preparation observations exist.
     function stageTrackerQueueSync(items, nowMs, preparation) {
       _stageTrackerQueueItems = Array.isArray(items) ? items : [];
       _stageTrackerPreparationQueues = Array.isArray(preparation) ? preparation : [];
@@ -106,7 +106,7 @@
       const prepUnknown = _stageTrackerPreparationQueues.some(q => q.state !== 'observed');
       chip.hidden = !trains.length && !_stageTrackerPreparationQueues.length;
       const nEl = chip.querySelector('.ham-queue-n');
-      const count = _stageTrackerPreparationQueues.length ? n + ' train · ' + (prepUnknown ? 'prep unknown' : prepTickets + ' prep tickets') : String(n);
+      const count = _stageTrackerPreparationQueues.length ? n + ' train PRs · ' + (prepUnknown ? 'prep unknown' : prepTickets + ' prep tickets') : String(n);
       if (nEl && nEl.textContent !== count) nEl.textContent = count;
       const title = (trains.length ? 'Merge queue: ' + n + ' PRs in ' + trains.length + (trains.length === 1 ? ' train' : ' trains') + (stalled ? ' · stalled' : '') : 'Merge queue: no ready train') + (_stageTrackerPreparationQueues.length ? ' · base preparation: ' + (prepUnknown ? 'state unknown' : prepTickets + ' recorded tickets (not readiness)') : '');
       if (chip.title !== title) chip.title = title;

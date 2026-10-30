@@ -566,6 +566,8 @@
     .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
     .ham-queue-train:first-of-type { margin-top: 0; }
     .ham-queue-stalled { color: var(--yellow); }
+    .ham-preparation-list li { grid-template-columns: auto minmax(0, 1fr); }
+    .ham-preparation-list .ham-merged-meta { white-space: normal; overflow-wrap: anywhere; }
     /* Inside a lit chevron the word keeps the chevron's ink: ochre on the
        amber fill was invisible, so a stalled train's chevrons read empty
        (just the ⟳ and the actor glyph). */

@@ -77,6 +77,9 @@ func (s *Server) stageTrackerPreparation(items []StageTrackerItem, now time.Time
 		q.State, q.ObservedAt = "observed", snapshot.ObservedAt
 		project := func(m automerge.BasePreparationMember, role string, behind int) *StageTrackerPreparation {
 			p := &StageTrackerPreparation{Role: role, Behind: behind, Number: m.Number, HeadSHA: m.HeadSHA, Since: m.Since, State: "unverified", Detail: "PR absent from current open snapshot"}
+			if !m.ExpiresAt.IsZero() && !now.Before(m.ExpiresAt) {
+				p.State, p.Detail = "inactive", "Ticket expired; awaiting scheduler reconciliation"
+			}
 			for i := range items {
 				it := &items[i]
 				if it.Kind != "pr" || !strings.EqualFold(it.Repo, d.repo) || it.Number != m.Number {
