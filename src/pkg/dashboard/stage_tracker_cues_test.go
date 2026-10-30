@@ -354,6 +354,9 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerRectInView"),
 		jsFunc(t, html, "stageTrackerFlightTarget"),
 		jsFunc(t, html, "celebrateRow"),
+		jsFunc(t, html, "stageTrackerFlyGlyph"),
+		jsFunc(t, html, "stageTrackerDetachedOrigin"),
+		jsFunc(t, html, "celebrateDetached"),
 		jsFunc(t, html, "stageTrackerMergeBannerNumber"),
 		jsFunc(t, html, "stageTrackerMergeBannerText"),
 		jsFunc(t, html, "stageTrackerMergeBanner"),
@@ -432,7 +435,7 @@ let renders = 0; function renderStageTracker() { renders++; }
 const srcs = new Map(); function stageTrackerRowSrcOf(node) { return srcs.get(node); }
 let _stageTrackerEvents = {};
 const STAGE_TRACKER_TERMINAL = 110;
-var _stageTrackerPRHost = {}; var _stageTrackerPRTitle = {}; var _stageTrackerMergeState = null, _stageTrackerZapped = {}, _stageTrackerMerged = { server: null, local: {} }, _stageTrackerMergedShown = 0, _stageTrackerCelebrating = {}, _stageTrackerCelebratePending = {}, _stageTrackerMergedHeld = {}, _stageTrackerFlights = 0, _stageTrackerReleaseTimer = 0;
+var _stageTrackerPRHost = {}; var _stageTrackerPRTitle = {}; var _stageTrackerMergeState = null, _stageTrackerZapped = {}, _stageTrackerMerged = { server: null, local: {} }, _stageTrackerMergedShown = 0, _stageTrackerCelebrating = {}, _stageTrackerCelebratePending = {}, _stageTrackerFlights = 0, _stageTrackerReleaseTimer = 0;
 let settingsClosed = 0; function closeStageTrackerSettings() { settingsClosed++; }
 const odoText = e => e.getAttribute('data-odo-value');
 const flights = () => body.children.filter(c => c.classList.contains('cue-flight'));
@@ -501,8 +504,11 @@ assert.strictEqual(flights().length, 0); assert.strictEqual(odoText(n), '7');
 assert.ok(panel.querySelector('[data-ham-key="o/r/pr#8"]').classList.contains('cue-merged'));
 reduced = false;
 
-// 4. A merged PR not on the board still counts.
+// 4. A merged PR not on the board still counts — and its bee flies from
+// the toast (#15808): the count rolls when it lands, not before.
 stageTrackerNoteMerges(items(9)); stageTrackerNoteMerges(payloadMerged(9)); tick(0);
+assert.strictEqual(odoText(n), '7', 'held for the detached bee'); assert.strictEqual(flights().length, 1, 'a bee with no row');
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
 assert.strictEqual(odoText(n), '8'); assert.strictEqual(flights().length, 0);
 assert.ok(banners.children.some(b => /#9<\/span> merged/.test(b.innerHTML) && !b.innerHTML.includes('hamBannerShowRow')), 'its banner has no "show row" (no row)');
 
@@ -857,37 +863,24 @@ console.log('ok');
 }
 
 // TestStageTrackerOdometerWaitsForMergingHoldNode (owner: "the odometer
-// still updates before the bee animation lands on it"): the merge gate's
-// hold (#15245) masks a landed merge as still open for the banner's
-// lifetime, and the poll that brought it also brings the server's raised
-// ledger total. The drum used to roll on that poll — the hold kept the
-// bee grounded while nothing kept the number — so the landing, a full
-// hold later, found nothing left to roll. The chip now holds the masked
-// merges back like flights to come: the number waits through the hold,
-// through the flight, and rolls once on the landing. Runs the real hold
-// functions (the other celebration tests stub them off).
+// still updates before the bee animation lands on it"; then #15808: the
+// "Merging · merge landed" mask "displays too long"): with the real hold
+// functions in place of the stubs, the poll that brings the merged fact
+// launches the bee at once — the hold no longer masks a known merge for
+// a fixed window — and the drum still rolls only on the landing (#15763),
+// through a bridged poll (PR dropped before its fact) and through two
+// merges in quick succession.
 func TestStageTrackerOdometerWaitsForMergingHoldNode(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"_stageTrackerMergedHeld = {};",
-		"masked.held.forEach(k => { _stageTrackerMergedHeld[k] = true; });",
-		"stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending, _stageTrackerMergedHeld)",
+		"stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending)",
+		"function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0; }",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
 		}
 	}
-	holdOn := strings.Join([]string{
-		jsConstLine(t, html, "STAGE_TRACKER_MERGING_HOLD_MS"),
-		jsConstLine(t, html, "STAGE_TRACKER_MERGE_QUEUE"),
-		"var _stageTrackerMergingHold = {}; var _stageTrackerPRItems = {}; var _stageTrackerMergingHoldTimer = 0; var _stageTracker = null;",
-		jsFunc(t, html, "stageTrackerPRItemsOf"),
-		jsFunc(t, html, "stageTrackerMergingHoldLive"),
-		jsFunc(t, html, "stageTrackerMergingHoldNext"),
-		jsFunc(t, html, "stageTrackerMergingHoldMask"),
-		jsFunc(t, html, "stageTrackerMergingHoldSchedule"),
-		jsFunc(t, html, "stageTrackerMergingHoldRelease"),
-	}, "\n")
+	holdOn := stageTrackerMergingHoldJS(t, html)
 	js := strings.Replace(stageTrackerCelebrateJS(t, html), stageTrackerMergingHoldOffJS, holdOn, 1)
 	if js == stageTrackerCelebrateJS(t, html) {
 		t.Fatal("the hold stub was not swapped for the real functions")
@@ -901,65 +894,69 @@ const pr = (num, stage, mg) => Object.assign({ repo: 'o/r', kind: 'pr', number: 
 // The poll handler: remember the payload (the hold's release re-reads it) and note it.
 const poll = d => { _stageTracker = d; stageTrackerNoteMerges(d); };
 panel.appendChild(row('o/r/pr#1'));
-poll({ items: [pr(1, 90)], merged: srv(40, 2, rec(31, 30)) });
+poll({ items: [pr(1, 90)], merged: srv(40, 2, rec(31, 30)), merged_hold_ms: 8000 });
 assert.strictEqual(odoText(n), '40', 'hydrated'); assert.strictEqual(odoText(sub), '2 today · 2 this week');
+assert.strictEqual(stageTrackerMergingHoldMs(), 8000, 'knob read from the payload');
 // The sweep is merging #1: the gate says so.
 tick(5000);
 const T = clock;
 poll({ items: [pr(1, 95, { state: 'merging', merging_since: iso(T) })], merged: srv(40, 2, rec(31, 30)) });
 assert.strictEqual(odoText(n), '40');
-// Next poll: #1 landed — the items dropped it, the ledger counts it (41),
-// recently_merged settles it. The hold masks the merge for the banner's
-// lifetime, so no bee launches yet; the number must wait with it.
-tick(5000);
+// Next poll: the items dropped #1 but neither the ledger nor
+// recently_merged has it yet — the bridge: no bee, no roll, the row is
+// synthesised at "Merging" (stageTrackerMergingHoldView) and a release is
+// scheduled for the hold's end.
+tick(2000);
+poll({ items: [], merged: srv(40, 2, rec(31, 30)) });
+tick(0);
+assert.strictEqual(flights().length, 0, 'no merged fact yet: no bee');
+assert.strictEqual(odoText(n), '40');
+assert.strictEqual(stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, clock).items.length, 1, 'bridged row');
+assert.ok(_stageTrackerMergingHoldTimer, 'release scheduled');
+// The merged fact lands 3 s later (well inside the 8 s window): the bee
+// launches NOW, the number waits for it.
+tick(3000);
 poll({ items: [], recently_merged: [{ repo: 'o/r', number: 1, merged_at: iso(clock) }], merged: srv(41, 3, rec(1, 31, 30)) });
 tick(0);
-assert.strictEqual(flights().length, 0, 'the hold keeps the bee grounded');
-assert.strictEqual(odoText(n), '40', 'the total waits for the bee (it used to roll here, a full hold early)'); assert.strictEqual(rolling(n).length, 0);
-assert.strictEqual(odoText(sub), '2 today · 2 this week', 'so does the day line');
-assert.ok(!chip.classList.contains('cue-tick'), 'no pop');
-assert.deepStrictEqual(zaps, []);
-// A further poll inside the hold with the same numbers: still waiting.
-tick(10000);
-poll({ items: [], recently_merged: [{ repo: 'o/r', number: 1, merged_at: iso(T) }], merged: srv(41, 3, rec(1, 31, 30)) });
-assert.strictEqual(odoText(n), '40', 'a repeat poll does not leak the number either');
-// The hold ends: the merge is re-read as fresh, the bee launches, the number still waits.
-tick(T + STAGE_TRACKER_MERGING_HOLD_MS - clock + 60);
-tick(0);
-assert.strictEqual(flights().length, 1, 'the bee launches when the hold ends');
+assert.strictEqual(flights().length, 1, 'the bee launches with the merged fact, not at the end of a fixed hold');
+assert.deepStrictEqual(_stageTrackerMergingHold, {}, 'hold dropped with the fact');
 assert.strictEqual(odoText(n), '40', 'held under the flight'); assert.strictEqual(rolling(n).length, 0);
+assert.strictEqual(odoText(sub), '2 today · 2 this week', 'so does the day line');
+assert.ok(!chip.classList.contains('cue-tick'), 'no pop yet');
+assert.deepStrictEqual(zaps, []);
+assert.strictEqual(banners.children.length, 1, 'one merge banner'); assert.ok(banners.children[0].innerHTML.includes('#1'), banners.children[0].innerHTML);
 // The bee lands: one roll, to the server's number.
 flights()[0]._ev.animationend();
 assert.strictEqual(flights().length, 0);
 assert.strictEqual(odoText(n), '41', 'the landing rolls it'); assert.strictEqual(rolling(n).length, 1, 'rolled, not set');
 assert.strictEqual(odoText(sub), '3 today · 3 this week');
 assert.ok(chip.classList.contains('cue-tick'), 'pop with the roll'); assert.deepStrictEqual(zaps, [1], 'zap with the roll');
-assert.ok(chip.title.startsWith('Merged: 41 all time'), chip.title);
 tick(STAGE_TRACKER_ODOMETER_MS + 100);
+// The scheduled release fires later and finds nothing to do: no second celebration.
+tick(10000);
+assert.strictEqual(flights().length, 0); assert.strictEqual(banners.children.length, 1, 'celebrated exactly once');
 // Steady afterwards: the same ledger does not move it again.
 poll({ items: [], merged: srv(41, 3, rec(1, 31, 30)) });
 assert.strictEqual(odoText(n), '41'); assert.strictEqual(rolling(n).length, 0);
-// Two merges in quick succession, each through its own hold: nothing is lost — the display ends on the server's value.
+// Two merges in quick succession, their facts arriving with the polls
+// that drop them (the webhook-style patch, #15808): each flies at once;
+// the number ends on the server's value after the last landing.
 zaps.length = 0; chip.classList.remove('cue-tick');
 panel.appendChild(row('o/r/pr#2')); panel.appendChild(row('o/r/pr#3'));
 poll({ items: [pr(2, 90), pr(3, 90)], merged: srv(41, 3, rec(1, 31, 30)) });
-tick(1000); const T2 = clock;
-poll({ items: [pr(2, 95, { state: 'merging', merging_since: iso(T2) }), pr(3, 90)], merged: srv(41, 3, rec(1, 31, 30)) });
-tick(3000); const T3 = clock;
-poll({ items: [pr(3, 95, { state: 'merging', merging_since: iso(T3) })], recently_merged: [{ repo: 'o/r', number: 2 }], merged: srv(42, 4, rec(2, 1, 31, 30)) });
-assert.strictEqual(odoText(n), '41', '#2 held');
+tick(1000);
+poll({ items: [pr(2, 95, { state: 'merging', merging_since: iso(clock) }), pr(3, 90)], merged: srv(41, 3, rec(1, 31, 30)) });
 tick(3000);
+poll({ items: [pr(3, 95, { state: 'merging', merging_since: iso(clock) })], recently_merged: [{ repo: 'o/r', number: 2 }], merged: srv(42, 4, rec(2, 1, 31, 30)) });
+tick(0);
+assert.strictEqual(flights().length, 1, '#2 flies at once');
+assert.strictEqual(odoText(n), '41', 'held under #2');
+tick(1000);
 poll({ items: [], recently_merged: [{ repo: 'o/r', number: 2 }, { repo: 'o/r', number: 3 }], merged: srv(43, 5, rec(3, 2, 1, 31, 30)) });
-assert.strictEqual(odoText(n), '41', '#2 and #3 held');
-// #2's hold ends first: its bee flies and lands; the number still waits for #3, whose hold is live.
-tick(T2 + STAGE_TRACKER_MERGING_HOLD_MS - clock + 60); tick(0);
-assert.strictEqual(flights().length, 1, '#2 flies');
+tick(0);
+assert.strictEqual(flights().length, 2, '#3 flies too');
 flights()[0]._ev.animationend();
-assert.strictEqual(odoText(n), '41', 'still held: #3 is masked (its bee is to come), and a landing never leaves a merge uncounted');
-// #3's hold ends: its bee flies and lands; the display reaches the server's value.
-tick(T3 + STAGE_TRACKER_MERGING_HOLD_MS - clock + 60); tick(0);
-assert.strictEqual(flights().length, 1, '#3 flies');
-assert.strictEqual(odoText(n), '41', 'held under its flight');
+assert.strictEqual(odoText(n), '41', 'still held: #3 is in the air, and a landing never leaves a merge uncounted');
 flights()[0]._ev.animationend();
 assert.strictEqual(odoText(n), '43', 'final displayed value == server value');
 assert.strictEqual(odoText(sub), '5 today · 5 this week');
@@ -1059,4 +1056,54 @@ func TestStageTrackerMergeBannersAboveChatFab(t *testing.T) {
 	if !strings.Contains(fab, "z-index: 9000;") {
 		t.Errorf(".hive-chat-fab z-index moved; keep it below --z-merge-banner (10001): %s", fab)
 	}
+}
+
+// TestStageTrackerDetachedCelebrationNode (hivecommons/hive#15808, #15707):
+// a merge whose row is not in the DOM — below the fold, filtered, already
+// evicted — still gets all three: the toast, a bee that flies from the
+// toast's ✓ to the chip, and the odometer rolling +1 once it lands. The
+// pipeline is one: no second toast, flight or count for the same PR on a
+// later payload.
+func TestStageTrackerDetachedCelebrationNode(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerCelebrateJS(t, html)+stageTrackerCelebrateFixture+`
+stageTrackerSetCelebrate(true);
+panel.rect = { left: 0, top: 100, width: 900, height: 600 };
+const srv = (all, today, recent) => ({ all_time: all, today, total_7d: today, total_30d: today, recent, tz: 'UTC', day_start: clock - 3600000 });
+const rec = (num) => ({ repo: 'o/r', number: num, title: 't' + num, merged_at: new Date(clock).toISOString(), lane: 'trusted-author' });
+// #15707 was listed open once but never drawn into the panel (below the
+// fold / filtered / evicted by the webhook before the ledger listed it).
+stageTrackerNoteMerges(Object.assign(items(1, 15707), { merged: srv(40, 1, []) }));
+stageTrackerMergedCountDraw(false);
+assert.strictEqual(odoText(n), '40', 'seeded');
+assert.strictEqual(flights().length, 0);
+// Merged fact arrives; the row is not in the DOM.
+stageTrackerNoteMerges({ items: items(1).items, recently_merged: [{ repo: 'o/r', number: 15707 }], merged: srv(41, 2, [rec(15707)]) });
+stageTrackerMergedCountDraw(false);
+assert.strictEqual(banners.children.length, 1, 'toast');
+assert.ok(banners.children[0].innerHTML.includes('#15707'), 'toast names the PR');
+assert.strictEqual(odoText(n), '40', 'odometer waits for the bee (#15763)');
+tick(0);
+assert.strictEqual(flights().length, 1, 'bee flies without a row');
+assert.strictEqual(odoText(n), '40', 'still held while in flight');
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 10);
+assert.strictEqual(flights().length, 0, 'landed');
+assert.strictEqual(odoText(n), '41', 'odometer +1 after landing');
+assert.deepStrictEqual(zaps, [1], 'one zap');
+// Same PR again (ledger still lists it; payload repeats): nothing more.
+stageTrackerNoteMerges({ items: items(1).items, recently_merged: [{ repo: 'o/r', number: 15707 }], merged: srv(41, 2, [rec(15707)]) });
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 10);
+assert.strictEqual(banners.children.length, 1, 'one toast');
+assert.strictEqual(flights().length, 0, 'no second bee');
+assert.strictEqual(odoText(n), '41', 'count unchanged');
+assert.deepStrictEqual(zaps, [1]);
+// Pure origin: banner box wins, then the panel's foot, then the viewport, else null.
+const bn = { left: 10, top: 20, width: 16, height: 16 };
+assert.strictEqual(stageTrackerDetachedOrigin(bn, panel.rect, 1280, 800), bn);
+const foot = stageTrackerDetachedOrigin(null, panel.rect, 1280, 800);
+assert.strictEqual(foot.left + foot.width / 2, 450, 'panel centre');
+assert.ok(foot.top + foot.height <= 700, 'at the panel foot');
+assert.strictEqual(stageTrackerDetachedOrigin(null, null, 1280, 800).top + 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, 800);
+assert.strictEqual(stageTrackerDetachedOrigin(null, null, 0, 0), null);
+`)
 }
