@@ -7,6 +7,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -134,6 +136,73 @@ func TestAdoptedInPlaceMixedAuthorshipElectsMergeCommit(t *testing.T) {
 	h.observeTrusted(adoptPR(7, "a1899cc", labelled...), "check-pending")
 	if h.api.writes() != 0 {
 		t.Fatalf("second sweep wrote: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+}
+
+// hivecommons/hive#15710: adopted fork PR #15521, the same mixed head on a
+// role/trusted PR, but the write-back gate keeps the hive's labels off the
+// contributor PR. The note used to go out before the write, promising a
+// `merge-method/merge` that never landed while the attribution check
+// stayed red. Now no note follows a suppressed write, and the next pass
+// refuses the election and takes the lane's fallback (re-home).
+func TestAdoptedInPlaceMixedAuthorshipLabelsSuppressedRefusesMergeCommit(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	client, ok := h.e.transport.(*hgithub.Client)
+	if !ok {
+		t.Fatalf("transport %T is not *hgithub.Client", h.e.transport)
+	}
+	inner := client.StageWriter()
+	suppress := false
+	h.e.stageEngine = &stageengine.Options{Writer: prStageWriterFunc(func(ctx context.Context, ref stageengine.Ref, hint []string, want stagelabels.Desired) (stagelabels.Outcome, error) {
+		if suppress {
+			return stagelabels.Outcome{Stage: want.Stage, Suppressed: true}, nil
+		}
+		return inner.Apply(ctx, ref, hint, want)
+	})}
+	h.api.commitDetails = map[int][]stageCommitFixture{7: mixedAuthorshipCommits}
+	key := adoptInPlaceAt(h, "e6d0ccb", contributorLaneReasonNoVerdict)
+	h.adopt.setCommitAuthor("e6d0ccb", testHiveAppBotLogin)
+	suppress = true
+
+	h.clock.advance(time.Minute)
+	h.observeTrusted(adoptPR(7, "e6d0ccb", adoptedTrustedLabels...), contributorLaneReasonNoVerdict)
+	if notes := mergeCommitComments(h.api); len(notes) != 0 {
+		t.Fatalf("merge-commit note promised a label the gate kept off: %v", notes)
+	}
+	if containsLabel(h.addedLabels(), stagelabels.MergeCommitLabel) {
+		t.Fatalf("label written through a suppressing gate: %v", h.api.added)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if !rec.LabelsSuppressed || rec.MergeCommitNoted("e6d0ccb") {
+		t.Fatalf("record after suppressed write: %+v", rec)
+	}
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observeTrusted(adoptPR(7, "e6d0ccb", adoptedTrustedLabels...), contributorLaneReasonNoVerdict)
+	if notes := mergeCommitComments(h.api); len(notes) != 0 {
+		t.Fatalf("merge commit elected with labels suppressed: %v", notes)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("expected the re-home fallback: pulls=%v comments=%v", h.adopt.pulls, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptReason != AdoptReasonSignoffRehome {
+		t.Fatalf("record: %+v", rec)
+	}
+}
+
+func TestMergeCommitRefusalTextNamesSuppressedLabels(t *testing.T) {
+	obs := stageObservation{Number: 15521, Display: "acme/widget"}
+	obs.Detail.MergeCommitRefused = mergeCommitRefusedLabelsSuppressed
+	got := mergeCommitRefusalText(obs, "mallory")
+	for _, want := range []string{"write-back gate", stagelabels.MergeCommitLabel, "gh pr merge 15521 --merge", "@mallory"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("refusal text missing %q:\n%s", want, got)
+		}
 	}
 }
 
