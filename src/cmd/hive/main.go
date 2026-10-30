@@ -979,20 +979,7 @@ func (b *boot) wireBootClosures() {
 	}
 
 	b.leaderboardForHeartbeat = func() []spoke.LeaderboardEntry {
-		lb := b.dashSrv.LeaderboardForHub()
-		out := make([]spoke.LeaderboardEntry, len(lb))
-		for i, e := range lb {
-			out[i] = spoke.LeaderboardEntry{
-				GitHubUsername: e.GitHubUsername,
-				AvatarURL:      e.AvatarURL,
-				TrustTier:      e.TrustTier,
-				TasksCompleted: e.TasksCompleted,
-				TasksFailed:    e.TasksFailed,
-				Active:         e.Active,
-				CurrentTask:    e.CurrentTask,
-			}
-		}
-		return out
+		return leaderboardForSpoke(b.dashSrv.LeaderboardForHub())
 	}
 
 	var ownerHeartbeatTokenPath string
@@ -5619,19 +5606,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 		if b.cfg.Hub.TaskStatusPushEnabled() {
 			deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
 				reg, active := b.dashSrv.ContributorSummary()
-				lb := b.dashSrv.LeaderboardForHub()
-				out := make([]spoke.LeaderboardEntry, len(lb))
-				for i, e := range lb {
-					out[i] = spoke.LeaderboardEntry{
-						GitHubUsername: e.GitHubUsername,
-						AvatarURL:      e.AvatarURL,
-						TrustTier:      e.TrustTier,
-						TasksCompleted: e.TasksCompleted,
-						TasksFailed:    e.TasksFailed,
-						Active:         e.Active,
-						CurrentTask:    e.CurrentTask,
-					}
-				}
+				out := leaderboardForSpoke(b.dashSrv.LeaderboardForHub())
 				return &spoke.TaskStatusPayload{
 					HiveID:       b.cfg.HiveID,
 					Leaderboard:  out,

@@ -4452,6 +4452,7 @@ func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
 			if existing, ok := merged[lb.GitHubUsername]; ok {
 				existing.TasksCompleted += lb.TasksCompleted
 				existing.TasksFailed += lb.TasksFailed
+				existing.Abandoned += lb.Abandoned
 				if lb.Active {
 					existing.Active = true
 					existing.CurrentTask = lb.CurrentTask
@@ -4465,7 +4466,7 @@ func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
 	}
 	result := make([]LeaderboardEntry, 0, len(merged))
 	for _, v := range merged {
-		if v.TasksCompleted == 0 && v.TasksFailed == 0 && !v.Active {
+		if v.TasksCompleted == 0 && v.TasksFailed == 0 && v.Abandoned == 0 && !v.Active {
 			continue
 		}
 		result = append(result, *v)
