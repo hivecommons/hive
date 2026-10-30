@@ -685,7 +685,22 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	}
 	in.ReporterTrustHold = strings.Contains(lowerReason, "reporter-trust") || strings.Contains(lowerReason, "reporter trust")
 	in.DCOMissing = strings.Contains(lowerReason, "dco")
+	if in.Kind == delegatedecision.KindIssue {
+		in.Advisory = delegatedAdvisoryChecklist(in.Labels, in.Body)
+	}
 	return in, nil
+}
+
+// delegatedAdvisoryChecklist is the advisory block of a hive advisory issue
+// (hivecommons/hive#15754): the same classification the tracker draws
+// (stageTrackerAdvisoryFor), with the checklist's progress. nil for an
+// ordinary issue.
+func delegatedAdvisoryChecklist(labels []string, body string) *delegatedecision.AdvisoryChecklist {
+	adv := stageTrackerAdvisoryFor(labels, body, nil)
+	if adv == nil {
+		return nil
+	}
+	return &delegatedecision.AdvisoryChecklist{Resolved: adv.Resolved, Total: adv.Total}
 }
 
 // delegatedAdoptionGraceElapsed reads the stage store: adoption at the PR's
@@ -835,20 +850,25 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 				}
 			}
 			notes = append(notes, "labels removed: "+strings.Join(a.Labels, ", "))
-		case delegatedecision.ActionCloseDuplicate, delegatedecision.ActionCloseNotNow:
-			// Both share one comment-then-close path so the writeback
+		case delegatedecision.ActionCloseDuplicate, delegatedecision.ActionCloseNotNow, delegatedecision.ActionCloseCompleted:
+			// All share one comment-then-close path so the writeback
 			// ratchet (pkg/writeback/testdata) sees no new write sites.
 			notNow := a.Kind == delegatedecision.ActionCloseNotNow
+			completed := a.Kind == delegatedecision.ActionCloseCompleted
 			body := fmt.Sprintf("%s\n\nRationale: %s.\n\n_Closed by the hive as the owner's delegate (rule `%s`)._\n%s", a.Text, d.Rationale, d.Rule, marker)
 			reason := "closed as duplicate of #" + strconv.Itoa(a.Target) + " by the hive delegate"
 			what := "duplicate"
-			if notNow {
+			stateReason := issueStateReasonNotPlanned
+			if notNow || completed {
 				if in.Kind != delegatedecision.KindIssue {
-					return notes, fmt.Errorf("not-now closes issues only")
+					return notes, fmt.Errorf("%s closes issues only", a.Kind)
 				}
 				body = comment
 				reason = "declined for now by the hive delegate: no incident or recurrence justifies the cost yet"
 				what = "not-now"
+			}
+			if completed {
+				reason, what, stateReason = "advisory closed as completed by the hive delegate: its items are resolved", "advisory", issueStateReasonCompleted
 			}
 			if err := client.CreateIssueComment(ctx, repoFull, number, body); err != nil {
 				return notes, fmt.Errorf("posting %s note: %w", what, err)
@@ -860,11 +880,13 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			} else if err := client.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{
 				OverrideReason:          reason,
 				SuppressOverrideComment: true,
-				StateReason:             issueStateReasonNotPlanned,
+				StateReason:             stateReason,
 			}); err != nil {
 				return notes, fmt.Errorf("closing %s: %w", what, err)
 			}
-			if notNow {
+			if completed {
+				notes = append(notes, "closed as completed (advisory resolved)")
+			} else if notNow {
 				notes = append(notes, "closed as not planned (declined for now)")
 			} else {
 				notes = append(notes, fmt.Sprintf("closed in favour of #%d", a.Target))
@@ -947,7 +969,7 @@ func delegatedDecisionResolves(v delegatedecision.Verdict) bool {
 	case delegatedecision.VerdictApprove, delegatedecision.VerdictDirection, delegatedecision.VerdictAdoptSupersede,
 		delegatedecision.VerdictCloseDuplicate, delegatedecision.VerdictCloseSuperseded,
 		delegatedecision.VerdictQuarantineFlaky, delegatedecision.VerdictAcceptRatchet, delegatedecision.VerdictAcceptProposal,
-		delegatedecision.VerdictNotNow:
+		delegatedecision.VerdictNotNow, delegatedecision.VerdictClose:
 		return true
 	}
 	return false

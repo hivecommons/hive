@@ -32,8 +32,11 @@ type DedupeChecklistFindings struct {
 	// a cluster row that asks for a close carries a task line, and one
 	// that only cross-links is not an action.
 	Clusters int
-	// TaskItems counts the `- [ ]` lines: every recommended action is one.
+	// TaskItems counts the task lines (`- [ ]` and `- [x]`): every
+	// recommended action is one. TaskDone counts the ticked ones — items
+	// the advisory sweep (or a person) has marked resolved.
 	TaskItems int
+	TaskDone  int
 }
 
 // dedupeChecklistCountPatterns read the Summary sentence's counts. Each
@@ -43,7 +46,8 @@ var (
 	dedupeCountClusterPattern  = regexp.MustCompile(`(?i)\b(\d+)\s+same-root-cause`)
 	dedupeCountResolvedPattern = regexp.MustCompile(`(?i)\b(\d+)\s+(?:items?\s+(?:that\s+)?(?:appear\s+)?(?:to\s+be\s+)?)?(?:already\s+)?resolved`)
 	dedupeCountLinksPattern    = regexp.MustCompile(`(?i)\b(\d+)\s+missing\s+PR\s*(?:↔|<->|->|/|-|to)\s*issue\s+links?`)
-	dedupeTaskLinePattern      = regexp.MustCompile(`(?m)^\s*[-*]\s+\[ \]`)
+	dedupeTaskLinePattern      = regexp.MustCompile(`(?m)^\s*[-*]\s+\[[ xX]\]`)
+	dedupeTaskDonePattern      = regexp.MustCompile(`(?m)^\s*[-*]\s+\[[xX]\]`)
 )
 
 // ParseDedupeChecklistFindings reports whether body is a dedupe-agent
@@ -62,6 +66,7 @@ func ParseDedupeChecklistFindings(body string) (DedupeChecklistFindings, bool) {
 	f.Resolved = dedupeChecklistCount(dedupeCountResolvedPattern, text)
 	f.MissingLinks = dedupeChecklistCount(dedupeCountLinksPattern, text)
 	f.TaskItems = len(dedupeTaskLinePattern.FindAllStringIndex(text, -1))
+	f.TaskDone = len(dedupeTaskDonePattern.FindAllStringIndex(text, -1))
 	return f, true
 }
 
@@ -94,6 +99,11 @@ type IssueAdvisory struct {
 	// Empty is true when the body is a dedupe checklist with nothing
 	// actionable in it (DedupeChecklistFindings.Actionable is false).
 	Empty bool `json:"empty,omitempty"`
+	// Resolved / Total are the checklist's ticked and total task lines,
+	// the progress the advisory sweep keeps current
+	// (hivecommons/hive#15754); zero when the body has no task lines.
+	Resolved int `json:"resolved,omitempty"`
+	Total    int `json:"total,omitempty"`
 }
 
 // dedupeDecisionNoLinePattern finds a "Decision required: no" line anywhere
@@ -108,7 +118,7 @@ func IssueAdvisoryFromBody(body string) *IssueAdvisory {
 		return nil
 	}
 	if f, ok := ParseDedupeChecklistFindings(body); ok {
-		return &IssueAdvisory{DedupeChecklist: true, DecisionNo: !f.DecisionRequired, Empty: !f.Actionable()}
+		return &IssueAdvisory{DedupeChecklist: true, DecisionNo: !f.DecisionRequired, Empty: !f.Actionable(), Resolved: f.TaskDone, Total: f.TaskItems}
 	}
 	if dedupeDecisionNoLinePattern.MatchString(stripFencedCode(body)) {
 		return &IssueAdvisory{DecisionNo: true}

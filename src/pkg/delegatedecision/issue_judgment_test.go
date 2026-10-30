@@ -285,3 +285,51 @@ func TestGlossaryCoversIssueJudgment(t *testing.T) {
 		t.Errorf("not-now plain = %q", got)
 	}
 }
+
+// hivecommons/hive#15754: a hive advisory is never a person's decision.
+// Items open → refused, no writes, no park wording; all resolved (or no
+// checklist) → close as completed. The rails must let the close through.
+func TestAdvisoryDecision(t *testing.T) {
+	t.Parallel()
+	base := Input{Repo: "o/r", Number: 15734, Kind: KindIssue, Title: "triage: duplicate and overlapping open issues/PRs to consolidate",
+		Body: "<!-- hive:dedupe-checklist repo=o/r -->\nDecision required: yes\n\n- [x] #1 — close\n- [ ] #2 — close\n", Labels: []string{"agent/dedupe"}, HiveAuthored: true}
+	for _, tc := range []struct {
+		name        string
+		adv         AdvisoryChecklist
+		wantVerdict Verdict
+		wantRule    string
+		wantActions int
+		wantPark    bool
+	}{
+		{"items open", AdvisoryChecklist{Resolved: 1, Total: 3}, VerdictRefused, RuleAdvisoryInProgress, 0, true},
+		{"all resolved", AdvisoryChecklist{Resolved: 3, Total: 3}, VerdictClose, RuleAdvisoryResolved, 1, false},
+		{"no checklist", AdvisoryChecklist{}, VerdictClose, RuleAdvisoryResolved, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := base
+			in.Advisory = &tc.adv
+			d := Run(in)
+			if d.Verdict != tc.wantVerdict || d.Rule != tc.wantRule || len(d.Actions) != tc.wantActions || d.KeepsPark != tc.wantPark {
+				t.Fatalf("%s: %+v", tc.name, d)
+			}
+			if tc.wantActions == 1 && d.Actions[0].Kind != ActionCloseCompleted {
+				t.Fatalf("%s: action %+v", tc.name, d.Actions[0])
+			}
+			if tc.adv.Total > 0 && tc.adv.Resolved < tc.adv.Total && !strings.Contains(d.Rationale, "1/3 resolved") {
+				t.Fatalf("%s: rationale %q", tc.name, d.Rationale)
+			}
+			body := CommentBodyWith(d, "h", "", CommentOptions{Kind: KindIssue})
+			if tc.wantVerdict == VerdictClose && (!strings.Contains(body, "Closed as completed") || strings.Contains(body, "/hive decision")) {
+				t.Fatalf("%s: body\n%s", tc.name, body)
+			}
+		})
+	}
+	// A dedupe checklist with a known duplicate target is still an
+	// advisory, not a duplicate to close.
+	in := base
+	in.Advisory = &AdvisoryChecklist{Resolved: 0, Total: 2}
+	in.DuplicateOf = 1
+	if d := Run(in); d.Rule != RuleAdvisoryInProgress {
+		t.Fatalf("advisory outranks dedupe: %+v", d)
+	}
+}

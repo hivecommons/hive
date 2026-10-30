@@ -178,6 +178,7 @@ contribute.token_idle_max # TODO #11854
 contribute.token_max_age # TODO #11854
 convergence.mutation.max_writers_per_target # boundary capacity tuning; yaml-only (#14645)
 debug.pprof_addr # loopback-only pprof bind address, operator/debug knob, not a Settings control (#14681)
+dedupe.advisory_autoclose # advisory-checklist sweep; yaml-only (#15754)
 deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
 duplicate_sweep.bot_authors[] # TODO #11854
 evidence.complexity.enabled # TODO #11854

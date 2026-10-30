@@ -639,6 +639,7 @@
   "issues": {
     "rfc_existing_check": {}
   },
+  "dedupe": {},
   "contribute": {},
   "HiveID": "",
   "acmm_level": null,
