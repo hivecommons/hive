@@ -463,7 +463,7 @@
        exists and so rides Actionable (the issue side), not the merge gate;
        a pre-045 issue still wearing 085 is drawn the same way until the
        reconciler re-stages it.
-       stageTrackerRowHtml() is pure (no DOM) so stage_tracker_ui_test.go can
+       stageTrackerRowHtml() is pure (no DOM) so stage_tracker_ui_rows_test.go can
        execute it under node. */
     const STAGE_TRACKER_POLL_MS = 30000;
     const STAGE_TRACKER_PATH = [0, 10, 20, 30, 50, 80];
