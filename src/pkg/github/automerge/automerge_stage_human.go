@@ -138,11 +138,18 @@ func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *S
 	hiveAuthored := (pass != nil && pass.AuthorIsApp) || obs.AuthorKind == authorkind.Hive
 	// A person's hold is that person's decision; the rule keeps held PRs,
 	// so it is not asked.
-	if !hiveAuthored || c.gh == nil || obs.Hold != nil {
+	if c.gh == nil || obs.Hold != nil {
+		return false
+	}
+	// Another author's PR is asked only the already-landed question, and
+	// only when the reviewer raised it (hivecommons/hive#15732): the
+	// closer then proves the landing before closing. Trust changes nothing.
+	landedClaimed := obs.Detail.VerdictKnown && alreadyLandedClaimed(obs.Detail.Verdict)
+	if !hiveAuthored && !landedClaimed {
 		return false
 	}
 	closer, ok := c.transport.(supersededCloserTransport)
-	if !ok {
+	if !ok && hiveAuthored {
 		return false
 	}
 	cacheKey := key + "@" + obs.HeadSHA
@@ -160,13 +167,16 @@ func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *S
 		c.warn("stage labels: superseded check could not read the PR", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return false
 	}
+	if !hiveAuthored {
+		return c.closeEmptyDiffBeforeHumanRoute(ctx, obs, pr, false, now)
+	}
 	res, err := closer.CloseSupersededHivePRIfEligible(ctx, obs.Owner+"/"+obs.Repo, pr)
 	if err != nil {
 		c.warn("stage labels: superseded check failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return false
 	}
 	if !res.Closed {
-		if c.closeEmptyDiffBeforeHumanRoute(ctx, obs, pr, now) {
+		if c.closeEmptyDiffBeforeHumanRoute(ctx, obs, pr, true, now) {
 			return true
 		}
 		c.debug("stage labels: hive PR kept", "repo", obs.Display, "pr", obs.Number, "verdict", res.Verdict, "reason", res.Reason)
@@ -184,6 +194,12 @@ func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *S
 // at all, number or not (hivecommons/hive#15647).
 func alreadyLandedVerdict(v ContributorLaneVerdict) (landed int, claimed bool) {
 	return review.AlreadyLandedFromVerdict(v.RedundantOf, v.DecisionQuestion, v.HumanSummaries)
+}
+
+// alreadyLandedClaimed is alreadyLandedVerdict's claimed alone.
+func alreadyLandedClaimed(v ContributorLaneVerdict) bool {
+	_, claimed := alreadyLandedVerdict(v)
+	return claimed
 }
 
 // alreadyLandedCloserTransport is the optional transport hook that closes
@@ -207,8 +223,11 @@ type alreadyLandedCloserTransport interface {
 // freshness guard, files identical on the base tip count as no diff, and
 // the close settles the adoption's lineage — the original the copy
 // superseded is closed as superseded by the same landed PR, so the orphan
-// recovery does not re-adopt a head the base already has.
-func (c *Engine) closeEmptyDiffBeforeHumanRoute(ctx context.Context, obs stageObservation, pr *gh.PullRequest, now time.Time) bool {
+// recovery does not re-adopt a head the base already has. That entry is
+// open to any author (hivecommons/hive#15732); the closer proves the
+// landing. hiveAuthored is false for another author's PR, which the plain
+// empty-diff rule never touches.
+func (c *Engine) closeEmptyDiffBeforeHumanRoute(ctx context.Context, obs stageObservation, pr *gh.PullRequest, hiveAuthored bool, now time.Time) bool {
 	redundantOf, claimed := 0, false
 	if obs.Detail.VerdictKnown {
 		redundantOf, claimed = alreadyLandedVerdict(obs.Detail.Verdict)
@@ -217,6 +236,11 @@ func (c *Engine) closeEmptyDiffBeforeHumanRoute(ctx context.Context, obs stageOb
 		if landedCloser, ok := c.transport.(alreadyLandedCloserTransport); ok {
 			return c.closeAlreadyLandedBeforeHumanRoute(ctx, obs, pr, landedCloser, redundantOf, now)
 		}
+	}
+	if !hiveAuthored {
+		// The sweep's empty-diff rule is the hive's own; another author's
+		// PR closes only on the already-landed entry above.
+		return false
 	}
 	closer, ok := c.transport.(emptyDiffCloserTransport)
 	if !ok {
@@ -254,8 +278,8 @@ func (c *Engine) closeAlreadyLandedBeforeHumanRoute(ctx context.Context, obs sta
 		return false
 	}
 	caption, _ := stagelabels.AlreadyLandedCaption(stagelabels.AlreadyLandedReason(res.RedundantOf))
-	c.info("stage labels: hive PR closed as already landed instead of a human decision",
-		"repo", obs.Display, "pr", obs.Number, "reason", stagelabels.LaneReasonAlreadyLanded, "action", res.Reason,
+	c.info("stage labels: PR closed as already landed instead of a human decision",
+		"repo", obs.Display, "pr", obs.Number, "reason", stagelabels.AlreadyLandedAuthorReason(obs.AuthorKind), "action", res.Reason,
 		"redundant_of", res.RedundantOf, "issues_closed", res.IssuesClosed, "supersedes", res.Supersedes, "caption", caption, "lane_reason", obs.LaneReason)
 	c.settleAlreadyLandedLineage(ctx, obs, pr.GetNumber(), res.RedundantOf, res.Supersedes, now)
 	return true

@@ -235,6 +235,11 @@ type Input struct {
 	// work (its issue is closed by that merge, or that PR declares
 	// `Supersedes #N`); nil when none is known (hivecommons/hive#15289).
 	SupersededBy *MergedCloser
+	// DiffEmpty: the PR's diff against its base is empty (+0/−0, no
+	// changed files) — with SupersededBy that is the already-landed case
+	// (hivecommons/hive#15732), and the preview says so instead of
+	// talking about the author's trust.
+	DiffEmpty bool
 	// AuthorTooling: what the author drives (hive / clanker / person);
 	// picks the words a decision uses for them (AuthorWord).
 	AuthorTooling AuthorTooling
