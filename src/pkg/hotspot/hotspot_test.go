@@ -284,7 +284,7 @@ func TestFilerDedupeAndRefileWindow(t *testing.T) {
 	if !strings.HasPrefix(cr.body, Marker(h.File)) {
 		t.Errorf("body must start with dedupe marker, got %q", cr.body[:60])
 	}
-	if cr.title != "[governor] refactor: pkg/dashboard/api.go is a merge hotspot — split into 4 units" {
+	if cr.title != "[ci-maintainer] refactor: pkg/dashboard/api.go is a merge hotspot — split into 4 units" {
 		t.Errorf("title=%q", cr.title)
 	}
 	if strings.Join(cr.labels, ",") != "agent/ci-maintainer,kind/cleanup" {
@@ -361,7 +361,7 @@ func TestBodyGolden(t *testing.T) {
 	if !strings.Contains(gb, "**generated**") || strings.Contains(gb, "## Split proposal") {
 		t.Errorf("generated body wrong:\n%s", gb)
 	}
-	if got := Title(gen, 4); got != "[governor] refactor: pkg/dashboard/static/index.html is a merge hotspot — split its source pkg/dashboard/static-src into 4 units" {
+	if got := Title(gen, 4); got != "[ci-maintainer] refactor: pkg/dashboard/static/index.html is a merge hotspot — split its source pkg/dashboard/static-src into 4 units" {
 		t.Errorf("generated title=%q", got)
 	}
 }
