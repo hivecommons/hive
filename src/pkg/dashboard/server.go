@@ -2649,6 +2649,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
 	status.Swarm = s.SwarmSnapshot()
+	s.attachFleetCostWindows(status, time.Now())
 
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired

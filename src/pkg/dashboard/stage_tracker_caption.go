@@ -766,7 +766,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		if c := stageTrackerMergeTrainCaption(reason); c != "" {
 			return c, "automerge lane"
 		}
-		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
+		return joinClause(stageTrackerAwaitingAdmissionCaption, clause), "automerge lane"
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
 		switch stageTrackerAdoptedByState(rec) {
 		case stageTrackerAdoptedClosedTwice:
