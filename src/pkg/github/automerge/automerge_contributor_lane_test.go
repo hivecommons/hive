@@ -49,6 +49,7 @@ func contributorClaimMarkerTier(who, kind, hive, fields string) string {
 }
 
 type contributorLaneFixture struct {
+	nodeID          string
 	author          string
 	body            string
 	labels          []string
@@ -175,6 +176,7 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		}
 		pull := func(sha string) map[string]any {
 			p := map[string]any{
+				"node_id":         fx.nodeID,
 				"number":          7,
 				"state":           "open",
 				"draft":           fx.draft,

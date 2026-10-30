@@ -106,10 +106,11 @@ func closeOnMergeOptionsFor(cfg *config.Config, logger *slog.Logger, now func() 
 			decision := trustedAuthorFunc(cfg)(login, cfg.AutoMerge.TrustedAuthors.EffectiveRequireRole())
 			return decision.Allowed
 		},
-		RecheckAfter: cfg.Issues.EffectiveCloseOnMergeRecheck(),
-		Now:          now,
-		LabelDriven:  cfg.RepoLabelDriven,
-		RepoOnGitHub: cfg.RepoOnGitHub,
+		RecheckAfter:         cfg.Issues.EffectiveCloseOnMergeRecheck(),
+		Now:                  now,
+		LabelDriven:          cfg.RepoLabelDriven,
+		RepoOnGitHub:         cfg.RepoOnGitHub,
+		AdvisoryAutocloseOff: !cfg.Dedupe.AdvisoryAutocloseEnabled(),
 	}
 }
 

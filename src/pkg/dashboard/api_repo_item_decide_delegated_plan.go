@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -192,9 +193,21 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 				"Hive opens its copy of " + ref + ", lets it soak, and merges it.",
 				ref + " is closed as superseded; the author keeps the credit.",
 			}
+	case d.Verdict == delegatedecision.VerdictApprove && in.Kind == delegatedecision.KindIssue:
+		// An issue has no commit to approve and nothing to merge
+		// (hivecommons/hive#15754): approval is the direction, and an
+		// agent picks the issue up.
+		return "Approve the direction of " + ref + " and let the hive pick it up.",
+			[]string{"Hive records approval and removes the needs-decision hold.", "An agent claims " + ref + " on the next cycle."}
 	case d.Verdict == delegatedecision.VerdictApprove:
 		return "Approve " + ref + " as it is and let the merge queue merge it.",
 			[]string{"Hive approves the current commit.", ref + " merges once CI is green and it has soaked."}
+	case d.Verdict == delegatedecision.VerdictClose:
+		return "Close the advisory — its items are tracked by the hive.",
+			[]string{ref + " is closed as completed with a note that its items are resolved."}
+	case d.Rule == delegatedecision.RuleAdvisoryInProgress && in.Advisory != nil:
+		return fmt.Sprintf("Keep open; hive is working %d/%d items.", in.Advisory.Resolved, in.Advisory.Total),
+			[]string{"Nothing is written; the sweep ticks items as they close or merge.", "The advisory closes itself once every item is resolved."}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate && target > 0:
 		return "Close " + ref + " as a duplicate of #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target) + "."}
 	case d.Verdict == delegatedecision.VerdictCloseSuperseded && target > 0:

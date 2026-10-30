@@ -47,7 +47,7 @@ const PolicyText = `Owner-delegate policy (how the owner decides; the hive appli
 - Be decisive; except for the safety rails below, never ask the owner a question back. Pick the option that keeps work moving and is reversible.
 - PRs: prefer an adequate human/contributor PR over a hive duplicate — if both exist and the contributor's is mergeable and current, recommend a human comparison of issue coverage, checks and review approval; keep the hive PR open and parked until adequacy is confirmed, and never close it solely on an issue reference. Otherwise supersede the contributor's with the hive's and close theirs with credit. Approve small, necessary, low-risk changes (CI pins, RBAC read-only adds, warning text, workflow hygiene) once the sentinel finding is checked and explained as intended. Sensitive-path sentinel alerts on trusted-author PRs: approve with a one-line "reviewed, intended" rationale. Clear reporter-trust holds when the fixing PR is sound.
 - Contributors offline: adopt now in supersede mode — do not wait for a deadline (hivecommons/hive#13975).
-- Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + hold with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage); a fleet self-report whose remedy is the operator's (an expired provider login, credentials, disk, network, App setup on the reporting spoke) is not code work → tell that spoke's owner(s) exactly what to do, no approved-direction, no implementer, keep it out of the actionable set, and never post the same direction twice; a hive-filed proposal is paid for by evidence → approve it when it cites an incident it would have prevented or prior instances of the same class fixed one at a time, otherwise decline it for now (comment the reason, close as not planned; re-propose with evidence) — a person's proposal is never declined this way.
+- Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + hold with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage); a fleet self-report whose remedy is the operator's (an expired provider login, credentials, disk, network, App setup on the reporting spoke) is not code work → tell that spoke's owner(s) exactly what to do, no approved-direction, no implementer, keep it out of the actionable set, and never post the same direction twice; a hive-filed proposal is paid for by evidence → approve it when it cites an incident it would have prevented or prior instances of the same class fixed one at a time, otherwise decline it for now (comment the reason, close as not planned; re-propose with evidence) — a person's proposal is never declined this way; a hive advisory (a dedupe checklist, a triage note) is never work for a person → the hive ticks its items as they close and closes it as completed when all are resolved; while items remain open nothing is written.
 - Record the decision as a "/hive decision <text>" comment on the item (and the auto-merge queue approval on the PR head when the decision is to release a PR), remove stage/085-needs-decision, add triage/accepted where applicable, and stamp the delegated-decision marker so it is auditable.
 - Safety rails: never merge a PR (the auto-merge engine does that per repo settings); never act on an item carrying hold; never grant org membership, secrets or permissions (always the owner); leave an item untouched when the question is a policy or scope change to the hive itself (settings, governance docs, security posture) — post "hive recommends: …; owner to confirm" instead and keep 085.`
 
@@ -95,12 +95,15 @@ const (
 	// not planned: the established way a declined proposal leaves the
 	// tracker (the dashboard's Won't-fix path).
 	ActionCloseNotNow ActionKind = "close-not-now"
+	// ActionCloseCompleted closes a hive advisory whose checklist items are
+	// all resolved, as completed (hivecommons/hive#15754).
+	ActionCloseCompleted ActionKind = "close-completed"
 )
 
 // AllowedActions is the allowed set in a fixed order.
 var AllowedActions = []ActionKind{
 	ActionCommentDecision, ActionApproveReview, ActionLabelsAdd, ActionLabelsRemove,
-	ActionCloseDuplicate, ActionLink, ActionAdoptSupersede, ActionRecommendOnly, ActionCloseNotNow,
+	ActionCloseDuplicate, ActionLink, ActionAdoptSupersede, ActionRecommendOnly, ActionCloseNotNow, ActionCloseCompleted,
 }
 
 // Action is one step of a decision.
@@ -134,7 +137,27 @@ const (
 	// VerdictNotNow declines a hive-filed proposal for now: no incident or
 	// recurrence justifies its cost yet; closed as not planned.
 	VerdictNotNow Verdict = "not-now"
+	// VerdictClose closes a hive advisory as completed: its checklist
+	// items are all resolved, so nothing is left for a person to read.
+	VerdictClose Verdict = "close"
 )
+
+// Advisory rule names (hivecommons/hive#15754).
+const (
+	// RuleAdvisoryResolved: every item of the advisory's checklist is
+	// resolved; the delegate closes it as completed.
+	RuleAdvisoryResolved = "advisory-resolved"
+	// RuleAdvisoryInProgress: items remain open; the hive's sweep is
+	// working them, so the delegate writes nothing and keeps it open.
+	RuleAdvisoryInProgress = "advisory-in-progress"
+)
+
+// AdvisoryChecklist is the progress of a hive advisory's checklist: how
+// many of its items are resolved. Total 0 is an advisory without items.
+type AdvisoryChecklist struct {
+	Resolved int
+	Total    int
+}
 
 // Labels the delegate writes or reads.
 const (
@@ -250,6 +273,9 @@ type Input struct {
 	// RepoPaused: the repo is under an operator pause; a decision that
 	// would write (close) is recommend-only instead.
 	RepoPaused bool
+	// Advisory is set for a hive advisory issue (triage/advisory, a dedupe
+	// checklist): not work, the hive's sweep ticks and closes it itself.
+	Advisory *AdvisoryChecklist
 }
 
 // RuleAdoptNow is the rule name of the grace-elapsed Adopt now decision;
@@ -423,6 +449,9 @@ func ownerOnlyDecision(in Input, rationale string) Decision {
 
 func decideIssue(in Input) Decision {
 	ref := "#" + strconv.Itoa(in.Number)
+	if in.Advisory != nil {
+		return advisoryDecision(ref, *in.Advisory)
+	}
 	// A self-report whose remedy is the spoke operator's comes first: its
 	// body names tokens and credentials, which would otherwise read as an
 	// owner-only secrets item and hold it forever.
@@ -525,6 +554,31 @@ func operatorActionDecision(sr SelfReport, remedy string) Decision {
 // notNowDecision declines a hive-filed proposal that shows neither an
 // incident nor a recurrence: the reason is posted and the issue is closed
 // as not planned, the way a declined proposal leaves the tracker.
+// advisoryDecision decides a hive advisory (hivecommons/hive#15754). Its
+// items are the hive's own work: while any is open nothing is written and
+// the advisory stays open (not parked — the tracker never parks one); once
+// all are resolved it is closed as completed.
+func advisoryDecision(ref string, adv AdvisoryChecklist) Decision {
+	if adv.Total > 0 && adv.Resolved < adv.Total {
+		return Decision{
+			Verdict: VerdictRefused, Rule: RuleAdvisoryInProgress,
+			Text:      fmt.Sprintf("keep %s open: the hive is working its items (%d/%d resolved)", ref, adv.Resolved, adv.Total),
+			Rationale: fmt.Sprintf("the hive is working the items (%d/%d resolved); the advisory closes itself when all are", adv.Resolved, adv.Total),
+			KeepsPark: true,
+		}
+	}
+	text := fmt.Sprintf("close %s: its items are tracked by the hive", ref)
+	rationale := "an advisory is a note, not work; nothing waits on it"
+	if adv.Total > 0 {
+		text = fmt.Sprintf("close %s: all %d items are resolved", ref, adv.Total)
+		rationale = fmt.Sprintf("all %d of the advisory's items are resolved; nothing is left to read", adv.Total)
+	}
+	return Decision{
+		Verdict: VerdictClose, Rule: RuleAdvisoryResolved, Text: text, Rationale: rationale,
+		Actions: []Action{{Kind: ActionCloseCompleted, Text: text}},
+	}
+}
+
 func notNowDecision(ref string) Decision {
 	text := "not now: no incident or recurrence justifies the cost of " + ref + " yet; re-propose with the incident or the repeated instances it would have prevented"
 	return Decision{
@@ -843,7 +897,10 @@ func ApplyRails(d Decision, r Rails) Decision {
 		}
 		out.Actions = append(out.Actions, a)
 	}
-	if len(out.Actions) == 0 {
+	if len(out.Actions) == 0 && d.Verdict != VerdictRefused {
+		// A decision that already refuses with no actions (an advisory the
+		// hive is still working) stays a no-write refusal, not a
+		// recommendation comment.
 		out.Verdict = VerdictRecommendOnly
 		out.KeepsPark = true
 		out.Actions = []Action{{Kind: ActionRecommendOnly, Text: "hive recommends: " + d.Text + "; owner to confirm"}}

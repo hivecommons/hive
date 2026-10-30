@@ -331,20 +331,22 @@ func (c *Engine) trustedHumanApprovalForRequiresHuman(ctx context.Context, owner
 	// No live trusted approval on head: a persisted review-backed approval
 	// is revoked, so drop it before reading the recorded decision.
 	c.reconcileReviewBackedApproval(ctx, owner, repo, number, head)
-	return c.recordedHumanApprovalForHead(owner, repo, number, head)
+	return c.recordedHumanApprovalForHead(ctx, owner, repo, number, head)
 }
 
 // recordedHumanApprovalForHead is a bare `/hive decision approve` the un-park
 // sweep recorded against head (pr_unpark_decision.go): the owner answered the
 // swarm's question with "yes" in a comment rather than a GitHub review. It
 // releases requires_human the way an APPROVED review on the head does
-// (hivecommons/hive#14679).
-func (c *Engine) recordedHumanApprovalForHead(owner, repo string, number int, head string) (string, bool) {
+// (hivecommons/hive#14679). An approval recorded on the previous head
+// follows the PR when the hive's own base refresh is all that moved it
+// (hivecommons/hive#15649).
+func (c *Engine) recordedHumanApprovalForHead(ctx context.Context, owner, repo string, number int, head string) (string, bool) {
 	if c == nil || c.humanChangeRequests == nil || strings.TrimSpace(head) == "" {
 		return "", false
 	}
-	req, ok := c.humanChangeRequests.For(owner+"/"+repo, number, strings.TrimSpace(head))
-	if !ok || !req.IsApproval() || strings.TrimSpace(req.Actor) == "" {
+	req, ok := c.recordedDecisionFor(ctx, owner, repo, number, "", head)
+	if !ok || !req.IsApproval() {
 		return "", false
 	}
 	login := strings.ToLower(strings.TrimSpace(req.Actor))
