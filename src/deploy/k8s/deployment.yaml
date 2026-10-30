@@ -183,10 +183,13 @@ spec:
                   name: hive-secrets
                   key: HIVE_METRICS_ENABLED
                   optional: true
+            # Dedicated Secret so the scraper (ServiceMonitor) can be granted read
+            # access to the token alone, never to hive-secrets. Optional: a missing
+            # Secret makes /metrics fail closed with 403 instead of crash-looping.
             - name: HIVE_METRICS_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hive-secrets
+                  name: hive-metrics-token
                   key: HIVE_METRICS_TOKEN
                   optional: true
             - name: HIVE_LLMD_ENDPOINT

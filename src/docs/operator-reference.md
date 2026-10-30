@@ -2427,7 +2427,7 @@ See [Monitoring a hive with Prometheus and Grafana](monitoring.md) for setup, me
 | Name | Purpose |
 |---|---|
 | `HIVE_METRICS_ENABLED` | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`; off by default (route not registered — scrapes 404) because it exposes estimated cost data. |
-| `HIVE_METRICS_TOKEN` | **Required whenever metrics are enabled** ([#3804](https://github.com/hivecommons/hive/pull/3804)): scrapers must send `Authorization: Bearer <token>` (configure Prometheus `bearer_token`). Enabled-but-tokenless serves 403 with an error naming both variables, and the hive logs a startup warning; the cost/agent series are never served unauthenticated. |
+| `HIVE_METRICS_TOKEN` | **Required whenever metrics are enabled** ([#3804](https://github.com/hivecommons/hive/pull/3804)): scrapers must send `Authorization: Bearer <token>` (configure Prometheus `bearer_token`). Enabled-but-tokenless serves 403 with an error naming both variables, and the hive logs a startup warning; the cost/agent series are never served unauthenticated. The Kubernetes manifests read it from the dedicated `hive-metrics-token` Secret, not from `hive-secrets` (see [monitoring.md](monitoring.md)). |
 
 > **Note on `tokens_24h`:** despite its name, the per-spoke heartbeat field
 > `tokens_24h` (stored on the hub as `totalTokens24h`) is a **cumulative total**,

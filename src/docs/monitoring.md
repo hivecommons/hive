@@ -4,19 +4,32 @@ This page is for operators who want to scrape a hive's Prometheus `/metrics` end
 
 ## Turning metrics on
 
-`/metrics` is off by default: the route is not registered, so scrapes return 404. Two settings turn it on; the base Deployment reads both from optional keys of the `hive-secrets` Secret (both listed in [env-vars.md](env-vars.md) and the [operator reference](operator-reference.md)):
+`/metrics` is off by default: the route is not registered, so scrapes return 404. Two settings turn it on (both listed in [env-vars.md](env-vars.md) and the [operator reference](operator-reference.md)); the base Deployment reads each from an optional Secret key:
 
-1. `HIVE_METRICS_ENABLED=1` (`1`, `true`, `yes` or `on`) registers `GET /metrics` on the dashboard port (3002).
-2. `HIVE_METRICS_TOKEN` holds the bearer token scrapers must present.
+1. `HIVE_METRICS_ENABLED=1` (`1`, `true`, `yes` or `on`) registers `GET /metrics` on the dashboard port (3002). Read from the `hive-secrets` Secret.
+2. `HIVE_METRICS_TOKEN` holds the bearer token scrapers must present. Read from the **dedicated `hive-metrics-token` Secret**, not from `hive-secrets`, so the scraper (for example the Prometheus Operator) can be granted read access to that one token and never to the hive's GitHub credentials or App key.
 
-Put both in the `hive-secrets` Secret next to the hive's other secrets, for example:
+Set the flag in `hive-secrets` and create the token Secret, for example:
 
    ```sh
    kubectl -n <namespace> patch secret hive-secrets --type merge \
-     -p "{\"stringData\":{\"HIVE_METRICS_ENABLED\":\"1\",\"HIVE_METRICS_TOKEN\":\"$(openssl rand -hex 32)\"}}"
+     -p '{"stringData":{"HIVE_METRICS_ENABLED":"1"}}'
+   kubectl -n <namespace> create secret generic hive-metrics-token \
+     --from-literal=HIVE_METRICS_TOKEN="$(openssl rand -hex 32)"
    ```
 
-`src/deploy/k8s/deployment.yaml` maps those keys to environment variables (`secretKeyRef`, `optional: true`). Roll the hive pod afterwards (`kubectl -n <namespace> rollout restart deployment/hive`) so the environment is re-read. If you deploy from a custom manifest, add the same two `secretKeyRef` env entries yourself; files mounted at `/secrets` are not exported as environment variables.
+`src/deploy/k8s/deployment.yaml` maps those keys to environment variables (`secretKeyRef`, `optional: true`, so a missing `hive-metrics-token` Secret makes `/metrics` fail closed with 403 rather than crash-looping the pod). A commented template of the Secret sits at the end of `src/deploy/k8s/secret.yaml`. Roll the hive pod afterwards (`kubectl -n <namespace> rollout restart deployment/hive`) so the environment is re-read. If you deploy from a custom manifest, add the same two `secretKeyRef` env entries yourself; files mounted at `/secrets` are not exported as environment variables.
+
+**Migrating from `hive-secrets`**: before this change the Deployment read `HIVE_METRICS_TOKEN` from `hive-secrets`. Copy the existing value into the new Secret before rolling out the new manifest, otherwise `/metrics` answers 403 until you do; afterwards the key can be dropped from `hive-secrets`:
+
+   ```sh
+   kubectl -n <namespace> create secret generic hive-metrics-token \
+     --from-literal=HIVE_METRICS_TOKEN="$(kubectl -n <namespace> get secret hive-secrets \
+       -o jsonpath='{.data.HIVE_METRICS_TOKEN}' | base64 -d)"
+   # optional, once the new Secret is in place:
+   kubectl -n <namespace> patch secret hive-secrets --type json \
+     -p '[{"op":"remove","path":"/data/HIVE_METRICS_TOKEN"}]'
+   ```
 
 ### Why `/metrics` is fail-closed
 
@@ -33,11 +46,14 @@ Enabling metrics without a token never serves the data unauthenticated.
 
 ## Adding the monitoring component to an overlay
 
-<!-- Update this section when the monitoring component (ServiceMonitor, alerts, dashboard) lands in `src/deploy/kustomize`. -->
+The opt-in `monitoring` component under `src/deploy/kustomize/components/monitoring/` ships a `ServiceMonitor` for `/metrics`, a Deployment patch that sets `HIVE_METRICS_ENABLED=true`, and a `PrometheusRule` with the alerts below. Its `ServiceMonitor` takes the bearer token from the `hive-metrics-token` Secret key `HIVE_METRICS_TOKEN`, the same Secret the Deployment reads, so scraper and server always agree. Add it to the `components:` list of any overlay that includes the `k8s/` base:
 
-No monitoring component ships under `src/deploy/kustomize` yet; the ServiceMonitor, alert rules and Grafana dashboard are tracked in companion issues (alerts: [#15438](https://github.com/hivecommons/hive/issues/15438)). Until they land, use the plain `scrape_config` below, or write a `ServiceMonitor` targeting the base `hive` Service, port `dashboard` (3002), path `/metrics`, with the bearer token taken from the `hive-secrets` Secret key `HIVE_METRICS_TOKEN`.
+```yaml
+components:
+  - ../../components/monitoring
+```
 
-Once the component exists you will add it to your overlay's `kustomization.yaml` `components:` list.
+Full prerequisites (Prometheus Operator CRDs, release label selectors) and the Secret setup are in the [component README](../deploy/kustomize/components/monitoring/README.md). Without the Prometheus Operator, use the plain `scrape_config` below.
 
 ## Metric families
 
@@ -60,13 +76,13 @@ The authoritative list is the comment block at the top of `pkg/dashboard/metrics
 
 ## Alerts and runbooks
 
-No alert rules ship in the repository yet; alert rules ship with the monitoring component (see [#15438](https://github.com/hivecommons/hive/issues/15438)). Each alert's `runbook_url` will point at a heading below, so these anchors are stable:
+The alert rules ship with the monitoring component (`src/deploy/kustomize/components/monitoring/prometheusrule.yaml`, [#15438](https://github.com/hivecommons/hive/issues/15438)). Each alert's `runbook_url` points at the matching section of the component README; the same alerts are summarised below, and these anchors are kept stable:
 
 - `#alert-reference` — one subsection per alert, titled with the alert name, giving what it means and what to do when it fires.
 
 ### Alert reference
 
-Conditions are specified in [#15438](https://github.com/hivecommons/hive/issues/15438); the rule files land with the monitoring component.
+Conditions are defined in the component's `prometheusrule.yaml` ([#15438](https://github.com/hivecommons/hive/issues/15438)).
 
 #### HiveMetricsDown
 
@@ -95,7 +111,7 @@ scrape_configs:
       - targets: ["hive.<namespace>.svc:3002"]
 ```
 
-Mount the token as a file from the same value you stored in `hive-secrets`. Verify with:
+Mount the token as a file from the same value you stored in the `hive-metrics-token` Secret. Verify with:
 
 ```sh
 curl -H "Authorization: Bearer $HIVE_METRICS_TOKEN" http://hive.<namespace>.svc:3002/metrics | head

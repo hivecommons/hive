@@ -23,18 +23,21 @@ It provides:
   patch in your overlay) or set
   `prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false`.
 - **Metrics Token**: Create a dedicated `hive-metrics-token` Secret in the
-  `hive` namespace with a `HIVE_METRICS_TOKEN` key (template:
-  `src/deploy/k8s/secret.yaml`). The ServiceMonitor and the Hive Deployment
-  both read the token from it, so scraper and server always agree.
+  `hive` namespace with a `HIVE_METRICS_TOKEN` key (commented template at the
+  end of `src/deploy/k8s/secret.yaml`). The ServiceMonitor and the base Hive
+  Deployment (`src/deploy/k8s/deployment.yaml`) both read the token from it,
+  so scraper and server always agree, and `hive-secrets` (GitHub token, App
+  key) never has to be readable by the scraper.
 
 ```bash
 kubectl -n hive create secret generic hive-metrics-token \
   --from-literal=HIVE_METRICS_TOKEN="$(openssl rand -hex 32)"
 ```
 
-**Migrating from `hive-secrets`**: earlier versions of this component read
-`HIVE_METRICS_TOKEN` from `hive-secrets`. Copy the existing value into the new
-Secret before upgrading, otherwise `/metrics` answers 403 until you do:
+**Migrating from `hive-secrets`**: earlier versions of this component and of
+the base Deployment read `HIVE_METRICS_TOKEN` from `hive-secrets`. Copy the
+existing value into the new Secret before upgrading, otherwise `/metrics`
+answers 403 until you do:
 
 ```bash
 kubectl -n hive create secret generic hive-metrics-token \
@@ -42,7 +45,8 @@ kubectl -n hive create secret generic hive-metrics-token \
     -o jsonpath='{.data.HIVE_METRICS_TOKEN}' | base64 -d)"
 ```
 
-Afterwards the `HIVE_METRICS_TOKEN` key can be removed from `hive-secrets`.
+Afterwards the `HIVE_METRICS_TOKEN` key can be removed from `hive-secrets`
+(see [monitoring.md](../../../../docs/monitoring.md) for the exact command).
 
 ## Usage
 
