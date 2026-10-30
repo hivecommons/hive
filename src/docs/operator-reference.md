@@ -918,7 +918,7 @@ awaiting rework (not yet dispatched)* line when the contributor has
 see [contributor-relay.md](contributor-relay.md#what-the-operator-sees-operations--connected-contributor-agents)). The retired `🐝 covered by PR`,
 `claimed` and `hive/in-progress` labels are removed from open items on the
 first cycle after upgrade. Full table, state diagram and migration note:
-[labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine).
+[labels-and-control-signals.md](labels-and-control-signals/stage-labels.md#stage-labels-stagennn--the-pipeline-state-machine).
 
 ### Central stage engine rollout
 
@@ -1076,7 +1076,7 @@ between. Two mechanisms close that gap
 | Key | Default | Meaning |
 |---|---|---|
 | `scanner.skip_issues_with_open_pr` | `true` (unset) | Set `false` to turn off both the pre-dispatch guard and the duplicate-fix sweep; the claim ledger alone then decides, as before. |
-| `governor.auto_close_superseded` | `true` (unset) | At ACMM L6, a **hive-authored** PR whose closing targets are all closed, one of them by a different merged PR, and whose head conflicts with the base (or whose files are a subset of that PR's) is closed by the hive itself as superseded — `hive/superseded`, one notice naming the superseding PR — in the self-authored auto-merge lane (before any review cycle), the supersession sweep, and close-on-merge of the superseding PR. Human-authored PRs are never auto-closed. Set `false` to report the refusal once and leave the PR for a person, as before ([#14965](https://github.com/hivecommons/hive/pull/14965)). See [labels-and-control-signals.md § Supersession](labels-and-control-signals.md#supersession-closed-issue-another-merged-pr). |
+| `governor.auto_close_superseded` | `true` (unset) | At ACMM L6, a **hive-authored** PR whose closing targets are all closed, one of them by a different merged PR, and whose head conflicts with the base (or whose files are a subset of that PR's) is closed by the hive itself as superseded — `hive/superseded`, one notice naming the superseding PR — in the self-authored auto-merge lane (before any review cycle), the supersession sweep, and close-on-merge of the superseding PR. Human-authored PRs are never auto-closed. Set `false` to report the refusal once and leave the PR for a person, as before ([#14965](https://github.com/hivecommons/hive/pull/14965)). See [labels-and-control-signals.md § Supersession](labels-and-control-signals/stage-labels.md#supersession-closed-issue-another-merged-pr). |
 
 ## What hive writes to GitHub, and when
 
@@ -1551,7 +1551,7 @@ is affected. Each report also names the repositories the hive watches
 `Affected repos (N)` / `Affected repo owners (N)` union across reporting
 hives (hivecommons/hive#12338). Every selfreport carries
 `origin/selfreport` (the provenance axis every hive-created issue records,
-see [labels-and-control-signals.md](labels-and-control-signals.md#origin-sources))
+see [labels-and-control-signals.md](labels-and-control-signals/reference.md#origin-sources))
 next to the deprecated `hive/selfreport`.
 
 ```yaml
@@ -2031,7 +2031,7 @@ The App's repository permissions decide which steps the hive can take itself.
 A step the App cannot take is not a question for a person to *decide*; it is
 a **capability gap** the hive records as a structured blocker
 (`<!-- hive:blocker kind=capability:… -->`, see
-[labels-and-control-signals.md](labels-and-control-signals.md#blockers-hiveblocker-marker)),
+[labels-and-control-signals.md](labels-and-control-signals/glossary-and-operations.md#blockers-hiveblocker-marker)),
 parks the item on, and surfaces at ⚙ → Security as *GitHub App permissions:
 missing `<permission>` · N items blocked* ([#15099](https://github.com/hivecommons/hive/issues/15099)).
 
