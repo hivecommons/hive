@@ -184,6 +184,30 @@ async function main() {
     assert.equal(seen.internal, null);
   });
 
+  for (const p of ['/api/gh-user-auth/start', '/api/gh-user-auth/poll']) {
+    await check(`unauthenticated POST ${p} is forwarded WITHOUT X-Hive-Internal`, async () => {
+      const res = await req('POST', p);
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(res.body).internal, null);
+    });
+  }
+
+  await check('POST /api/gh-user-auth/startx is still 401 (exact match, not prefix)', async () => {
+    const res = await req('POST', '/api/gh-user-auth/startx');
+    assert.equal(res.status, 401);
+  });
+
+  await check('POST to another unauthenticated route is still 401', async () => {
+    const res = await req('POST', '/api/gh-user-auth/other');
+    assert.equal(res.status, 401);
+  });
+
+  await check('POST with a hive_session cookie is forwarded WITHOUT X-Hive-Internal', async () => {
+    const res = await req('POST', '/api/pause', { Cookie: 'hive_session=abc123' });
+    assert.equal(res.status, 200);
+    assert.equal(JSON.parse(res.body).internal, null);
+  });
+
   await stopProxy(proxy);
 
   // ── hosted mode: no shared token exists at all ──────────────────────────
