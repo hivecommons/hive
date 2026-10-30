@@ -63,6 +63,9 @@ js/history-sparklines.js
 js/cost-trend.js
 js/stats.js
 js/agent-now.js
+js/tracker-words-core.js
+js/tracker-words-stage.js
+js/tracker-words-gate.js
 js/tracker-words.js
 js/tracker-row.js
 js/tracker-motion.js
