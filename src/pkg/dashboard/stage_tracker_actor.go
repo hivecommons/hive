@@ -183,6 +183,12 @@ func stageTrackerStageActor(it StageTrackerItem, workers map[string]stageTracker
 	case stagelabels.Reviewed:
 		return set(StageActorHive, "", "approved; a required check is still pending")
 	case stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor:
+		// The author's push landed and CI / the re-review for it still
+		// run: the ball is back with the hive, the person glyph goes
+		// (hivecommons/hive#15784).
+		if it.Push != nil && it.Push.State == pushStatePushed {
+			return set(StageActorHive, "", stageTrackerPushWhy(it.Push))
+		}
 		return stageTrackerAuthorStageActor(a, it, stage, workers, now)
 	case stagelabels.AdoptedByHive:
 		if w, ok := stageTrackerWorkerOn(workers, it.Repo, it.Number); ok {

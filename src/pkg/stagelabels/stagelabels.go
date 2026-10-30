@@ -279,6 +279,24 @@ var Table = []Definition{
 	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted and soak complete: merge-eligible, waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }
 
+// WaitsOnPush reports whether s is a stage where the hive waits for the
+// author (or their clanker) to push: 071 needs-author and 072
+// returned-to-contributor (hivecommons/hive#15784).
+func (s Stage) WaitsOnPush() bool {
+	return s == NeedsAuthor || s == ReturnedToContributor
+}
+
+// TracksPush reports whether s sits in the CI / Review column, where a head
+// change is progress the dashboard shows as "pushed" until CI and the
+// re-review for that head settle (hivecommons/hive#15784).
+func (s Stage) TracksPush() bool {
+	switch s {
+	case ReviewPending, Reviewed, Fixing, NeedsAuthor, ReturnedToContributor, AdoptedByHive:
+		return true
+	}
+	return false
+}
+
 // FixingStageFor is the "author must act" stage for a red or blocked PR by
 // who wrote it: the hive's own PR (selfAuthored, or author/hive) goes to 070
 // fixing — a hive agent reworks it; an author/clanker PR goes to 072

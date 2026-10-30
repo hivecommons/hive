@@ -324,6 +324,20 @@ type Record struct {
 	// HiveHeldWarned is set once the hive-side alert for an item held by
 	// the hive past its dwell has been logged; activity resets it.
 	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+	// WaitingPushSince is when the current waiting-on-push state began
+	// (hivecommons/hive#15784): entry to 071 / 072, or a head the sweep
+	// evaluated and still routed back to the author. The dashboard ages
+	// the "waiting on @author to push" pill from it. Zero outside those
+	// stages.
+	WaitingPushSince time.Time `json:"waiting_push_since,omitempty"`
+	// LastPushAt / LastPushSha record the last head change seen while the
+	// item sat in the CI / Review column: from the webhook re-read of a
+	// `pull_request` synchronize delivery (NotePush) or, as the fallback,
+	// from the head change the next enumerate observed (NoteActivity). A
+	// new waiting-on-push state clears them; leaving the column clears
+	// them too.
+	LastPushAt  time.Time `json:"last_push_at,omitempty"`
+	LastPushSha string    `json:"last_push_sha,omitempty"`
 	// LabelsSuppressed is set when the write-back gate kept the stage
 	// labels off the item on GitHub (a contributor PR without the opt-in
 	// label): the stage lives in this record only, so a label-less item
@@ -651,6 +665,7 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 		next.StallCommented = false
 		next.EntryCommented = false
 		tr.Changed = true
+		next.notePushStageChange(now)
 	} else if ReasonClass(prev.Reason) != ReasonClass(reason) {
 		next.ReasonChangedAt = now
 	}
@@ -763,6 +778,18 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at
 	}
+	if a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead {
+		// The enumerate fallback for a push no webhook announced
+		// (hivecommons/hive#15784). A head the sweep evaluated and still
+		// routed back to the author starts a fresh waiting-on-push state.
+		switch {
+		case r.Stage.WaitsOnPush():
+			r.WaitingPushSince = at
+			r.LastPushAt, r.LastPushSha = time.Time{}, ""
+		case a.Head != r.LastPushSha:
+			r.LastPushAt, r.LastPushSha = at, a.Head
+		}
+	}
 	if changed {
 		r.HiveHeldWarned = false
 	}
@@ -782,6 +809,66 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	}
 	s.items[key] = r
 	return changed
+}
+
+// notePushStageChange keeps the push-progress fields in step with a stage
+// change (hivecommons/hive#15784): entering 071 / 072 starts a fresh
+// waiting-on-push state (a push before it is history), leaving them keeps
+// the push on record so the row can say "pushed abc1234" while CI and the
+// re-review run, and leaving the CI / Review column drops it all.
+func (r *Record) notePushStageChange(now time.Time) {
+	switch {
+	case r.Stage.WaitsOnPush():
+		r.WaitingPushSince = now
+		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+	case r.Stage.TracksPush():
+		r.WaitingPushSince = time.Time{}
+	default:
+		r.WaitingPushSince = time.Time{}
+		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+	}
+}
+
+// NotePush records that key's head moved to sha at the given instant, as a
+// webhook re-read of a `pull_request` synchronize delivery saw it
+// (hivecommons/hive#15784). It reports whether a push was booked: a head the
+// store already knows (the enumerate's ActivityHead, or the last push) is
+// not one, and nothing is booked for a record whose head was never seen
+// — a first read cannot tell a push from the initial head. A zero or
+// future instant reads as now.
+func (s *Store) NotePush(key, sha string, at time.Time) bool {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || !r.Stage.TracksPush() {
+		return false
+	}
+	known := r.ActivityHead
+	if r.LastPushSha != "" {
+		known = r.LastPushSha
+	}
+	if known == "" || strings.EqualFold(sha, known) {
+		return false
+	}
+	now := s.now()
+	if at.IsZero() || at.After(now) {
+		at = now
+	}
+	r.LastPushAt, r.LastPushSha = at, sha
+	s.items[key] = r
+	s.dirty = true
+	return true
+}
+
+// PushedSinceWaiting reports whether a push landed after the current
+// waiting-on-push state began: the ball is back with the hive even if the
+// sweep has not re-staged the item yet.
+func (r Record) PushedSinceWaiting() bool {
+	return !r.LastPushAt.IsZero() && !r.LastPushAt.Before(r.WaitingPushSince)
 }
 
 // CountOwnComments records that the hive itself posted n comments on key,
