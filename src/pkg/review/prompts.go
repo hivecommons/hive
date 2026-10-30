@@ -97,6 +97,16 @@ type PullRequest struct {
 	// PR has a prior verdict at another head. nil means not fetched: the
 	// reviewer still gets the delta instruction, but no trivial skip.
 	DeltaDiff *DeltaDiff
+	// MergeReady is true when the verdict is the only thing between this PR
+	// and a merge: CI green, mergeable, not a draft. CIPending is true while
+	// CI has not settled on HeadSHA. The planner spends reviewer slots on
+	// merge-ready heads first and on pending-CI heads last, since a head
+	// whose CI may still fail is likely to be pushed again
+	// (hivecommons/hive#15823). Priority is the planner's order reason for
+	// the PR this cycle (ReviewPriority*), stamped onto its kicks.
+	MergeReady bool
+	CIPending  bool
+	Priority   string
 }
 
 func PullRequestBodyDigest(title, body string) string {
