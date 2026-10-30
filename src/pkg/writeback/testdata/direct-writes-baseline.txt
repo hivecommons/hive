@@ -16,7 +16,8 @@ raw pkg/github/automerge/automerge_merge_commit.go 1
 raw pkg/github/automerge/automerge_merge_forward.go 1
 raw pkg/github/automerge/automerge_stage_human.go 1
 raw pkg/github/automerge/automerge_stage_labels.go 3
-raw pkg/github/automerge/automerge_sweep.go 7
+raw pkg/github/automerge/automerge_sweep_queued.go 3
+raw pkg/github/automerge/automerge_sweep_trusted.go 4
 raw pkg/github/automerge/automerge_unauthorized.go 3
 raw pkg/github/automerge/reporter_trust_release.go 2
 raw pkg/github/automerge/self_authorization_release.go 2
