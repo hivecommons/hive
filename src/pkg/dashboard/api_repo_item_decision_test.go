@@ -690,7 +690,7 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 			name:    "human must merge",
 			facts:   repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded", "needs-human"}, Stage: stagelabels.ReadyForHumanMerge.Label(), SoakMinutes: 3},
 			outcome: "Approved #510 as @clubanderson.",
-			next:    "Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer.",
+			next:    "Hive cannot merge this one (trust or role blocks it): use Approve and let hive merge, merge it now as maintainer, or merge it on GitHub yourself.",
 			posted:  "`/lgtm` posted|`/approve` posted|`needs-human` label removed",
 		},
 		{

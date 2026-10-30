@@ -16722,7 +16722,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTED_LABELS = {
       approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed (read)',
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
-      'merge-now': 'Approve & merge as maintainer', 'queue-merge': 'Approve — let hive merge',
+      'queue-merge': 'Approve and let hive merge', 'merge-now': 'Merge now as maintainer',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
     };
     // "Rebase, then merge as maintainer" is merge-now on a row that needs a
@@ -16793,7 +16793,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'applied': return 'done' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'no-op': return 'nothing changed' + (action.detail ? ': ' + stageTrackerActedPlain(action.detail) : '');
         case 'failed': return 'failed' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
-        case 'pending': return action.action === 'merge-now' ? 'rebasing, then merging…' : 'the hive is deciding…';
+        case 'pending': return action.action === 'merge-now' ? 'rebasing, then merging…' : (action.action === 'queue-merge' ? 'approved — hive will merge on the next tick once CI is green' : 'the hive is deciding…');
         case 'executing': return (action.detail ? stageTrackerActedPlain(action.detail) : 'decided — the hive is carrying it out…');
         case 'no-effect': return "hasn't taken effect" + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'blocked': return 'blocked' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
@@ -18943,7 +18943,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
       "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
       "approved": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
-      "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "author-online": {"kind": "reason", "plain": "the author's clanker or hive is connected, so hive won't take the PR over", "detail": "Adoption is for authors whose clanker or hive has gone offline; this author's is connected, so the hive leaves the PR with them."},
       "behind": {"kind": "reason", "plain": "the branch is behind the base branch", "detail": "The branch is behind the base branch and must be updated before it can merge."},
       "blocker": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
@@ -18964,7 +18964,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "comment-decision": {"kind": "action", "plain": "recorded the decision on GitHub", "detail": "The hive posted the decision as a `/hive decision` comment, the way a maintainer would."},
       "conflict": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
       "conflicting": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
-      "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "contributor-lane:changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "contributor-lane:sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
@@ -18984,7 +18984,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "hive-policy": {"kind": "rule", "plain": "this changes the hive's own rules", "detail": "This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms."},
       "hold": {"kind": "reason", "plain": "on hold; the hive does nothing until it is released", "detail": "The PR is on hold. The hive does nothing with it until a person releases the hold.", "issue_detail": "The issue is on hold. No agent claims it until a person releases the hold."},
       "human-changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
-      "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "human-only": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
       "label:needs-human": {"kind": "reason", "plain": "marked needs-human; a person must remove the label", "detail": "The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed."},
       "labels-add": {"kind": "action", "plain": "added labels", "detail": "The hive added labels to the item."},
@@ -19008,7 +19008,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "proposal-not-now": {"kind": "rule", "plain": "a hive-filed proposal with no incident or recurrence behind it; declined for now", "detail": "The proposal shows neither an incident it would have prevented nor a repeated class it would end, so its value is speculative. The hive declines it for now and closes it as not planned; re-propose with evidence."},
       "quarantine-flaky": {"kind": "action", "plain": "quarantined the flaky test", "detail": "The flaky test is quarantined with a retry and a deflake task is filed."},
       "rail-hold": {"kind": "rule", "plain": "the item is on hold", "detail": "The item carries the hold label; the hive never acts on a held item until a person releases the hold."},
-      "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "rebase-then-merge": {"kind": "rule", "plain": "only conflicts block it; a rebase then merge", "detail": "Conflicts are the only blocker. The unattended rebase-then-merge path lands with hivecommons/hive#15104; until then the ladder records this rung and moves on."},
       "recommend-only": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
       "recommended": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
@@ -19033,7 +19033,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "supersede-now": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
-      "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer approves it (Approve and let hive merge — hive merges on the next tick once CI is green — or Merge now as maintainer), or trusts the author under 👥 Contributors."},
       "workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
     };
     // Pure: plain words for a glossary slug ("supersede" → "close this PR and
@@ -19074,7 +19074,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:close-read': 'Close (read)',
       'decide:adopt': 'Adopt (hive takes over)',
-      'decide:merge-now': 'Approve & merge as maintainer', 'decide:queue-merge': 'Approve — let hive merge',
+      'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:re-author': 'Re-author as hive PR',
       'decide:adopt-now': 'Adopt now — hive takes it over', 'decide:reroute': 'Reroute to another clanker',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
@@ -19082,10 +19082,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'open:app-settings': 'Grant the App permission', 'blocker:recheck': 'Re-check permissions', 'blocker:patch': 'Prepare the patch for a person to push',
       'blocker:close-partial': 'Mark partially-addressed and close', 'blocker:wait': 'Keep waiting',
     };
-    // Actions that end with a commit on the base branch (merge now, or an
-    // approval the hive's sweep merges on): merger or owner only, like
-    // POST .../queue-automerge.
-    const STAGE_TRACKER_MERGE_ACTIONS = ['decide:merge-now', 'decide:queue-merge'];
+    // Actions that end with a commit on the base branch — the lead
+    // "Approve and let hive merge" (the hive's sweep merges on its next
+    // tick once CI is green) and the secondary "Merge now as maintainer":
+    // merger or owner only, like POST .../queue-automerge.
+    const STAGE_TRACKER_MERGE_ACTIONS = ['decide:queue-merge', 'decide:merge-now'];
     // Generic items every row has; a server-named decision option with one
     // of these ids is not repeated at the top of the menu.
     const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt'];
@@ -19860,7 +19861,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The one recommended action: the first the viewer may take, else the
       // lead option greyed with its reason. Short verbs here; the ⋯ menu
       // keeps the full labels.
-      const shortLabel = { 'decide:merge-now': 'Merge it', 'decide:queue-merge': 'Let hive merge it', 'decide:direction': 'Send back' };
+      const shortLabel = { 'decide:queue-merge': 'Let hive merge', 'decide:merge-now': 'Merge now', 'decide:direction': 'Send back' };
       const primary = options.length ? (options.find(o => o.enabled) || options[0]) : null;
       const lead = primary ? `<button type="button" class="ham-decision-act ham-decision-lead${primary.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(primary.id)}"${primary.enabled ? (primary.consequence ? ` title="${esc(primary.consequence)}"` : '') : ` aria-disabled="true" title="${esc(primary.why)}"`}>${esc(shortLabel[primary.id] || primary.label)}</button>` : '';
       const more = options.length > 1 ? `<button type="button" class="ham-decision-act ham-decision-more" data-ham-more="1" title="All actions for this row">More ⋯</button>` : '';
@@ -20408,10 +20409,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // subject line; ONE decision sentence; ONE why line; at most two
     // "then" items; everything else — the sentinel finding, the rails, the
     // rungs ruled out — behind a single collapsed Details. Two buttons,
-    // [Cancel] [Let hive do that]; "Approve & merge as-is" only when the
-    // plan says the head is mergeable as it is.
+    // [Cancel] [Let hive do that]; the merge button — "Approve and let hive
+    // merge" (queue-merge), or "Merge now as maintainer" when the hive
+    // would approve anyway — only when the plan says the head is mergeable
+    // as it is.
     const STAGE_TRACKER_PLAN_BUTTON_DELEGATE = 'Let hive do that';
-    const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve & merge as-is';
+    const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve and let hive merge';
+    const STAGE_TRACKER_PLAN_MERGE_ACTIONS = ['decide:queue-merge', 'decide:merge-now'];
     const STAGE_TRACKER_PLAN_TITLE = 'Let hive decide';
     const STAGE_TRACKER_PLAN_EYEBROW = 'Hive would';
     const STAGE_TRACKER_PLAN_NEXT_MAX = 2;
@@ -20433,7 +20437,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: one view model for every decision the preview can show — a
     // PR or an issue; direction, adopt, close, approve, recommend-only.
     //   { title, subject, finding, decisions: [{ ref, sentence, why, next[] }],
-    //     ruledOut[], rails, mergeable, mergeWhy, danger }
+    //     ruledOut[], rails, mergeable, mergeWhy, mergeAction, mergeLabel, danger }
     function stageTrackerDelegatePlanView(plans, sentinel) {
       plans = plans || [];
       // One item: "repo#N · title"; a batch names each item on its own
@@ -20461,6 +20465,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         mergeable,
         mergeWhy: mergeable ? '' : (stageTrackerDelegatePlanMergeReason(plans) || STAGE_TRACKER_PLAN_MERGE_WHY),
         showMerge: stageTrackerDelegatePlanOffersMerge(plans),
+        mergeAction: stageTrackerDelegatePlanMergeAction(plans),
+        mergeLabel: stageTrackerDelegatePlanMergeLabel(plans),
         danger: !!sentinel,
       };
     }
@@ -20489,7 +20495,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + '<details class="ham-plan-details"><summary>Details</summary>' + details.join('') + '</details>'
         + '<div class="hive-dialog-buttons">'
         + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>'
-        + (view.showMerge ? '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"' + (view.mergeable ? '' : ' aria-disabled="true" disabled title="' + esc(view.mergeWhy) + '"') + '>' + esc(STAGE_TRACKER_PLAN_BUTTON_MERGE) + '</button>' : '')
+        + (view.showMerge ? '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"' + (view.mergeable ? '' : ' aria-disabled="true" disabled title="' + esc(view.mergeWhy) + '"') + '>' + esc(view.mergeLabel || STAGE_TRACKER_PLAN_BUTTON_MERGE) + '</button>' : '')
         + '<button type="button" class="hv-btn ' + (view.danger ? 'btn-danger' : 'btn-primary') + ' hive-dialog-btn primary" data-initial-focus>' + esc(STAGE_TRACKER_PLAN_BUTTON_DELEGATE) + '</button>'
         + '</div>';
     }
@@ -20498,19 +20504,38 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerDelegatePlanVisibleText(html) {
       return String(html).replace(/<details[\s\S]*?<\/details>/g, ' ').replace(/<div class="hive-dialog-buttons">[\s\S]*$/, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
     }
-    // Pure: does the dialog offer "Approve & merge as-is" at all — only
-    // when every plan says the head is mergeable as it is (the ladder's
-    // mergeable-as-is rung, or green and conflict-free without a ladder).
-    function stageTrackerDelegatePlanOffersMerge(plans) {
-      return (plans || []).length > 0 && plans.every(pl => pl.mergeable_as_is === true && (pl.alternatives || []).some(a => a.action === 'decide:merge-now'));
+    // Pure: the merge alternative every plan shares — the lead queue-merge
+    // ("Approve and let hive merge") when each plan lists it, else merge-now
+    // ("Merge now as maintainer", the one left when the hive would approve
+    // anyway); '' when the plans disagree or list neither.
+    function stageTrackerDelegatePlanMergeAction(plans) {
+      for (const action of STAGE_TRACKER_PLAN_MERGE_ACTIONS) {
+        if ((plans || []).length > 0 && plans.every(pl => (pl.alternatives || []).some(a => a.action === action))) return action;
+      }
+      return '';
     }
-    // Pure: can "Approve & merge as-is" run — offered, and every plan lists
-    // merge-now as an enabled alternative (merge rights).
+    // Pure: does the dialog offer a merge button at all — only when every
+    // plan says the head is mergeable as it is (the ladder's
+    // mergeable-as-is rung, or green and conflict-free without a ladder)
+    // and they share a merge alternative.
+    function stageTrackerDelegatePlanOffersMerge(plans) {
+      return (plans || []).length > 0 && plans.every(pl => pl.mergeable_as_is === true) && stageTrackerDelegatePlanMergeAction(plans) !== '';
+    }
+    // Pure: the merge button's label — the shared alternative's own label.
+    function stageTrackerDelegatePlanMergeLabel(plans) {
+      const action = stageTrackerDelegatePlanMergeAction(plans);
+      for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === action && a.label) return a.label;
+      return (action && STAGE_TRACKER_ACTION_LABELS[action]) || STAGE_TRACKER_PLAN_BUTTON_MERGE;
+    }
+    // Pure: can the merge button run — offered, and every plan lists the
+    // shared merge alternative as enabled (merge rights).
     function stageTrackerDelegatePlanMergeable(plans) {
-      return stageTrackerDelegatePlanOffersMerge(plans) && plans.every(pl => (pl.alternatives || []).some(a => a.action === 'decide:merge-now' && a.enabled !== false));
+      const action = stageTrackerDelegatePlanMergeAction(plans);
+      return stageTrackerDelegatePlanOffersMerge(plans) && plans.every(pl => (pl.alternatives || []).some(a => a.action === action && a.enabled !== false));
     }
     function stageTrackerDelegatePlanMergeReason(plans) {
-      for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === 'decide:merge-now' && a.enabled === false && a.reason_if_disabled) return a.reason_if_disabled;
+      const action = stageTrackerDelegatePlanMergeAction(plans);
+      for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === action && a.enabled === false && a.reason_if_disabled) return a.reason_if_disabled;
       return '';
     }
     async function stageTrackerFetchDelegatePlan(item) {
@@ -20524,7 +20549,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }
     // The preview: resolves { chosen } for Let hive do that, { chosen,
-    // mergeNow: true } for Approve & merge as-is, null on Cancel.
+    // merge: <action id> } for the merge button, null on Cancel.
     function stageTrackerDelegatePlanDialog(plans, sentinel) {
       const view = stageTrackerDelegatePlanView(plans, sentinel);
       return new Promise(resolve => {
@@ -20536,11 +20561,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const would = plans.map(pl => pl.would || '?').filter((v, i, a) => a.indexOf(v) === i).join('/');
         hiveWireDialog(overlay, resolve, null, '.primary', '.cancel', close => close({ chosen: STAGE_TRACKER_PLAN_BUTTON_DELEGATE + ' · previewed ' + would }));
         const merge = overlay.querySelector('.ham-plan-merge');
-        if (merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: STAGE_TRACKER_PLAN_BUTTON_MERGE + ' · previewed ' + would, mergeNow: true }); });
+        if (merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: view.mergeLabel + ' · previewed ' + would, merge: view.mergeAction }); });
       });
     }
     // Let hive decide → plan → preview → act. Returns the delegate payload,
-    // or null when cancelled or when the operator took the merge-now
+    // or null when cancelled or when the operator took the merge
     // alternative (which runs as its own row action with the chosen button
     // recorded on the ledger).
     async function stageTrackerDelegatePreview(items) {
@@ -20549,8 +20574,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (failed.length) { showToast('Could not preview ' + failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', '), 'error'); return null; }
       const picked = await stageTrackerDelegatePlanDialog(plans, stageTrackerSentinelPreface(items));
       if (!picked) return null;
-      if (picked.mergeNow) {
-        await stageTrackerRunActions(items, 'decide:merge-now', { comment: '', chosen: picked.chosen }, items);
+      if (picked.merge) {
+        await stageTrackerRunActions(items, picked.merge, { comment: '', chosen: picked.chosen }, items);
         return null;
       }
       return { chosen: picked.chosen };
@@ -20610,10 +20635,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (items.some(stageTrackerNeedsRebase)) {
             return (await stageTrackerAsk(id, 'confirm', { title: STAGE_TRACKER_REBASE_MERGE_LABEL, message: preface + refs + ' is behind ' + base + ' (needs a rebase), so GitHub would refuse a plain merge. Record your approval as ' + who + ' and have the hive rebase it onto ' + base + ', wait for CI, then merge it with your approval on record? You get a toast when it lands or if the rebase conflicts.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & rebase-merge', danger: true })) ? {} : null;
           }
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now, credited to ' + who + '? Hive left this merge to a person; this is you taking that call. The version you see is the one that merges.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Merge now as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now, credited to ' + who + '? Hive left this merge to a person; this is you taking that call yourself instead of letting hive merge on its next tick. The version you see is the one that merges.' + stageTrackerDCOCaveat(items), confirmLabel: 'Merge now', danger: true })) ? {} : null;
         }
         case 'decide:queue-merge':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is on its next pass once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve and let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is through its own App on the next tick once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:re-author': {
           const caveat = stageTrackerDCOCaveat(items);
           return (await stageTrackerAsk(id, 'confirm', { title: 'Re-author as hive PR', message: preface + 'Have the hive re-author ' + refs + ' as ' + who + '?' + (caveat || ' Its head cannot merge as-is.') + ' The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. Nothing is merged as-is, and the author\'s commits stay attributed.', confirmLabel: 'Re-author', danger: true })) ? {} : null;
@@ -20689,13 +20714,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
-      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…', 'decide:re-author': 'Queuing re-authoring…',
-      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…',
+      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
-      merged: 'merged', 'queued-for-merge': 'queued for merge', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
+      merged: 'merged', 'queued-for-merge': 'approved — hive will merge on the next tick once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };

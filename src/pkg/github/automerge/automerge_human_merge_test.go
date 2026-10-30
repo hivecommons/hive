@@ -87,7 +87,7 @@ func TestHumanMergeRequiredSkipsEveryLanePrefilter(t *testing.T) {
 	breaking := humanMergePR("\u26a0\ufe0f remove the v4 API")
 	flagged := humanMergePR("\u2728 add a thing", "needs-owner-merge")
 	for name, pr := range map[string]*gh.PullRequest{"breaking title": breaking, "owner label": flagged} {
-		if got := engine.prefilterTrustedAuthorPR(pr, TrustedAuthorPolicy{RequireRole: "merger"}); got != autoMergeReasonHumanMergeRequired {
+		if got := engine.prefilterTrustedAuthorPR("acme", "widget", pr, TrustedAuthorPolicy{RequireRole: "merger"}); got != autoMergeReasonHumanMergeRequired {
 			t.Fatalf("%s: trusted-author prefilter = %q, want %q", name, got, autoMergeReasonHumanMergeRequired)
 		}
 		if got := engine.prefilterContributorLanePR(pr, ContributorLanePolicy{}); got != autoMergeReasonHumanMergeRequired {
@@ -102,11 +102,11 @@ func TestHumanMergeRequiredSkipsEveryLanePrefilter(t *testing.T) {
 		if got := engine.prefilterQueuedIssue(issue, "hive/automerge"); got != autoMergeReasonHumanMergeRequired {
 			t.Fatalf("%s: queued-issue prefilter = %q, want %q", name, got, autoMergeReasonHumanMergeRequired)
 		}
-		if mergeTrainCandidate(engine.prefilterTrustedAuthorPR(pr, TrustedAuthorPolicy{RequireRole: "merger"})) {
+		if mergeTrainCandidate(engine.prefilterTrustedAuthorPR("acme", "widget", pr, TrustedAuthorPolicy{RequireRole: "merger"})) {
 			t.Fatalf("%s: the merge train must not admit a human-merge PR", name)
 		}
 	}
-	if got := engine.prefilterTrustedAuthorPR(humanMergePR("\u2728 add a thing"), TrustedAuthorPolicy{RequireRole: "merger"}); got != "" {
+	if got := engine.prefilterTrustedAuthorPR("acme", "widget", humanMergePR("\u2728 add a thing"), TrustedAuthorPolicy{RequireRole: "merger"}); got != "" {
 		t.Fatalf("a plain PR must stay eligible, got %q", got)
 	}
 }
@@ -128,7 +128,7 @@ func TestSweepTrustedAuthorSkipsBreakingTitle(t *testing.T) {
 	if result.Seen != 1 || result.Skipped != 1 || len(result.Merged) != 0 || len(audits) != 0 || fx.merges != 0 {
 		t.Fatalf("result = %+v audits=%d merges=%d, want the PR seen, skipped and unmerged", result, len(audits), fx.merges)
 	}
-	if got := engine.prefilterTrustedAuthorPR(humanMergePR(fx.title), TrustedAuthorPolicy{Enabled: true}); got != autoMergeReasonHumanMergeRequired {
+	if got := engine.prefilterTrustedAuthorPR("acme", "widget", humanMergePR(fx.title), TrustedAuthorPolicy{Enabled: true}); got != autoMergeReasonHumanMergeRequired {
 		t.Fatalf("skip reason = %q, want %q", got, autoMergeReasonHumanMergeRequired)
 	}
 	// The same PR with a plain title merges: the title is the only difference.

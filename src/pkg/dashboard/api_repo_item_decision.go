@@ -862,7 +862,7 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 	case out.SentinelOpen:
 		out.Next = "The `" + repoItemSentinelLabelOrDefault(facts.SentinelLabel) + "` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's merge sweep will touch it."
 	case facts.Stage == stagelabels.ReadyForHumanMerge.Label():
-		out.Next = "Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer."
+		out.Next = "Hive cannot merge this one (trust or role blocks it): use Approve and let hive merge, merge it now as maintainer, or merge it on GitHub yourself."
 	default:
 		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked" + repoItemSoakNote(facts.SoakMinutes) + "."
 	}
