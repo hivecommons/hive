@@ -861,7 +861,13 @@ label, close and reopen are unsolicited writes on a contributor's PR, so each
 first asks the write-back gate as kind `contributor_adopt` (L6 + opt-in label
 by default; see [the write-back table](#what-hive-writes-to-github-and-when)):
 refused, the original is not closed and stays open on the keep-open path
-until the copy merges, and a due reopen waits for the next poll (a pause
+until the copy merges, and a due reopen waits for the next poll. A clanker-
+or hive-authored original is exempt from the opt-in label: with
+`governor.labels.stage.adoption.close_superseded: on_adopt` (the default;
+`on_merge` keeps it open until the copy merges) the gate admits its close
+as `superseded-agent-pr` once the copy carries its commits and sign-off, so
+an agent's PR never lingers open beside hive's copy
+(hivecommons/hive#15526) (a pause
 lifting lands it; a policy change after the close is warned in the log and
 leaves the PR closed until a person reopens it). `close_first:
 false` keeps the earlier behaviour: the original moves to 074 and closes
@@ -1073,7 +1079,7 @@ that level, the power the write-back exists to govern?
 | PR↔issue linker (`pr_issue_link.go`, `pr_contributor_link.go`, `linked_prs.go`) | PR watcher | "covered by PR" label on the issue, link comments | issues referenced by any PR | `covered_by_pr_label` → L5 + label |
 | Verdict / decision labels (`pr_decision_operator.go`, `human_decision_label.go`, `legacy_decision_labels.go`, `contribute_verdict_settle.go`) | review verdicts, dashboard decisions | `hive:verdict-*`, decision labels | reviewed PRs | `verdict_label` → L3 + label; dashboard-triggered decisions are solicited |
 | Contributor adopt / nudge / bot takeover (`automerge/automerge_contributor_*.go`, `automerge_bot_takeover.go`) | auto-merge sweep | adopt comment, update-branch push, workflow approval, nudge comments | contributor PRs in the contributor lane | `contributor_adopt` → L6 + label |
-| Adoption close-first (`automerge/automerge_adoption_close_first.go`) | auto-merge sweep, when a supersede adoption opens the hive's copy; close-first poll | close-first note, `hive/superseded` label and close on the original; reopen, copy-failed note and label removal when the copy fails | the contributor's original PR | `contributor_adopt` → L6 + label; refused: the original stays open until the copy merges, and a due reopen waits for the next poll |
+| Adoption close-first (`automerge/automerge_adoption_close_first.go`) | auto-merge sweep, when a supersede adoption opens the hive's copy; close-first poll | close-first note, `hive/superseded` label and close on the original; reopen, copy-failed note and label removal when the copy fails | the contributor's original PR | `contributor_adopt` → L6 + label (an agent-authored original closes without the label, `adoption.close_superseded: on_adopt`); refused: the original stays open until the copy merges, and a due reopen waits for the next poll |
 | Claims (`prclaims.go`, `claimed_by_label.go`, `cmd/hive/claimswire.go`, `claimescalation.go`) | claim ledger changes | `claimed-by:*` labels, claim/escalation comments | claimed issues | `claim_comment` → L4 + label (hive-claimed issues are own items) |
 | Issue close / task-list / decomposed parents (`issue_close.go`, `task_list_sweep.go`, `decomposed_parents.go`, `close_on_merge.go`, `tracking_issue.go`) | merges, sweeps | close, body edits (checkbox ticks), `Refs` rewrites | issues linked from hive PRs | `issue_close`, `parent_issue_edit` → L5 + label; hive-filed issues are own items |
 | Gate comments (`pkg/scheduler/clarity_gate.go`, `prior_art_gate.go`, `triage.go`, `issue_blocked.go`, `issue_recheck_soak.go`) | scheduler intake | clarity/prior-art/triage questions, `blocked` labels | issues admitted by the issue filter | `gate_comment` → L5 + label; items carrying the intake label are opted in |

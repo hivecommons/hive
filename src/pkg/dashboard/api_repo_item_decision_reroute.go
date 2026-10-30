@@ -167,7 +167,7 @@ func repoItemAdoptNowResponse(repoFull string, number, superseding int) repoItem
 	}
 	out.Status = "adoption-forced"
 	out.Result.Outcome = "Adoption forced: hive opens its copy on the pass now running."
-	out.Result.Next = "The contributor PR closes when the hive's copy merges; the author's commits and sign-off are preserved. The row updates when the pass lands."
+	out.Result.Next = "The contributor PR closes as superseded (an agent's PR in the adopting pass, a person's when the hive's copy merges) and leaves the list; the author's commits and sign-off are preserved. The row updates when the pass lands."
 	return out
 }
 

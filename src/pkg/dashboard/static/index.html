@@ -1712,7 +1712,7 @@
     .cue-acting > .ham-strip-row .ham-seg.active { background-image: repeating-linear-gradient(-45deg, transparent 0 6px, color-mix(in srgb, var(--surface-0) 28%, transparent) 6px 12px); background-size: 34px 100%; animation: cue-acting-stripes 1.1s linear infinite; }
     .ham-sub-superseded { opacity: .55; }
     .ham-sub-superseded .ham-row-head { min-height: 0; }
-    .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); }
+    .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); flex: 0 0 auto; white-space: nowrap; }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
     /* The Let hive decide preview. One decision, readable in three seconds
        (operator feedback on the dialog, issue 15397): subject line,
@@ -1979,6 +1979,7 @@
     .ham-decision-pop p { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; }
     .ham-decision-head { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-redundant { margin: 0; }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-capability-gap { color: var(--amber); }
     .ham-decision-meta { font-size: var(--fs-xs); color: var(--text-faint); }
@@ -6652,6 +6653,24 @@
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
     .review-priority-low { border-color: var(--muted); }
+/* ---- kiosk: unattended display mode (#15594) ----
+   `?kiosk=1` (see js/boot.js) is what the headless Twitch streamer in
+   src/deploy/stream loads. The page becomes the Hive activity monitor and
+   nothing else: no sidebar, topbar, avatar menu, chat FAB or notices, and
+   the other sections are removed from flow so the tracker fills 1920x1080.
+   Toasts and the merge banners stay — they are part of the show. */
+    body.kiosk-mode { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); cursor: none; --navbar-sticky-height: 0px; }
+    body.kiosk-mode .oc-sidebar, body.kiosk-mode .oc-sidebar-resize, body.kiosk-mode .oc-topbar,
+    body.kiosk-mode #dash-notices, body.kiosk-mode #oc-agent-detail, body.kiosk-mode .hive-chat-fab,
+    body.kiosk-mode .hive-chat-panel, body.kiosk-mode #welcome-overlay, body.kiosk-mode .nps-card { display: none !important; }
+    /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
+       display:grid!important with id specificity; beat it with (1,2,2). */
+    html body.kiosk-mode #oc-topbar[id] { display: none !important; }
+    body.kiosk-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.kiosk-mode #activity-monitor-section .dashboard-grip, body.kiosk-mode #activity-monitor-section .section-chevron { display: none !important; }
+    body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
+    body.kiosk-mode .ham-sticky { top: 0; }
+    body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6676,6 +6695,23 @@
 // for toggle labels; the DOMContentLoaded hook below guarantees it runs
 // once the topbar/sidebar buttons exist, so the label and body class always
 // sync from storage.
+// Kiosk mode (#15594): `?kiosk=1` turns the dashboard into an unattended
+// display for a headless streamer (src/deploy/stream). It is a pure
+// presentation flag — it grants nothing, hides the chrome (sidebar, topbar,
+// avatar menu, chat FAB, notices) and every section except the Hive activity
+// monitor, suppresses the welcome/NPS dialogs and the toast hover-pause, and
+// never writes to localStorage so a rolled SPA can't inherit stale state.
+// The class is set here, before first paint, so the chrome never flashes.
+(function(){
+  var kiosk=false;
+  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; } catch(e) {}
+  window.HIVE_KIOSK=kiosk;
+  window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  if(kiosk){
+    document.body.classList.add('kiosk-mode');
+    if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
+  }
+})();
 (function(){
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
@@ -15122,18 +15158,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const lead = who + ' · ' + chose + ', ' + agentNowClockTime(atMs, nowMs);
       return lead + (d.title ? '\n' + d.title : '');
     }
+    // Pure: the PR a nested original was superseded by — `superseded_by`
+    // from the server, or `adopted_by` while the copy is live — when that
+    // copy is itself listed under the issue; else 0.
+    function stageTrackerLinkedSuperseder(lp, issue) {
+      if (!lp) return 0;
+      const live = lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice' && lp.adopted_by_state !== 'copy-failed';
+      const by = Number(lp.superseded_by) || (live ? Number(lp.adopted_by) || 0 : 0);
+      if (!(by > 0) || by === Number(lp.number)) return 0;
+      const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
+      return linked.some(x => x && Number(x.number) === by && String(x.state || '') !== 'closed') ? by : 0;
+    }
     // Pure: an adopted original listed under its issue — closed, or still
-    // open with the hive's copy already in the list — draws as one dimmed
-    // line without a chevron track (hivecommons/hive#15126).
+    // open — with the hive's copy in the list draws as one muted line
+    // without a chevron track (hivecommons/hive#15126, #15511): the note
+    // reads "superseded · hive adopted → #N", "superseded · closed · hive
+    // adopted → #N" once the close landed. '' when the copy is not listed.
     function stageTrackerLinkedSupersededText(lp, issue) {
-      if (!lp) return '';
-      const by = Number(lp.superseded_by || lp.adopted_by) || 0;
-      if (String(lp.state || '') === 'closed') return 'closed · superseded by #' + by;
-      if (by > 0 && lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice') {
-        const linked = Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : [];
-        if (linked.some(x => Number(x.number) === by)) return 'Adopted → #' + by + ' · superseded (hive re-authored with sign-off)';
-      }
-      return '';
+      const by = stageTrackerLinkedSuperseder(lp, issue);
+      if (!by) return '';
+      return 'superseded · ' + (String(lp.state || '') === 'closed' ? 'closed · ' : '') + 'hive adopted → #' + by;
+    }
+    // Pure: the hover behind that note — what hive did and what becomes of
+    // this PR.
+    function stageTrackerLinkedSupersededTip(lp) {
+      const by = Number(lp && (lp.superseded_by || lp.adopted_by)) || 0;
+      if (!by) return '';
+      return 'Hive re-authored this PR as #' + by + ' with the same commits and sign-off. ' + (String(lp.state || '') === 'closed' ? 'This PR is closed as superseded.' : 'This PR closes as superseded when #' + by + ' merges.');
+    }
+    // Pure: a closed original whose superseder is no longer listed open
+    // under the issue (merged, closed, filtered) has nothing left to say
+    // and is not drawn.
+    function stageTrackerLinkedSupersededGone(lp, issue) {
+      return !!lp && String(lp.state || '') === 'closed' && !stageTrackerLinkedSuperseder(lp, issue);
     }
     function stageTrackerCoveringPR(item) {
       if (!item || item.kind === 'pr') return null;
@@ -16853,7 +16910,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (l.kind === 'superseded') return 'Hive took this PR over as #' + Number(l.to_number) + '; this original is closed when that merges.';
       const who = l.from_author ? '@' + l.from_author : 'the contributor';
       const tip = STAGE_TRACKER_LINEAGE_REASON_TIP[l.reason] || STAGE_TRACKER_LINEAGE_REASON_TIP['ci-red-contributor-offline'];
-      return tip.split('@AUTHOR').join(who);
+      return tip.split('@AUTHOR').join(who) + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
+    }
+    // Pure: the hover clause that says what became of the superseded
+    // original the chip stands in for — closed, or still open and closing
+    // when the copy merges; '' when the server does not say.
+    function stageTrackerSupersededOriginalClause(number, state) {
+      if (!(number > 0)) return '';
+      if (state === 'closed') return ' #' + number + ' is closed as superseded.';
+      if (state === 'open') return ' #' + number + ' is superseded and still open; it closes when this merges.';
+      return '';
     }
     function stageTrackerLineageChipHtml(item, nowMs) {
       const text = stageTrackerLineageText(item, nowMs);
@@ -16884,7 +16950,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const what = af.decided_action === 'let-hive-decide' ? 'you let hive decide' : 'you approved';
         text += ' · ' + what + ' ' + agentNowClockTime(Date.parse(af.decided_at), typeof nowMs === 'number' ? nowMs : Date.now());
       }
-      const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '. #' + af.number + ' is closed as superseded when this merges.';
+      const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '.' + (stageTrackerSupersededOriginalClause(Number(af.number), af.state) || ' #' + af.number + ' is closed as superseded when this merges.');
       return `<a class="ham-badge ham-adopted-from" href="${esc(af.url || '#')}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(text)}</a>`;
     }
     // The row's inline lead action (tracker-actions.js
@@ -16905,7 +16971,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
-      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded || stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
+      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded ? superseded + ' · ' + stageTrackerLinkedSupersededTip(lp) : stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       // One line (hivecommons/hive: "consolidate from 3 lines of text to
       // 1"): connector, repo chip, author icon + #N + title, the lineage /
       // adopted-from chip, then the base pill — all siblings of the flex-row
@@ -16916,11 +16982,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ref = stageTrackerPRPillsHtml(ref, lineage || null, lp.base_ref);
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       if (superseded) {
-        // The adopted original: one dimmed line, no chevron track, no row
-        // tools, no needs-human styling — the copy carries the chevron.
+        // The adopted original: one muted line, no chevron track, no row
+        // tools, no needs-human styling — the copy carries the chevron. The
+        // trailing note never wraps; the title ellipsizes first (owner,
+        // hivecommons/hive#15511: "superseded · hive adopted → #15574").
         return `<div class="ham-sub ham-sub-superseded" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}" data-ham-superseded-by="${Number(lp.superseded_by || lp.adopted_by) || 0}">
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref + ` <span class="ham-superseded-note">· ${esc(superseded)}</span>`], '', stageTrackerActedBadgeHtml(pr, nowMs))}
+            ${stageTrackerHeadColsHtml([ref + ` <span class="ham-superseded-note" title="${esc(stageTrackerLinkedSupersededTip(lp))}">${esc(superseded)}</span>`], '', stageTrackerActedBadgeHtml(pr, nowMs))}
           </div>
         </div>`;
       }
@@ -16955,7 +17023,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return stageTrackerLinkedElsewhere(item).map(lp => `<a class="ham-badge ham-linked-elsewhere" href="${esc(lp.url || '#')}" target="_blank" rel="noopener" title="${esc('PR #' + (Number(lp.number) || 0) + ' covers this issue too; its row is drawn under #' + Number(lp.drawn_under))}">↳ #${Number(lp.number) || 0} · under #${Number(lp.drawn_under)}</a>`).join(' ');
     }
     function stageTrackerLinkedSorted(item, stages) {
-      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y) - stageTrackerAnchor(x.stage, stages, 'pr', x)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
@@ -17136,7 +17204,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? (stageTrackerLineageChipHtml(lp, nowMs) || null) : null, lp.base_ref)];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '') || null, lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
@@ -19660,9 +19728,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const said = typeof stageTrackerSayOnce === 'function' ? stageTrackerSayOnce([question, d.blocker, d.detail, tip]) : [question, d.blocker, d.detail, tip].filter(Boolean);
       const details = question ? said.slice(1) : said;
       const fold = details.length ? `<details class="ham-decision-details"><summary>Details</summary>${details.map(x => `<p class="ham-decision-blocker">${esc(x)}</p>`).join('')}</details>` : '';
+      // The PR the reviewer named as already carrying this change
+      // (hivecommons/hive#15499): a chip under the question so the person
+      // sees what "close as a no-op" is measured against.
+      const redundantOf = Number(d.redundant_of) || 0;
+      const redundantChip = redundantOf ? `<p class="ham-decision-redundant"><span class="ham-chip" title="${esc('A reviewer found this change already on the base through #' + redundantOf)}">redundant of #${redundantOf}</span></p>` : '';
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
-        <p class="ham-decision-q">${esc(question)}</p>
+        <p class="ham-decision-q">${esc(question)}</p>${redundantChip}
         ${typeof stageTrackerPresenceTip === 'function' && stageTrackerPresenceTip(item, nowMs) ? `<p class="ham-decision-presence">${stageTrackerPresenceDotHtml(item, nowMs)}${esc(stageTrackerPresenceTip(item, nowMs))}</p>` : ''}
         ${lead || more ? `<div class="ham-decision-acts">${lead}${more}</div>` : ''}
         <p class="ham-decision-meta">${esc(meta)}</p>
@@ -42699,7 +42772,9 @@ function burnAreaChart() {
         cd.remaining = Math.max(0, cd.remaining - (Date.now() - cd.startedAt));
         bar.style.animationPlayState = 'paused';
       };
-      if (!el._countdownWired) {
+      // A kiosk (#15594) has no pointer; the hidden cursor must never park a
+      // toast on screen for the whole stream.
+      if (!el._countdownWired && !(window.hiveKioskMode && window.hiveKioskMode())) {
         el._countdownWired = true;
         const c = () => el._countdown;
         el.addEventListener('mouseenter', () => { const x = c(); if (x) { x.hovered = true; x.pause(); } });
@@ -46509,7 +46584,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
-      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts' },
+      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
@@ -53387,7 +53462,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label for="cfg-stage-grace-offline">Offline contributor grace ${yamlHint('governor.labels.stage.contributor_grace_offline')}</label>
           <input type="text" id="cfg-stage-grace-offline" value="${esc(stageGraceOffline)}" placeholder="1h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_offline" data-arg-types="s,s,w">
-          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on). When the hive supersedes instead, it closes the original in the same pass that opens its copy — one note naming the copy, <code>hive/superseded</code> — and reopens it if the copy is closed unmerged or red at two heads ${yamlHint('governor.labels.stage.adoption.supersede.close_first')} (default on; off keeps the original open at stage 074 until the copy merges). A copy that conflicts with the base is handed to the fixer's rebase-resolve episode (two attempts, then stage 085 <code>rebase-failed-twice</code>); an adoption attempt that opened nothing is retried once the author's clanker has stayed offline for ${yamlHint('governor.labels.stage.adoption.offline_grace')} (default 30m).</div>
+          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on). When the hive supersedes instead, it closes the original in the same pass that opens its copy — one note naming the copy, <code>hive/superseded</code> — and reopens it if the copy is closed unmerged or red at two heads ${yamlHint('governor.labels.stage.adoption.supersede.close_first')} (default on; off keeps the original open at stage 074 until the copy merges). A clanker- or hive-authored original closes in that pass by policy even without the repo's write-back opt-in label, since the copy carries its commits and sign-off ${yamlHint('governor.labels.stage.adoption.close_superseded')} (default <code>on_adopt</code>; <code>on_merge</code> waits for the copy to merge; a person's PR always waits unless the label is present). A copy that conflicts with the base is handed to the fixer's rebase-resolve episode (two attempts, then stage 085 <code>rebase-failed-twice</code>); an adoption attempt that opened nothing is retried once the author's clanker has stayed offline for ${yamlHint('governor.labels.stage.adoption.offline_grace')} (default 30m).</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>
@@ -61604,6 +61679,7 @@ function burnAreaChart() {
 
     function showNPSSurvey(status) {
       if (_npsShownThisLoad || _npsCard) return;
+      if (window.hiveKioskMode && window.hiveKioskMode()) return;
       _npsShownThisLoad = true;
       const maxChars = Number(status && status.max_feedback_chars) || 0;
       let selected = null;
@@ -61749,7 +61825,8 @@ function burnAreaChart() {
       if (navItem) navItem.style.display = '';
       const topBtn = document.getElementById('welcome-topbar-btn');
       if (topBtn) topBtn.style.display = '';
-      if (!_welcomeState.dismissed) openWelcomeDialog();
+      // Kiosk displays (#15594) are unattended: nothing can dismiss a dialog.
+      if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 
     function openWelcomeDialog() {

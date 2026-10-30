@@ -151,6 +151,10 @@ pinned:
   # filters name v5 only: the forge.Merger it exercises lives on v5, and v4 is
   # feature-frozen.
   forgejo-smoke.yml: [-v4]
+  # Publishes the headless Twitch streamer image (#15594) from v5 only: the
+  # dashboard's `?kiosk=1` mode it depends on lives on v5 and v4 is
+  # feature-frozen. The image is operator tooling, not a hive release channel.
+  stream-image.yml: [-v4]
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard

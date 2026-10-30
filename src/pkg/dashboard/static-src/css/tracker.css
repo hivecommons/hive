@@ -387,7 +387,7 @@
     .cue-acting > .ham-strip-row .ham-seg.active { background-image: repeating-linear-gradient(-45deg, transparent 0 6px, color-mix(in srgb, var(--surface-0) 28%, transparent) 6px 12px); background-size: 34px 100%; animation: cue-acting-stripes 1.1s linear infinite; }
     .ham-sub-superseded { opacity: .55; }
     .ham-sub-superseded .ham-row-head { min-height: 0; }
-    .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); }
+    .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); flex: 0 0 auto; white-space: nowrap; }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
     /* The Let hive decide preview. One decision, readable in three seconds
        (operator feedback on the dialog, issue 15397): subject line,
@@ -654,6 +654,7 @@
     .ham-decision-pop p { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; }
     .ham-decision-head { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-redundant { margin: 0; }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-capability-gap { color: var(--amber); }
     .ham-decision-meta { font-size: var(--fs-xs); color: var(--text-faint); }

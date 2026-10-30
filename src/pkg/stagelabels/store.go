@@ -142,6 +142,12 @@ type Record struct {
 	// alert cleared, workflow-path fence now the blocker — gets each distinct
 	// cause explained once, not a byte-identical repost and not silence.
 	EntryCommentedCauses []string `json:"entry_commented_causes,omitempty"`
+	// EntryCommentedDecisionKey is the writeback.DecisionKey of the last 085
+	// entry comment: the superseding PR the reviewer named, or the
+	// normalised question. It survives heads and stage flaps, so the same
+	// question re-asked on a merge-from-base head is not re-posted
+	// (hivecommons/hive#15499).
+	EntryCommentedDecisionKey string `json:"entry_commented_decision_key,omitempty"`
 	// History is the item's recent stage transitions, oldest first, capped
 	// at HistoryLimit: each entry is the stage entered, when, and the reason
 	// at entry. The dashboard's Hive activity monitor renders it as the
@@ -874,6 +880,28 @@ func EntryCause(reasons []string) string {
 	}
 	sum := sha256.Sum256([]byte(strings.Join(reasons, "\n")))
 	return hex.EncodeToString(sum[:8])
+}
+
+// MarkEntryCommentedDecisionKey records the decision identity of the 085
+// entry comment just posted (or found already explained).
+func (s *Store) MarkEntryCommentedDecisionKey(key, decisionKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.EntryCommentedDecisionKey == decisionKey {
+		return
+	}
+	r.EntryCommentedDecisionKey = decisionKey
+	s.items[key] = r
+	s.dirty = true
+}
+
+// EntryCommentRepeatsDecision reports whether an 085 entry comment with
+// this decision identity was already posted on this PR — on any head: a
+// reviewer re-asking the same question on a new head (one that only
+// merged the base) is not a new decision (hivecommons/hive#15499).
+func (r Record) EntryCommentRepeatsDecision(decisionKey string) bool {
+	return decisionKey != "" && r.EntryCommentedStage == NeedsDecision && r.EntryCommentedDecisionKey == decisionKey
 }
 
 // EntryCommentExplains reports whether an entry comment already posted for

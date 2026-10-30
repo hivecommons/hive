@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -341,6 +343,9 @@ func TestAdoptionCloseFirstReopenPingPongGuard(t *testing.T) {
 type closeFirstGateState struct {
 	adoptOff bool
 	paused   bool
+	// requireLabel keeps the contributor_adopt kind's default opt-in label
+	// requirement (the live hive's needs-opt-in-label refusal on #15526).
+	requireLabel bool
 }
 
 // installWritebackGate puts a write-back gate on the harness's client at
@@ -355,12 +360,12 @@ func (h *closeFirstHarness) installWritebackGate(st *closeFirstGateState) *write
 			return writeback.RepoPauseInfo{By: "ops", Reason: "freeze"}, st.paused
 		},
 		Config: func() writeback.Config {
-			one, no, yes, ownOnly := 1, false, true, st.adoptOff
+			one, no, yes, ownOnly, adoptLabel := 1, false, true, st.adoptOff, st.requireLabel
 			return writeback.Config{
 				Unsolicited: writeback.UnsolicitedConfig{Backfill: &yes},
 				Kinds: map[string]writeback.KindPolicyOverride{
 					string(writeback.KindStageLabel):       {MinLevel: &one, RequireLabel: &no},
-					string(writeback.KindContributorAdopt): {MinLevel: &one, RequireLabel: &no, OwnOnly: &ownOnly},
+					string(writeback.KindContributorAdopt): {MinLevel: &one, RequireLabel: &adoptLabel, OwnOnly: &ownOnly},
 				},
 			}
 		},
@@ -434,6 +439,93 @@ func TestAdoptionCloseFirstWritebackGate(t *testing.T) {
 			t.Fatalf("suppressed = %+v", s)
 		}
 	})
+}
+
+// hivecommons/hive#15526: with the contributor_adopt kind requiring a repo
+// opt-in label (the default), an agent-authored original the hive has
+// re-authored closes on adopt by policy (close_superseded: on_adopt,
+// writeback.ReasonSupersededAgentPR); on_merge leaves it to the merge-time
+// close. A person's original still needs the label (TestCloseFirstGateItem
+// and the gate's own decision table).
+func TestAdoptionCloseFirstSupersededAgentPolicy(t *testing.T) {
+	run := func(t *testing.T, policy StageLabelPolicy) (*closeFirstHarness, *writeback.Gate, func()) {
+		t.Helper()
+		h, done := newCloseFirstHarness(t, policy)
+		gate := h.installWritebackGate(&closeFirstGateState{requireLabel: true})
+		h.adoptCloseFirst()
+		return h, gate, done
+	}
+	t.Run("clanker original closes on adopt without the label", func(t *testing.T) {
+		h, gate, done := run(t, closeFirstPolicy())
+		defer done()
+		if len(h.adopt.pulls) != 1 {
+			t.Fatalf("copy not opened: pulls=%d", len(h.adopt.pulls))
+		}
+		if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+			t.Fatalf("original not closed: %v", h.adopt.prEdits)
+		}
+		if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "close_first=true") || !strings.Contains(c[0], "same commits and sign-off") {
+			t.Fatalf("comments: %v", h.api.comments)
+		}
+		if rec := h.record(); !rec.SupersededClosedFirst || rec.SupersededBy != 90 || rec.SupersededOpen {
+			t.Fatalf("record = %+v", rec)
+		}
+		if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 0 {
+			t.Fatalf("suppressed = %+v", s)
+		}
+	})
+	t.Run("on_merge leaves a clanker original open until the copy merges", func(t *testing.T) {
+		p := closeFirstPolicy()
+		p.AdoptCloseSuperseded = config.AdoptionCloseSupersededOnMerge
+		h, gate, done := run(t, p)
+		defer done()
+		if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 0 {
+			t.Fatalf("pulls=%d edits=%v", len(h.adopt.pulls), h.adopt.prEdits)
+		}
+		if c := adoptionComments(h.api); len(c) != 0 {
+			t.Fatalf("close-first note posted under on_merge: %v", c)
+		}
+		rec := h.record()
+		if rec.SupersededClosedFirst || rec.AdoptedBy != 90 {
+			t.Fatalf("record = %+v", rec)
+		}
+		// Not a gate refusal: nothing was asked of the gate.
+		if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 0 {
+			t.Fatalf("suppressed = %+v", s)
+		}
+	})
+}
+
+// closeFirstGateItem: only an agent-authored original names the copy for the
+// gate; a person's never does, whatever close_superseded says.
+func TestCloseFirstGateItem(t *testing.T) {
+	obs := func(kind authorkind.Kind) stageObservation {
+		return stageObservation{Number: 7, Author: "odttlnt", AuthorKind: kind, Labels: []string{"stage/072-returned-to-contributor"}}
+	}
+	onAdopt, onMerge := closeFirstPolicy(), closeFirstPolicy()
+	onMerge.AdoptCloseSuperseded = config.AdoptionCloseSupersededOnMerge
+	for _, tc := range []struct {
+		name    string
+		kind    authorkind.Kind
+		policy  StageLabelPolicy
+		agent   bool
+		by      int
+		onMerge bool
+	}{
+		{"clanker default", authorkind.Clanker, onAdopt, true, 90, false},
+		{"hive default", authorkind.Hive, onAdopt, true, 90, false},
+		{"clanker on_merge", authorkind.Clanker, onMerge, false, 0, true},
+		{"human default", authorkind.Human, onAdopt, false, 0, false},
+		{"human on_merge", authorkind.Human, onMerge, false, 0, false},
+		{"unknown default", authorkind.Unknown, onAdopt, false, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			item, onMerge := closeFirstGateItem(obs(tc.kind), tc.policy, 90)
+			if item.AgentAuthored != tc.agent || item.SupersededBy != tc.by || onMerge != tc.onMerge || item.Number != 7 || item.Author != "odttlnt" || !item.IsPR {
+				t.Fatalf("item=%+v onMerge=%v", item, onMerge)
+			}
+		})
+	}
 }
 
 // A paused repo gets no reopen while paused; the record stays due its poll

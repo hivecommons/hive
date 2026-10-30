@@ -91,7 +91,12 @@ type StageTrackerAdoptedFrom struct {
 	DecidedAt     *time.Time `json:"decided_at,omitempty"`
 	DecidedAction string     `json:"decided_action,omitempty"`
 	Verdict       string     `json:"verdict,omitempty"`
-	Text          string     `json:"text"`
+	// State is the original's state: "open" (still open; closes when the
+	// copy merges) or "closed" (closed as superseded). The chip's hover
+	// says which, since the original is not listed as a row of its own
+	// (hivecommons/hive#15526).
+	State string `json:"state,omitempty"`
+	Text  string `json:"text"`
 }
 
 const (
@@ -163,7 +168,7 @@ func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now ti
 	switch {
 	case it.AdoptedBy > 0 && verdict == string(delegatedecision.VerdictAdoptSupersede):
 		d.Effect, d.SupersededBy = decidedEffectLanded, it.AdoptedBy
-		d.Text = "Adopted → #" + strconv.Itoa(it.AdoptedBy) + " · superseded (hive re-authored with sign-off)"
+		d.Text = stageTrackerSupersededNote(it.AdoptedBy, false)
 	case moved || a.State == operatorActionStateAddressed:
 		d.Effect = decidedEffectLanded
 	case !a.At.IsZero() && now.Sub(a.At) >= timeout:
@@ -306,8 +311,10 @@ func (s *Server) applyDecidedProjection(items []StageTrackerItem, now time.Time)
 		pr := prs[it.Repo+"#"+strconv.Itoa(it.LinkedPR)]
 		if pr == nil {
 			s.stageTrackerClosedOriginal(it, prs, store)
+			stageTrackerListClosedOriginals(it, prs)
 			continue
 		}
+		stageTrackerListClosedOriginals(it, prs)
 		if copy := prs[it.Repo+"#"+strconv.Itoa(pr.AdoptedBy)]; pr.AdoptedBy > 0 && copy != nil {
 			stageTrackerFollowAdoption(it, pr, copy)
 			continue
@@ -354,7 +361,7 @@ func stageTrackerFollowAdoption(issue, orig, copy *StageTrackerItem) {
 // stageTrackerAdoptedFrom builds the copy's adopted_from from the original
 // PR and its recorded decision.
 func stageTrackerAdoptedFrom(orig *StageTrackerItem, now time.Time) *StageTrackerAdoptedFrom {
-	af := &StageTrackerAdoptedFrom{Number: orig.Number, URL: orig.URL, Author: orig.Author}
+	af := &StageTrackerAdoptedFrom{Number: orig.Number, URL: orig.URL, Author: orig.Author, State: lineageFromStateOpen}
 	text := "↳ adopted from #" + strconv.Itoa(orig.Number)
 	if a := orig.LastOperatorAction; a != nil && stageTrackerDecidedVerdict(a) != "" {
 		t := a.At
@@ -391,16 +398,62 @@ func (s *Server) stageTrackerClosedOriginal(issue *StageTrackerItem, prs map[str
 		return
 	}
 	orig := StageTrackerLinkedPR{Number: issue.LinkedPR, State: "closed", SupersededBy: copy.Number, Title: copy.Title,
-		Caption: "closed · superseded by #" + strconv.Itoa(copy.Number)}
+		Caption: stageTrackerSupersededNote(copy.Number, true)}
 	if a := s.stageTrackerLatestDecision(issue.Repo, issue.LinkedPR); a != nil {
 		orig.LastOperatorAction = a
 		copy.AdoptedFrom = stageTrackerAdoptedFrom(&StageTrackerItem{Number: issue.LinkedPR, LastOperatorAction: a}, time.Time{})
 	} else if copy.AdoptedFrom == nil {
 		copy.AdoptedFrom = &StageTrackerAdoptedFrom{Number: issue.LinkedPR, Text: "↳ adopted from #" + strconv.Itoa(issue.LinkedPR)}
 	}
+	copy.AdoptedFrom.State = lineageFromStateClosed
 	stageTrackerFollowAdoption(issue, &StageTrackerItem{Number: issue.LinkedPR}, copy)
 	issue.LinkedPRs = slices.DeleteFunc(issue.LinkedPRs, func(lp StageTrackerLinkedPR) bool { return lp.Number == orig.Number })
 	issue.LinkedPRs = append(issue.LinkedPRs, orig)
+}
+
+// stageTrackerSupersededNote is the muted sub-row's trailing note for an
+// adopted original (owner, hivecommons/hive#15511: one short line,
+// "superseded · hive adopted → #15574"; "superseded · closed · hive adopted
+// → #15574" once the close landed — the "re-authored with sign-off" part
+// lives in the hover).
+func stageTrackerSupersededNote(copy int, closed bool) string {
+	if closed {
+		return "superseded · closed · hive adopted → #" + strconv.Itoa(copy)
+	}
+	return "superseded · hive adopted → #" + strconv.Itoa(copy)
+}
+
+// stageTrackerListClosedOriginals lists, under an issue, the closed
+// original of every hive copy the issue carries (the copy's lineage names
+// it: from_number, from_state closed), as a muted "superseded · closed ·
+// hive adopted → #M" line. Closed PRs are not in the open-PR projection, so
+// without this the original vanished the moment the close-first close
+// landed; the owner wants it visible in that muted form while its
+// superseder is open (hivecommons/hive#15511). A copy that merged or closed
+// is not listed, so its original goes with it.
+func stageTrackerListClosedOriginals(issue *StageTrackerItem, prs map[string]*StageTrackerItem) {
+	for _, lp := range slices.Clone(issue.LinkedPRs) {
+		copy := prs[issue.Repo+"#"+strconv.Itoa(lp.Number)]
+		if copy == nil || copy.Lineage == nil || copy.Lineage.Kind != lineageAdopted || copy.Lineage.FromState != lineageFromStateClosed || copy.Lineage.FromNumber <= 0 {
+			continue
+		}
+		n := copy.Lineage.FromNumber
+		if n == issue.LinkedPR || prs[issue.Repo+"#"+strconv.Itoa(n)] != nil {
+			continue
+		}
+		closed := StageTrackerLinkedPR{Number: n, URL: copy.Lineage.FromURL, State: "closed", SupersededBy: copy.Number,
+			Title: copy.Title, Author: copy.Lineage.FromAuthor, AuthorKind: copy.Lineage.FromAuthorKind, Caption: stageTrackerSupersededNote(copy.Number, true)}
+		// The claims index may still list the original as open for a while
+		// after the close: that bare entry becomes the muted line.
+		if k := slices.IndexFunc(issue.LinkedPRs, func(x StageTrackerLinkedPR) bool { return x.Number == n }); k >= 0 {
+			if issue.LinkedPRs[k].URL != "" {
+				closed.URL = issue.LinkedPRs[k].URL
+			}
+			issue.LinkedPRs[k] = closed
+			continue
+		}
+		issue.LinkedPRs = append(issue.LinkedPRs, closed)
+	}
 }
 
 // stageTrackerLatestDecision reads the ledger for the newest decision
