@@ -655,7 +655,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	}
 	if forced {
 		c.info("stage labels: operator forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "online", presence.Online, "policy", policy.maintainerPolicy())
-	} else if c.adoptionRefusedByAdmission(store, key, obs, requested, now) {
+	} else if c.adoptionRefusedByAdmission(ctx, store, key, obs, requested, now) {
 		return 0, nil
 	} else if held, deferred := c.maintainerHoldsAdoption(ctx, obs, policy, requested, now); held || deferred {
 		if held && !deferred {
@@ -830,7 +830,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	rec.AdoptReason = reason
 	// A person's approval of this head travels to the copy
 	// (hivecommons/hive#15136 follow-up): adopting is not un-approving.
-	admittedBy := c.operatorAdmission(owner, repo, number, obs.HeadSHA)
+	admittedBy := c.operatorAdmission(ctx, owner, repo, number, obs.HeadSHA)
 	if stored, ok := store.Get(key); ok && stored.AdoptDiffFence != "" {
 		// A second takeover (dco-rehome, signoff-rehome, in-place-stalled)
 		// carries the fence the first adoption recorded.

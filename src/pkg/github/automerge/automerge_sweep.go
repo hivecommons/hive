@@ -269,6 +269,9 @@ type Engine struct {
 	reviewGate   *ReviewGate
 
 	humanChangeRequests review.HumanChangeRequestStore
+	// baseRefresh memoises whether a PR head is the hive's own base refresh
+	// of the head a decision was recorded on (automerge_decision_carry.go).
+	baseRefresh hgithub.BaseRefreshChecker
 
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
@@ -2259,7 +2262,10 @@ func (c *Engine) prefilterTrustedAuthorPR(owner, repo string, pr *gh.PullRequest
 	if pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
 		return "missing-head-sha"
 	}
-	if _, ok := c.trustedAuthorOrOperatorDecision(owner, repo, pr, policy); !ok {
+	// The prefilter has no caller context; the admission read only reaches
+	// GitHub to carry a decision over a base refresh, and the lane repeats
+	// the read with its own context before merging.
+	if _, ok := c.trustedAuthorOrOperatorDecision(context.Background(), owner, repo, pr, policy); !ok {
 		return "untrusted-author-role"
 	}
 	return ""
@@ -2277,13 +2283,13 @@ const trustedAuthorRoleOperatorApprovedPrefix = "operator-approved:"
 // whose current head an operator admitted (the dashboard's "Approve and
 // let hive merge") is treated as trusted for this head, attributed to the
 // operator. Any other untrusted author stays refused (ok=false).
-func (c *Engine) trustedAuthorOrOperatorDecision(owner, repo string, pr *gh.PullRequest, policy TrustedAuthorPolicy) (TrustedAuthorDecision, bool) {
+func (c *Engine) trustedAuthorOrOperatorDecision(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy TrustedAuthorPolicy) (TrustedAuthorDecision, bool) {
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	decision := c.trustedAuthorDecision(author, policy.RequireRole)
 	if decision.Allowed {
 		return decision, true
 	}
-	login := c.operatorAdmission(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA())
+	login := c.operatorAdmission(ctx, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA())
 	if login == "" {
 		return decision, false
 	}
@@ -2332,7 +2338,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if reason := c.prefilterTrustedAuthorPR(owner, repo, pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	decision, ok := c.trustedAuthorOrOperatorDecision(owner, repo, pr, policy)
+	decision, ok := c.trustedAuthorOrOperatorDecision(ctx, owner, repo, pr, policy)
 	if !ok {
 		return AutoMergeSweepEvent{}, "untrusted-author-role", nil
 	}

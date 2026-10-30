@@ -660,7 +660,7 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	if headSHA := pr.GetHead().GetSHA(); c.adoptedHeadOwnedByHive(owner, repo, pr.GetNumber(), headSHA) {
 		return contributorClaimMatch{AdoptedHead: headSHA, ObservedTier: c.observedRegistryTier(author)}, nil
 	}
-	if login := c.operatorAdmission(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()); login != "" {
+	if login := c.operatorAdmission(ctx, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()); login != "" {
 		return contributorClaimMatch{OperatorLogin: login, ObservedTier: c.observedRegistryTier(author)}, nil
 	}
 	if tier := c.admittedRegistryTier(author, policy); tier != "" {
