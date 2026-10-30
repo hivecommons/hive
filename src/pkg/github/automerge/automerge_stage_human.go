@@ -11,6 +11,7 @@ package automerge
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -117,8 +119,10 @@ func supersededCheckWarranted(verdict stageVerdict, obs stageObservation) bool {
 	if v.DecisionRequested {
 		// A decision question that names the PR already carrying this
 		// change ("close as a no-op?") is the superseded question itself
-		// (hivecommons/hive#15499); any other decision stays a person's.
-		return v.RedundantOf > 0
+		// (hivecommons/hive#15499) — by marker or in words
+		// (hivecommons/hive#15647); any other decision stays a person's.
+		_, claimed := alreadyLandedVerdict(v)
+		return claimed
 	}
 	return strings.EqualFold(strings.TrimSpace(v.Verdict), "requires_human")
 }
@@ -162,7 +166,7 @@ func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *S
 		return false
 	}
 	if !res.Closed {
-		if c.closeEmptyDiffBeforeHumanRoute(ctx, obs, pr) {
+		if c.closeEmptyDiffBeforeHumanRoute(ctx, obs, pr, now) {
 			return true
 		}
 		c.debug("stage labels: hive PR kept", "repo", obs.Display, "pr", obs.Number, "verdict", res.Verdict, "reason", res.Reason)
@@ -174,6 +178,21 @@ func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *S
 	return true
 }
 
+// alreadyLandedVerdict reads a reviewer verdict for "this change is already
+// on the base": landed is the PR it named (the `hive-redundant-of` marker,
+// else "already landed via #N" in words), claimed is true when it says so
+// at all, number or not (hivecommons/hive#15647).
+func alreadyLandedVerdict(v ContributorLaneVerdict) (landed int, claimed bool) {
+	return review.AlreadyLandedFromVerdict(v.RedundantOf, v.DecisionQuestion, v.HumanSummaries)
+}
+
+// alreadyLandedCloserTransport is the optional transport hook that closes
+// a hive-authored PR on the reviewer's already-landed verdict
+// (hgithub.Client.CloseAlreadyLandedHivePRIfEligible; hivecommons/hive#15647).
+type alreadyLandedCloserTransport interface {
+	CloseAlreadyLandedHivePRIfEligible(ctx context.Context, repo string, pr *gh.PullRequest, redundantOf int) (hgithub.HiveEmptyDiffClose, error)
+}
+
 // closeEmptyDiffBeforeHumanRoute runs the hive-authored empty-diff rule
 // (hgithub.CloseEmptyDiffHivePRIfEligible) on a hive-authored PR about to
 // be routed to a person: a head whose compare against the base lists no
@@ -182,14 +201,26 @@ func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *S
 // of asking the owner to say so on every head (hivecommons/hive#15499). The
 // diff is measured by the closer; the reviewer's text only names the
 // superseding PR.
-func (c *Engine) closeEmptyDiffBeforeHumanRoute(ctx context.Context, obs stageObservation, pr *gh.PullRequest) bool {
+//
+// When the verdict for this head says the change is already landed, the
+// already-landed entry is taken instead (hivecommons/hive#15647): no
+// freshness guard, files identical on the base tip count as no diff, and
+// the close settles the adoption's lineage — the original the copy
+// superseded is closed as superseded by the same landed PR, so the orphan
+// recovery does not re-adopt a head the base already has.
+func (c *Engine) closeEmptyDiffBeforeHumanRoute(ctx context.Context, obs stageObservation, pr *gh.PullRequest, now time.Time) bool {
+	redundantOf, claimed := 0, false
+	if obs.Detail.VerdictKnown {
+		redundantOf, claimed = alreadyLandedVerdict(obs.Detail.Verdict)
+	}
+	if claimed {
+		if landedCloser, ok := c.transport.(alreadyLandedCloserTransport); ok {
+			return c.closeAlreadyLandedBeforeHumanRoute(ctx, obs, pr, landedCloser, redundantOf, now)
+		}
+	}
 	closer, ok := c.transport.(emptyDiffCloserTransport)
 	if !ok {
 		return false
-	}
-	redundantOf := 0
-	if obs.Detail.VerdictKnown {
-		redundantOf = obs.Detail.Verdict.RedundantOf
 	}
 	res, err := closer.CloseEmptyDiffHivePRIfEligible(ctx, obs.Owner+"/"+obs.Repo, pr, redundantOf)
 	if err != nil {
@@ -206,6 +237,108 @@ func (c *Engine) closeEmptyDiffBeforeHumanRoute(ctx context.Context, obs stageOb
 		"repo", obs.Display, "pr", obs.Number, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason,
 		"redundant_of", res.RedundantOf, "lane_reason", obs.LaneReason)
 	return true
+}
+
+// closeAlreadyLandedBeforeHumanRoute is the already-landed entry of the
+// empty-diff rule (see closeEmptyDiffBeforeHumanRoute). It reports whether
+// the PR was closed; a PR the closer kept (a real diff, a guard) falls
+// through to the ordinary route.
+func (c *Engine) closeAlreadyLandedBeforeHumanRoute(ctx context.Context, obs stageObservation, pr *gh.PullRequest, closer alreadyLandedCloserTransport, redundantOf int, now time.Time) bool {
+	res, err := closer.CloseAlreadyLandedHivePRIfEligible(ctx, obs.Owner+"/"+obs.Repo, pr, redundantOf)
+	if err != nil {
+		c.warn("stage labels: already-landed check failed", "repo", obs.Display, "pr", obs.Number, "redundant_of", redundantOf, "error", err)
+		return false
+	}
+	if !res.Closed {
+		c.info("stage labels: already-landed verdict but the PR was kept", "repo", obs.Display, "pr", obs.Number, "redundant_of", redundantOf, "empty", res.Empty, "verdict", res.Verdict, "reason", res.Reason)
+		return false
+	}
+	caption, _ := stagelabels.AlreadyLandedCaption(stagelabels.AlreadyLandedReason(res.RedundantOf))
+	c.info("stage labels: hive PR closed as already landed instead of a human decision",
+		"repo", obs.Display, "pr", obs.Number, "reason", stagelabels.LaneReasonAlreadyLanded, "action", res.Reason,
+		"redundant_of", res.RedundantOf, "issues_closed", res.IssuesClosed, "supersedes", res.Supersedes, "caption", caption, "lane_reason", obs.LaneReason)
+	c.settleAlreadyLandedLineage(ctx, obs, pr.GetNumber(), res.RedundantOf, res.Supersedes, now)
+	return true
+}
+
+// settleAlreadyLandedLineage closes the originals an already-landed copy
+// declared it supersedes (hivecommons/hive#15647): the adoption promised
+// "this PR closes when that copy merges"; the copy did not merge because
+// the base already had the change, which is the same outcome for the
+// original. Each original whose record names this copy as its adoption is
+// told, marked superseded on the store (so settleSuperseder does not read
+// the closed copy as an orphan and re-adopt), and closed. A refused close
+// (403/404 on a fork PR) leaves the note and the mark, as the merged-copy
+// path does. The original's record is required: without it the hive does
+// not know which head it adopted, and a PR that moved on since is not
+// closed on the copy's word.
+func (c *Engine) settleAlreadyLandedLineage(ctx context.Context, obs stageObservation, copy, landed int, originals []int, now time.Time) {
+	if c.gh == nil || len(originals) == 0 {
+		return
+	}
+	store := c.stageStoreOrShared()
+	for _, number := range originals {
+		if number <= 0 || number == copy {
+			continue
+		}
+		key := stageKey(obs.Owner, obs.Repo, number)
+		rec, ok := store.Get(key)
+		if !ok || rec.AdoptedBy != copy {
+			c.info("stage labels: already-landed copy names an original the store does not tie to it; left alone", "repo", obs.Display, "pr", number, "copy", copy, "recorded_adopted_by", rec.AdoptedBy)
+			continue
+		}
+		if rec.Superseded() {
+			continue
+		}
+		orig, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, number)
+		if err != nil {
+			c.warn("stage labels: already-landed lineage could not read the original", "repo", obs.Display, "pr", number, "copy", copy, "error", err)
+			continue
+		}
+		if orig.GetMerged() || strings.EqualFold(orig.GetState(), "closed") {
+			store.MarkSuperseded(key, copy, false, now)
+			continue
+		}
+		if head := strings.TrimSpace(orig.GetHead().GetSHA()); head != "" && rec.AdoptedHead != "" && !strings.EqualFold(head, rec.AdoptedHead) {
+			c.warn("stage labels: already-landed lineage: the original moved on since the adoption; left open", "repo", obs.Display, "pr", number, "copy", copy, "adopted_head", rec.AdoptedHead, "head", head)
+			continue
+		}
+		body := alreadyLandedOriginalNote(copy, landed, hgithub.SafeGetLogin(orig.GetUser()), nonEmpty(orig.GetBase().GetRef(), obs.BaseRef))
+		item := writeback.Item{Number: number, IsPR: true, Author: hgithub.SafeGetLogin(orig.GetUser()), Labels: labelNames(orig.Labels), CreatedAt: orig.GetCreatedAt().Time, SupersededBy: copy}
+		if d := c.writebackAllowed(obs.Display, item, writeback.KindSupersessionClose, body); !d.Allowed {
+			c.info("stage labels: already-landed lineage close gated", "repo", obs.Display, "pr", number, "copy", copy, "reason", d.Reason)
+			continue
+		}
+		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
+			c.warn("stage labels: already-landed lineage note failed", "repo", obs.Display, "pr", number, "copy", copy, "error", err)
+			continue
+		}
+		// The note is out: whatever the close below does, never post it
+		// again, and never read the closed copy as an orphan.
+		store.MarkSuperseded(key, copy, true, now)
+		if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil { // writeback:gated
+			c.warn("stage labels: already-landed lineage: closing the original failed; left open with the note", "repo", obs.Display, "pr", number, "copy", copy, "error", err)
+			continue
+		}
+		store.MarkSuperseded(key, copy, false, now)
+		c.info("stage labels: adopted original closed; its copy was already landed", "repo", obs.Display, "pr", number, "copy", copy, "landed", landed, "reason", stagelabels.LaneReasonAlreadyLanded)
+	}
+}
+
+// alreadyLandedOriginalNote is the close note on an adopted original whose
+// hive copy was closed as already landed.
+func alreadyLandedOriginalNote(copy, landed int, author, base string) string {
+	var b strings.Builder
+	b.WriteString(adoptionCloseMarker)
+	if landed > 0 {
+		b.WriteString("\n" + writeback.RedundantOfMarker + " #" + strconv.Itoa(landed) + " -->")
+	}
+	b.WriteString("\nClosing: #" + strconv.Itoa(copy) + " (the hive's adoption of this PR, with @" + author + "'s commits) was closed because the change is already on `" + base + "`")
+	if landed > 0 {
+		b.WriteString(" via #" + strconv.Itoa(landed))
+	}
+	b.WriteString(", so there is nothing left to merge. Thank you — reopen if that's wrong.")
+	return b.String()
 }
 
 // humanEvidence gathers the Evidence for one human-routed observation.
