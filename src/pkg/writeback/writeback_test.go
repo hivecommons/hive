@@ -18,6 +18,12 @@ var (
 	humanPR = Item{Number: 10, IsPR: true, Author: "maintainer", CreatedAt: t0.Add(time.Hour)}
 	optedPR = Item{Number: 11, IsPR: true, Author: "maintainer", Labels: []string{"Hive-Review"}, CreatedAt: t0.Add(time.Hour)}
 	ownPR   = Item{Number: 12, IsPR: true, Author: "hive[bot]", HiveAuthored: true, CreatedAt: t0.Add(time.Hour)}
+	// clankerSuperseded is a contributor's clanker PR the hive re-authored
+	// as its copy #90 (hivecommons/hive#15526); humanSuperseded the same
+	// for a person's PR.
+	clankerSuperseded = Item{Number: 13, IsPR: true, Author: "odttlnt", AgentAuthored: true, SupersededBy: 90, CreatedAt: t0.Add(time.Hour)}
+	humanSuperseded   = Item{Number: 14, IsPR: true, Author: "maintainer", SupersededBy: 90, CreatedAt: t0.Add(time.Hour)}
+	clankerAdopting   = Item{Number: 15, IsPR: true, Author: "odttlnt", AgentAuthored: true, CreatedAt: t0.Add(time.Hour)}
 )
 
 func newGate(t *testing.T, cfg Config, level int) (*Gate, *bytes.Buffer) {
@@ -169,6 +175,16 @@ func TestDecisionTable(t *testing.T) {
 		{"no-label kind by level", Config{Kinds: map[string]KindPolicyOverride{"claim_comment": {RequireLabel: boolp(false)}}}, 4, humanPR, KindClaimComment, true, ReasonLevel},
 		{"no-label kind below", Config{Kinds: map[string]KindPolicyOverride{"claim_comment": {RequireLabel: boolp(false)}}}, 3, humanPR, KindClaimComment, false, ReasonBelowLevel},
 		{"unknown kind fails closed", Config{}, 6, optedPR, Kind("mystery"), false, ReasonOwnOnly},
+		// Adoption close of a superseded original (hivecommons/hive#15526):
+		// agent-authored with the hive's copy on record closes by policy,
+		// no opt-in label needed; a person's PR, or an agent PR before its
+		// copy exists, still needs the label; other kinds are unchanged.
+		{"adopt close superseded clanker L6", Config{}, 6, clankerSuperseded, KindContributorAdopt, true, ReasonSupersededAgentPR},
+		{"adopt close superseded clanker L1", Config{}, 1, clankerSuperseded, KindContributorAdopt, true, ReasonSupersededAgentPR},
+		{"adopt close superseded human L6", Config{}, 6, humanSuperseded, KindContributorAdopt, false, ReasonNeedsLabel},
+		{"adopt clanker no copy yet L6", Config{}, 6, clankerAdopting, KindContributorAdopt, false, ReasonNeedsLabel},
+		{"sentinel on superseded clanker", Config{}, 5, clankerSuperseded, KindSentinel, false, ReasonNeedsLabel},
+		{"adopt close superseded repo off", Config{PerRepo: map[string]RepoOverride{"org/repo": {Mode: RepoModeOff}}}, 6, clankerSuperseded, KindContributorAdopt, false, ReasonRepoOff},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -340,6 +356,7 @@ func TestRepoPausedRefusesEveryKind(t *testing.T) {
 		{"issue file", "org/repo", Item{}, KindIssueFile},
 		{"stage label opted", "org/repo", optedPR, KindStageLabel},
 		{"case-insensitive repo", "org/repo", ownPR, KindClaimComment},
+		{"superseded agent PR close", "org/repo", clankerSuperseded, KindContributorAdopt},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

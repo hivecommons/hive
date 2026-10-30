@@ -941,6 +941,21 @@ func stageTrackerAdoptedByState(rec stagelabels.Record) string {
 	return ""
 }
 
+// stageTrackerSupersededBy is the live copy that supersedes an adopted
+// original, 0 when the adoption was in place or the copy is closed, failed
+// or being replaced (then the original is live work again). A copy still
+// resolving conflicts is live: the pair stays one logical PR.
+func stageTrackerSupersededBy(rec stagelabels.Record) int {
+	if rec.AdoptedBy <= 0 || rec.AdoptMode == stagelabels.AdoptModeInPlace {
+		return 0
+	}
+	switch stageTrackerAdoptedByState(rec) {
+	case "", stageTrackerAdoptedResolving:
+		return rec.AdoptedBy
+	}
+	return 0
+}
+
 // stageTrackerAdoptionLoopCaption is the 085 caption for the loop guard.
 func stageTrackerAdoptionLoopCaption(rec stagelabels.Record) string {
 	return "The hive's copies of this PR (last #" + strconv.Itoa(rec.AdoptedBy) + ") were closed without merging twice within an hour; the hive stopped opening copies and a person must decide"

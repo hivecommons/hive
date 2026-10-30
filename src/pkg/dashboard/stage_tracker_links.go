@@ -119,7 +119,8 @@ type stageTrackerLinkInfo struct {
 	at          time.Time
 }
 
-// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#number.
+// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#issue.
+// The cached closer is unfiltered; each carrying PR excludes itself below.
 type stageTrackerLinkMemo struct {
 	mu sync.Mutex
 	m  map[string]stageTrackerLinkInfo
@@ -195,7 +196,7 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				in, hit := s.stageTrackerLinks.get(key, now)
 				if !hit && lookups < stageTrackerLinkLookups && ctx.Err() == nil {
 					lookups++
-					facts, err := s.deps.GHClient.IssueLinkState(ctx, owner, name, li.Number, pr.Number)
+					facts, err := s.deps.GHClient.IssueLinkState(ctx, owner, name, li.Number, 0)
 					in = stageTrackerLinkInfo{title: facts.Title, state: facts.State, stateReason: facts.StateReason, closedBy: facts.ClosedBy, pr: facts.IsPR, ok: err == nil}
 					// Running out of this rebuild's budget says nothing
 					// about the issue: leave it for the next rebuild.
@@ -209,7 +210,11 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				if in.ok {
 					li.Title, li.State = in.title, in.state
 					if in.state == "closed" {
-						li.StateReason, li.ClosedBy = in.stateReason, in.closedBy
+						li.StateReason, li.ClosedBy = in.stateReason, 0
+						// Exclude the carrying PR per row, not in the shared lookup.
+						if in.closedBy != pr.Number {
+							li.ClosedBy = in.closedBy
+						}
 					}
 				}
 			}
@@ -310,7 +315,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			}
 			seen[lp.Number] = true
 			pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]
-			if pr == nil && (open == nil || !open(it.Repo, lp.Number)) {
+			if pr == nil && (open == nil || !open(it.Repo, lp.Number)) && !stageTrackerClosedOriginalListed(it, lp, prs) {
 				return
 			}
 			if pr != nil {
@@ -335,6 +340,9 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				lp.Decided, lp.AdoptedFrom = pr.Decided, pr.AdoptedFrom
 				lp.AdoptedBy, lp.AdoptedByState = pr.AdoptedBy, pr.AdoptedByState
+				if lp.SupersededBy == 0 {
+					lp.SupersededBy = pr.SupersededBy
+				}
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
@@ -438,6 +446,15 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 	}
 	it.Caption = prefix + strings.Join(progress, "; ")
 	it.Actor = "its PR"
+}
+
+// stageTrackerClosedOriginalListed keeps a closed adopted original in its
+// issue's list while the hive copy that superseded it is itself listed
+// open there: it draws as one muted "superseded · closed · hive adopted →
+// #M" line (hivecommons/hive#15511). Once the copy merges or closes the
+// original leaves with it.
+func stageTrackerClosedOriginalListed(issue *StageTrackerItem, lp StageTrackerLinkedPR, prs map[string]*StageTrackerItem) bool {
+	return lp.State == "closed" && lp.SupersededBy > 0 && prs[issue.Repo+"#"+strconv.Itoa(lp.SupersededBy)] != nil
 }
 
 // stageTrackerLinkedPRSupersededByListed reports whether lp is the

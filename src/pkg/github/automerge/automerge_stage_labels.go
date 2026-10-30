@@ -106,6 +106,14 @@ type StageLabelPolicy struct {
 	// hivecommons/hive#15135). Off, the original stays open at 074 until
 	// the copy merges.
 	AdoptSupersedeCloseFirst bool
+	// AdoptCloseSuperseded is governor.labels.stage.adoption.close_superseded
+	// (config.AdoptionCloseSuperseded*): when an agent-authored original
+	// (author/clanker, author/hive) closes once the hive's copy exists.
+	// "" or on_adopt closes it in the adopting pass by policy, without the
+	// write-back opt-in label the contributor_adopt kind otherwise needs;
+	// on_merge leaves it open until the copy merges. Human-authored
+	// originals always take the gated path.
+	AdoptCloseSuperseded string
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.

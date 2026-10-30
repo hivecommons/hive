@@ -34,6 +34,8 @@ func stageTrackerDecidedUIJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDecidedActing"),
 		jsFunc(t, html, "stageTrackerDecidedLead"),
 		jsFunc(t, html, "stageTrackerLinkedSupersededText"),
+		jsFunc(t, html, "stageTrackerLinkedSupersededTip"),
+		jsFunc(t, html, "stageTrackerSupersededOriginalClause"),
 		jsFunc(t, html, "stageTrackerAdoptedFromChipHtml"),
 		// Pending entries as stageTrackerRowDeciding reads them.
 		"var _stageTrackerPending = [];",
@@ -165,59 +167,103 @@ for (const a of ['adopted', 'directed', 'closed', 'merged', 'queued-for-merge', 
 }
 
 // ── 3. landed: the adoption pair ────────────────────────────────────────
-// The original is dimmed "Adopted → #15123 · superseded (hive re-authored
-// with sign-off)" with no chevron track, no row tools and no needs-human
-// styling; the copy carries the single active chevron and the chip
-// "↳ adopted from #15029 · you let hive decide 11:57 UTC"; the issue row's
-// pill follows the copy.
+// The superseded original stays listed under the issue as one muted,
+// chevron-less sub-row (owner likes the look, hivecommons/hive#15511) whose
+// trailing note is short and never wraps: "superseded · hive adopted →
+// #15123" — the "re-authored with sign-off" part moved into the hover. The
+// copy carries the single active chevron and its "↳ adopted from #15029 ·
+// you let hive decide 11:57 UTC" chip; the issue row's pill follows the copy.
 {
   const landed = Object.assign({}, decidedPending, { effect: 'landed', superseded_by: 15123, next_at: undefined });
-  const orig = original({ stage: 74, modifiers: [], manual_merge: false, human_merge_reason_text: '', adopted_by: 15123, adopted_by_state: 'open', decided: landed, last_operator_action: Object.assign({}, acted, { state: 'addressed' }), operator_action_count: 1 });
-  const copy = { number: 15123, title: 'fix: tracker pill', url: 'u123', stage: 50, author: 'hivecommons-hive[bot]', author_kind: 'hive', modifiers: [], adopted_from: { number: 15029, url: 'u29', author: 'Karibhou', decided_by: 'clubanderson', decided_at: at, decided_action: 'let-hive-decide', verdict: 'adopt-supersede', text: '↳ adopted from #15029 · you let hive decide 11:57 UTC' } };
+  const orig = original({ stage: 74, modifiers: [], manual_merge: false, human_merge_reason_text: '', adopted_by: 15123, adopted_by_state: 'open', superseded_by: 15123, decided: landed, last_operator_action: Object.assign({}, acted, { state: 'addressed' }), operator_action_count: 1 });
+  const copy = { number: 15123, title: 'fix: tracker pill', url: 'u123', stage: 50, author: 'hivecommons-hive[bot]', author_kind: 'hive', modifiers: [], adopted_from: { number: 15029, url: 'u29', author: 'Karibhou', state: 'open', decided_by: 'clubanderson', decided_at: at, decided_action: 'let-hive-decide', verdict: 'adopt-supersede', text: '↳ adopted from #15029 · you let hive decide 11:57 UTC' } };
   const issue = issueOf([orig, copy], { stage: 50 });
   const row = stageTrackerRowHtml(issue, stages, ctx);
-  assert.strictEqual(subs(row).length, 1, 'one full sub-row: the copy; the original is a dimmed line');
-  const dim = (/<div class="ham-sub ham-sub-superseded"[\s\S]*?<\/div>\s*<\/div>/.exec(row) || [''])[0];
-  assert.ok(dim, 'the original renders as a superseded line: ' + row);
+  // subs() counts full sub-rows only; the muted line is a "ham-sub ham-sub-superseded".
+  const parts = (r) => r.split('<div class="ham-sub').slice(1);
+  const part = (r, n) => parts(r).find(s => s.includes('pr#' + n + '"')) || '';
+  assert.deepStrictEqual(parts(row).map(s => (/pr#(\d+)"/.exec(s) || [])[1]), ['15029', '15123'], 'two sub-rows, the original muted: ' + row);
+  assert.strictEqual(subs(row).length, 1, 'one full sub-row: the copy');
+  const dim = part(row, 15029);
+  assert.ok(dim.startsWith(' ham-sub-superseded"'), 'the original is the muted line: ' + dim);
   assert.ok(dim.includes('data-ham-superseded-by="15123"'));
-  assert.ok(text(dim).includes('#15029') && text(dim).includes('Adopted → #15123 · superseded (hive re-authored with sign-off)'), text(dim));
-  assert.ok(!dim.includes('aria-label="Pipeline progress"') && !dim.includes('ham-seg active'), 'no chevron track on the superseded original');
-  assert.ok(!dim.includes('ham-row-tools') && !dim.includes('needs-human') && !dim.includes('Ready for human merge'), 'no action chevron, no needs-human styling');
-  const sub = subHtml(row, 15123);
-  assert.ok(sub.includes('aria-current="step"'), 'the copy carries the active chevron');
-  assert.ok(sub.includes('class="ham-badge ham-adopted-from"') && /↳ adopted from #15029 · you let hive decide 11:57( AM)? UTC/.test(text(sub)), 'the adopted-from chip: ' + text(sub));
-  assert.ok(!text(sub).includes('untrusted author'), 'the copy is hive-authored');
-  // With several PRs the issue strip ends at Claimed, unlit: the copy's
-  // chevron is the row's single active one; the original has none.
+  const note = (/<span class="ham-superseded-note"[^>]*>([^<]*)<\/span>/.exec(dim) || [])[1] || '';
+  assert.strictEqual(note, 'superseded · hive adopted → #15123', 'the note is short, one line, no parenthetical: ' + note);
+  assert.ok(!note.includes('re-authored') && !note.includes('(') && !text(dim).includes('(hive re-authored'), 'no parenthetical in the row: ' + text(dim));
+  const noteTip = (/<span class="ham-superseded-note" title="([^"]*)"/.exec(dim) || [])[1] || '';
+  assert.strictEqual(noteTip, 'Hive re-authored this PR as #15123 with the same commits and sign-off. This PR closes as superseded when #15123 merges.', noteTip);
+  assert.ok(!dim.includes('aria-label="Pipeline progress"') && !dim.includes('aria-current="step"'), 'no chevron track on the muted line');
+  assert.ok(!dim.includes('ham-kebab') && !dim.includes('ham-sel'), 'no row tools on the muted line');
+  assert.ok(text(dim).includes('#15029') && text(dim).includes('fix: tracker pill'), 'greyed title stays: ' + text(dim));
+  const cp = part(row, 15123);
+  assert.ok(cp.includes('aria-current="step"'), 'the copy carries the active chevron');
+  assert.ok(cp.includes('class="ham-badge ham-adopted-from"') && /↳ adopted from #15029 · you let hive decide 11:57( AM)? UTC/.test(text(cp)), 'the adopted-from chip on the copy: ' + text(cp));
+  const chipTip = (/class="ham-badge ham-adopted-from"[^>]*title="([^"]*)"/.exec(cp) || [])[1] || '';
+  assert.ok(chipTip.includes('#15029 is superseded and still open; it closes when this merges.'), 'the chip tooltip names the superseded state: ' + chipTip);
+  assert.ok(!text(cp).includes('untrusted author'), 'the copy is hive-authored');
   assert.strictEqual((row.match(/aria-current="step"/g) || []).length, 1, 'exactly one active chevron: the copy');
-  assert.ok(pill(sub).includes('CI / Review'), 'the active pill follows the copy: ' + pill(sub));
+  assert.ok(pill(row).includes('CI / Review'), 'the active pill follows the copy: ' + pill(row));
   assert.ok(!/Approving/.test(row));
+  // The same muted line without superseded_by (an older payload): adopted_by
+  // with a live copy in the list is enough.
+  const legacy = stageTrackerRowHtml(issueOf([original({ stage: 74, modifiers: [], manual_merge: false, human_merge_reason_text: '', adopted_by: 15123, adopted_by_state: 'open' }), copy], { stage: 50 }), stages, ctx);
+  assert.ok(part(legacy, 15029).startsWith(' ham-sub-superseded"') && text(part(legacy, 15029)).includes('superseded · hive adopted → #15123'), 'legacy payload: ' + text(legacy));
+  // A copy that was closed (recovering): the original is a live PR again
+  // — a full sub-row with a chevron, no muted line.
+  const recovering = issueOf([original({ stage: 85, modifiers: [], adopted_by: 15123, adopted_by_state: 'closed', superseded_by: 0 }), Object.assign({}, copy, { state: 'closed' })], { stage: 85 });
+  assert.strictEqual(stageTrackerLinkedSuperseder(recovering.linked_prs[0], recovering), 0, 'a closed copy never supersedes its original');
+  const rrow = stageTrackerRowHtml(recovering, stages, ctx);
+  assert.ok(!rrow.includes('ham-sub-superseded') && rrow.includes('aria-label="Pipeline progress"'), 'recovering: the original is a live row: ' + rrow);
 }
 
 // ── 4. closed original ──────────────────────────────────────────────────
-// A closed-superseded original (closed PRs drop out of the open-PR
-// projection; only the back-link remains) is one dimmed line with the
-// cached title: "#15029 fix: tracker pill · closed · superseded by #15123".
+// Once the close-first close landed the original is still listed, in the
+// same muted form, while its superseder is open: the note becomes
+// "superseded · closed · hive adopted → #15123". With the copy gone from
+// the list (merged, closed) the closed original goes with it.
 {
-  const closed = { number: 15029, title: 'fix: tracker pill', url: 'u29', stage: 74, state: 'closed', superseded_by: 15123, adopted_by: 15123, adopted_by_state: 'open', caption: 'closed · superseded by #15123', modifiers: [] };
-  const copy = { number: 15123, title: 'fix: tracker pill', url: 'u123', stage: 50, author: 'hivecommons-hive[bot]', author_kind: 'hive', modifiers: [], adopted_from: { number: 15029, url: 'u29', author: 'Karibhou', text: '↳ adopted from #15029' } };
+  const closed = { number: 15029, title: 'fix: tracker pill', url: 'u29', stage: 74, state: 'closed', superseded_by: 15123, adopted_by: 15123, adopted_by_state: 'open', caption: 'superseded · closed · hive adopted → #15123', modifiers: [] };
+  const copy = { number: 15123, title: 'fix: tracker pill', url: 'u123', stage: 50, author: 'hivecommons-hive[bot]', author_kind: 'hive', modifiers: [], adopted_from: { number: 15029, url: 'u29', author: 'Karibhou', state: 'closed', text: '↳ adopted from #15029' } };
   const row = stageTrackerRowHtml(issueOf([closed, copy], { stage: 50 }), stages, ctx);
-  const dim = (/<div class="ham-sub ham-sub-superseded"[\s\S]*?<\/div>\s*<\/div>/.exec(row) || [''])[0];
-  assert.ok(dim, 'the closed original renders as a line, not a bare number: ' + row);
-  assert.ok(text(dim).includes('#15029 fix: tracker pill') || (text(dim).includes('#15029') && text(dim).includes('fix: tracker pill')), 'cached title, no live fetch: ' + text(dim));
-  assert.ok(text(dim).includes('closed · superseded by #15123'), text(dim));
+  const parts = (r) => r.split('<div class="ham-sub').slice(1);
+  const part = (r, n) => parts(r).find(s => s.includes('pr#' + n + '"')) || '';
+  const dim = part(row, 15029);
+  assert.ok(dim.startsWith(' ham-sub-superseded"'), 'the closed original renders as a muted line: ' + row);
+  assert.strictEqual(subs(row).length, 1, 'one full sub-row: the copy');
+  const note = (/<span class="ham-superseded-note"[^>]*>([^<]*)<\/span>/.exec(dim) || [])[1] || '';
+  assert.strictEqual(note, 'superseded · closed · hive adopted → #15123', note);
+  assert.ok(text(dim).includes('#15029') && text(dim).includes('fix: tracker pill'), 'cached title, no live fetch: ' + text(dim));
   assert.ok(!dim.includes('aria-label="Pipeline progress"'), 'no hollow chevrons');
+  const noteTip = (/<span class="ham-superseded-note" title="([^"]*)"/.exec(dim) || [])[1] || '';
+  assert.ok(noteTip.includes('This PR is closed as superseded.'), noteTip);
+  const chipTip = (/class="ham-badge ham-adopted-from"[^>]*title="([^"]*)"/.exec(part(row, 15123)) || [])[1] || '';
+  assert.ok(chipTip.includes('#15029 is closed as superseded.'), 'the chip tooltip says closed: ' + chipTip);
   assert.ok(!stageTrackerLinkedPROpen(stageTrackerLinkedPRItem(issueOf([closed]), closed)), 'a closed PR is not an open linked PR');
-  assert.strictEqual(subs(row).length, 1, 'only the copy is a full sub-row');
   // The issue row never shows a blank numbered sub-row.
   for (const s of row.split('<div class="ham-sub').slice(1)) assert.ok(text(s).replace(/^#\d+\s*$/, '') !== '', 'never a blank numbered row: ' + text(s));
+  // Copy not listed (merged / closed): the closed original is not drawn.
+  assert.ok(stageTrackerLinkedSupersededGone(closed, issueOf([closed])), 'no superseder listed: gone');
+  assert.ok(stageTrackerLinkedSupersededGone(closed, issueOf([closed, Object.assign({}, copy, { state: 'closed' })])), 'closed superseder: gone');
+  assert.deepStrictEqual(stageTrackerLinkedSorted(issueOf([closed, copy], { stage: 50 }), stages).map(lp => lp.number), [15029, 15123]);
+  assert.deepStrictEqual(stageTrackerLinkedSorted(issueOf([closed], { stage: 74 }), stages).map(lp => lp.number), []);
+  const alone = stageTrackerRowHtml(issueOf([closed], { stage: 74 }), stages, ctx);
+  assert.ok(!alone.includes('<span class="ham-pr-num">#15029</span>'), 'the orphaned closed original is not drawn: ' + text(alone));
 }
 
 // ── 5. superseded text is pure and conservative ─────────────────────────
-assert.strictEqual(stageTrackerLinkedSupersededText({ state: 'closed', superseded_by: 9 }, null), 'closed · superseded by #9');
-assert.strictEqual(stageTrackerLinkedSupersededText({ adopted_by: 9, adopted_by_state: 'open' }, { linked_prs: [{ number: 9 }] }), 'Adopted → #9 · superseded (hive re-authored with sign-off)');
-assert.strictEqual(stageTrackerLinkedSupersededText({ adopted_by: 9, adopted_by_state: 'open' }, { linked_prs: [{ number: 8 }] }), '', 'the copy must be in the list before the original dims');
+assert.strictEqual(stageTrackerLinkedSupersededText({ state: 'closed', superseded_by: 9 }, { linked_prs: [{ number: 9 }] }), 'superseded · closed · hive adopted → #9');
+assert.strictEqual(stageTrackerLinkedSupersededText({ state: 'closed', superseded_by: 9 }, null), '', 'a closed original without its copy listed says nothing');
+assert.strictEqual(stageTrackerLinkedSupersededText({ adopted_by: 9, adopted_by_state: 'open' }, { linked_prs: [{ number: 9 }] }), 'superseded · hive adopted → #9');
+assert.strictEqual(stageTrackerLinkedSupersededText({ superseded_by: 9 }, { linked_prs: [{ number: 9 }] }), 'superseded · hive adopted → #9');
+assert.strictEqual(stageTrackerLinkedSupersededText({ adopted_by: 9, adopted_by_state: 'open' }, { linked_prs: [{ number: 8 }] }), '');
 assert.strictEqual(stageTrackerLinkedSupersededText({ adopted_by: 9, adopted_by_state: 'closed' }, { linked_prs: [{ number: 9 }] }), '', 'a closed copy keeps the original live (recovering)');
+assert.strictEqual(stageTrackerLinkedSupersededText({ adopted_by: 9, adopted_by_state: 'open' }, { linked_prs: [{ number: 9, state: 'closed' }] }), '', 'a copy listed closed does not supersede');
 assert.strictEqual(stageTrackerLinkedSupersededText({}, null), '');
+assert.strictEqual(stageTrackerLinkedSupersededTip({ superseded_by: 9 }), 'Hive re-authored this PR as #9 with the same commits and sign-off. This PR closes as superseded when #9 merges.');
+assert.strictEqual(stageTrackerLinkedSupersededTip({ adopted_by: 9, state: 'closed' }), 'Hive re-authored this PR as #9 with the same commits and sign-off. This PR is closed as superseded.');
+assert.strictEqual(stageTrackerSupersededOriginalClause(9, 'open'), ' #9 is superseded and still open; it closes when this merges.');
+assert.strictEqual(stageTrackerSupersededOriginalClause(9, 'closed'), ' #9 is closed as superseded.');
+assert.strictEqual(stageTrackerSupersededOriginalClause(9, ''), '');
+assert.strictEqual(stageTrackerSupersededOriginalClause(0, 'open'), '');
 `)
 }

@@ -52,6 +52,11 @@ type StageTrackerDecision struct {
 	// collapsed "Details" (how to trust the author, the rails, DCO): never
 	// in the first read (hivecommons/hive#15394).
 	Detail string `json:"detail,omitempty"`
+	// RedundantOf is the PR the reviewer named as already carrying this
+	// PR's change (`<!-- hive-redundant-of: #N -->`), when the question is
+	// "close this as a no-op?" (hivecommons/hive#15499). The popover shows
+	// it as a chip and leads with "Close as superseded".
+	RedundantOf int `json:"redundant_of,omitempty"`
 	// Options are the actions that can advance the item, first the one the
 	// owner asked to lead ("Let hive decide"), under the row context menu's
 	// action ids. A disabled option says why; the SPA further greys out
@@ -135,6 +140,38 @@ func stageTrackerVerdictLookup(artifact *review.Artifact) func(repo string, numb
 		for _, item := range artifact.Items {
 			item = item.Normalize()
 			if item.Number != number || !strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) || !review.SameHeadSHA(item.HeadSHA, head) {
+				continue
+			}
+			if !ok || item.RecordedAt.After(match.RecordedAt) {
+				match, ok = item, true
+			}
+		}
+		return match, ok
+	}
+}
+
+// stageTrackerDecisionVerdictLookup is stageTrackerVerdictLookup with the
+// fallback a parked row needs (hivecommons/hive#15499): when the current
+// head has no verdict yet — the hive moved the branch onto a new base and
+// the re-review is in flight — but the PR is parked at 085 on a reviewer's
+// decision, the question that parked it is the newest decision-requested
+// aggregate on any head of the PR. Without it the popover printed "a
+// reviewer handed this PR to a person without a specific question" while
+// the review on the previous head asked a specific one.
+func stageTrackerDecisionVerdictLookup(artifact *review.Artifact) func(repo string, number int, head string, parkedOnDecision bool) (review.Aggregate, bool) {
+	atHead := stageTrackerVerdictLookup(artifact)
+	return func(repo string, number int, head string, parkedOnDecision bool) (review.Aggregate, bool) {
+		if a, ok := atHead(repo, number, head); ok {
+			return a, true
+		}
+		if !parkedOnDecision || artifact == nil || number == 0 {
+			return review.Aggregate{}, false
+		}
+		var match review.Aggregate
+		var ok bool
+		for _, item := range artifact.Items {
+			item = item.Normalize()
+			if item.Number != number || !strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) || !item.DecisionRequested {
 				continue
 			}
 			if !ok || item.RecordedAt.After(match.RecordedAt) {
@@ -719,6 +756,13 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 			t := verdict.RecordedAt
 			d.Since = &t
 		}
+	case verdict != nil && verdict.RedundantOf > 0:
+		d.AskedBy = decisionAskedByReviewer
+		d.Question = "A reviewer found this PR's change already on the base through #" + strconv.Itoa(verdict.RedundantOf) + ". Close it as superseded, or give direction?"
+		if !verdict.RecordedAt.IsZero() {
+			t := verdict.RecordedAt
+			d.Since = &t
+		}
 	case selfHold != nil:
 		// The hive held the PR itself (hivecommons/hive#15020): say so,
 		// name the gate and the issue, and offer release / keep.
@@ -825,7 +869,30 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		// Release leads: it is the one action that answers the question.
 		d.Options = append([]StageTrackerDecisionOption{decisionHoldOption(true)}, d.Options[:len(d.Options)-1]...)
 	}
+	if verdict != nil && verdict.RedundantOf > 0 && selfHold == nil {
+		// The reviewer named the PR that already carries this change
+		// (hivecommons/hive#15499): closing as superseded is the answer
+		// to that question, so it leads and says which PR.
+		d.RedundantOf = verdict.RedundantOf
+		d.Options = decisionLeadWithCloseSuperseded(d.Options, verdict.RedundantOf)
+	}
 	return d
+}
+
+// decisionLeadWithCloseSuperseded moves "Close as superseded" to the front
+// of opts with the superseding PR named in its consequence.
+func decisionLeadWithCloseSuperseded(opts []StageTrackerDecisionOption, redundantOf int) []StageTrackerDecisionOption {
+	lead := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
+	lead.Consequence = "Closes this PR as superseded by #" + strconv.Itoa(redundantOf) + ", which already carries its change."
+	out := make([]StageTrackerDecisionOption, 0, len(opts)+1)
+	out = append(out, lead)
+	for _, o := range opts {
+		if o.Action == decisionActionCloseSuperseded {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // decisionHoldReason is the hold's plain-words reason for the popover.

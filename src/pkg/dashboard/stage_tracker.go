@@ -450,6 +450,14 @@ type StageTrackerItem struct {
 	// "copy-failed" — a close-first copy failed and the original was
 	// reopened for a person (hivecommons/hive#15135).
 	AdoptedByState string `json:"adopted_by_state,omitempty"`
+	// SupersededBy is, on an adopted original still open while the hive's
+	// copy is live (AdoptedBy with no failed / closed state), that copy:
+	// the SPA folds such a row into the copy's "adopted from" chip instead
+	// of listing it — a superseded PR is closed and not listed, never a
+	// second row for one logical PR (hivecommons/hive#15526 under #15511
+	// read as two PRs). 0 when the copy is gone and the original is live
+	// work again.
+	SupersededBy int `json:"superseded_by,omitempty"`
 	// Supersedes names the closed original this PR replaced (the hive's
 	// close-first supersession, hivecommons/hive#15135). The original is
 	// closed, unmerged, and never a tracker row; this is the only trace of
@@ -631,9 +639,11 @@ type StageTrackerLinkedPR struct {
 	Lineage *StageTrackerLineage `json:"lineage,omitempty"`
 	// State is "closed" for an adopted original the hive (or a person)
 	// closed once its copy existed (hivecommons/hive#15126): the sub-row
-	// is one dimmed line "#N <title> · closed · superseded by #M" with no
-	// chevron track. SupersededBy is the copy; Title is cached from the
-	// copy (same commits, same title), never fetched live.
+	// is one muted line "#N <title> superseded · closed · hive adopted →
+	// #M" with no chevron track, listed only while the copy is listed open
+	// (hivecommons/hive#15511). SupersededBy is the copy (set on an open
+	// original too, once the copy exists); Title is cached from the copy
+	// (same commits, same title), never fetched live.
 	State        string `json:"state,omitempty"`
 	SupersededBy int    `json:"superseded_by,omitempty"`
 	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).

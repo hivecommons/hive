@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -63,7 +64,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	if art, err := review.LoadArtifact(""); err == nil {
 		verdictArtifact = &art
 	}
-	verdictFor := stageTrackerVerdictLookup(verdictArtifact)
+	verdictFor := stageTrackerDecisionVerdictLookup(verdictArtifact)
 	// The planner's wait records (review.DispatchState.Waits): a review-
 	// pending head the swarm keeps passing over for lack of a reviewer
 	// says so in its caption instead of a bare "stalled" pill
@@ -120,6 +121,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.AdoptedBy = rec.AdoptedBy
 			it.AdoptedByState = stageTrackerAdoptedByState(rec)
+			it.SupersededBy = stageTrackerSupersededBy(rec)
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 			it.AdmittedBy = rec.Admission(it.Head)
 			if total, unsigned, ok := rec.DCOFor(it.Head); ok {
@@ -389,7 +391,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 		}
 		var agg *review.Aggregate
-		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
+		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA, stageTrackerParkedOnDecision(it)); ok {
 			agg = &a
 		}
 		if it.Stage == trackerNumberReviewPending && it.Superseded == nil {
@@ -893,4 +895,16 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(body); err != nil {
 		logOverviewEncodeFailure(err)
 	}
+}
+
+// stageTrackerParkedOnDecision reports whether a PR row waits at 085 on a
+// reviewer's decision, so the popover may quote the question from the
+// newest decision-requested verdict on any head (hivecommons/hive#15499).
+func stageTrackerParkedOnDecision(it StageTrackerItem) bool {
+	if it.Kind != "pr" || (it.Stage != stagelabels.NeedsDecision.Number() && !slices.Contains(it.Modifiers, modNeedsDecision)) {
+		return false
+	}
+	base, _ := stagelabels.HumanApprovedReason(it.Reason)
+	lower := strings.ToLower(strings.TrimSpace(base))
+	return lower == stageengine.StageReasonVerdictRequiresHuman || lower == stageengine.StageReasonDecisionRequested
 }

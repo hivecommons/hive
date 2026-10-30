@@ -830,9 +830,14 @@
       const said = typeof stageTrackerSayOnce === 'function' ? stageTrackerSayOnce([question, d.blocker, d.detail, tip]) : [question, d.blocker, d.detail, tip].filter(Boolean);
       const details = question ? said.slice(1) : said;
       const fold = details.length ? `<details class="ham-decision-details"><summary>Details</summary>${details.map(x => `<p class="ham-decision-blocker">${esc(x)}</p>`).join('')}</details>` : '';
+      // The PR the reviewer named as already carrying this change
+      // (hivecommons/hive#15499): a chip under the question so the person
+      // sees what "close as a no-op" is measured against.
+      const redundantOf = Number(d.redundant_of) || 0;
+      const redundantChip = redundantOf ? `<p class="ham-decision-redundant"><span class="ham-chip" title="${esc('A reviewer found this change already on the base through #' + redundantOf)}">redundant of #${redundantOf}</span></p>` : '';
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
-        <p class="ham-decision-q">${esc(question)}</p>
+        <p class="ham-decision-q">${esc(question)}</p>${redundantChip}
         ${typeof stageTrackerPresenceTip === 'function' && stageTrackerPresenceTip(item, nowMs) ? `<p class="ham-decision-presence">${stageTrackerPresenceDotHtml(item, nowMs)}${esc(stageTrackerPresenceTip(item, nowMs))}</p>` : ''}
         ${lead || more ? `<div class="ham-decision-acts">${lead}${more}</div>` : ''}
         <p class="ham-decision-meta">${esc(meta)}</p>
