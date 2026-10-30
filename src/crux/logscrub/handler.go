@@ -181,6 +181,20 @@ func renderAny(v any) (text string, ok bool) {
 		return string(b), true
 	case error, fmt.Stringer:
 		return fmt.Sprint(v), true
+	case []byte:
+		return string(v), true
+	case []string:
+		return fmt.Sprintf("%v", v), true
+	}
+	// Composite payloads are rendered by the inner handler after the scrubbing
+	// boundary, so render them here conservatively; scalars stay untouched.
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Pointer && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	switch rv.Kind() {
+	case reflect.Map, reflect.Struct, reflect.Slice, reflect.Array, reflect.Interface:
+		return fmt.Sprintf("%+v", v), true
 	}
 	return "", false
 }
