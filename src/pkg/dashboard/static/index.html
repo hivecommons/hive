@@ -14625,6 +14625,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
     // / duplicate_issue carry the numbers).
     const STAGE_TRACKER_GATE_DUPLICATE_PREFIX = 'duplicate-of:';
+    // merge_gate.state of a PR the queue holds because an open PR in
+    // another lane claims the same issue and nobody has decided which
+    // lands (hivecommons/hive#15810): "claim-conflict:15793".
+    const STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX = 'claim-conflict:';
+    // Pure: the other claimant of a "claim-conflict:<n>" gate state; 0 for
+    // any other state.
+    function stageTrackerGateClaimConflictOf(state) {
+      state = String(state || '');
+      return state.indexOf(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX) === 0 ? Number(state.slice(STAGE_TRACKER_GATE_CLAIM_CONFLICT_PREFIX.length)) || 0 : 0;
+    }
     // Pure: the PR number a "duplicate-of:<n>" gate state yields to; 0 for
     // any other state.
     function stageTrackerGateDuplicateOf(state) {
@@ -14639,6 +14649,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
       const dup = stageTrackerGateDuplicateOf(state);
       if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
+      const conflict = stageTrackerGateClaimConflictOf(state);
+      if (conflict) return 'Held · duplicate of #' + conflict + ' · needs decision';
       if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
       const plain = state.replace(/[-_]+/g, ' ').trim();
       return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';
@@ -15539,6 +15551,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // kept one and holds this one — "Duplicate of #15402 · needs a
       // pick"; no clock, no train. Let hive decide on either row closes
       // the held one as superseded.
+      // Two open PRs for one issue in different lanes (hivecommons/hive#15810):
+      // the queue admits neither until a person keeps one and closes the
+      // other; the row's decision options name both PRs.
+      const conflictWith = typeof stageTrackerGateClaimConflictOf === 'function' ? stageTrackerGateClaimConflictOf(state) : 0;
+      if (conflictWith) {
+        const issue = Number(mg.duplicate_issue) || 0;
+        const tip = 'This PR and #' + conflictWith + ' both claim' + (issue ? ' #' + issue : ' the same issue') + " from different merge lanes. Hive's merge queue admits neither until one is closed or approved, so two implementations of one fix never both land. Keep this one (Approve) or close it as superseded by #" + conflictWith + '.' + lastSeen;
+        return { state, word: word, detail: 'needs decision', tip, cue: 'waiting', until: 0, duplicateOf: conflictWith };
+      }
       const dupOf = stageTrackerGateDuplicateOf(state);
       if (dupOf) {
         const issue = Number(mg.duplicate_issue) || 0;

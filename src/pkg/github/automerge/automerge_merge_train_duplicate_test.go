@@ -86,7 +86,7 @@ func TestPlanDuplicateHoldsFiltersCandidates(t *testing.T) {
 		pr(15411, "Fixes #15397", t0, "clean"),
 	}
 	plan := &mergeTrainPlan{lane: "self", displayRepo: "o/r"}
-	kept := c.planDuplicateHolds(plan, stageLaneSelf, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
+	kept := c.planDuplicateHolds(context.Background(), plan, stageLaneSelf, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
 	if len(kept) != 3 || kept[0].GetNumber() != 15407 {
 		t.Fatalf("kept = %v", kept)
 	}
@@ -100,16 +100,21 @@ func TestPlanDuplicateHoldsFiltersCandidates(t *testing.T) {
 	if _, held := plan.duplicateOf(15410); held {
 		t.Fatal("a Refs line is not a claim")
 	}
-	// A prefilter refusal keeps the PR out of the rule entirely.
+	// A prefilter refusal keeps the PR out of the winner rule entirely —
+	// but it is still an open claimant, so the lane's remaining candidate
+	// for that issue is held as a claim conflict (hivecommons/hive#15810).
 	plan2 := &mergeTrainPlan{}
-	kept = c.planDuplicateHolds(plan2, stageLaneSelf, "o", "r", "o/r", prs, func(p *gh.PullRequest) string {
+	kept = c.planDuplicateHolds(context.Background(), plan2, stageLaneSelf, "o", "r", "o/r", prs, func(p *gh.PullRequest) string {
 		if p.GetNumber() == 15407 {
 			return "label:hold"
 		}
 		return ""
 	})
-	if len(kept) != 4 || plan2.duplicates != nil {
+	if len(kept) != 3 || plan2.duplicates != nil {
 		t.Fatalf("kept = %d dup=%v", len(kept), plan2.duplicates)
+	}
+	if h, held := plan2.claimConflictOf(15402); !held || h.Other != 15407 || h.Issue != 15396 {
+		t.Fatalf("claim conflict = %+v held=%v", h, held)
 	}
 }
 

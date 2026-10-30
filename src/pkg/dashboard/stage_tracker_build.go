@@ -174,6 +174,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if c := stageTrackerSoakCaption(rec, now); c != "" {
 			it.Caption = c
 		}
+		if c := stageTrackerClaimConflictCaption(it); c != "" {
+			it.Caption, it.Actor = c, StageActorHuman
+		}
 		if hasRec && rec.Stage != stagelabels.None {
 			if at := stageTrackerNoteChangedAt(rec, now); !at.IsZero() {
 				it.NoteChangedAt = &at

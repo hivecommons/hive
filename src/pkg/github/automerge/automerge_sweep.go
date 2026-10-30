@@ -1163,6 +1163,13 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
 				continue
 			}
+			if _, held := train.claimConflictOf(number); held {
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[autoMergeReasonMergeTrainClaimConflict]++
+				stage(c.mergeTrainClaimConflictSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				repoSkipped++
@@ -1396,6 +1403,11 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			if _, held := train.duplicateOf(number); held {
 				result.Skipped++
 				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
+			if _, held := train.claimConflictOf(number); held {
+				result.Skipped++
+				stage(c.mergeTrainClaimConflictSkip(train, number), false, nil)
 				continue
 			}
 			if train.isSibling(number) {

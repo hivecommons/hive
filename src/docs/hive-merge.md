@@ -909,6 +909,27 @@ contributor task already dispatched on it (see
 [operator-reference.md § Open-PR dispatch guard](operator-reference.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner)),
 so the hive does not open the second PR in the first place.
 
+The duplicate pick above sees one lane at a time. When the two PRs sit in
+**different lanes** — the hive's own PR in the self lane and a trusted
+human's PR in the trusted lane both closing one issue, as #15783 and
+#15793 did for #15773 — neither lane's winner rule saw the other and both
+marched toward merge. Every lane therefore also runs a **same-issue claim
+gate** before its trains are grouped: a candidate whose closing issue any
+other open PR of the repository also claims (`Fixes`/`Closes`/`Resolves`;
+a `Refs` line is not a claim; an adoption copy and the original it
+`Supersedes` are one change, not a pair) is held with lane reason
+`merge-train:claim-conflict#<other>:<issue>/0:0/0:` and the log line
+`same-issue claim conflict undecided: #A vs #B` — in every lane, so
+**neither PR is admitted** while the conflict stands. The hive does not
+pick: the stage engine parks the held PR at 085, the tracker chevron reads
+*held · duplicate of #B · needs decision*, the row's options name the
+concrete PRs (*Keep #A — admit it to the merge queue*, *Close #A as
+superseded by #B*), and *Let hive decide* only recommends ("Hold both: #A
+and #B claim issue #N. Keep #B, close #A — or keep #A, close #B"). A
+recorded decision on a PR's head (`/hive decision approve`, the tracker's
+Approve) is what lifts the gate for that PR; closing the other ends it
+([#15810](https://github.com/hivecommons/hive/issues/15810)).
+
 ### Empty-diff PRs of the hive's own
 
 A PR of the hive's own (the App's, or an adoption it opened) whose diff

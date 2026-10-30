@@ -105,6 +105,27 @@ func MergeGateStateDuplicateOf(n int) string {
 	return MergeGateStateDuplicateOfPrefix + strconv.Itoa(n)
 }
 
+// MergeGateStateClaimConflictPrefix opens the gate state of a PR the merge
+// queue holds because an open PR in another lane claims the same issue and
+// no decision is recorded (hivecommons/hive#15810): "claim-conflict:15793".
+const MergeGateStateClaimConflictPrefix = prstage.MergeTrainStateClaimConflict + ":"
+
+// MergeGateStateClaimConflict is the gate state for a PR held against n.
+func MergeGateStateClaimConflict(n int) string {
+	return MergeGateStateClaimConflictPrefix + strconv.Itoa(n)
+}
+
+// mergeGateClaimConflictOf reads the other claimant out of a
+// claim-conflict gate state, 0 for any other state.
+func mergeGateClaimConflictOf(state string) int {
+	rest, ok := strings.CutPrefix(state, MergeGateStateClaimConflictPrefix)
+	if !ok {
+		return 0
+	}
+	n, _ := strconv.Atoi(rest)
+	return n
+}
+
 // stageTrackerMergeGateState maps a stage to its merge-gate state; "" off
 // the gate.
 func stageTrackerMergeGateState(stage stagelabels.Stage) string {
