@@ -1380,7 +1380,10 @@ func (r Record) Admission(head string) string {
 }
 
 // NoteAdoptionForced records an operator's "Adopt now" by login at now. The
-// pending reroute (if any) is dropped: a forced adoption supersedes it.
+// pending reroute (if any) is dropped: a forced adoption supersedes it. So
+// is a recorded adoption blocker (a person's admission, maintainer policy):
+// the forced adoption outranks it, and the tracker must stop saying "not
+// adopted" the moment the operator asked.
 func (s *Store) NoteAdoptionForced(key, login string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1390,6 +1393,7 @@ func (s *Store) NoteAdoptionForced(key, login string, now time.Time) {
 	}
 	r.AdoptForcedBy, r.AdoptForcedAt = login, now
 	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
+	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	s.items[key] = r
 	s.dirty = true
 }

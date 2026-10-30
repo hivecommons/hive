@@ -503,6 +503,40 @@ the engine derives it from the recorded approval and writes it back. An
 explicit **Adopt** / **Re-author** from the dashboard is the person choosing
 re-authoring and is not refused.
 
+**Approve means "approved to proceed", not "merge this exact head whatever
+happens".** The merge-as-is hold applies only while the head *is* mergeable
+as-is. When the lane cannot land the approved head unchanged — the fork is
+not editable by the App and sits behind the base (`fork-not-editable`),
+it conflicts (`conflicting` / `not-mergeable` / `needs-rebase`), or a
+commit lacks `Signed-off-by` (`dco-missing`) — the admission does not
+block adoption: the hive adopts (re-authors the commits on a hive-owned
+branch) and **carries the approval to its copy** (a decision approval
+recorded on the copy's head; the copy's body says *Approval carried over:
+@you approved #N at head …*). Logged as `a person admitted this head but
+the hive cannot merge it as-is; adopting and carrying the approval`. Before
+this, an approved fork PR that fell behind `v5` deadlocked: every cycle
+refused adoption (*not adopted: a maintainer approved this head; the hive
+merges it as-is*) while the merge itself failed on `fork-not-editable`.
+
+**Adopt now always wins over an earlier Approve.** Recording the forced
+adoption clears the `operator-admission` blocker at once, and the adoption
+engine bypasses admission, presence, grace and `maintainer_policy` on its
+next pass. The response is honest about timing: `status: adopted-now` with
+the copy's number when the nudged pass opened it within the handler's wait,
+else `status: adoption-queued` (*Adopting… (queued): the hive opens its copy
+on its next stage pass*). Either way the row is in its acted state the
+moment you click — `adoption.queued_by` / `takeover.forced_by` on the
+payload, chip *adopting… (queued)*, caption *Adopting… (queued by @you …)*,
+no *not adopted* blocker, **Adopt now** gone from the ⋯ menu and the
+popover, no decision popover asking again — until the sweep lands and the
+row reads *Adopted → #N*.
+
+| You | Head mergeable as-is | Head not mergeable as-is (fork not editable + behind, conflicting, DCO missing) |
+|---|---|---|
+| **Approve** | admitted; hive merges it unchanged after checks and soak; no adoption | hive adopts (supersede), approval carried to the copy |
+| **Adopt** / **Re-author** | hive adopts on the next pass (grace and policy still apply to a plain Adopt) | same |
+| **Adopt now** (`force: true`) | hive adopts on the next pass regardless of an earlier Approve, presence, grace, policy; row acted at once | same |
+
 | Decision | What it does | Audit / ledger |
 |---|---|---|
 | `re-author` — *Re-author as hive PR* | Offered as its own lead action on a 090 PR whose head cannot merge as-is — the stage record's commit check counted commits without a `Signed-off-by` (`dco_unsigned` / `dco_total` on the row). The popover and both Approve confirms say so **before** acting (*2 of 3 commits have no Signed-off-by, so a required DCO check refuses the merge*); approving never re-authors by itself. Re-author posts its own note and the `adoption/supersede` request label; the hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR. Disabled with the reason on a person's PR (the hive does not re-author a human's PR — ask them to `git commit -s --amend`). | `repo_item_decision_adopt` with `decision=re-author`; `last_operator_action.action: re-author`; toast *adopted*. |
@@ -791,8 +825,11 @@ Dashboard: Settings → Labels → "When the PR author maintains the
 repository". Whatever the policy and the clocks say, the row's ⋯ menu on a
 072 / 071 clanker PR offers the operator **Adopt now — hive takes it over**
 (decision API `adopt` + `force: true`: supersede adoption on the next nudged
-sweep, bypassing presence, grace and `maintainer_policy`; `hold` still
-stops it; marker `hive:adopted reason=operator-forced by=@login`) and
+sweep, bypassing presence, grace, `maintainer_policy` and an earlier
+Approve's admission; `hold` still stops it; marker `hive:adopted
+reason=operator-forced by=@login`; the row shows *adopting… (queued)* and
+drops the action until the copy opens — see *Adopt now always wins over an
+earlier Approve* above) and
 **Reroute to another clanker** (decision API `reroute` + `to: <login>|any`:
 the follow-up work goes to an online contributor clanker's fix queue as a
 `fix-pr` interrupt — the same mechanism as the 072 nudge — with a

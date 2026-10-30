@@ -860,6 +860,9 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	}
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	rec.AdoptReason = reason
+	// A person's approval of this head travels to the copy
+	// (hivecommons/hive#15136 follow-up): adopting is not un-approving.
+	admittedBy := c.operatorAdmission(owner, repo, number, obs.HeadSHA)
 	if stored, ok := store.Get(key); ok && stored.AdoptDiffFence != "" {
 		// A second takeover (dco-rehome, signoff-rehome, in-place-stalled)
 		// carries the fence the first adoption recorded.
@@ -971,7 +974,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 				Title: gh.Ptr(nonEmpty(strings.TrimSpace(obs.Title), fmt.Sprintf("Adopt #%d", number))),
 				Head:  gh.Ptr(branch),
 				Base:  gh.Ptr(obs.BaseRef),
-				Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome, resignedTip) + adoptionCopyConflictNote(obs, fixerResolves)),
+				Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome, resignedTip) + adoptionCopyConflictNote(obs, fixerResolves) + adoptionCarriedApprovalNote(obs, admittedBy)),
 			})
 			if apiErr != nil {
 				return effects.Result{}, effects.NotApplied(apiErr)
@@ -1007,6 +1010,9 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	superseding := created.GetNumber()
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
 	store.NoteAdoptReason(key, reason)
+	if admittedBy != "" {
+		c.carryAdmissionToCopy(obs, admittedBy, superseding, nonEmpty(created.GetHead().GetSHA(), nonEmpty(resignedTip, obs.HeadSHA)), now)
+	}
 	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch, "fence", rec.AdoptDiffFence, "forced_by", forcedBy, "fixer_resolves_conflicts", fixerResolves)
 	if fixerResolves {
 		c.requestAdoptionCopyRebase(ctx, store, key, obs, branch, superseding, created.GetHead().GetSHA())
@@ -1124,6 +1130,16 @@ func adoptionCopyConflictNote(obs stageObservation, conflicting bool) string {
 		return ""
 	}
 	return fmt.Sprintf("\n\n**Conflicts with `%s`:** the contributor head could not be replayed onto the base, so this copy opened as it is and the hive's fixer is resolving the conflicts on this branch (rebase-resolve episode, two attempts). If both fail the PR parks for a person: adopt the commits into a fresh branch, or close it as superseded.\n", obs.BaseRef)
+}
+
+// adoptionCarriedApprovalNote is the paragraph appended to the copy's body
+// when a person had approved the original head: the approval stands for
+// the content the copy carries unchanged.
+func adoptionCarriedApprovalNote(obs stageObservation, login string) string {
+	if login == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n\n**Approval carried over:** @%s approved #%d at head `%s`. The hive could not merge that head as-is (%s), so it re-authors it here; the approval travels with the content.\n", login, obs.Number, shortSHA(obs.HeadSHA), nonEmpty(headNotMergeableAsIs(obs), nonEmpty(obs.Reason, obs.LaneReason)))
 }
 
 // requestAdoptionCopyRebase opens the fixer's rebase-resolve episode on the

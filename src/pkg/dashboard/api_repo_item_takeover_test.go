@@ -105,8 +105,11 @@ func TestRepoItemAdoptNowWithoutSweepIsQueuedForm(t *testing.T) {
 
 	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"adopt","force":true,"type":"pr"}`)
 	out := decodeDecision(t, w.Body.String())
-	if w.Code != http.StatusOK || out.Status != "adoption-forced" || !strings.HasPrefix(out.Result.Outcome, "Adoption forced:") {
+	if w.Code != http.StatusOK || out.Status != repoItemDecisionStatusAdoptionQueued || !strings.HasPrefix(out.Result.Outcome, "Adopting… (queued)") || out.Result.Action != rowActionAdopted {
 		t.Fatalf("code=%d out=%+v", w.Code, out)
+	}
+	if strings.Contains(out.Result.Outcome, "pass now running") {
+		t.Fatalf("queued adoption promised the running pass: %q", out.Result.Outcome)
 	}
 	rec, _ := store.Get(stagelabels.Key("testorg/testrepo", 8))
 	if rec.AdoptForcedBy != "writer" || !recForced(rec) {
@@ -317,6 +320,50 @@ func TestStageTrackerTakeoverOffersAdoptNowAndReroute(t *testing.T) {
 	}
 	raw, _ := json.Marshal(it)
 	for _, want := range []string{`"takeover":{`, `"adopt_now":true`, `"reroute":true`, `"clankers":[{"login":"bee2"`, `"grace_elapsed":true`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("payload lacks %s: %s", want, raw)
+		}
+	}
+}
+
+// Approve, then Adopt now (hive#15312): the moment Adopt now is recorded
+// the row is in its acted state — "Adopting… (queued by @x)", no "not
+// adopted: a maintainer approved this head", no Adopt now action, no
+// decision popover asking the person to take it over again.
+func TestStageTrackerTakeoverQueuedAfterAdoptNow(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyNever, offlinePresence(now.Add(-26*time.Hour)))
+	s.rerouteCandidates = func(string) []RerouteCandidate { return []RerouteCandidate{{Login: "bee2", Capable: true}} }
+	key := stagelabels.Key("hivecommons/hive", 14524)
+	store.NoteAdmission(key, "feed", stagelabels.OperatorApprovalAdmission("andan02"), now.Add(-10*time.Minute))
+	store.NoteAdoptionBlocked(key, "feed", stagelabels.AdoptBlockedOperatorAdmission, now.Add(-9*time.Minute))
+	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
+	if it.Adoption == nil || it.Adoption.BlockedBy != stagelabels.AdoptBlockedOperatorAdmission || !strings.Contains(it.Adoption.Text, "a maintainer approved this head") || it.Takeover == nil || !it.Takeover.AdoptNow {
+		t.Fatalf("precondition (approved, blocked, Adopt now offered): adoption=%+v takeover=%+v", it.Adoption, it.Takeover)
+	}
+
+	store.NoteAdoptionForced(key, "andan02", now.Add(-time.Minute))
+	it = trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
+	a, tk := it.Adoption, it.Takeover
+	if a == nil || a.QueuedBy != "andan02" || a.BlockedBy != "" || a.Action != "" || !strings.HasPrefix(a.Text, "Adopting… (queued by @andan02") {
+		t.Fatalf("adoption after Adopt now = %+v", a)
+	}
+	if tk == nil || tk.AdoptNow || tk.AdoptNowReason != takeoverAdoptNowQueued || tk.ForcedBy != "andan02" || !tk.Reroute {
+		t.Fatalf("takeover after Adopt now = %+v", tk)
+	}
+	if it.DecisionNeeded != nil {
+		t.Fatalf("queued adoption still asks a person: %+v", it.DecisionNeeded)
+	}
+	if strings.Contains(it.Caption, "not adopted") {
+		t.Fatalf("caption still says not adopted: %q", it.Caption)
+	}
+	for _, o := range takeoverDecisionOptions(tk, false) {
+		if o.Action == decisionActionAdoptNow {
+			t.Fatalf("Adopt now still offered in the popover: %+v", o)
+		}
+	}
+	raw, _ := json.Marshal(it)
+	for _, want := range []string{`"queued_by":"andan02"`, `"forced_by":"andan02"`, `"adopt_now":false`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("payload lacks %s: %s", want, raw)
 		}
