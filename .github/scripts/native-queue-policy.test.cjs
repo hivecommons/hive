@@ -35,12 +35,16 @@ function fixture(eventName = 'merge_group') {
   const state = {
     queue: clone(entries), prs: [eligible(1), eligible(2)], seen: [], reviews: [],
     runs: new Map([1, 2].map(n => [sha(10 + n), checks(sha(10 + n))])),
-    ancestry: 'ahead', ref: group.head_sha, queueReads: 0,
+    ancestry: 'ahead', ref: group.head_sha, queueReads: 0, prReads: 0, reviewReads: 0,
   };
   const github = {
     rest: {
       checks: { listForRef: 'checks' }, pulls: {
-        get: async ({ pull_number: n }) => ({ data: clone(state.prs[n - 1]) }),
+        get: async ({ pull_number: n }) => {
+          state.prReads++;
+          if (state.prReads === state.holdOnPRRead) state.prs[n - 1].labels = [{ name: 'hold' }];
+          return { data: clone(state.prs[n - 1]) };
+        },
         listReviews: 'reviews',
       },
       actions: {
@@ -64,13 +68,20 @@ function fixture(eventName = 'merge_group') {
         state.workflowHead = args.ref;
         return clone(state.runs.get(args.ref));
       }
+      state.reviewReads++;
+      if (state.reviewReads === state.dismissOnReviewRead) {
+        state.reviews = [{ id: 2, user: { login: 'reviewer' }, state: 'DISMISSED', commit_id: sha(11) }];
+      }
       return clone(state.reviews);
     },
-    graphql: async () => {
+    graphql: async (_query, args) => {
       state.queueReads++;
       if (state.mutateOnReread && state.queueReads === 2) state.queue[0].pullRequest.headRefOid = sha(99);
+      const start = Number(args.cursor || 0);
+      const end = state.pageSize ? start + state.pageSize : state.queue.length;
       return { repository: { mergeQueue: { entries: {
-        nodes: clone(state.queue), pageInfo: { hasNextPage: false },
+        nodes: clone(state.queue.slice(start, end)),
+        pageInfo: { hasNextPage: end < state.queue.length, endCursor: String(end) },
       } } } };
     },
   };
@@ -147,6 +158,14 @@ test('group evaluation checks each member head, all evidence, and live synthetic
   assert.equal(f.state.queueReads, 2);
 });
 
+test('membership lookup consumes every page up to this group, not pending successors', async () => {
+  const f = fixture();
+  f.state.pageSize = 1;
+  f.state.queue.push({ id: 'later', position: 3, headCommit: null, pullRequest: null });
+  assert.match(await evaluate(f), /all 2 member heads/);
+  assert.equal(f.state.queueReads, 4);
+});
+
 test('PR-target admission consumes policy providers without group APIs', async () => {
   const f = fixture('pull_request_target');
   assert.match(await evaluate(f), /five existing policy providers/);
@@ -188,6 +207,17 @@ test('changes requested, withdrawn and stale approvals block group validation', 
     f.state.reviews = [{ id: 1, user: { login: 'reviewer' }, ...review }];
     await assert.rejects(evaluate(f), /approval|changes requested/);
   }
+});
+
+test('late hold or approval withdrawal is caught by the final re-read', async () => {
+  for (const change of [{ holdOnPRRead: 3 }, { dismissOnReviewRead: 3 }]) {
+    const f = fixture();
+    Object.assign(f.state, change);
+    await assert.rejects(evaluate(f), /held|approval/);
+  }
+  const pr = fixture('pull_request_target');
+  pr.state.holdOnPRRead = 2;
+  await assert.rejects(evaluate(pr), /held/);
 });
 
 test('API failure is never interpreted as an empty successful member list', async () => {
