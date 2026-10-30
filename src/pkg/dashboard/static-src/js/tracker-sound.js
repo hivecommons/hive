@@ -114,6 +114,10 @@
     // click or key press on the page is needed. The action runs inside the
     // click, so it is itself the gesture that resumes the context.
     function stageTrackerSoundHeldNotice(skipped) {
+      // A kiosk has no user to click: the streamer's Chromium runs with
+      // autoplay allowed, so a blocked context is a misconfiguration there,
+      // not something a toast on the stream can fix. Retry on the next play.
+      if (window.HIVE_KIOSK_SOUND) return; // kiosk: never nag an unattended display
       const b = document.getElementById('activity-monitor-sound');
       if (b) {
         b.classList.add(STAGE_TRACKER_SOUND_HELD_CLASS);
@@ -534,14 +538,14 @@
     /* ---- Settings actions ---- */
     function stageTrackerSetSoundOn(on) {
       _stageTrackerSoundOn = !!on;
-      try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
+      if (!(window.hiveKioskMode && window.hiveKioskMode())) { try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {} }
       stageTrackerSoundHeldClear();
       stageTrackerRenderSettings();
       if (_stageTrackerSoundOn) stageTrackerPlayTest();
     }
     function stageTrackerSetVolume(v) {
       _stageTrackerVolume = Math.max(0, Math.min(Math.round(Number(v) || 0), STAGE_TRACKER_VOLUME_MAX));
-      try { localStorage.setItem(STAGE_TRACKER_VOLUME_KEY, String(_stageTrackerVolume)); } catch {}
+      if (!(window.hiveKioskMode && window.hiveKioskMode())) { try { localStorage.setItem(STAGE_TRACKER_VOLUME_KEY, String(_stageTrackerVolume)); } catch {} }
       const out = document.getElementById('activity-monitor-volume-value');
       if (out) out.textContent = String(_stageTrackerVolume);
     }
@@ -592,7 +596,31 @@
       b.setAttribute('title', label);
     }
 
+    // Kiosk (#15594): sounds on unless the URL says `&sound=off`; nothing is
+    // read from or written to localStorage so a rolled SPA inherits no state.
+
+    // Pure: the kiosk's sound default from its URL query — on unless
+    // `sound=off`; never on outside kiosk mode.
+    function stageTrackerKioskSoundDefault(kiosk, search) {
+      if (!kiosk) return false;
+      try { return new URLSearchParams(search || '').get('sound') !== 'off'; } catch { return true; }
+    }
+
+    // Kiosk: create and resume the context now — the streamer's Chromium
+    // runs --autoplay-policy=no-user-gesture-required, so no gesture is
+    // coming and none is needed. A browser that still refuses is left for
+    // the next automatic play to retry (stageTrackerPlayVoices).
+    function stageTrackerKioskSoundInit() {
+      _stageTrackerSoundOn = stageTrackerKioskSoundDefault(true, window.location.search);
+      _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT;
+      stageTrackerSoundSyncButton();
+      if (!_stageTrackerSoundOn) return;
+      const ctx = stageTrackerAudioContext();
+      if (ctx) stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS).catch(() => {});
+    }
+
     function stageTrackerSoundInit() {
+      if (window.hiveKioskMode && window.hiveKioskMode()) { stageTrackerKioskSoundInit(); return; }
       try { _stageTrackerSoundOn = localStorage.getItem(STAGE_TRACKER_SOUND_KEY) === '1'; } catch { _stageTrackerSoundOn = false; }
       try {
         const v = localStorage.getItem(STAGE_TRACKER_VOLUME_KEY);

@@ -149,6 +149,11 @@ func TestRouteHumanDecision(t *testing.T) {
 			e.Verdict = VerdictRequiresHuman
 			e.DecisionQuestion = "@clubanderson should decide whether to land this now."
 		}, "reviewer question: @clubanderson should decide whether to land this now."},
+		{"requires_human finding", func(e *Evidence) {
+			e.Verdict = VerdictRequiresHuman
+			e.DecisionQuestion = "close in favour of #15309?"
+			e.DecisionFinding = "duplicate: the review found this change already landed or open elsewhere"
+		}, "the review found: duplicate: the review found this change already landed or open elsewhere"},
 		{"requires_human summary", func(e *Evidence) {
 			e.Verdict = VerdictRequiresHuman
 			e.HumanSummaries = []string{"security requires human: relay owner should confirm before merge"}
@@ -696,5 +701,20 @@ func TestEntryCommentRepeatsDecisionAcrossHeads(t *testing.T) {
 	st.Observe(key, NeedsDecision, "verdict:decision-requested")
 	if rec, _ = st.Get(key); !rec.EntryCommentRepeatsDecision("redundant-of:15427") {
 		t.Fatalf("stage flap lost the decision identity: %+v", rec)
+	}
+}
+
+func TestAlreadyLandedReasonCaption(t *testing.T) {
+	if got := AlreadyLandedReason(15506); got != "self-authored:already-landed:#15506" {
+		t.Fatalf("reason=%q", got)
+	}
+	if c, ok := AlreadyLandedCaption(AlreadyLandedReason(15506)); !ok || c != "already landed via #15506 — closing as superseded" {
+		t.Fatalf("caption=%q ok=%v", c, ok)
+	}
+	if c, ok := AlreadyLandedCaption(AlreadyLandedReason(0)); !ok || c != "already landed on the base — closing as superseded" {
+		t.Fatalf("bare caption=%q ok=%v", c, ok)
+	}
+	if _, ok := AlreadyLandedCaption("superseded-by-merge"); ok {
+		t.Fatal("other reasons are not already-landed")
 	}
 }

@@ -158,7 +158,9 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 }
 
 var (
-	reviewBacklogTitleCategoryRE = regexp.MustCompile(`^\s*Review backlog \(([^)]+)\):`)
+	// The optional leading `[<agent>]` tag keeps items filed before titles
+	// carried the filer in the same category as their prefixed successors.
+	reviewBacklogTitleCategoryRE = regexp.MustCompile(`^\s*(?:\[[^\]\s]+\]\s*)?Review backlog \(([^)]+)\):`)
 	reviewBacklogPerspectiveRE   = regexp.MustCompile(`(?m)^\s*Perspective:\s*(\S+)`)
 	reviewBacklogFileLineRE      = regexp.MustCompile(`([A-Za-z0-9_./-]+):(\d+)\b`)
 	reviewBacklogFileNameRE      = regexp.MustCompile(`[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.[a-z]{1,5}\b`)
@@ -183,8 +185,15 @@ var reviewBacklogNonSymbols = map[string]bool{
 // An issue with no recognisable category never matches.
 func reviewBacklogFoldMatches(p review.Perspective, f outputschema.Finding, title, body string) bool {
 	want := strings.ToLower(strings.TrimSpace(string(p)))
-	if want == "" || want != reviewBacklogItemCategory(title, body) {
+	if want == "" {
 		return false
+	}
+	if cat := reviewBacklogItemCategory(title, body); cat != want {
+		// Another perspective's item folds only when it is the same
+		// finding verbatim: same title once per-pass wrapping is stripped,
+		// cited at the same place (hivecommons/hive#15627).
+		n := reviewBacklogNormalisedTitle(f.Title)
+		return cat != "" && n != "" && n == reviewBacklogNormalisedTitle(title) && reviewBacklogNearbyCitation(f, title+"\n"+body)
 	}
 	return reviewBacklogNearbyCitation(f, title+"\n"+body) || reviewBacklogSharesSymbol(f.Title, title)
 }
@@ -434,6 +443,11 @@ type reviewBacklogFingerprintRecord struct {
 	// BlockState is blocked, lifted or retriage; ReconcileReviewBacklogBlocks
 	// moves it on when BlockedOnPR merges or closes.
 	BlockState string `json:"block_state,omitempty"`
+	// File and Title are the finding's evidence file (repo-relative) and
+	// title, kept so the block sweep can check whether the finding still
+	// applies on the base once BlockedOnPR merges (hivecommons/hive#15627).
+	File  string `json:"file,omitempty"`
+	Title string `json:"title,omitempty"`
 }
 
 func (r reviewBacklogFingerprintRecord) ref() ReviewBacklogRef {

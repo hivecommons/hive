@@ -313,15 +313,15 @@
 
       // Split into active (non-revoked) and revoked lists
       const showingRevokedFilter = _contributorFilters.has('revoked');
-      const nonRevoked = filtered.filter(c => c.trust_tier !== 'revoked');
+      const nonRevoked = contributorsOnlineFirst(filtered.filter(c => c.trust_tier !== 'revoked'));
       const revoked = filtered.filter(c => c.trust_tier === 'revoked');
 
       // --- Card grid: only non-revoked contributors ---
       let html = '';
       if (nonRevoked.length > 0) {
         const cards = nonRevoked.map(c => {
-          const dotColor = c.active ? 'var(--green)' : 'var(--muted)';
-          const dotTitle = c.active ? 'Online' : 'Offline';
+          const dotClass = c.online ? 'online' : 'offline';
+          const dotTitle = c.online ? 'Online — heartbeat within the presence window' : 'Offline — no heartbeat within the presence window';
           // The face is the profile link. The @username beside it used to be a
           // second anchor to that same profile; it stays as plain text so there
           // is one control per destination.
@@ -340,7 +340,7 @@
           const initialTint = contribTintReadCache(login) || contribTintFallback(login);
           return `<div class="contrib-card" data-contrib-login="${esc(login)}" data-contrib-avatar="${esc(c.avatar_url || '')}" style="--contrib-accent:${esc(initialTint.accent)};--contrib-accent-2:${esc(initialTint.accent2)}">
             <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4);flex-wrap:wrap">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0" title="${dotTitle}"></span>
+              <span class="contrib-status-dot ${dotClass}" title="${dotTitle}"></span>
               ${avatarHtml}
               <span style="font-weight:600">@${esc(c.github_username)}</span>
               <span class="contrib-role-pill" style="flex-shrink:0"${tierProv ? ` title="${esc(tierProv)}"` : ''}>${trustTierBadge(c.trust_tier)}</span>
@@ -494,15 +494,39 @@
       const sidebarBadge = document.getElementById('contributors-sidebar-badge');
       const statusBadge = document.getElementById('contributors-status-badge');
       if (!pool) return;
-      const activeCount = pool.active || 0;
-      const totalCount = pool.registered || 0;
-      if (sidebarBadge) setSidebarCountBadge(sidebarBadge, totalCount, `${activeCount} active of ${totalCount} registered`);
+      const onlineCount = Number(pool.online) || 0;
+      const totalCount = Number(pool.registered) || 0;
+      const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
+      // Same two-part pill as Governor / Overview: "online/total".
+      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
-        statusBadge.textContent = `${activeCount} active / ${totalCount} registered`;
-        statusBadge.style.background = activeCount > 0 ? 'var(--green)' : 'var(--line)';
-        statusBadge.style.color = '#fff';
+        statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
+        statusBadge.title = tip;
+        statusBadge.classList.toggle('is-online', onlineCount > 0);
       }
+    }
+
+    // contributorsOnlineTitle is the pill tooltip: "3 online · 12 registered
+    // (heartbeat within 15m)". The window is the hub's presence_window, the
+    // same one the tracker's "(offline 13m)" caption is judged against.
+    function contributorsOnlineTitle(online, total, window) {
+      const o = Number(online) || 0;
+      const t = Number(total) || 0;
+      const w = window ? ` (heartbeat within ${window})` : '';
+      return `${o} online · ${t} registered${w}`;
+    }
+
+    // contributorsOnlineFirst orders a contributor list online first, then by
+    // login, so the people who can take work now sit at the top. Pure; does
+    // not mutate its input.
+    function contributorsOnlineFirst(list) {
+      return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
+        const ao = a && a.online ? 1 : 0;
+        const bo = b && b.online ? 1 : 0;
+        if (ao !== bo) return bo - ao;
+        return String((a && a.github_username) || '').localeCompare(String((b && b.github_username) || ''));
+      });
     }
 
     // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit

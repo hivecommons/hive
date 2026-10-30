@@ -28,6 +28,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +123,10 @@ type Evidence struct {
 	// DecisionQuestion is the maintainer-facing question from the reviewer
 	// verdict/comment, when the swarm explicitly deferred a product call.
 	DecisionQuestion string
+	// DecisionFinding is what the review found that makes the question a
+	// person's — printed so the comment and tracker say WHY, not just that
+	// a decision is owed (hivecommons/hive, owner rule 2026-10-29).
+	DecisionFinding string
 	// HumanSummaries are reviewer summaries for requires_human verdicts that
 	// did not carry a structured decision question.
 	HumanSummaries []string
@@ -254,6 +259,11 @@ const (
 	// closed, or the merged PR declares it) instead of parking it at 085 on
 	// a reviewer's requires_human (hivecommons/hive#15208).
 	LaneReasonSupersededByMerge = "superseded-by-merge"
+	// LaneReasonAlreadyLanded is the ledger reason when the hive closes its
+	// own PR because the reviewer's verdict on the head says the change is
+	// already on the base and the closer proved it (hivecommons/hive#15647);
+	// AlreadyLandedReason appends the landing PR (":#N") when known.
+	LaneReasonAlreadyLanded = "self-authored:already-landed"
 	// LaneReasonAdoptionStalledPrefix opens the 085 reason for an adopted
 	// PR (074) whose head sat past the stage dwell with nothing the hive
 	// could push; the suffix is the lane reason it was stuck on
@@ -352,6 +362,9 @@ func RouteHuman(e Evidence) Route {
 			break
 		}
 		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
+		if f := strings.TrimSpace(e.DecisionFinding); f != "" {
+			decide = append(decide, "the review found: "+f)
+		}
 		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
 			if decisionQuestionPlaceholderMention(q) {
 				q += " _(the reviewer named no specific person; repository approvers/owners, this is yours)_"
@@ -641,4 +654,27 @@ func HumanAuthorOwesAnswer(e Evidence) bool {
 // its own, so it never turns a human author's question into a decision.
 func IsDecisionRequestedReason(reason string) bool {
 	return strings.EqualFold(strings.TrimSpace(reason), "contributor-lane:decision-requested")
+}
+
+// AlreadyLandedReason is LaneReasonAlreadyLanded with the PR that landed
+// the change (":#N"), or bare when none was named.
+func AlreadyLandedReason(landed int) string {
+	if landed <= 0 {
+		return LaneReasonAlreadyLanded
+	}
+	return LaneReasonAlreadyLanded + ":#" + strconv.Itoa(landed)
+}
+
+// AlreadyLandedCaption is the tracker caption for an AlreadyLandedReason
+// ("already landed via #N — closing as superseded"); ok is false for any
+// other reason.
+func AlreadyLandedCaption(reason string) (caption string, ok bool) {
+	r := strings.TrimSpace(reason)
+	if r != LaneReasonAlreadyLanded && !strings.HasPrefix(r, LaneReasonAlreadyLanded+":#") {
+		return "", false
+	}
+	if n, err := strconv.Atoi(strings.TrimPrefix(r, LaneReasonAlreadyLanded+":#")); err == nil && n > 0 {
+		return "already landed via #" + strconv.Itoa(n) + " — closing as superseded", true
+	}
+	return "already landed on the base — closing as superseded", true
 }

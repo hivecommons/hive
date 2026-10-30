@@ -2997,71 +2997,148 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 // queuer). The dashboard's delegated decision uses it to carry the
 // owner-delegate audit marker on the review itself.
 func (c *Client) QueuePRAutoMergeWithNote(ctx context.Context, repo string, number int, queuedBy, note string) error {
+	_, err := c.QueuePRAutoMergeWithNoteResult(ctx, repo, number, queuedBy, note)
+	return err
+}
+
+// PRAutoMergeQueueResult reports how QueuePRAutoMergeWithNoteResult
+// recorded the queue: HeadSHA is the head it applies to; ReviewSubmitted is
+// false when the hive could not review the PR because it is the hive's own
+// (GitHub refuses "Can not approve your own pull request"), in which case
+// the queue line was left as a comment instead and the caller records the
+// operator's approval in the hive's own store so the self-authored lane
+// merges on it (hivecommons/hive#15666).
+type PRAutoMergeQueueResult struct {
+	HeadSHA         string
+	ReviewSubmitted bool
+	SelfAuthored    bool
+}
+
+// ownPullRequestReviewRefusal is the phrase in GitHub's 422 for an APPROVE
+// (or REQUEST_CHANGES) review on the caller's own pull request.
+const ownPullRequestReviewRefusal = "own pull request"
+
+// IsOwnPullRequestReviewRefusal reports whether err is GitHub's 422 "Review
+// Can not approve your own pull request" (or the request-changes twin): the
+// reviewer is the PR author, which no retry changes. Callers treat it as a
+// policy answer, not a fault, and fall back to a comment.
+func IsOwnPullRequestReviewRefusal(err error) bool {
+	if err == nil || !githubStatusError(err, http.StatusUnprocessableEntity) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), ownPullRequestReviewRefusal)
+}
+
+// pullRequestSelfAuthored reports whether pr is the hive's own: opened by
+// one of its posting identities or stamped author/hive by the classifier.
+func (c *Client) pullRequestSelfAuthored(pr *gh.PullRequest) bool {
+	if c == nil || pr == nil {
+		return false
+	}
+	if c.isHiveAccount(pr.GetUser()) || c.IsHiveAuthorLogin(safeGetLogin(pr.GetUser())) {
+		return true
+	}
+	names := authorkind.Names{}
+	if c.authorKindLabels != nil {
+		names = c.authorKindLabels()
+	}
+	return authorkind.FromLabels(labelNames(pr.Labels), names) == authorkind.Hive
+}
+
+// QueuePRAutoMergeWithNoteResult is QueuePRAutoMergeWithNote reporting how
+// the queue was recorded. On the hive's own PR the App cannot approve
+// (GitHub 422 "Can not approve your own pull request"), so no review is
+// attempted: the queue line is posted as an issue comment and the label
+// applied. The same fallback runs when GitHub answers that 422 for an
+// author the hive did not recognise as itself.
+func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string, number int, queuedBy, note string) (PRAutoMergeQueueResult, error) {
 	if c == nil {
-		return ErrNoGitHubClient
+		return PRAutoMergeQueueResult{}, ErrNoGitHubClient
 	}
 	queuedBy = strings.TrimSpace(queuedBy)
 	if queuedBy == "" {
-		return errors.New("queuedBy is required for auto-merge audit and self-merge checks")
+		return PRAutoMergeQueueResult{}, errors.New("queuedBy is required for auto-merge audit and self-merge checks")
 	}
 	owner, repoName := c.splitRepo(repo)
 	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:queue_pr_automerge"), owner, repoName, number)
 	if err != nil {
-		return fmt.Errorf("fetching PR head for auto-merge approval: %w", err)
+		return PRAutoMergeQueueResult{}, fmt.Errorf("fetching PR head for auto-merge approval: %w", err)
 	}
 	headSHA := ""
 	if pr.GetHead() != nil {
 		headSHA = pr.GetHead().GetSHA()
 	}
 	if headSHA == "" {
-		return errors.New("PR head SHA is required for auto-merge approval")
+		return PRAutoMergeQueueResult{}, errors.New("PR head SHA is required for auto-merge approval")
 	}
+	full := owner + "/" + repoName
+	res := PRAutoMergeQueueResult{HeadSHA: headSHA, SelfAuthored: c.pullRequestSelfAuthored(pr)}
 	if blocked := c.sentinelBlockedLabel(labelNames(pr.Labels)); blocked != "" {
 		c.recordWriteAudit(AuditActionSentinelBlockedApproval, InvocationMeta{Agent: AttributionAgentGovernor},
-			WriteTarget{Repo: owner + "/" + repoName, Number: number},
+			WriteTarget{Repo: full, Number: number},
 			"agent", queuedBy, "label", blocked)
-		return fmt.Errorf("approving PR: %s label blocks Hive approval and auto-merge", blocked)
+		return res, fmt.Errorf("approving PR: %s label blocks Hive approval and auto-merge", blocked)
 	}
 	label := c.AutoMergeLabel()
 	if err := c.ensureLabel(ctx, owner, repoName, label); err != nil {
-		return fmt.Errorf("ensuring %s label: %w", label, err)
+		return res, fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
 	if note = strings.TrimSpace(note); note != "" {
 		body += "\n\n" + note
 	}
-	provenance := owner + "/" + repoName + "#" + strconv.Itoa(number)
-	_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
-		Repo:   owner + "/" + repoName,
-		Kind:   effects.KindReviewSubmit,
-		Target: strconv.Itoa(number),
-		Inputs: map[string]string{"event": "APPROVE", "head_sha": headSHA, "body": effects.StableDigest(body)},
-	}, func(ctx context.Context) (effects.ExternalState, error) {
-		return c.observeReviewSubmit(ctx, owner, repoName, number, body, headSHA, provenance)
-	}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
-		_, _, apiErr := c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
-			CommitID: gh.Ptr(headSHA),
-			Body:     gh.Ptr(body),
-			Event:    gh.Ptr("APPROVE"),
+	refusedAsOwn := false
+	if !res.SelfAuthored {
+		provenance := full + "#" + strconv.Itoa(number)
+		_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
+			Repo:   full,
+			Kind:   effects.KindReviewSubmit,
+			Target: strconv.Itoa(number),
+			Inputs: map[string]string{"event": "APPROVE", "head_sha": headSHA, "body": effects.StableDigest(body)},
+		}, func(ctx context.Context) (effects.ExternalState, error) {
+			return c.observeReviewSubmit(ctx, owner, repoName, number, body, headSHA, provenance)
+		}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
+			_, _, apiErr := c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
+				CommitID: gh.Ptr(headSHA),
+				Body:     gh.Ptr(body),
+				Event:    gh.Ptr("APPROVE"),
+			})
+			if IsOwnPullRequestReviewRefusal(apiErr) {
+				// Policy, not a fault: nothing to reconcile later.
+				refusedAsOwn = true
+				return effects.Result{Provenance: provenance}, nil
+			}
+			return effects.Result{Provenance: provenance}, apiErr
 		})
-		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
-	})
-	if err != nil {
-		return fmt.Errorf("approving PR: %w", err)
+		if err != nil {
+			return res, fmt.Errorf("approving PR: %w", err)
+		}
+		res.ReviewSubmitted = !refusedAsOwn
+		res.SelfAuthored = res.SelfAuthored || refusedAsOwn
 	}
-	// Audit the review so it counts as activity on the trail. This is the hive's
-	// own auto-merge self-approval (a governor action); agent-authored reviews
-	// come through the review-request watcher, which audits separately.
-	c.recordWriteAudit(AuditActionPRReviewed, InvocationMeta{Agent: AttributionAgentGovernor},
-		WriteTarget{Repo: owner + "/" + repoName, Number: number},
-		"agent", queuedBy, "state", "approved")
-	if err := c.AddLabels(ctx, owner+"/"+repoName, number, []string{label}); err != nil {
-		return fmt.Errorf("adding %s label: %w", label, err)
+	if res.ReviewSubmitted {
+		// Audit the review so it counts as activity on the trail. This is the hive's
+		// own auto-merge self-approval (a governor action); agent-authored reviews
+		// come through the review-request watcher, which audits separately.
+		c.recordWriteAudit(AuditActionPRReviewed, InvocationMeta{Agent: AttributionAgentGovernor},
+			WriteTarget{Repo: full, Number: number},
+			"agent", queuedBy, "state", "approved")
+	} else {
+		// The App cannot review its own pull request: leave the queue line
+		// as a comment so the decision stays visible and attributed; the
+		// caller records the operator's approval in the hive's store.
+		if err := c.CreateIssueComment(ctx, full, number, body); err != nil {
+			return res, fmt.Errorf("posting auto-merge queue note: %w", err)
+		}
+		c.info("auto-merge queue: the PR is the hive's own, approval left as a comment instead of a review", "repo", full, "pr", number, "queued_by", queuedBy, "head", headSHA)
+	}
+	if err := c.AddLabels(ctx, full, number, []string{label}); err != nil {
+		return res, fmt.Errorf("adding %s label: %w", label, err)
 	}
 	if strings.EqualFold(label, prowLgtmLabel) {
 		c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy)
 	}
-	return nil
+	return res, nil
 }
 
 // observeReviewSubmit is the authoritative observation of a review submission
@@ -3204,7 +3281,7 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repoName, &gh.Label{
 		Name:        gh.Ptr(name),
 		Color:       gh.Ptr(color),
-		Description: gh.Ptr(strings.TrimSpace(description)),
+		Description: gh.Ptr(clampLabelDescription(description)),
 	})
 	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
 		return nil

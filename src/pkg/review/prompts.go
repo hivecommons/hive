@@ -535,6 +535,7 @@ func scopeContractSection(pr PullRequest) string {
 	}
 	b.WriteString("- Classify every finding with review_scope: \"in-scope\" when it affects whether this PR satisfies that contract, or \"out-of-scope\" when it is a real adjacent/pre-existing concern for later work.\n")
 	b.WriteString("- Only in-scope findings may affect your verdict. Out-of-scope findings need file:line evidence too, but they do not block this PR; the hive will file them as backlog issues.\n")
+	b.WriteString(priorNotesInstruction)
 	if isLinear && linearText != "" {
 		b.WriteString("- Mark each acceptance criterion in that issue delivered, missing, or deferred in your summary.\n\n")
 		return b.String()
@@ -546,6 +547,17 @@ func scopeContractSection(pr PullRequest) string {
 	b.WriteString("\n\n")
 	return b.String()
 }
+
+// priorNotesInstruction keeps a perspective from re-reporting another
+// perspective's or an earlier head's note as a finding of its own: each such
+// re-report used to become one more backlog issue per perspective per head
+// (hivecommons/hive#15627, #15628, #15629 were one finding). The hive drops
+// carry-over wrappers and treats ReviewRefersToMarker as a reference.
+const priorNotesInstruction = "- Report only findings that are NEW from this perspective at this head. Do NOT re-report another perspective's note, or a note already raised at an earlier head, as a finding of your own: a finding titled \"Previous style note still present\" or \"Prior finding unchanged\" is a reference, not a finding, and the hive discards it instead of filing it. If you must mention a prior note, say so in your summary, or cite its backlog issue inside the finding's summary with `<!-- hive-refers-to: #N -->`; the hive treats that as a reference to issue N, never as a new filing.\n"
+
+// ReviewRefersToMarker is the marker a finding carries to cite an existing
+// backlog item instead of raising a new one; pkg/github reads it.
+const ReviewRefersToMarker = "<!-- hive-refers-to:"
 
 // untrustedFence returns a backtick fence longer than any backtick run in
 // text, so the text cannot close the block it is quoted in.
@@ -748,10 +760,21 @@ func buildHeadFanOutInstruction(pr PullRequest, perspectives []Perspective, back
 	fmt.Fprintf(&b, "1. Fetch the PR metadata, the full diff of %s#%d and any linked issue or contract ONCE, yourself, as the read instructions above describe.\n", pr.Repo, pr.Number)
 	fmt.Fprintf(&b, "2. Start one sub-agent per perspective, all %d at once, IN PARALLEL, not one after another (Claude Code: the Task tool; Codex and other backends: their sub-agent facility). Give each sub-agent the diff, the PR metadata, the linked issue or contract text, the shared instructions above (scope contract, grounding, finding schema) and ONLY its own section from PERSPECTIVE SECTIONS below. Each sub-agent returns exactly one verdict object for its perspective.\n", len(perspectives))
 	writeFanOutModelPin(&b, backend, model)
+	fmt.Fprintf(&b, "   Grounding budget: the shared %d tool calls cover this whole review, not each sub-agent. Tell each sub-agent it may make at most %d investigation tool calls for its own perspective, so the total across all %d stays within the cap.\n", combinedGroundingBudget(len(perspectives)), fanOutSubAgentBudget(len(perspectives)), len(perspectives))
 	b.WriteString("3. Sub-agents must NOT post anything on the PR, must NOT call hive-review, must NOT read other hive reviews of this head SHA, and must NOT fetch the PR or its diff again: they work from what you passed them. They may read the surrounding code in the checkout to ground a finding.\n")
 	b.WriteString("4. Collect every result, check each object names its own perspective and carries this PR's repo, number, head_sha and body_digest, write them as ONE JSON array to the verdict file, and record it ONCE with the --record-verdict command above. Only you call hive-review.\n")
 	b.WriteString("If sub-agents are unavailable, or one fails or returns no usable verdict, review those perspectives yourself one by one in this session. The array contract is unchanged either way.\n")
 	return b.String()
+}
+
+// fanOutSubAgentBudget splits the combined grounding budget evenly across the
+// per-perspective sub-agents of a fan-out (hivecommons/hive#15435), so the
+// shared "whole review" cap is not read as each sub-agent's own.
+func fanOutSubAgentBudget(n int) int {
+	if n < 1 {
+		n = 1
+	}
+	return max(1, combinedGroundingBudget(n)/n)
 }
 
 // writeFanOutModelPin keeps the head's model guarantee across the fan-out.

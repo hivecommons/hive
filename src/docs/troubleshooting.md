@@ -137,7 +137,7 @@ podman exec hive hive validate                  # Podman
 
 ## GitHub credentials are missing or invalid
 
-When no token or App credentials are usable, Hive starts the dashboard but disables write-capable GitHub work. The code logs these exact messages from `src/cmd/hive/main.go` depending on the state:
+When no token or App credentials are usable, Hive starts the dashboard but disables write-capable GitHub work. The code logs these exact messages from `src/cmd/hive/main_github_app.go` depending on the state:
 
 - `no GitHub token configured (set github.token or github.app_id in config) — starting in dashboard-only mode`
 - `GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.`

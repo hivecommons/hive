@@ -251,7 +251,7 @@ stageTrackerSetMenuOpen(el, true); assert.ok(el.classList.contains('ham-menu-ope
 stageTrackerSetMenuOpen(el, false); assert.ok(!el.classList.contains('ham-menu-open'));
 stageTrackerSetMenuOpen(null, true); // tolerant of a missing panel
 `
-	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+	if out, err := runNodeStdin(node, script); err != nil {
 		t.Fatalf("node gutter invariant fixture failed: %v\n%s", err, out)
 	}
 }

@@ -87,7 +87,7 @@ func TestPrefilterTrustedAuthorPRDoesNotSpecialCaseTrustedBot(t *testing.T) {
 	pr := selfAuthoredListPR(func(pr *gh.PullRequest) {
 		pr.User = &gh.User{Login: gh.Ptr("dependabot[bot]")}
 	})
-	if got := c.prefilterTrustedAuthorPR(pr, TrustedAuthorPolicy{RequireRole: "merger"}); got != "untrusted-author-role" {
+	if got := c.prefilterTrustedAuthorPR("acme", "widget", pr, TrustedAuthorPolicy{RequireRole: "merger"}); got != "untrusted-author-role" {
 		t.Fatalf("prefilterTrustedAuthorPR = %q, want untrusted-author-role", got)
 	}
 }

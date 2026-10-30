@@ -191,17 +191,17 @@ func TestF3IsTrustedMergerFailsClosedInSource(t *testing.T) {
 // silently stops merging — or, if the fail-closed branch were also lost, merges
 // everything.
 func TestF3AuthorizerIsWiredInMain(t *testing.T) {
-	src := f3ReadSource(t, "../../../cmd/hive/main.go")
+	pkg := f3ReadPackage(t, "../../../cmd/hive")
 
 	// Whitespace-tolerant: gofmt column-aligns the key when sibling fields
 	// (TrustedAuthorizer, TrustedAuthorPolicy) are longer.
-	if !regexp.MustCompile(`MergerAuthorizer:\s+trustedMergerFunc\(cfg\)`).MatchString(src) {
+	if !regexp.MustCompile(`MergerAuthorizer:\s+trustedMergerFunc\(cfg\)`).MatchString(pkg) {
 		t.Error("cmd/hive main() does not install the trusted-merger authorizer — the F3 gate in " +
 			"trySweepQueuedPR is present but INERT (audit F3, standing). Restore " +
 			"MergerAuthorizer: trustedMergerFunc(cfg) beside StartMergeRequestWatcher.")
 	}
 
-	body := f3FuncBody(t, f3ReadPackage(t, "../../../cmd/hive"), "func trustedMergerFunc(", "trustedMergerFunc")
+	body := f3FuncBody(t, pkg, "func trustedMergerFunc(", "trustedMergerFunc")
 	if !strings.Contains(body, "config.RoleAtLeast(role, config.RoleMerger)") {
 		t.Error("trustedMergerFunc no longer requires at least config.RoleMerger — the sweep would " +
 			"admit a tier below the one the dashboard queue endpoint enforces (audit F3)")

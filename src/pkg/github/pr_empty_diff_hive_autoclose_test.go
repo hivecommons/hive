@@ -1,7 +1,13 @@
 package github
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +43,20 @@ func TestDecideHiveEmptyDiffAutoClose(t *testing.T) {
 		{"parked by a person keeps", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.ParkedByPerson = true }), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonPerson},
 		{"below L6 keeps", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.Level = acmmLevelAutonomous - 1 }), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonLevel},
 		{"fresh head keeps", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.HeadAge = EmptyDiffMinHeadAge / 2 }), hiveEmptyDiffVerdictKeep, hiveEmptyDiffReasonTooFresh},
+		// hivecommons/hive#15647: the reviewer read this head and said it
+		// is already landed; a fresh head is not mid-push, and files that
+		// are all identical on the base tip are no diff.
+		{"reviewer-confirmed fresh head closes", with(func(f *HiveEmptyDiffAutoCloseFacts) { f.HeadAge = 0; f.ReviewerConfirmed = true }), hiveEmptyDiffVerdictClose, SupersessionActionClosedEmptyDiff},
+		{"files identical on base close as already landed", with(func(f *HiveEmptyDiffAutoCloseFacts) {
+			f.DiffFiles = 2
+			f.TreeMatchesBase = true
+			f.ReviewerConfirmed = true
+		}), hiveEmptyDiffVerdictClose, SupersessionActionClosedAlreadyLanded},
+		{"files identical on base but a person's PR is a prompt", with(func(f *HiveEmptyDiffAutoCloseFacts) {
+			f.DiffFiles = 2
+			f.TreeMatchesBase = true
+			f.HiveAuthored = false
+		}), hiveEmptyDiffVerdictHumanNote, hiveEmptyDiffReasonNotHive},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,7 +81,7 @@ func TestPRChangedFilesClaimsEmpty(t *testing.T) {
 }
 
 func TestRenderEmptyDiffCloseCommentCarriesMarkers(t *testing.T) {
-	body := renderEmptyDiffCloseComment(supersessionCloser{Repo: "hivecommons/hive", Number: 15427, URL: "https://github.com/hivecommons/hive/pull/15427"}, "closed: empty diff")
+	body := renderEmptyDiffCloseComment(supersessionCloser{Repo: "hivecommons/hive", Number: 15427, URL: "https://github.com/hivecommons/hive/pull/15427"}, "closed: empty diff", false)
 	for _, want := range []string{supersessionSweepMarker, reviewRedundantOfMarker + " #15427 -->", "[#15427](https://github.com/hivecommons/hive/pull/15427)", "edited in place"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("comment lacks %q:\n%s", want, body)
@@ -93,5 +113,45 @@ func TestReviewRedundantOfNumber(t *testing.T) {
 		if got := reviewRedundantOfNumber(body); got != want {
 			t.Fatalf("%q → %d, want %d", body, got, want)
 		}
+	}
+}
+
+// hivecommons/hive#15689: CloseIssue's gates (here the tracking-issue
+// refusal) may keep an issue open; the "this issue is done" note must then
+// not be posted. A close that goes through still gets its note.
+func TestCloseIssuesAlreadyLandedNotesOnlyClosedIssues(t *testing.T) {
+	var mu sync.Mutex
+	var comments, closes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1":
+			_ = json.NewEncoder(w).Encode(trackingTestIssue(1, nil, trackingTestBody))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/2":
+			_ = json.NewEncoder(w).Encode(&gh.Issue{Number: gh.Ptr(2), State: gh.Ptr("open"), Title: gh.Ptr("Fix the sweep"), User: &gh.User{Login: gh.Ptr("owner")}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			comments = append(comments, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPatch:
+			closes = append(closes, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "closed"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	pr := &gh.PullRequest{Number: gh.Ptr(7), Body: gh.Ptr("Closes #1\nCloses #2"), Base: &gh.PullRequestBranch{Ref: gh.Ptr("v5")}}
+
+	got := c.closeIssuesAlreadyLanded(context.Background(), "o", "r", pr, 5)
+	if !reflect.DeepEqual(got, []int{2}) {
+		t.Fatalf("closed = %v, want [2]", got)
+	}
+	if want := []string{"/repos/o/r/issues/2"}; !reflect.DeepEqual(closes, want) {
+		t.Fatalf("closes = %v, want %v", closes, want)
+	}
+	if want := []string{"/repos/o/r/issues/2/comments"}; !reflect.DeepEqual(comments, want) {
+		t.Fatalf("done notes = %v, want only on the closed issue %v", comments, want)
 	}
 }

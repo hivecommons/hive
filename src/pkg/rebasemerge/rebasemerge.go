@@ -1,6 +1,6 @@
 // Package rebasemerge is the "Rebase, then merge as maintainer" follow-through
 // (hivecommons/hive: #14822 sat 14h at 085 behind v5 with no lane owning the
-// rebase, and "Approve & merge as maintainer" on a dirty PR would have been a
+// rebase, and "Merge now as maintainer" on a dirty PR would have been a
 // GitHub 405). An operator's merge-now on a PR that is behind or conflicting
 // records the approval first, arms a follow-through here, and the hive does
 // the rest: a fixer rebases the branch (the merge-eligibility router admits

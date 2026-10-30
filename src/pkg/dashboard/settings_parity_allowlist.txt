@@ -470,6 +470,7 @@ forgestate.freshness_bound_s # yaml-only until readers migrate (#13373)
 forgestate.reconcile_interval_s # yaml-only until readers migrate (#13373)
 forgestate.search_budget # yaml-only until readers migrate (#13373)
 scanner.skip_issues_with_open_pr # open-PR dispatch guard (#14799); yaml-only
+security.sensitive_paths[] # TODO #15640
 self_experiments.scheduler.enabled # TODO #11854
 self_experiments.scheduler.interval_s # TODO #11854
 self_experiments.scheduler.mode # TODO #11854
@@ -522,3 +523,5 @@ governor.hotspot_min_prs # merge-hotspot advisor; yaml-only
 governor.hotspot_min_overlaps # merge-hotspot advisor; yaml-only
 governor.hotspot_min_lines # merge-hotspot advisor; yaml-only
 governor.hotspot_refile_days # merge-hotspot advisor; yaml-only
+governor.hotspot_max_open # merge-hotspot advisor; yaml-only
+governor.hotspot_max_per_pass # merge-hotspot advisor; yaml-only
