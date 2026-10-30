@@ -25,6 +25,10 @@ const baseRefreshCacheLimit = 4096
 // baseRefreshMergeParents is the parent count of a merge commit.
 const baseRefreshMergeParents = 2
 
+// baseRefreshMaxHops bounds how many consecutive hive base refreshes the
+// carry walks back through to reach the decided head (hivecommons/hive#15766).
+const baseRefreshMaxHops = 5
+
 // BaseRefreshRepos is the slice of the repositories API the base-refresh
 // check reads: one commit lookup and two three-dot compares per new head.
 type BaseRefreshRepos interface {
@@ -58,7 +62,7 @@ func (b *BaseRefreshChecker) HeadIsBaseRefreshOf(ctx context.Context, api BaseRe
 	if got, seen := b.Known(owner, repo, number, oldHead, newHead); seen {
 		return got
 	}
-	ok := headIsBaseRefreshOf(ctx, api, owner, repo, baseRef, oldHead, newHead, appBotLogin)
+	ok := headIsBaseRefreshChainOf(ctx, api, owner, repo, baseRef, oldHead, newHead, appBotLogin)
 	b.mu.Lock()
 	if b.cache == nil || len(b.cache) >= baseRefreshCacheLimit {
 		b.cache = map[string]bool{}
@@ -83,6 +87,32 @@ func (b *BaseRefreshChecker) Known(owner, repo string, number int, oldHead, newH
 
 func baseRefreshKey(owner, repo string, number int, oldHead, newHead string) string {
 	return owner + "/" + repo + "#" + strconv.Itoa(number) + "@" + newHead + "<-" + oldHead
+}
+
+// headIsBaseRefreshChainOf is the single-hop check first, then a walk back
+// along the first-parent chain: every hop must itself pass the single-hop
+// check (App-authored merge, base parent on the base branch, diff
+// unchanged), and the walk reaches oldHead within baseRefreshMaxHops.
+func headIsBaseRefreshChainOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef, oldHead, newHead, appBotLogin string) bool {
+	if headIsBaseRefreshOf(ctx, api, owner, repo, baseRef, oldHead, newHead, appBotLogin) {
+		return true
+	}
+	cur := newHead
+	for hop := 0; hop < baseRefreshMaxHops; hop++ {
+		commit, _, err := api.GetCommit(WithRESTCaller(ctx, "hive:decision_base_refresh"), owner, repo, cur, nil)
+		if err != nil || commit == nil || len(commit.Parents) != baseRefreshMergeParents {
+			return false
+		}
+		parent := strings.TrimSpace(commit.Parents[0].GetSHA())
+		if parent == "" || parent == cur || !headIsBaseRefreshOf(ctx, api, owner, repo, baseRef, parent, cur, appBotLogin) {
+			return false
+		}
+		if parent == oldHead {
+			return true
+		}
+		cur = parent
+	}
+	return false
 }
 
 func headIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef, oldHead, newHead, appBotLogin string) bool {
