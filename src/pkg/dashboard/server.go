@@ -186,8 +186,13 @@ type Server struct {
 	// "Merged" chip (merged_ledger.go); built lazily by mergedLedger.
 	merged     *MergedLedger
 	mergedOnce sync.Once
-	sidebar    interface{}
-	sidebarMu  sync.RWMutex
+	// recentlyClosed is the in-memory list behind
+	// StageTrackerResponse.RecentlyClosed (stage_tracker_recently_closed.go).
+	recentlyClosedMu sync.Mutex
+	recentlyClosed   []StageTrackerClosed
+
+	sidebar   interface{}
+	sidebarMu sync.RWMutex
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
@@ -1526,8 +1531,8 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 	}
 	s.registerCoreRoutes()
 	// A merge attempt beginning or ending is a tracker change the next poll
-	// must see (hivecommons/hive#15245).
-	github.DefaultMergeAttempts().SetOnChange(func() { s.invalidateStageTrackerCache() })
+	// must see (hivecommons/hive#15245, #15808).
+	github.DefaultMergeAttempts().SetOnChange(s.noteMergeAttempt)
 	return s
 }
 
