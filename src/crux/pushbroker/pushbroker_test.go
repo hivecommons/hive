@@ -122,6 +122,60 @@ func TestBrokerRejectsProtectedPathsWithQuotedNames(t *testing.T) {
 	}
 }
 
+// A rename must check both endpoints regardless of diff.renames or which
+// base-selection route the broker uses. In particular, moving a protected
+// file to an unprotected directory must not hide its deletion from the gate.
+func TestBrokerRejectsRenamedProtectedPaths(t *testing.T) {
+	for _, mode := range []string{"explicit base", "remote base", "no base"} {
+		for _, protected := range []string{".github/workflows/ci.yml", "policies/x.rego", "OWNERS", "bin/gh-wrapper.sh"} {
+			for _, intoProtected := range []bool{false, true} {
+				t.Run(mode+"/"+protected+"/intoProtected="+strconv.FormatBool(intoProtected), func(t *testing.T) {
+					dir := initRepo(t)
+					runGit(t, dir, "config", "diff.renames", "true")
+					oldPath, newPath := protected, "notes/moved.txt"
+					if intoProtected {
+						oldPath, newPath = newPath, oldPath
+					}
+					writeCommit(t, dir, oldPath, "unchanged content\n")
+					base := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+					r := &recordingRunner{}
+					b := &Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}
+					switch mode {
+					case "explicit base":
+						b.BaseRef = base
+					case "remote base":
+						runGit(t, dir, "update-ref", "refs/remotes/origin/work", base)
+					}
+					if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, newPath)), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					runGit(t, dir, "mv", oldPath, newPath)
+					runGit(t, dir, "commit", "-s", "-m", "rename file")
+
+					files, err := b.changedFiles(context.Background())
+					if err != nil || len(files) != 2 || !slices.Contains(files, oldPath) || !slices.Contains(files, newPath) {
+						t.Fatalf("changedFiles = %q, %v; want both %q and %q", files, err, oldPath, newPath)
+					}
+					// Explicit diff config is rejected by the config allowlist.
+					// Run with Git's default (also rename-enabled) to exercise
+					// the protected-path gate rather than that earlier gate.
+					runGit(t, dir, "config", "--unset", "diff.renames")
+					res, err := b.Run(context.Background())
+					if err == nil || !strings.Contains(err.Error(), "protected paths changed") {
+						t.Fatalf("Run error = %v, want protected path rejection", err)
+					}
+					if !slices.Equal(res.ProtectedReject, []string{protected}) {
+						t.Fatalf("ProtectedReject = %q, want %q", res.ProtectedReject, protected)
+					}
+					if res.Pushed || r.argsOnPush != nil {
+						t.Fatalf("broker pushed renamed protected file: res=%+v args=%v", res, r.argsOnPush)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestSplitNUL(t *testing.T) {
 	if got := splitNUL(nil); got != nil {
 		t.Fatalf("splitNUL(nil)=%v want nil", got)

@@ -6730,6 +6730,60 @@
     body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
     body.kiosk-mode .ham-sticky { top: 0; }
     body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }
+/* ---- pop-out & full screen: the activity monitor on its own (#15829) ----
+   `?popout=1` (see js/boot.js) is what the ⧉ header button opens in a
+   named popup window so an operator can park the tracker on a second
+   monitor. Same chrome-less layout as kiosk — no sidebar, topbar, avatar
+   menu, chat FAB or notices, every other section out of flow — but attended:
+   the cursor stays, the gear works, and a ⤶ Return link goes back to the
+   opener. The ⛶ button puts the document into the Fullscreen API and sets
+   body.ham-fullscreen, which shares every rule below — the document rather
+   than the section so the body-level toasts (waiting on you, merges) stay
+   visible while full screen. */
+    body.popout-mode, body.ham-fullscreen { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
+    body.popout-mode .oc-sidebar, body.popout-mode .oc-sidebar-resize, body.popout-mode .oc-topbar,
+    body.popout-mode #dash-notices, body.popout-mode #oc-agent-detail, body.popout-mode .hive-chat-fab,
+    body.popout-mode .hive-chat-panel, body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
+    body.ham-fullscreen .oc-sidebar, body.ham-fullscreen .oc-sidebar-resize, body.ham-fullscreen .oc-topbar,
+    body.ham-fullscreen #dash-notices, body.ham-fullscreen #oc-agent-detail, body.ham-fullscreen .hive-chat-fab,
+    body.ham-fullscreen .hive-chat-panel { display: none !important; }
+    /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
+       display:grid!important with id specificity; beat it with (1,2,2). */
+    html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
+    body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
+    body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.popout-mode #activity-monitor-section .dashboard-grip, body.popout-mode #activity-monitor-section .section-chevron,
+    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron { display: none !important; }
+    /* The header cannot collapse the only section on the page, but its
+       gear, full-screen and return buttons must still take clicks. */
+    body.popout-mode #activity-monitor-section .section-header-toggle,
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle { pointer-events: none; }
+    body.popout-mode #activity-monitor-section .section-header-toggle button,
+    body.popout-mode #activity-monitor-section .section-header-toggle .config-info,
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle button,
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
+    /* A collapsed state saved from the main window would leave an empty
+       page with a header that cannot be clicked: always show the body. */
+    body.popout-mode #activity-monitor-section .section-body.collapsed,
+    body.ham-fullscreen #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
+    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions,
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
+    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary,
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
+    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky { top: 0; }
+    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols { top: var(--ham-sticky-bar-h); }
+
+    /* Header tools: ⧉ pop out and ⛶ full screen sit beside the gear and
+       share its chip styling; the return link is a pop-out-only text pill. */
+    .ham-header-tool { width: auto; min-width: 15px; padding: 0 var(--sp-1); font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; }
+    .ham-header-tool[aria-pressed="true"] { color: var(--blue); border-color: var(--blue); }
+    .ham-popout-return { display: none; margin-left: var(--sp-2); padding: 0 var(--sp-2); height: 15px; border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, var(--blue) 60%, transparent); background: color-mix(in srgb, var(--blue) 18%, var(--panel)); color: var(--blue); font: inherit; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0; line-height: 1; white-space: nowrap; cursor: pointer; }
+    .ham-popout-return:hover, .ham-popout-return:focus-visible { background: var(--blue); color: var(--bg); outline: none; }
+    body.popout-mode .ham-popout-return { display: inline-flex; align-items: center; }
+    /* A window that already is the tracker has nothing to pop out, and a
+       kiosk has no one to click. */
+    body.popout-mode .ham-popout-btn, body.ham-fullscreen .ham-popout-btn,
+    body.kiosk-mode .ham-header-tool, body.kiosk-mode .ham-popout-return { display: none !important; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6763,15 +6817,27 @@
 // The class is set here, before first paint, so the chrome never flashes.
 // Tracker sounds are on by default in kiosk mode (the streamer captures them
 // through a PulseAudio null sink); `&sound=off` keeps the display silent.
+// Pop-out mode (#15829): `?popout=1` is the same chrome-less, tracker-only
+// layout for an operator's second monitor — opened by the ⧉ button in the
+// activity monitor header via window.open. Unlike kiosk it is attended: the
+// cursor stays, the settings gear works, preferences persist as usual, and a
+// "Return to dashboard" link focuses the opener. Reloading keeps the layout
+// because the flag lives in the URL.
 (function(){
-  var kiosk=false, sound=true;
-  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, sound=true;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
   window.HIVE_KIOSK=kiosk;
+  window.HIVE_POPOUT=popout&&!kiosk;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
   window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };
   if(kiosk){
     document.body.classList.add('kiosk-mode');
+  }else if(window.HIVE_POPOUT){
+    document.body.classList.add('popout-mode');
+  }
+  if(kiosk||window.HIVE_POPOUT){
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();
@@ -8842,6 +8908,12 @@
       return `<button type="button" class="config-info section-settings-gear" data-section-settings="1" data-action="${esc(action)}" data-stop="1"${extraAttrs || ''} title="${esc(title || (label + ' settings'))}" aria-label="${esc(label)} settings"><svg class="section-settings-gear-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M13.3 2.25h-2.6l-.42 2.66a7.46 7.46 0 0 0-1.24.52L6.86 3.84 5.02 5.68 6.61 7.86c-.22.4-.4.82-.52 1.25l-2.66.42v2.6l2.66.42c.13.43.3.85.52 1.25l-1.59 2.18 1.84 1.84 2.18-1.59c.4.22.81.39 1.24.52l.42 2.66h2.6l.42-2.66c.43-.13.85-.3 1.24-.52l2.18 1.59 1.84-1.84-1.59-2.18c.22-.4.4-.82.52-1.25l2.66-.42v-2.6l-2.66-.42a7.4 7.4 0 0 0-.52-1.25l1.59-2.18-1.84-1.84-2.18 1.59c-.4-.22-.81-.39-1.24-.52l-.42-2.66ZM12 14.9a2.9 2.9 0 1 0 0-5.8 2.9 2.9 0 0 0 0 5.8Z"/></svg></button>`;
     }
 
+    // Pop out / full screen / return (hivecommons/hive#15829), rendered next to
+    // the activity monitor's gear; handlers live in js/tracker-popout.js and
+    // css/popout.css decides which of the three show in which mode.
+    const STAGE_TRACKER_HEADER_TOOLS_HTML = '<button type="button" class="config-info section-settings-gear ham-header-tool ham-popout-btn" id="activity-monitor-popout" data-action="openStageTrackerPopout" data-stop="1" title="Pop out — open the activity monitor in its own window, for another monitor" aria-label="Pop out the Hive activity monitor into its own window">⧉</button>'
+      + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
+      + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
       'governor': { title: '🚦 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
@@ -8869,7 +8941,7 @@
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
-      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -23735,6 +23807,164 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerSaveFilter();
       return true;
     }
+    /* ---- Pop out & full screen -------------------------------------------
+       Two header buttons next to the settings gear (hivecommons/hive#15829)
+       for an operator who wants the activity monitor on another monitor
+       while they do other work. ⧉ opens the SPA in a named popup window on
+       `?popout=1#section-activity-monitor-section`; boot.js reads the flag
+       before first paint and css/popout.css hides every piece of chrome and
+       every other section, so the new window is the tracker and nothing
+       else. The bearer token is in localStorage, so the popup is already
+       signed in. ⛶ toggles the Fullscreen API on the section itself (and
+       `f` does the same while focus is inside the tracker); Esc exits
+       natively and the label flips through the fullscreenchange event.
+       Nothing is persisted: the only state is the URL of the popup. */
+    const STAGE_TRACKER_POPOUT_PARAM = 'popout';
+    const STAGE_TRACKER_POPOUT_WINDOW_NAME = 'hive-activity-monitor';
+    const STAGE_TRACKER_POPOUT_FEATURES = 'popup,width=1600,height=900';
+    const STAGE_TRACKER_POPOUT_HASH = '#section-activity-monitor-section';
+    const STAGE_TRACKER_POPOUT_TITLE = 'Hive · Activity Monitor';
+    const STAGE_TRACKER_FULLSCREEN_KEY = 'f';
+    const STAGE_TRACKER_FULLSCREEN_LABELS = {
+      enter: { text: '⛶', title: 'Full screen — fill the screen with the activity monitor (f, Esc exits)' },
+      exit: { text: '⛶ Exit full screen', title: 'Exit full screen (Esc or f)' },
+    };
+    var _stageTrackerPopoutHiveId = '';
+
+    // Pure: the pop-out URL for the window the operator is on. Keeps the
+    // origin, path and any other query (theme, style…), drops kiosk so the
+    // attended layout wins, and lands on the activity monitor section.
+    function stageTrackerPopoutUrl(href) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      url.searchParams.set(STAGE_TRACKER_POPOUT_PARAM, '1');
+      url.searchParams.delete('kiosk');
+      url.searchParams.delete('filter');
+      url.hash = STAGE_TRACKER_POPOUT_HASH;
+      return url.toString();
+    }
+    // Pure: the main-dashboard URL a pop-out falls back to when the browser
+    // refuses to close it (a tab the operator opened directly, not a popup).
+    function stageTrackerDashboardUrl(href) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      url.searchParams.delete(STAGE_TRACKER_POPOUT_PARAM);
+      url.hash = STAGE_TRACKER_POPOUT_HASH;
+      return url.toString();
+    }
+    // Pure: the pop-out window title; the hive id joins once /api/status
+    // has delivered it.
+    function stageTrackerPopoutTitle(hiveId) {
+      const id = String(hiveId || '').trim();
+      return id ? STAGE_TRACKER_POPOUT_TITLE + ' · ' + id : STAGE_TRACKER_POPOUT_TITLE;
+    }
+    function stageTrackerPopoutMode() {
+      return !!(window.hivePopoutMode && window.hivePopoutMode());
+    }
+    function stageTrackerPopoutSyncTitle(hiveId) {
+      if (hiveId !== undefined) _stageTrackerPopoutHiveId = hiveId || '';
+      if (!stageTrackerPopoutMode()) return;
+      document.title = stageTrackerPopoutTitle(_stageTrackerPopoutHiveId);
+    }
+    function openStageTrackerPopout() {
+      const url = stageTrackerPopoutUrl(window.location.href);
+      if (!url) return null;
+      let win = null;
+      try { win = window.open(url, STAGE_TRACKER_POPOUT_WINDOW_NAME, STAGE_TRACKER_POPOUT_FEATURES); } catch { win = null; }
+      if (!win) {
+        if (typeof showToast === 'function') showToast('The browser blocked the pop-out window — allow pop-ups for this site and try again.', 'error');
+        return null;
+      }
+      try { win.focus(); } catch {}
+      return win;
+    }
+    // ⤶ Return to dashboard: bring the opener forward and close this
+    // pop-out. A window the operator navigated to by hand cannot be
+    // closed by script, so it navigates back to the full dashboard instead.
+    function stageTrackerReturnToDashboard() {
+      try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch {}
+      try { window.close(); } catch {}
+      if (!window.closed) {
+        const url = stageTrackerDashboardUrl(window.location.href);
+        if (url) window.location.assign(url);
+      }
+    }
+
+    // The whole document goes full screen (not the section) so the
+    // body-level toasts — waiting on you, merge celebrations — stay
+    // visible; body.ham-fullscreen then applies the pop-out layout.
+    function stageTrackerFullscreenTarget() {
+      return document.documentElement;
+    }
+    function stageTrackerFullscreenButton() {
+      return document.getElementById('activity-monitor-fullscreen');
+    }
+    function stageTrackerIsFullscreen() {
+      return !!(document.fullscreenElement && document.fullscreenElement === stageTrackerFullscreenTarget()) && document.body.classList.contains('ham-fullscreen');
+    }
+    // Pure: label + title for the ⛶ button given the current state.
+    function stageTrackerFullscreenLabel(isFull) {
+      return isFull ? STAGE_TRACKER_FULLSCREEN_LABELS.exit : STAGE_TRACKER_FULLSCREEN_LABELS.enter;
+    }
+    function stageTrackerRenderFullscreenButton() {
+      // Esc (or the browser) leaving full screen must drop the layout too.
+      if (!document.fullscreenElement) document.body.classList.remove('ham-fullscreen');
+      const full = stageTrackerIsFullscreen();
+      const btn = stageTrackerFullscreenButton();
+      if (!btn) return;
+      const label = stageTrackerFullscreenLabel(full);
+      btn.textContent = label.text;
+      btn.title = label.title;
+      btn.setAttribute('aria-label', label.title);
+      btn.setAttribute('aria-pressed', full ? 'true' : 'false');
+    }
+    function toggleStageTrackerFullscreen() {
+      const target = stageTrackerFullscreenTarget();
+      if (!target) return Promise.resolve(false);
+      let p;
+      if (stageTrackerIsFullscreen()) {
+        document.body.classList.remove('ham-fullscreen');
+        p = document.exitFullscreen ? document.exitFullscreen() : Promise.resolve();
+      } else if (target.requestFullscreen) {
+        document.body.classList.add('ham-fullscreen');
+        p = target.requestFullscreen();
+      } else {
+        if (typeof showToast === 'function') showToast('This browser does not support full screen here.', 'error');
+        return Promise.resolve(false);
+      }
+      return Promise.resolve(p).then(() => { stageTrackerRenderFullscreenButton(); return true; }, (err) => {
+        document.body.classList.remove('ham-fullscreen');
+        stageTrackerRenderFullscreenButton();
+        if (typeof showToast === 'function') showToast('Full screen was refused: ' + ((err && err.message) || err), 'error');
+        return false;
+      });
+    }
+    // Pure: should this keydown toggle full screen? Only a bare `f` with
+    // focus inside the tracker (or anywhere, in a pop-out — the whole page
+    // is the tracker), never while typing in a field.
+    function stageTrackerFullscreenHotkey(ev, inTracker, typing, popout) {
+      if (!ev || ev.key !== STAGE_TRACKER_FULLSCREEN_KEY) return false;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return false;
+      if (typing) return false;
+      return !!(inTracker || popout);
+    }
+    document.addEventListener('keydown', function(e) {
+      const t = e.target;
+      const tag = ((t && t.tagName) || '').toLowerCase();
+      const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || !!(t && t.isContentEditable);
+      const section = document.getElementById('activity-monitor-section');
+      const inTracker = !!(section && t && t.nodeType === 1 && section.contains(t)) || stageTrackerIsFullscreen();
+      if (!stageTrackerFullscreenHotkey(e, inTracker, typing, stageTrackerPopoutMode())) return;
+      const overlay = document.getElementById('activity-monitor-settings-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) return;
+      e.preventDefault();
+      toggleStageTrackerFullscreen();
+    });
+    document.addEventListener('fullscreenchange', stageTrackerRenderFullscreenButton);
+    document.addEventListener('DOMContentLoaded', function() {
+      stageTrackerRenderFullscreenButton();
+      stageTrackerPopoutSyncTitle();
+    });
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
       const m = cadence.match(/^(\d+)(m|h)$/);
@@ -41289,6 +41519,7 @@ function burnAreaChart() {
       if (hiveIdBadge) hiveIdBadge.textContent = hiveId;
       const ocHiveId = document.getElementById('oc-hive-id');
       if (ocHiveId) ocHiveId.textContent = hiveId;
+      if (typeof stageTrackerPopoutSyncTitle === 'function') stageTrackerPopoutSyncTitle(hiveId);
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderProviderStrip(document.getElementById('oc-providers'), data.providers);
@@ -47539,7 +47770,7 @@ function burnAreaChart() {
       const el = document.getElementById("project-name");
       if (el && repoDisplay) {
         el.textContent = "for " + repoDisplay;
-        document.title = "Hive Dashboard for " + repoDisplay;
+        if (!(window.hivePopoutMode && window.hivePopoutMode())) document.title = "Hive Dashboard for " + repoDisplay;
       }
       const ocEl = document.getElementById("oc-project-name");
       if (ocEl && repoDisplay) ocEl.textContent = repoDisplay;
@@ -62783,6 +63014,7 @@ function burnAreaChart() {
     function showNPSSurvey(status) {
       if (_npsShownThisLoad || _npsCard) return;
       if (window.hiveKioskMode && window.hiveKioskMode()) return;
+      if (window.hivePopoutMode && window.hivePopoutMode()) return;
       _npsShownThisLoad = true;
       const maxChars = Number(status && status.max_feedback_chars) || 0;
       let selected = null;
@@ -62929,6 +63161,8 @@ function burnAreaChart() {
       const topBtn = document.getElementById('welcome-topbar-btn');
       if (topBtn) topBtn.style.display = '';
       // Kiosk displays (#15594) are unattended: nothing can dismiss a dialog.
+      // A pop-out (#15829) is the tracker alone; the welcome tour belongs to the main window.
+      if (window.hivePopoutMode && window.hivePopoutMode()) return;
       if (!_welcomeState.dismissed && !(window.hiveKioskMode && window.hiveKioskMode())) openWelcomeDialog();
     }
 

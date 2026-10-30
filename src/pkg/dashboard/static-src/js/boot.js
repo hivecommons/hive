@@ -14,15 +14,27 @@
 // The class is set here, before first paint, so the chrome never flashes.
 // Tracker sounds are on by default in kiosk mode (the streamer captures them
 // through a PulseAudio null sink); `&sound=off` keeps the display silent.
+// Pop-out mode (#15829): `?popout=1` is the same chrome-less, tracker-only
+// layout for an operator's second monitor — opened by the ⧉ button in the
+// activity monitor header via window.open. Unlike kiosk it is attended: the
+// cursor stays, the settings gear works, preferences persist as usual, and a
+// "Return to dashboard" link focuses the opener. Reloading keeps the layout
+// because the flag lives in the URL.
 (function(){
-  var kiosk=false, sound=true;
-  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, sound=true;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
   window.HIVE_KIOSK=kiosk;
+  window.HIVE_POPOUT=popout&&!kiosk;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
   window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };
   if(kiosk){
     document.body.classList.add('kiosk-mode');
+  }else if(window.HIVE_POPOUT){
+    document.body.classList.add('popout-mode');
+  }
+  if(kiosk||window.HIVE_POPOUT){
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();
