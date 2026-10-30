@@ -1,0 +1,1 @@
+- refactor: split `src/pkg/review/prompts.go` into 4 files (`prompts.go`, `prompts_instructions.go`, `prompts_publish.go`, `prompts_combined.go`) to cut rebase churn on a merge hotspot; no behaviour change ([#15701](https://github.com/hivecommons/hive/issues/15701)).

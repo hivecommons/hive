@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -20,7 +21,12 @@ import (
 // agentNoProxy returns the NO_PROXY value handed to agents: loopback plus the
 // host of OMP_AUTH_BROKER_URL, and only that host. An unset, unparsable or
 // host-less URL adds nothing, so every other private address stays behind the
-// proxy's destination guard.
+// proxy's destination guard. The host is appended only when it is an IP
+// literal or a plain DNS hostname: wildcards, leading or trailing dots and
+// any other odd characters fall back to loopback, since NO_PROXY would read
+// them as "bypass everything" or a domain-suffix match.
+var noProxyHostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$`)
+
 func agentNoProxy() string {
 	const loopback = "127.0.0.1,localhost,::1"
 	u, err := url.Parse(strings.TrimSpace(os.Getenv("OMP_AUTH_BROKER_URL")))
@@ -28,7 +34,7 @@ func agentNoProxy() string {
 		return loopback
 	}
 	host := u.Hostname()
-	if host == "" || strings.ContainsAny(host, ", \t") {
+	if net.ParseIP(host) == nil && !noProxyHostRe.MatchString(host) {
 		return loopback
 	}
 	return loopback + "," + host
