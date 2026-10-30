@@ -32,7 +32,7 @@ func useRebaseMergeStore(t *testing.T) *rebasemerge.Store {
 	return store
 }
 
-// "Approve & merge as maintainer" on a PR GitHub reports dirty is not a
+// "Merge now as maintainer" on a PR GitHub reports dirty is not a
 // 405: the approval is recorded first (/lgtm + /approve), the
 // follow-through is armed, the rebase note is left, nothing is merged, and
 // the answer is 202 rebase-queued (hivecommons/hive#14822).
@@ -178,14 +178,15 @@ func TestRebaseMergeRowCaptionFollowedAndOptions(t *testing.T) {
 			t.Fatalf("merge-now offered at 085 without needs-rebase: %+v", plain.Options)
 		}
 	}
-	// 090 relabel.
+	// 090 relabel: merge-now is the secondary answer behind "Approve and
+	// let hive merge", renamed for the rebase.
 	hm := decisionForHumanMerge(StageTrackerItem{Repo: "o/r", Number: 7, Kind: "pr", Stage: 90, BaseRef: "v5", Labels: []string{"needs-rebase"}}, false)
-	if hm.Options[0].Action != decisionActionMergeNow || hm.Options[0].Label != rebaseMergeFollowThroughLabel || hm.Options[0].Consequence != rebaseMergeFollowThroughConsequence(7, "v5") {
-		t.Fatalf("090 option = %+v", hm.Options[0])
+	if hm.Options[0].Action != decisionActionQueueMerge || hm.Options[1].Action != decisionActionMergeNow || hm.Options[1].Label != rebaseMergeFollowThroughLabel || hm.Options[1].Consequence != rebaseMergeFollowThroughConsequence(7, "v5") {
+		t.Fatalf("090 options = %+v", hm.Options[:2])
 	}
 	hmPlain := decisionForHumanMerge(StageTrackerItem{Repo: "o/r", Number: 7, Kind: "pr", Stage: 90, BaseRef: "v5"}, false)
-	if hmPlain.Options[0].Label != "Approve & merge as maintainer" {
-		t.Fatalf("090 plain option = %+v", hmPlain.Options[0])
+	if hmPlain.Options[1].Label != "Merge now as maintainer" {
+		t.Fatalf("090 plain option = %+v", hmPlain.Options[1])
 	}
 	// Settled: the caption is the lane's again; a stale record is dropped.
 	f.Merged(now.Add(2*time.Minute), "abc")

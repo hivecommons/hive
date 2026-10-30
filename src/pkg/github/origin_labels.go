@@ -120,7 +120,7 @@ func (c *Client) ensureOriginLabel(ctx context.Context, owner, repo, name string
 		_, _, err = c.client.Issues.EditLabel(ctx, owner, repo, name, &gh.Label{
 			Name:        gh.Ptr(name),
 			Color:       gh.Ptr(def.color),
-			Description: gh.Ptr(def.description),
+			Description: gh.Ptr(clampLabelDescription(def.description)),
 		})
 		return err
 	}
@@ -130,7 +130,7 @@ func (c *Client) ensureOriginLabel(ctx context.Context, owner, repo, name string
 	_, _, err = c.client.Issues.CreateLabel(ctx, owner, repo, &gh.Label{
 		Name:        gh.Ptr(name),
 		Color:       gh.Ptr(def.color),
-		Description: gh.Ptr(def.description),
+		Description: gh.Ptr(clampLabelDescription(def.description)),
 	})
 	if githubStatusError(err, http.StatusUnprocessableEntity) {
 		return nil

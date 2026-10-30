@@ -506,7 +506,7 @@ func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 		t.Fatalf("why = %q", res.Why)
 	}
 	labels := optionLabels(res.Options)
-	for _, want := range []string{"Merge as maintainer", "Re-run decision", "Close as superseded", "Send back for a new commit"} {
+	for _, want := range []string{"Merge now as maintainer", "Re-run decision", "Close as superseded", "Send back for a new commit"} {
 		if !strings.Contains(strings.Join(labels, "|"), want) || !strings.Contains(res.Next, want) {
 			t.Fatalf("options %v / next %q missing %q", labels, res.Next, want)
 		}
@@ -747,10 +747,10 @@ func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T
 	if res.Why != delegatedecision.GlossaryHumanMerge || res.Rule != delegatedHumanMergeRule {
 		t.Errorf("why=%q rule=%q", res.Why, res.Rule)
 	}
-	if !strings.Contains(res.Next, "Approve & merge as maintainer · Approve — let hive merge") || !strings.Contains(res.Next, "promote the author to trusted") {
+	if !strings.Contains(res.Next, "Approve and let hive merge · Merge now as maintainer") || !strings.Contains(res.Next, "promote the author to trusted") {
 		t.Errorf("next = %q", res.Next)
 	}
-	if len(res.Options) < 2 || res.Options[0].Action != decisionActionMergeNow || !res.Options[0].Enabled || res.Options[1].Action != decisionActionQueueMerge || !res.Options[1].Enabled {
+	if len(res.Options) < 2 || res.Options[0].Action != decisionActionQueueMerge || !res.Options[0].Enabled || res.Options[1].Action != decisionActionMergeNow || !res.Options[1].Enabled {
 		t.Fatalf("options = %+v", res.Options)
 	}
 	for _, o := range res.Options {

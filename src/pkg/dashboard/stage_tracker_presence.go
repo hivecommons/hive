@@ -61,13 +61,13 @@ type StageTrackerPresence struct {
 }
 
 // stageTrackerAdoptionClock is the slice of governor.labels.stage the
-// adopt-at projection needs, mirroring what cmd/hive hands the adoption
-// engine as automerge.StageLabelPolicy.
+// adopt-at projection and the takeover offer need: the same
+// automerge.AdoptionClock cmd/hive hands the adoption engine, so the
+// tracker's "adopt?" and the sweep's adoption are one verdict
+// (automerge.AutoAdoption).
 type stageTrackerAdoptionClock struct {
-	Enabled                bool
-	GraceOnline            time.Duration
-	AdoptAfterOffline      time.Duration
-	AdoptAfterUnregistered time.Duration
+	Enabled bool
+	automerge.AdoptionClock
 }
 
 func (s *Server) stageTrackerAdoptionClock() stageTrackerAdoptionClock {
@@ -76,11 +76,35 @@ func (s *Server) stageTrackerAdoptionClock() stageTrackerAdoptionClock {
 		stage = s.deps.Config.Governor.Labels.Stage
 	}
 	return stageTrackerAdoptionClock{
-		Enabled:                stage.Adoption.IsEnabled(),
-		GraceOnline:            stage.EffectiveContributorGraceOnline(),
-		AdoptAfterOffline:      stage.Adoption.EffectiveAfterOffline(),
-		AdoptAfterUnregistered: stage.Adoption.EffectiveAfterUnregistered(),
+		Enabled: s.stageAdoptionEnabled(),
+		AdoptionClock: automerge.AdoptionClock{
+			GraceOnline:            stage.EffectiveContributorGraceOnline(),
+			GraceOffline:           stage.EffectiveContributorGraceOffline(),
+			AdoptAfterOffline:      stage.Adoption.EffectiveAfterOffline(),
+			AdoptAfterUnregistered: stage.Adoption.EffectiveAfterUnregistered(),
+			AdoptOfflineGrace:      stage.Adoption.EffectiveOfflineGrace(),
+		},
 	}
+}
+
+// stageTrackerAutoAdoption is the engine's verdict for a row: whether the
+// adoption clock runs on its head and when (or that) it fires. It is the
+// one predicate the sweep acts on, so a row that says "adopting" is one
+// the hive adopts on its next sweep without a click.
+func stageTrackerAutoAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(string) (automerge.ContributorPresence, bool), clock stageTrackerAdoptionClock, now time.Time) automerge.AdoptionVerdict {
+	if !hasRec || !clock.Enabled || it.Kind != "pr" || it.AuthorKind == authorKindHuman {
+		return automerge.AdoptionVerdict{}
+	}
+	head := it.Head
+	if head == "" {
+		head = rec.NudgeHead
+	}
+	var p automerge.ContributorPresence
+	hasPresence := false
+	if presence != nil && it.Author != "" {
+		p, hasPresence = presence(it.Author)
+	}
+	return automerge.AutoAdoption(rec, head, clock.AdoptionClock, now, p, hasPresence)
 }
 
 // stageTrackerWaitingOn names the person a PR row waits on: its author at
@@ -149,10 +173,9 @@ func stageTrackerPresenceFor(it StageTrackerItem, login string, stage stagelabel
 	}
 	out := &StageTrackerPresence{Login: login, State: presenceStateUnknown, Kind: presenceKindHuman, Next: presenceNextWait}
 	var p automerge.ContributorPresence
+	hasPresence := false
 	if presence != nil {
-		if got, ok := presence(login); ok {
-			p = got
-		}
+		p, hasPresence = presence(login)
 	}
 	switch {
 	case p.Registered && p.Online:
@@ -180,46 +203,28 @@ func stageTrackerPresenceFor(it StageTrackerItem, login string, stage stagelabel
 	}
 	// The adoption clock runs only where adoption itself does: a nudged
 	// clanker PR at 072 whose head has not moved since the nudge, not yet
-	// adopted, with nothing holding it.
+	// adopted, with nothing holding it — automerge.AutoAdoption, the
+	// sweep's own predicate.
 	if stage != stagelabels.ReturnedToContributor || !clock.Enabled || it.AuthorKind == authorKindHuman || out.Kind != presenceKindClanker {
-		return out
-	}
-	if !hasRec || rec.NudgeCount == 0 || rec.NudgeStart().IsZero() {
 		return out
 	}
 	head := it.Head
 	if head == "" {
 		head = rec.NudgeHead
 	}
-	if rec.NudgeHead != "" && head != rec.NudgeHead {
-		return out
-	}
-	if rec.AdoptedHead != "" && (rec.Adopted(head) || rec.AdoptedInPlace()) {
-		return out
-	}
-	if rec.AdoptionBlocked(head) != "" {
+	if hasRec && rec.AdoptionBlocked(head) != "" {
 		// Held (maintainer_policy ask / never): the adoption text says so;
 		// the engine will not adopt on its own.
 		return out
 	}
-	nudged := rec.NudgeStart()
-	var at time.Time
-	switch out.State {
-	case presenceStateOnline:
-		// Mirrors adoptionDue: an online clanker keeps the online grace; the
-		// hive waits for it meanwhile.
-		at = nudged.Add(orDefault(clock.GraceOnline, config.DefaultContributorGraceOnline))
-	case presenceStateOffline:
-		since := nudged
-		if p.LastSeen.After(since) {
-			since = p.LastSeen
-		}
-		at = since.Add(orDefault(clock.AdoptAfterOffline, config.DefaultAdoptAfterOffline))
-		out.Next = presenceNextAdopt
-	default:
-		at = nudged.Add(orDefault(clock.AdoptAfterUnregistered, config.DefaultAdoptAfterUnregistered))
+	v := automerge.AutoAdoption(rec, head, clock.AdoptionClock, now, p, hasPresence)
+	if !v.Running {
+		return out
+	}
+	if v.Reason != automerge.AdoptReasonGrace || out.State != presenceStateOnline {
 		out.Next = presenceNextAdopt
 	}
+	at := v.At
 	out.AdoptAt = &at
 	return out
 }

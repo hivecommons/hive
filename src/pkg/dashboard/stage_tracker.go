@@ -522,6 +522,17 @@ type StageTrackerItem struct {
 	// NestedUnder is, on a PR, the issue in the same repo whose row nests
 	// it (0 when the PR has no listed issue and stands on its own).
 	NestedUnder int `json:"nested_under,omitempty"`
+	// ReviewNoteOf is, on a `blocked` review-backlog issue ("Review backlog
+	// (<perspective>): …", with or without the `[reviewer]` prefix), the
+	// open source PR in the same repo it waits on. The SPA folds such issues
+	// under the PR's row as one muted "N review notes blocked on this PR"
+	// line — or, when the PR is not a row, into the lowest-numbered note of
+	// the group — instead of N first-class rows (hivecommons/hive: 16 of 62
+	// open items were blocked review notes). 0 on every other item.
+	ReviewNoteOf int `json:"review_note_of,omitempty"`
+	// ReviewNotes lists, on a PR, the blocked review-backlog issues folded
+	// under it (ReviewNoteOf == this PR), lowest number first.
+	ReviewNotes []StageTrackerReviewNote `json:"review_notes,omitempty"`
 	// LinkedIssues lists, on a PR, the issues GitHub says it closes
 	// (closingIssuesReferences, i.e. the PR body's Fixes/Closes/Resolves
 	// keywords) in the same repo, so a PR whose issue is not listed —
@@ -636,7 +647,10 @@ type StageTrackerLinkedPR struct {
 	SoakRemainingSeconds int64                   `json:"soak_remaining_seconds,omitempty"`
 	MergeGate            *StageTrackerMergeGate  `json:"merge_gate,omitempty"`
 	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
-	Soak                 *StageTrackerSoak       `json:"soak,omitempty"`
+	// LeftTrain mirrors the nested PR's own row field so the sub-row's
+	// hover can say it left its train while under repair.
+	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`
+	Soak      *StageTrackerSoak      `json:"soak,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
 	// LastOperatorAction / OperatorActionCount mirror the nested PR's own

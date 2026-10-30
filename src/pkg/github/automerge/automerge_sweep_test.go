@@ -312,7 +312,7 @@ func TestPrefilterTrustedAuthorPR(t *testing.T) {
 		{name: "ok", pr: pr(), want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := engine.prefilterTrustedAuthorPR(tc.pr, policy); got != tc.want {
+			if got := engine.prefilterTrustedAuthorPR("acme", "widget", tc.pr, policy); got != tc.want {
 				t.Fatalf("prefilterTrustedAuthorPR = %q, want %q", got, tc.want)
 			}
 		})
