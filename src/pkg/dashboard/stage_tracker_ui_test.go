@@ -20,6 +20,16 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`.ham-select {`,
 		`.ham-repo-filter {`,
 		`id="activity-monitor-sidebar-badge"`,
+		// Waiting-on-you surfacing (hivecommons/hive#15638): second sidebar
+		// badge, topbar pill, toolbar chip and the filter key they share.
+		`id="activity-monitor-waiting-badge" class="badge-count oc-nav-count oc-nav-count--waiting" data-zero`,
+		`id="oc-waiting-on-you" data-action="showWaitingOnYou"`,
+		`id="activity-monitor-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle"`,
+		`if (f.waitingOnYou && !item.waiting_on_you) return false;`,
+		`function stageTrackerRenderWaiting(d, nowMs)`,
+		`function stageTrackerWaitingToast(w, nowMs)`,
+		`if (typeof window.hiveKioskMode === 'function' && window.hiveKioskMode()) return;`,
+		`const STAGE_TRACKER_WAITING_FILTER_PARAM = 'waiting-on-you';`,
 		`'activity-monitor-section': { title: '📍 Hive activity monitor'`,
 		`'activity-monitor-section': { heading: 'Hive activity monitor'`,
 		`'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'`,
