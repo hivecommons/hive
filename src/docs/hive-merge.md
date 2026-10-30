@@ -710,7 +710,11 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
 carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
-hold / sentinel alert → `stage/085-needs-decision`, untrusted author with an approve verdict at the
+hold / sentinel alert → `stage/085-needs-decision`, hive-authored PR whose fix
+dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
+with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /
+hand to a person / close as not planned; a stale `decision-answered` cannot pull it
+back to 070 while the head is unchanged, [#15744](https://github.com/hivecommons/hive/issues/15744)), untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
 missing; the dashboard derives a compact **human-merge reason code** from the

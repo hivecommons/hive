@@ -2733,12 +2733,19 @@ type reviewFixAuditor interface {
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
 	// One WARN per changes_requested head that ends the cycle without a fix
 	// kick: a PR shown as "Fixing" that nobody is fixing must be loud
-	// (hivecommons/hive#14665).
+	// (hivecommons/hive#14665) — once per (pr, head, reason), Debug while
+	// the same exclusion persists (hivecommons/hive#15744).
+	active := make(map[string]struct{}, len(plan.FixExclusions))
+	defer func() { reviewFixExcludedWarn.retain(active) }()
 	for _, x := range plan.FixExclusions {
-		level := slog.LevelWarn
+		key := reviewFixExcludedWarnKey(x)
+		active[key] = struct{}{}
+		level := reviewFixExcludedWarn.level(key)
 		if x.Reason == review.FixDispatchExcludedNotHiveAuthored || x.Reason == review.FixDispatchExcludedNotHiveAuthoredDCO {
 			// Policy skip (the hive never pushes to PRs it did not author), not a fault.
-			level = slog.LevelInfo
+			if level == slog.LevelWarn {
+				level = slog.LevelInfo
+			}
 		}
 		logger.Log(context.Background(), level, "review fix dispatch excluded",
 			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
@@ -2751,6 +2758,41 @@ func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor
 		}
 		auditor.AuditLog("governor", "review_fix_withheld",
 			fmt.Sprintf("pr=%s#%d head=%s author=%s setting=%s=%t reason=%s", w.Repo, w.Number, w.HeadSHA, w.Author, w.Setting, w.SettingEnabled, w.Reason), "")
+	}
+}
+
+func reviewFixExcludedWarnKey(x review.FixDispatchExclusion) string {
+	return prWarnKey(x.Repo, x.Number) + "@" + strings.ToLower(strings.TrimSpace(x.HeadSHA)) + ":" + x.Reason
+}
+
+// fixDispatchStatusReader is the automerge engine's view of the review
+// fixer's standing on a PR head (hivecommons/hive#15744): the persisted
+// dispatch state, re-read per call so a stage pass sees the fixer's latest
+// verdict. No state (fresh hive, unreadable file) reads as unknown.
+func fixDispatchStatusReader() func(repo string, number int, head string) (review.FixDispatchStatus, bool) {
+	var (
+		mu      sync.Mutex
+		state   review.DispatchState
+		modTime time.Time
+		size    int64
+		loaded  bool
+	)
+	return func(repo string, number int, head string) (review.FixDispatchStatus, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		// A stage pass asks once per PR; re-parse only when the file moved.
+		if fi, err := os.Stat(review.ReviewDispatchStatePath); err == nil && loaded && fi.ModTime().Equal(modTime) && fi.Size() == size {
+			return review.FixDispatchStatusFor(state, repo, number, head), true
+		} else if err == nil {
+			modTime, size = fi.ModTime(), fi.Size()
+		}
+		st, err := review.LoadDispatchState("")
+		if err != nil {
+			loaded = false
+			return review.FixDispatchStatus{}, false
+		}
+		state, loaded = st, true
+		return review.FixDispatchStatusFor(state, repo, number, head), true
 	}
 }
 

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +82,65 @@ func TestAuditWithheldReviewFixesNotHiveAuthoredExclusionIsNotWarn(t *testing.T)
 	out := buf.String()
 	if !strings.Contains(out, "review fix dispatch excluded") || strings.Contains(out, "level=WARN") {
 		t.Fatalf("not-hive-authored exclusion must log below WARN, got: %s", out)
+	}
+}
+
+type levelRecorder struct {
+	levels []slog.Level
+}
+
+func (r *levelRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (r *levelRecorder) Handle(_ context.Context, rec slog.Record) error {
+	if rec.Message == "review fix dispatch excluded" {
+		r.levels = append(r.levels, rec.Level)
+	}
+	return nil
+}
+func (r *levelRecorder) WithAttrs([]slog.Attr) slog.Handler { return r }
+func (r *levelRecorder) WithGroup(string) slog.Handler      { return r }
+
+// TestAuditWithheldReviewFixesWarnsOncePerHead: the dispatcher re-derives
+// its exclusions every cycle, so the same fix-attempts-exhausted line
+// fired every ~5 min for 13h on #15308 (hivecommons/hive#15744). WARN
+// once per (pr, head, reason); Debug while it persists; WARN again on a
+// new head or after the exclusion cleared and came back.
+func TestAuditWithheldReviewFixesWarnsOncePerHead(t *testing.T) {
+	reviewFixExcludedWarn = prWarnOnce{}
+	t.Cleanup(func() { reviewFixExcludedWarn = prWarnOnce{} })
+	rec := &levelRecorder{}
+	logger := slog.New(rec)
+	exhausted := review.FixDispatchExclusion{Repo: "hivecommons/hive", Number: 15308, HeadSHA: "5b62304", Author: "hivecommons-hive[bot]", Reason: review.FixDispatchExcludedAttemptsExhausted, Attempts: 6}
+	plan := review.DispatchPlan{FixExclusions: []review.FixDispatchExclusion{exhausted}}
+
+	auditWithheldReviewFixes(plan, nil, logger)
+	auditWithheldReviewFixes(plan, nil, logger)
+	auditWithheldReviewFixes(plan, nil, logger)
+	if want := []slog.Level{slog.LevelWarn, slog.LevelDebug, slog.LevelDebug}; !slices.Equal(rec.levels, want) {
+		t.Fatalf("levels across three cycles = %v, want %v", rec.levels, want)
+	}
+
+	moved := exhausted
+	moved.HeadSHA = "9f0e1d2"
+	rec.levels = nil
+	auditWithheldReviewFixes(review.DispatchPlan{FixExclusions: []review.FixDispatchExclusion{moved}}, nil, logger)
+	if want := []slog.Level{slog.LevelWarn}; !slices.Equal(rec.levels, want) {
+		t.Fatalf("new head levels = %v, want %v", rec.levels, want)
+	}
+
+	// Cleared for a cycle, then back: the old key was retained away.
+	rec.levels = nil
+	auditWithheldReviewFixes(review.DispatchPlan{}, nil, logger)
+	auditWithheldReviewFixes(plan, nil, logger)
+	if want := []slog.Level{slog.LevelWarn}; !slices.Equal(rec.levels, want) {
+		t.Fatalf("recurrence levels = %v, want %v", rec.levels, want)
+	}
+
+	// Policy skips stay Info the first time, Debug after.
+	rec.levels = nil
+	policy := review.DispatchPlan{FixExclusions: []review.FixDispatchExclusion{{Repo: "acme/x", Number: 1, HeadSHA: "a", Reason: review.FixDispatchExcludedNotHiveAuthored}}}
+	auditWithheldReviewFixes(policy, nil, logger)
+	auditWithheldReviewFixes(policy, nil, logger)
+	if want := []slog.Level{slog.LevelInfo, slog.LevelDebug}; !slices.Equal(rec.levels, want) {
+		t.Fatalf("policy skip levels = %v, want %v", rec.levels, want)
 	}
 }
