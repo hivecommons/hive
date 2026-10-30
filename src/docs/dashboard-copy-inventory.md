@@ -28,7 +28,7 @@ twice.** The tests that hold the line are named in the last column.
 The new hover, verbatim (title line omitted):
 
 > **Ready to merge. Hive won't merge it alone — @odttlnt isn't a trusted author yet.**
-> [ Merge it ] [ More ⋯ ]
+> [ Let hive merge ] [ More ⋯ ]
 > Asked by the hive · 7 hours ago
 > Details ▸ *Hive never merges this on its own; a maintainer merges here or on GitHub. To trust @odttlnt: add them as a merger under ⚙ Security → Authorized users. · Ready for human merge · untrusted author · Next move: human — a maintainer merges it*
 
@@ -60,8 +60,8 @@ The new hover, verbatim (title line omitted):
 | `stageTrackerStripItems` 090 chevron tip (`tracker-row.js`) | chevron `title` / popover Details | word + reason + stage description + actor (≈ 70) | word + reason + actor (≈ 20) | `TestStageTrackerSentinelLane…` whyTip case |
 | `stageTrackerTooltip` author line | row tooltip | `@x (author/clanker, inferred)` | `@x (agent, inferred)`; duplicate lines dropped | `TestStageTrackerRows` |
 | `stageTrackerDCOCaveat` | confirm dialogs | 55 | 46 | `TestStageTrackerReauthor…` in `stage_tracker_row_actions_test.go` |
-| Confirm: Approve & merge as maintainer | dialog | 76 | 53 | same |
-| Confirm: Approve — let hive merge | dialog | 62 | 49 | same |
+| Confirm: Approve and let hive merge (lead) | dialog | 62 | 49 | same |
+| Confirm: Merge now as maintainer | dialog | 76 | 53 | same |
 | ⋯ menu hints (`stageTrackerLeadActions` → `ham-menu-hint`) | ⋯ menu | server consequences (11–31 each) | server consequences (≤ 12 each) | Go budget test |
 | `stageTrackerOpenTriageNeeded` → `stageTrackerSegments` / `stageTrackerHeadline` Open word (`tracker-row.js`, `tracker-words.js`) | Open chevron, chevron hover first word, row tooltip headline | *New · since 28m* on a reporter-trust hold; the ask lived only in the caption ([#15437](https://github.com/hivecommons/hive/issues/15437)) | *Triage needed · since 28m* (same word as the `needs-triage` chip / 015) | `TestStageTrackerNewRowRendering`, `TestStageTracker_ReporterTrustHoldReadsTriageNeeded` |
 | `stageTrackerTriageNeededCaption` (`stageTrackerCaption` 015, `stageTrackerNewState` hold text) | row caption, feed | 110 ("Actionable, but no maintainer has looked at it yet; waiting for triage — triage needed: carries needs triage": *triage* ×3 after the chevron word) / 84 ("New · waiting for a maintainer's triage (add `triage/accepted`); the hive's next pass in 7m") | 31 ("Triage needed — accept or close"; the next-mover and next-pass narration stay on the chevron hover) | `TestStageTracker_TriageNeededStage`, `TestStageTracker_ReporterTrustHoldReadsTriageNeeded`, `TestStageTrackerNewState` |

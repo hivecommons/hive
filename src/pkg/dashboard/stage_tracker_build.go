@@ -90,7 +90,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	workers := stageTrackerWorkersFromStatus(status)
 	isClankerOwner := stageTrackerIsClankerOwner()
 	adoptionClock := s.stageTrackerAdoptionClock()
-	rerouteCandidates, adoptionEnabled, takeoverGrace := s.stageTrackerRerouteCandidates(), s.stageAdoptionEnabled(), s.takeoverGrace()
+	rerouteCandidates := s.stageTrackerRerouteCandidates()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -182,7 +182,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// (hivecommons/hive#15202): that row says "not adopted" wherever it sits.
 		personRefused := hasRec && it.Kind == "pr" && rec.AdoptionBlocked(it.Head) == stagelabels.AdoptBlockedAuthorPerson
 		if personRefused || (stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman) {
-			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, now); it.Adoption != nil {
+			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, adoptionClock, now); it.Adoption != nil {
 				it.Caption = stageTrackerAdoptionCaption(it.Caption, it.Adoption)
 			}
 		}
@@ -190,7 +190,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
 			it.Rework = stageTrackerReworkFor(*it, login, stage, rec, hasRec, fixWork, now)
 		}
-		if it.Takeover = stageTrackerTakeover(*it, rec, hasRec, presence, rerouteCandidates, adoptionEnabled, takeoverGrace, now); it.Takeover != nil {
+		if it.Takeover = stageTrackerTakeover(*it, rec, hasRec, presence, rerouteCandidates, adoptionClock, now); it.Takeover != nil {
 			it.Caption = stageTrackerTakeoverCaption(it.Caption, it.Takeover)
 		}
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)

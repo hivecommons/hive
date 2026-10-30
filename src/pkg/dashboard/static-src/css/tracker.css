@@ -389,6 +389,8 @@
     .ham-sub-superseded { opacity: .55; }
     .ham-sub-superseded .ham-row-head { min-height: 0; }
     .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); flex: 0 0 auto; white-space: nowrap; }
+    .ham-review-notes { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-1); }
+    .ham-review-notes a { color: inherit; }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
     /* The Let hive decide preview. One decision, readable in three seconds
        (operator feedback on the dialog, issue 15397): subject line,

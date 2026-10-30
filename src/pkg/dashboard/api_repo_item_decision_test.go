@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -634,6 +635,57 @@ func TestRepoItemDecisionQueueMergeApprovesForTheSweep(t *testing.T) {
 	}
 }
 
+// TestRepoItemDecisionQueueMergeOnHivePRRecordsApprovalWithoutReview
+// (hivecommons/hive#15666): "Approve and let hive merge" on the hive's own
+// PR cannot post an App review (GitHub 422 "Can not approve your own pull
+// request"), so no review is attempted: the queue note is left as a
+// comment, the auto-merge label applied, and the operator's approval is
+// recorded in the hive's store exactly as the plain Approve records it —
+// the self-authored lane merges on that record once CI is green.
+func TestRepoItemDecisionQueueMergeOnHivePRRecordsApprovalWithoutReview(t *testing.T) {
+	mock := &repoItemDecisionMock{prLabels: []string{"stage/090-ready-for-human-merge"}}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"queue-merge","type":"pr"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("queue-merge on the hive's PR: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "queued-for-merge" || resp.Label != srv.deps.GHClient.AutoMergeLabel() {
+		t.Fatalf("response = %+v", resp)
+	}
+	if len(mock.reviews) != 0 {
+		t.Fatalf("the App must not review its own pull request: %v", mock.reviews)
+	}
+	if len(mock.merges) != 0 {
+		t.Fatalf("queue-merge must not merge: %v", mock.merges)
+	}
+	if !slices.Contains(resp.Released, "approval-recorded") || !slices.Contains(resp.Released, "admitted") {
+		t.Fatalf("released = %v, want approval-recorded and admitted", resp.Released)
+	}
+	var queueNote, lgtm, approve int
+	for _, c := range mock.comments {
+		switch {
+		case strings.HasPrefix(c, "Approved by @writer for Hive auto-merge on green CI."):
+			queueNote++
+		case strings.HasPrefix(c, "/lgtm\n"):
+			lgtm++
+		case strings.HasPrefix(c, "/approve\n"):
+			approve++
+		}
+	}
+	if queueNote != 1 || lgtm != 1 || approve != 1 {
+		t.Fatalf("comments = %q, want the queue note plus /lgtm and /approve", mock.comments)
+	}
+	if len(mock.added) != 1 || mock.added[0] != srv.deps.GHClient.AutoMergeLabel() {
+		t.Fatalf("labels added = %v", mock.added)
+	}
+	if actions := decisionAuditActions(srv); len(actions) == 0 || actions[0] != auditRepoItemDecisionQueue {
+		t.Fatalf("audit = %v", actions)
+	}
+}
+
 // TestRepoItemDecisionMergeDecisionsGuard: both merge answers need the
 // merger or owner role on top of write access, apply to PRs only, and
 // refuse the operator's own PR.
@@ -690,7 +742,7 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 			name:    "human must merge",
 			facts:   repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded", "needs-human"}, Stage: stagelabels.ReadyForHumanMerge.Label(), SoakMinutes: 3},
 			outcome: "Approved #510 as @clubanderson.",
-			next:    "Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer.",
+			next:    "Hive cannot merge this one (trust or role blocks it): use Approve and let hive merge, merge it now as maintainer, or merge it on GitHub yourself.",
 			posted:  "`/lgtm` posted|`/approve` posted|`needs-human` label removed",
 		},
 		{
