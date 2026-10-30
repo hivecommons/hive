@@ -127,16 +127,25 @@ func scrubAttr(a slog.Attr) slog.Attr {
 	// strings or groups after the scrubbing boundary.
 	a.Value = a.Value.Resolve()
 	if a.Value.Kind() == slog.KindAny {
+		// Match slog.TextHandler's precedence (TextAppender, then TextMarshaler,
+		// then fmt for error/Stringer) so the scrubbed text is the same text the
+		// inner handler would otherwise have rendered.
 		switch v := a.Value.Any().(type) {
-		case error, fmt.Stringer:
-			return slog.String(a.Key, scrub(fmt.Sprint(v)))
-		case encoding.TextMarshaler:
-			text, err := v.MarshalText()
+		case encoding.TextAppender:
+			text, err := v.AppendText(nil)
 			if err != nil {
 				// Do not let the inner handler render an unsanitized error.
 				return slog.String(a.Key, scrub("!ERROR:"+err.Error()))
 			}
 			return slog.String(a.Key, scrub(string(text)))
+		case encoding.TextMarshaler:
+			text, err := v.MarshalText()
+			if err != nil {
+				return slog.String(a.Key, scrub("!ERROR:"+err.Error()))
+			}
+			return slog.String(a.Key, scrub(string(text)))
+		case error, fmt.Stringer:
+			return slog.String(a.Key, scrub(fmt.Sprint(v)))
 		}
 	}
 	if a.Value.Kind() == slog.KindString {
