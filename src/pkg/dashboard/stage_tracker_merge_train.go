@@ -82,6 +82,21 @@ type StageTrackerMergeTrain struct {
 	Late       bool       `json:"late,omitempty"`
 	Stalled    bool       `json:"stalled,omitempty"`
 	StalledS   int64      `json:"stalled_s,omitempty"`
+	// Provisional is true while this member's own stage is still short of
+	// the merge gate (050 review pending / CI, 060, 070…): the planner has
+	// ordered it, but the slot is a forecast, not a state. The SPA keeps
+	// the stage's blocker as the headline and words the slot as a suffix
+	// ("CI / Review · queued 1st once ready") so the chevron never
+	// contradicts the caption (hive's own #15577 read "Merge queued · 1st"
+	// over "check build-and-test still running").
+	Provisional bool `json:"provisional,omitempty"`
+}
+
+// stageTrackerMergeTrainProvisional reports whether a train member at
+// stage is holding its queue slot ahead of being merge-ready: anything
+// below 080 awaiting merge admission.
+func stageTrackerMergeTrainProvisional(stage int) bool {
+	return stage > 0 && stage < stagelabels.AwaitingMergeAdmission.Number()
 }
 
 // Head states a merge train reports on its members (HeadState). The SPA
@@ -237,7 +252,11 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQue
 				front.MergeGate.State = MergeGateStateTrainFront
 			}
 			if front.MergeGate.Reason == "" {
-				front.MergeGate.Reason = "1st in the merge queue; merges next (1st of " + strconv.Itoa(sample.Size) + ", overlapping files: " + strings.Join(sample.OverlapFiles, ", ") + ")"
+				next := "merges next"
+				if stageTrackerMergeTrainProvisional(front.Stage) {
+					next = "merges first once it is ready"
+				}
+				front.MergeGate.Reason = "1st in the merge queue; " + next + " (1st of " + strconv.Itoa(sample.Size) + ", overlapping files: " + strings.Join(sample.OverlapFiles, ", ") + ")"
 			}
 			if front.Stage == stagelabels.AwaitingMergeAdmission.Number() {
 				front.Caption = stageTrackerMergeTrainFrontCaption(sample)
@@ -259,6 +278,7 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQue
 			}
 			items[i].MergeTrain.Ahead = ahead
 			items[i].MergeTrain.Members = append([]int(nil), members...)
+			items[i].MergeTrain.Provisional = stageTrackerMergeTrainProvisional(items[i].Stage)
 		}
 		var head *StageTrackerItem
 		if frontIdx >= 0 {
