@@ -432,6 +432,7 @@ type RecentReview struct {
 	DeltaPreviousHead string      `json:"delta_previous_head,omitempty"`
 	Dispatched        time.Time   `json:"dispatched_at,omitempty"`
 	Confirmed         time.Time   `json:"confirmed_at"`
+	Priority          string      `json:"priority,omitempty"`
 }
 
 type PendingFix struct {
@@ -681,7 +682,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	}
 	availableSlots := maxParallel
 	prs, plan.Promoted = promoteStarvedWaits(prs, plan.State.Waits, opts.ProjectOrg)
-	prs = orderByReviewPriority(prs, plan.Promoted, opts.ProjectOrg)
+	prs = orderByReviewPriority(prs, plan.Promoted, opts.ProjectOrg, lastReviewWasPreparation(plan.State.Recent))
 	for _, pr := range prs {
 		pr.Repo = fullRepoName(pr.Repo, opts.ProjectOrg)
 		if pr.Number <= 0 || pr.Repo == "" {
@@ -1676,7 +1677,7 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 			// first perspective alone would leave every other verdict in the
 			// array with nothing to bind to once its pending entry is gone.
 			for _, p := range kickPerspectives(k) {
-				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, HiveAuthored: k.HiveAuthored, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now})
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, HiveAuthored: k.HiveAuthored, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now, Priority: k.Priority})
 			}
 		}
 	}

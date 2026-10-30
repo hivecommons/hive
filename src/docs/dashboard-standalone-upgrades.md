@@ -278,6 +278,41 @@ see [podman-auto-update.md](podman-auto-update.md) and gap 3 of
 [#10344](https://github.com/hivecommons/hive/issues/10344) for why a plain
 `pin` would silently disable tracking.
 
+## Seeing the upgrade animation for every roll
+
+The dashboard's version chip and navbar indicator animate a self-upgrade
+(bees over the hive, `draining → pulling → rolling → done`). Since
+[#15788](https://github.com/hivecommons/hive/issues/15788) the same
+component also covers rolls the spoke did not start itself:
+
+- **Hub-managed rolls** — the hub attaches `upgrade_announce` to the
+  heartbeat response while its upgrade latch is open onto a build the spoke
+  is not running, so the chip shows `Upgrading hive… → <sha>` before the
+  hub's `kubectl rollout restart` kills the pod.
+- **Operator rolls** — announce first, then roll, so the dashboard shows the
+  intent rather than a bare "reconnecting":
+
+  ```sh
+  curl -sS -X POST "https://<spoke>/api/upgrade/announce" \
+    -H "Authorization: Bearer $HIVE_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"target":"<sha-or-tag>","source":"operator","reason":"rollout restart"}' \
+  && kubectl -n <ns> rollout restart deploy/hive
+  ```
+
+  The endpoint is owner-only; `target` may be omitted for a plain restart.
+- **Anything else (SIGTERM, OOM-kill-then-restart, `kubectl delete pod`)** —
+  the old pod publishes an SSE `upgrading` event with `phase: restarting` as
+  its first shutdown hook, before the stream drops. The banner persists in
+  the browser across the reconnect, shows the new pod's boot phase
+  (`starting: opening stores…`) from `/api/version.startupPhase`, and on
+  reconnect compares build hash and process `startedAt`: **Upgraded to
+  `<sha>` ✓** when the build changed, **Restarted ✓** when only the process
+  did. Both end with the standard 15-second toast countdown.
+
+To see the animation without rolling anything, open the dashboard with
+`?demo=upgrade` or press **Settings → Diagnostics → Preview upgrade
+animation**.
+
 ## Operational notes
 
 - Owner authorization is still required on `/api/self-upgrade`.

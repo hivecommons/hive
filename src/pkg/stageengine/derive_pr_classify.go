@@ -603,6 +603,26 @@ func PreserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs st
 	return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
 }
 
+// PreserveStageOnStaleDecisionAnswer keeps a PR parked at 085 when the only
+// thing pulling it back to its fixing stage is a trusted human's answered
+// decision on a head that has not moved since, and no fixer will act on
+// that answer (fixerExcluded: exhausted, no enabled fixer, …). Without it
+// the flip to 070 reset the record's dwell and stripped stage/stalled
+// ("removed:[stage/stalled] reason:contributor-lane:decision-answered" on
+// hive's own #15308, hivecommons/hive#15744) while nobody was fixing.
+func PreserveStageOnStaleDecisionAnswer(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict, fixerExcluded bool) (stageVerdict, bool) {
+	if !hadPrev || !fixerExcluded || prev.Stage != stagelabels.NeedsDecision {
+		return stageVerdict{}, false
+	}
+	if verdict.Terminal || verdict.Stage != FixingStage(obs) || verdict.Reason != StageReasonDecisionAnswered {
+		return stageVerdict{}, false
+	}
+	if prev.ActivityHead == "" || obs.HeadSHA == "" || prev.ActivityHead != obs.HeadSHA {
+		return stageVerdict{}, false
+	}
+	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: prev.Reason}, true
+}
+
 // AuthorSideDone reports whether the PR has nothing left for its author to
 // do: the reviewer verdict for this head is approve and the lane's reason
 // is not a CI state.

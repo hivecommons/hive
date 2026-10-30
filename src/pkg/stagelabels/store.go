@@ -124,6 +124,12 @@ type Record struct {
 	// "superseder merged but this PR has moved on" note was posted, so a
 	// diverged original is told once per head rather than every poll.
 	SupersederMergedNotedHead string `json:"superseder_merged_noted_head,omitempty"`
+	// MentionCause is the cause (ReasonClass) the author was last
+	// @-mentioned for in the hive status comment. In quiet notification
+	// mode a person is mentioned once per distinct cause, not once per
+	// head: a mention is an email, and the same cause on a new head is the
+	// same ask.
+	MentionCause string `json:"mention_cause,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
 	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
@@ -1162,6 +1168,41 @@ func (r Record) EntryCommentExplains(head, cause string) bool {
 		return false
 	}
 	return len(r.EntryCommentedCauses) == 0 || cause == "" || slices.Contains(r.EntryCommentedCauses, cause)
+}
+
+// MentionDue reports whether the author should be @-mentioned for cause:
+// never for an empty cause, otherwise only when it differs from the cause
+// of the last mention.
+func (r Record) MentionDue(cause string) bool {
+	cause = MentionCauseClass(cause)
+	return cause != "" && !strings.EqualFold(r.MentionCause, cause)
+}
+
+// MentionCauseClass collapses a stage reason to what the author would be
+// asked to do about it: "check-failing:unit" and "check-failing:lint" are
+// both "CI is red, fix it", so a second red check on a later head is the
+// same cause and earns no second @-mention; a conflict after a red check is
+// a new one. The class is the reason's kind (ReasonClass, then the part
+// before the first ':'), with the "required-" qualifier dropped.
+func MentionCauseClass(reason string) string {
+	class := ReasonClass(reason)
+	if i := strings.IndexByte(class, ':'); i >= 0 {
+		class = class[:i]
+	}
+	return strings.TrimPrefix(strings.TrimSpace(class), "required-")
+}
+
+// MarkMentioned records that the author was @-mentioned for cause.
+func (s *Store) MarkMentioned(key, cause string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.MentionCause = MentionCauseClass(cause)
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkStallCommented records that the stall note for this stage visit was posted.

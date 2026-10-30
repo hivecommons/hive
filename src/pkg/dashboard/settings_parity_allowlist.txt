@@ -164,6 +164,7 @@ auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#151
 auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
 auto_merge.native_merge_queue.repos[] # native merge queue per-repo allow-list (#15198); yaml-only
 auto_merge.native_merge_queue.skip_current_base_gate # explicit current-base bypass on queue bases (#15198); yaml-only
+auto_merge.hive_superseding.auto_merge # hive-authored superseding PRs auto-merge without an operator decision; yaml-only
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
 auto_merge.require_current_base[] # current-base gate per-repo "on" override, written by the Repos tab (#15335)
@@ -188,6 +189,7 @@ duplicate_sweep.bot_authors[] # TODO #11854
 evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854
 github.additional_bot_logins[] # TODO #11854
+github.notifications.mode # quiet|normal PR notification mode; yaml-only, see operator-reference.md
 github.shared_uid_read_token # shared-UID App read-token opt-in; yaml-only, restart required (#14778)
 good_first_issue.exclude_labels[] # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.repos[] # advanced scorer tuning; yaml-only (#12185)
