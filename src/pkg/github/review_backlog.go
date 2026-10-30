@@ -18,6 +18,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -587,12 +588,15 @@ func reviewBacklogKey(repo string, pr int, perspective review.Perspective, f out
 	return hex.EncodeToString(h[:])
 }
 
+// reviewBacklogIssueTitle is the title of a review backlog item:
+// `[reviewer] Review backlog (<perspective>): <finding>`. The leading tag
+// names the filing agent, as every hive-filed issue title does.
 func reviewBacklogIssueTitle(p review.Perspective, f outputschema.Finding) string {
 	title := strings.TrimSpace(f.Title)
 	if title == "" {
 		title = "out-of-scope review finding"
 	}
-	return fmt.Sprintf("Review backlog (%s): %s", p, title)
+	return issueshape.TitleFor(config.OriginSourceReviewer, fmt.Sprintf("Review backlog (%s): %s", p, title))
 }
 
 func reviewBacklogSummaryComment(issues []reviewBacklogFiled, cap int) string {

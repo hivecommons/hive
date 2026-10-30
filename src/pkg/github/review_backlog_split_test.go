@@ -58,7 +58,7 @@ func TestParseReviewBacklogFoldedComment(t *testing.T) {
 			if item.Key != key || item.Fingerprint != fp || item.PRNumber != 5 {
 				t.Errorf("key/fp/pr = %q/%q/%d, want %q/%q/5", item.Key, item.Fingerprint, item.PRNumber, key, fp)
 			}
-			if item.Title != "Review backlog (correctness): unused variable (x)" || item.Perspective != review.PerspectiveCorrectness {
+			if item.Title != "[reviewer] Review backlog (correctness): unused variable (x)" || item.Perspective != review.PerspectiveCorrectness {
 				t.Errorf("title/perspective = %q/%q", item.Title, item.Perspective)
 			}
 			if item.Finding.Title != f.Title || item.Finding.File != f.File || item.Finding.Line != f.Line {
@@ -162,7 +162,7 @@ func TestSplitReviewBacklogHostIsIdempotentByLinkKey(t *testing.T) {
 				t.Fatalf("created=%d appends=%d, want 1 and %d", len(sink.created), len(sink.appends), tc.wantAppends)
 			}
 			item := sink.created[0]
-			if item.Title != "Review backlog (correctness): unused variable" || item.Finding.File != "pkg/a.go" || item.Perspective != review.PerspectiveCorrectness {
+			if item.Title != "[reviewer] Review backlog (correctness): unused variable" || item.Finding.File != "pkg/a.go" || item.Perspective != review.PerspectiveCorrectness {
 				t.Errorf("created item = %+v", item)
 			}
 			for _, want := range []string{reviewBacklogSplitMarker + openKey + " -->", "Split from #42 (host closed)", "PR: #5 (https://github.com/o/r/pull/5)", "x is never read", "Fingerprint: `" + openFP + "`"} {

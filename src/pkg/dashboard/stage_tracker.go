@@ -441,6 +441,12 @@ type StageTrackerItem struct {
 	// parked on a decision, or red (stageTrackerTrainUnderRepair). The
 	// row rides no train and wears no ordinal; the hover says so.
 	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`
+	// Overlap is set on a PR short of the merge queue (below 080) whose
+	// changed files overlap another open PR's: the planner has ordered
+	// them, but the merge train is a merge-queue concept and this row is
+	// not in the queue yet. No train, no ordinal — one hint naming the PR
+	// it will queue behind (stageTrackerOverlapHint).
+	Overlap *StageTrackerOverlap `json:"overlap,omitempty"`
 	// BlockedOn lists the open GitHub "blocked by" dependencies ("repo#N")
 	// of an issue the scheduler withholds from every kick until they close
 	// (scheduler.partitionBlockedIssues). Without it a sequenced sub-issue
@@ -650,6 +656,7 @@ type StageTrackerLinkedPR struct {
 	// LeftTrain mirrors the nested PR's own row field so the sub-row's
 	// hover can say it left its train while under repair.
 	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`
+	Overlap   *StageTrackerOverlap   `json:"overlap,omitempty"`
 	Soak      *StageTrackerSoak      `json:"soak,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`

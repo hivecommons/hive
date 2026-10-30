@@ -703,3 +703,18 @@ func TestEntryCommentRepeatsDecisionAcrossHeads(t *testing.T) {
 		t.Fatalf("stage flap lost the decision identity: %+v", rec)
 	}
 }
+
+func TestAlreadyLandedReasonCaption(t *testing.T) {
+	if got := AlreadyLandedReason(15506); got != "self-authored:already-landed:#15506" {
+		t.Fatalf("reason=%q", got)
+	}
+	if c, ok := AlreadyLandedCaption(AlreadyLandedReason(15506)); !ok || c != "already landed via #15506 — closing as superseded" {
+		t.Fatalf("caption=%q ok=%v", c, ok)
+	}
+	if c, ok := AlreadyLandedCaption(AlreadyLandedReason(0)); !ok || c != "already landed on the base — closing as superseded" {
+		t.Fatalf("bare caption=%q ok=%v", c, ok)
+	}
+	if _, ok := AlreadyLandedCaption("superseded-by-merge"); ok {
+		t.Fatal("other reasons are not already-landed")
+	}
+}
