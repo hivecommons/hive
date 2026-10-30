@@ -2398,6 +2398,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	})
 
 	scopeReader := reviewScopeLinearReader(cfg, logger)
+	preparationHeads := reviewPreparationHeads(ctx, cfg, candidates, reviewPreparationObserver(cfg, ghr, logger), artifact, logger)
 	prs := make([]review.PullRequest, 0, len(candidates))
 	for _, pr := range candidates {
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
@@ -2451,6 +2452,9 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 			// (hivecommons/hive#15823).
 			MergeReady: reviewMergeReady(pr),
 			CIPending:  reviewCIPending(pr),
+			PreparationOwner: reviewMergeReady(pr) && !reviewCIPending(pr) &&
+				pr.HeadSHA != "" && preparationHeads[github.ReviewQueueKey(fullRepo, pr.Number)] == pr.HeadSHA &&
+				reviewPreparationOwesVerdict(artifact, fullRepo, pr),
 		}
 		// The linked Linear issue's text for the scope contract, read here
 		// so reviewers never need a Linear token (hivecommons/hive#14906);
@@ -2572,7 +2576,7 @@ func reviewKickPrioritySummary(kicks []review.DispatchKick) string {
 		}
 		counts[p]++
 	}
-	order := []string{review.ReviewPriorityMergeReady, review.ReviewPriorityStarved, review.ReviewPriorityAge, review.ReviewPriorityCIPendingSpare}
+	order := []string{review.ReviewPriorityPreparation, review.ReviewPriorityPreparationYield, review.ReviewPriorityMergeReady, review.ReviewPriorityStarved, review.ReviewPriorityAge, review.ReviewPriorityCIPendingSpare}
 	parts := make([]string, 0, len(counts))
 	for _, p := range order {
 		if n := counts[p]; n > 0 {

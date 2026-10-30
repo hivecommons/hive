@@ -413,6 +413,25 @@ and release/skip reason. `automerge update-branch` and the sweep's
 reasons do not consume the branch-update budget. Ready-only train seating and
 reviewer dispatch scheduling are separate policies.
 
+The review planner observes the durable preparation owner once per destination
+per pass. Only its exact live, CI-green, mergeable head with a verdict still
+owed receives `base-preparation` review priority; it does not need a ready train
+seat. A refreshed head must be the merge of the recorded attempted head and
+base and pass the existing same-patch proof, so an author's content push or
+amended merge cannot inherit that priority.
+Closed, held, retargeted, released and expired owners receive no promotion.
+Observation is read-only and performs GitHub reads outside preparation locks.
+Busy valid reviews are never interrupted. After a confirmed preparation review
+handoff, other non-pending heads promoted by the existing three-cycle starvation
+rule go first as `base-preparation-fairness`; their confirmed service restores
+preparation preference. Unrelated deliveries cannot clear the owed yield. This
+uses the existing dispatch history, survives restarts, and prevents successive
+owners from indefinitely starving aged work. Without an active eligible owner,
+the existing review order is unchanged. Priority is not review approval or merge
+eligibility: normal label, model, current-head verdict and merge gates still run.
+`review swarm kick planned` exposes `priority=base-preparation`; the normal
+waiting reasons continue to expose reviewer/parallel-slot exhaustion.
+
 Human pushes, direct merges and external automation can still move a base.
 Such a move is coalesced until the preparation owner qualifies again; it must
 then refresh and re-pass current-head gates if still behind. This scheduler
