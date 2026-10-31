@@ -35,9 +35,10 @@ func TestStageTrackerLetHiveDecideBusyCSS(t *testing.T) {
 func TestStageTrackerLetHiveDecidePreviewTagsPend(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"stageTrackerActingCaption('decide:delegate'), undefined, 'decide:delegate');",
+		"stageTrackerActingCaption('decide:delegate:preview'), undefined, 'decide:delegate');",
+		`'decide:delegate:preview': 'Asking the hive…'`,
 		"try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { stageTrackerClearPending(pend); }",
-		"stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] || '');",
+		"stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] ? busy[key].busy : '', busy[key] ? busy[key].caption : '');",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
@@ -59,14 +60,15 @@ function hamStubLead(act, disabledWhy) {
   head.appendChild(b); return { head, b };
 }
 const K = 'hivecommons/hive/pr#15773';
-// 1. The preview's tagged pend: busy + spinner + "Asking the hive…", not clickable; restore puts the label and hint back.
+// 1. The preview's tagged pend: busy + spinner + the pend's caption ("Asking the hive…", the row caption's phrase), not clickable; restore puts the label and hint back.
 let row = hamStubRow(K); let { head, b } = hamStubLead('decide:delegate'); row.appendChild(head); hamPanel.children.length = 0; hamPanel.appendChild(row);
-let pend = stageTrackerSetPending([K], stageTrackerActingCaption('decide:delegate'), now, 'decide:delegate');
+let pend = stageTrackerSetPending([K], stageTrackerActingCaption('decide:delegate:preview'), now, 'decide:delegate');
 assert.strictEqual(b.getAttribute('aria-busy'), 'true', 'tagged pend busies the button');
 assert.strictEqual(b.getAttribute('aria-disabled'), 'true', 'busy is not clickable (the click guard reads aria-disabled)');
 assert.strictEqual(b.getAttribute('title'), null, 'the hint does not show while busy');
 assert.ok(b.children.some(c => c.classList && c.classList.contains('cue-acting-spin')), 'spinner');
-assert.strictEqual(b.children[b.children.length - 1].nodeValue, STAGE_TRACKER_LEAD_BUSY_TEXT);
+assert.strictEqual(b.children[b.children.length - 1].nodeValue, ' Asking the hive…', 'the button reads the pend caption, one phrase with the row');
+assert.strictEqual(stageTrackerActingCaption('decide:delegate:preview'), 'Asking the hive…'); assert.strictEqual(stageTrackerActingCaption('decide:delegate'), 'Hive deciding…', 'the confirmed action keeps its own caption');
 assert.ok(row.classList.contains('cue-acting'), 'the row still wears the acting caption');
 stageTrackerPendingSync(hamPanel);
 assert.strictEqual(b.children.filter(c => c.classList && c.classList.contains('cue-acting-spin')).length, 1, 'a re-sync adds no second spinner');
@@ -80,12 +82,12 @@ assert.ok(row.classList.contains('cue-acting'), 'but the row caption shows');
 stageTrackerClearPending(pend);
 // 3. A tagged pend on a row whose lead is another verb leaves that lead alone.
 row = hamStubRow(K); ({ head, b } = hamStubLead('decide:merge-now')); row.appendChild(head); hamPanel.children.length = 0; hamPanel.appendChild(row);
-pend = stageTrackerSetPending([K], stageTrackerActingCaption('decide:delegate'), now, 'decide:delegate');
+pend = stageTrackerSetPending([K], stageTrackerActingCaption('decide:delegate:preview'), now, 'decide:delegate');
 assert.strictEqual(b.getAttribute('aria-busy'), null, 'Merge now does not read Asking the hive…');
 stageTrackerClearPending(pend);
 // 4. A lead the row rendered disabled (aria-disabled + why) is disabled again after the pend clears — not clickable.
 row = hamStubRow(K); ({ head, b } = hamStubLead('decide:delegate', 'Needs write access')); row.appendChild(head); hamPanel.children.length = 0; hamPanel.appendChild(row);
-pend = stageTrackerSetPending([K], stageTrackerActingCaption('decide:delegate'), now, 'decide:delegate');
+pend = stageTrackerSetPending([K], stageTrackerActingCaption('decide:delegate:preview'), now, 'decide:delegate');
 assert.strictEqual(b.getAttribute('aria-busy'), 'true');
 stageTrackerClearPending(pend);
 assert.strictEqual(b.getAttribute('aria-busy'), null);
@@ -107,13 +109,17 @@ const asking = { number: 15647, url: 'https://github.com/o/r/pull/15647', title:
   decision_needed: { question: 'Approve or send back?', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: true }, { action: 'decide:approve', label: 'Approve', enabled: true }] } };
 const issue = { repo: 'o/r', kind: 'issue', number: 15320, title: 'Tracker lead chips', url: 'https://github.com/o/r/issues/15320', stage: 40, actor: 'maintainer', modifiers: [], linked_prs: [asking] };
 const prRow = Object.assign({ repo: 'o/r', kind: 'pr' }, asking);
+// Rows are what the last render drew (_stageTracker.rows, from
+// stageTrackerVisible); before any render nothing is listed, so no chip.
+_stageTracker = { items: [issue, prRow] };
+assert.ok(!stageTrackerLeadActionOnRow(issue, ctx).passive, 'no render yet: no chip');
 // The PR not listed as a row: the issue keeps its button (no sub-rows drawn).
-_stageTracker = { items: [issue] };
+_stageTracker = { items: [issue], rows: [issue] };
 let a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.strictEqual(a.id, 'decide:delegate'); assert.ok(!a.passive);
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(issue, ctx)), 1);
 // Listed as its own row: passive, naming the PR; the chip is a span, no button.
-_stageTracker = { items: [issue, prRow] };
+_stageTracker = { items: [issue, prRow], rows: [issue, prRow] };
 a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.strictEqual(a.passive, 15647, JSON.stringify(a));
 let h = stageTrackerLeadActionHtml(issue, ctx);
@@ -123,11 +129,11 @@ assert.ok(h.includes('Let hive decide lives on its row'), h);
 // The PR's own row still carries the button.
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(prRow, ctx)), 1);
 // Nested under the issue (stage_tracker_links.go sets nested_under): the PR
-// is in items but stageTrackerVisible folds it into the issue's sub-row, so
-// no chip — the issue keeps its button when no sub-row is drawn (one
-// covering PR) and yields it to the sub-row when several are.
+// is in items but stageTrackerVisible folds it into the issue's sub-row and
+// leaves it out of rows, so no chip — the issue keeps its button when no
+// sub-row is drawn (one covering PR) and yields it to the sub-row when several are.
 const nested = Object.assign({}, prRow, { nested_under: 15320 });
-_stageTracker = { items: [issue, nested] };
+_stageTracker = { items: [issue, nested], rows: [issue] };
 a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.ok(a && !a.passive, 'a nested PR is not its own row: ' + JSON.stringify(a));
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(issue, ctx)), 1, 'the issue row keeps its only decision button');
@@ -142,7 +148,8 @@ assert.strictEqual(stageTrackerLeadActionOnRow(issue, ctx).passive, 15647, 'the 
 // A server-marked lead that is not Let hive decide is named as itself.
 const merging = Object.assign({}, asking, { decision_needed: { question: 'Merge?', options: [{ action: 'decide:merge-now', label: 'Merge now', enabled: true, lead: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } });
 const issue2 = Object.assign({}, issue, { number: 15321, linked_prs: [merging] });
-_stageTracker = { items: [issue2, Object.assign({ repo: 'o/r', kind: 'pr' }, merging)] };
+const mergingRow = Object.assign({ repo: 'o/r', kind: 'pr' }, merging);
+_stageTracker = { items: [issue2, mergingRow], rows: [issue2, mergingRow] };
 a = stageTrackerLeadActionOnRow(issue2, ctx);
 assert.strictEqual(a.id, 'decide:merge-now', JSON.stringify(a)); assert.strictEqual(a.passive, 15647);
 h = stageTrackerLeadActionHtml(issue2, ctx);

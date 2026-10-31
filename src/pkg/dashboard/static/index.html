@@ -20396,19 +20396,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // stageTrackerRender from stageTrackerVisible), not the payload's items:
     // a PR nested_under a listed issue is in items but is never its own row
     // outside the Pull requests view (tracker-filter.js stageTrackerVisible),
-    // and a filter may hide the PR while it shows the issue. Without a
-    // render (the node harness) the items stand in, minus PRs nested under
-    // a listed issue, so the chip never points at a row that is not drawn.
+    // and a filter may hide the PR while it shows the issue. The nesting
+    // rule lives in stageTrackerVisible alone: with no rows recorded yet
+    // nothing is drawn, so nothing is "listed" and the chip is not shown.
     function stageTrackerPRListedOwnRow(issue, t) {
-      if (!_stageTracker) return false;
+      if (!_stageTracker || !Array.isArray(_stageTracker.rows)) return false;
       const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'pr', number: t.number });
-      let rows = _stageTracker.rows;
-      if (!Array.isArray(rows)) {
-        const items = Array.isArray(_stageTracker.items) ? _stageTracker.items : [];
-        const issues = new Set(items.filter(it => it && it.kind === 'issue').map(it => it.repo + '#' + it.number));
-        rows = items.filter(it => it && !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
-      }
-      return rows.some(it => it && stageTrackerItemKey(it) === key);
+      return _stageTracker.rows.some(it => it && stageTrackerItemKey(it) === key);
     }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
@@ -21500,11 +21494,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // alternative (which runs as its own row action with the chosen button
     // recorded on the ledger).
     async function stageTrackerDelegatePreview(items, rows) {
-      // The plan gathers the PR live (seconds): the row reads "acting…" and
-      // its Let hive decide button busy from the click until the preview can
-      // open. The pend is tagged with the button it busies: a confirmed
-      // action's pend (or any other ⋯ action on the row) leaves it alone.
-      const pend = stageTrackerSetPending([].concat(...items.map(it => stageTrackerPendingKeys(it, rows))).filter((k, i, a) => a.indexOf(k) === i), stageTrackerActingCaption('decide:delegate'), undefined, 'decide:delegate');
+      // The plan gathers the PR live (seconds): the row caption and its Let
+      // hive decide button both read the preview's own caption ("Asking the
+      // hive…", one phrase from STAGE_TRACKER_ACTING_CAPTIONS, distinct from
+      // the confirmed action's "Hive deciding…") from the click until the
+      // preview can open. The pend is tagged with the button it busies: a
+      // confirmed action's pend (or any other ⋯ action on the row) leaves it alone.
+      const pend = stageTrackerSetPending([].concat(...items.map(it => stageTrackerPendingKeys(it, rows))).filter((k, i, a) => a.indexOf(k) === i), stageTrackerActingCaption('decide:delegate:preview'), undefined, 'decide:delegate');
       let plans;
       try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { stageTrackerClearPending(pend); }
       const failed = plans.filter(pl => pl.error);
@@ -21686,7 +21682,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
-      'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
+      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
@@ -21932,11 +21928,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerPendingExpire(d, now) { _stageTrackerPending = stageTrackerPendingLive(_stageTrackerPending, d, typeof now === 'number' ? now : Date.now()); }
     // The row's lead button while a tagged pend (busyAct, its data-ham-act)
-    // waits: busy, spinner, "Asking the hive…", not clickable again. The
-    // button's own aria-disabled / title are kept and put back when the
-    // pend clears, so a lead the row rendered disabled stays disabled.
-    const STAGE_TRACKER_LEAD_BUSY_TEXT = ' Asking the hive…';
-    function stageTrackerLeadBusySync(lead, busyAct) {
+    // waits: busy, spinner, the pend's own caption (the same phrase the row
+    // caption shows), not clickable again. The button's own aria-disabled /
+    // title are kept and put back when the pend clears, so a lead the row
+    // rendered disabled stays disabled.
+    function stageTrackerLeadBusySync(lead, busyAct, caption) {
       if (!lead) return;
       const on = !!busyAct && lead.getAttribute('data-ham-act') === busyAct;
       const isBusy = lead.getAttribute('aria-busy') === 'true';
@@ -21947,7 +21943,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         lead.setAttribute('aria-busy', 'true'); lead.setAttribute('aria-disabled', 'true'); lead.removeAttribute('title');
         lead.textContent = '';
         const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; lead.appendChild(sp);
-        lead.appendChild(document.createTextNode(STAGE_TRACKER_LEAD_BUSY_TEXT));
+        lead.appendChild(document.createTextNode(' ' + String(caption || 'acting…')));
       } else if (!on && isBusy) {
         lead.removeAttribute('aria-busy');
         if (lead.dataset.hamWasDisabled === 'true') lead.setAttribute('aria-disabled', 'true'); else lead.removeAttribute('aria-disabled');
@@ -21960,12 +21956,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPendingSync(el) {
       if (!el || typeof el.querySelectorAll !== 'function') return;
       const want = {}, busy = {};
-      for (const p of _stageTrackerPending) for (const k of p.keys) { want[k] = p.caption; if (p.busy) busy[k] = p.busy; }
+      for (const p of _stageTrackerPending) for (const k of p.keys) { want[k] = p.caption; if (p.busy) busy[k] = p; }
       const nodes = Array.from(el.querySelectorAll('[data-ham-key], [data-ham-sub-key]'));
       for (const n of nodes) {
         const key = n.getAttribute('data-ham-sub-key') || n.getAttribute('data-ham-key');
         const cap = want[key];
-        stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] || '');
+        stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] ? busy[key].busy : '', busy[key] ? busy[key].caption : '');
         const strip = n.querySelector(':scope > .ham-strip-row');
         // The caption lives inside the lit chevron (the pill), never as a
         // separate element beside the ✓ badge (#15126); a row without a

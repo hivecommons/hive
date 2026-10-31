@@ -161,7 +161,6 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerClearPending"),
 		jsFunc(t, html, "stageTrackerPendingLive"),
 		jsFunc(t, html, "stageTrackerPendingExpire"),
-		jsConstLine(t, html, "STAGE_TRACKER_LEAD_BUSY_TEXT"),
 		jsFunc(t, html, "stageTrackerLeadBusySync"),
 		jsFunc(t, html, "stageTrackerPendingSync"),
 		// Progress + failure surfacing for every mutating action (hivecommons/hive#15436).
