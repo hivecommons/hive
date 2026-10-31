@@ -60,7 +60,8 @@
       if (!el) return;
       const nowMs = Date.now();
       // Rows under a "Merging" hold the payload already dropped ride along (#15245).
-      const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
+      const held = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
+      const d = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(held, nowMs) : held;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
         if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
         if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(null, [], nowMs, '');
@@ -70,6 +71,7 @@
         return;
       }
       const f = _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      if (typeof stageTrackerTerminalEvents === 'function') stageTrackerTerminalEvents(nowMs);
       const stages = d.stages || [];
       const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
       const sel = document.getElementById('activity-monitor-repo');
@@ -170,7 +172,7 @@
         : itemRow(pageItems[i], i);
       const trainRows = stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null);
       const inlineRows = typeof stageTrackerPreparationInlineRows === 'function' ? stageTrackerPreparationInlineRows(trainRows, pageItems, stages) : trainRows;
-      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs);
+      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept

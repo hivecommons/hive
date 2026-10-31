@@ -26,10 +26,12 @@
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
-      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
+      const humanIcon = actorKind === 'human' || actorKind === 'maintainer';
+      const humanRequired = typeof stageTrackerHumanAttentionOf !== 'function' || !!stageTrackerHumanAttentionOf(item);
+      const actorIco = actorKind && (!humanIcon || humanRequired) ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
       // Guarded: test harnesses lift this function by name without stageTrackerHumanReason.
-      const humanReason = typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
+      const humanReason = (!humanIcon || humanRequired) && typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
       // "· @odttlnt's clanker · ■ offline 3h": the holder's live state
@@ -40,7 +42,8 @@
       // issue reads "PR in progress") still shows WHO holds it: the
       // holder's own kind icon stands where the actor icon would
       // (hivecommons/hive#15541).
-      const holderIco = holderShort && !actorIco ? stageTrackerIcon(stageTrackerClaimantIconKind(claimant), 'ham-ico ham-actor-ico', stageTrackerClaimantLine(claimant, nowMs)) : '';
+      const holderKind = claimant ? stageTrackerClaimantIconKind(claimant) : '';
+      const holderIco = holderShort && !actorIco && (holderKind !== 'human' || humanRequired) ? stageTrackerIcon(holderKind, 'ham-ico ham-actor-ico', stageTrackerClaimantLine(claimant, nowMs)) : '';
       // Static chevrons carry no data-motion: the CSS only animates the two
       // moving buckets. The hive-acting pulse needs an agent actually on
       // the item (tracker-cues: working); a hive stage with nobody on it is
@@ -130,8 +133,9 @@
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
       const actor = active.cap ? '' : stageTrackerActorTip(item);
+      const by = active.cap && item.terminal_merge && typeof stageTrackerMergedByText === 'function' ? stageTrackerMergedByText(item.merged_by) : '';
       const regressed = stageTrackerRegressionText(item, Date.now());
-      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
+      const text = active.short + (by ? ' ' + by : '') + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
       return `<p class="ham-current-stage">${esc(text)}</p>`;
     }
 
@@ -283,7 +287,8 @@
     }
     function stageTrackerSentinelChipHtml(item) {
       if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item) || stageTrackerSentinelAsSuffix(item) || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
-      return `<span class="ham-badge ham-badge-sentinel" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc('Sentinel alert — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
+      const label = item.sentinel_notice ? 'Informational security notice' : 'Sentinel alert';
+      return `<span class="ham-badge ham-badge-sentinel${item.sentinel_notice ? ' ham-sentinel-notice' : ''}" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc(label + ' — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
     }
 
     // Pure: the hold pill text from the row's `hold` provenance ('' when the

@@ -115,6 +115,17 @@ func (st *activityStore) record(hiveID string, block *hubactivity.Digest, now ti
 	return clean.ETag
 }
 
+// forget drops a hive's held digest, e.g. when the hive leaves the registry.
+// Unknown ids and a nil store are no-ops.
+func (st *activityStore) forget(hiveID string) {
+	if st == nil {
+		return
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	delete(st.byHive, hiveID)
+}
+
 func (st *activityStore) forgetOldLocked(now time.Time) {
 	for id, a := range st.byHive {
 		if now.Sub(a.receivedAt) > activityForgetAfter {

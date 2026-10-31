@@ -1551,6 +1551,7 @@
     .ham-row.ham-preparation-gap::before, .ham-sub.ham-preparation-member.ham-preparation-gap::before { border-left-style: dashed; }
     .ham-row.ham-preparation-unverified::after, .ham-sub.ham-preparation-member.ham-preparation-unverified::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
     .ham-preparation-comment { animation: none; }
+    .ham-human-context { animation: none; }
     /* Mixed issue trees keep their existing children; only actual prep PRs
        receive a rail, at the original gutter offset minus the parent inset. */
     .ham-row > .ham-preparation-head { margin-left: calc(-1 * var(--sp-2)); }
@@ -1616,6 +1617,7 @@
        reads "Sentinel alert · needs human". Danger-tinted from the
        status token the sentinel pill on the repo card already uses. */
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
+    .ham-badge-sentinel.ham-sentinel-notice { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 55%, transparent); }
     .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
@@ -6966,6 +6968,22 @@
       body.display-shift #activity-monitor-section { animation: none; }
       body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
       body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: none; }    }
+body.matrix-mode #hive-dashboard-root { display: none !important; }
+body.matrix-mode #hive-matrix {
+  --matrix-bg: #000804;
+  --matrix-fg: #52ed86;
+  --matrix-surface: #000000;
+  --matrix-text: #e8f5eb;
+  --matrix-muted: #b8ccbb;
+  position: fixed; inset: 0; z-index: 100000; background: var(--matrix-bg); color: var(--matrix-color, var(--matrix-fg)); font: 16px monospace;
+}
+body.matrix-mode .matrix-canvas { width: 100%; height: 100%; }
+body.matrix-mode .matrix-labels { position: absolute; bottom: 1rem; left: 1rem; right: 1rem; padding: var(--sp-3); background: var(--matrix-surface); color: var(--matrix-text); font-size: var(--fs-base); overflow-wrap: anywhere; }
+body.matrix-mode .matrix-notice { position: absolute; top: 2rem; left: 1rem; right: 1rem; color: var(--matrix-text); }
+body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; overflow: hidden; }
+body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 1rem; }
+body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
+body.matrix-mode #hive-matrix [hidden] { display: none !important; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6983,6 +7001,211 @@
 </head>
 <body>
 <script>
+// Matrix is an opt-in display only. Content always comes from the authorized
+// pull endpoint; the shared SSE stream carries a content-free nudge.
+(function(){
+  'use strict';
+  var pull = function(){};
+  window.hiveMatrixAttach = function(source){
+    if (!window.HIVE_MATRIX) return;
+    source.addEventListener('code-lines', function(){ pull(); });
+    source.addEventListener('open', function(){ pull(); });
+  };
+  window.hiveMatrixStart = function(){
+    if (!window.HIVE_MATRIX || document.getElementById('hive-matrix')) return;
+    var params = new URL(window.location.href).searchParams;
+    function option(name, fallback){
+      var value = params.get('mx.' + name);
+      try {
+        if (value === null) value = localStorage.getItem('hive.matrix.' + name);
+        else localStorage.setItem('hive.matrix.' + name, value);
+      } catch(e) {}
+      return value === null ? fallback : value;
+    }
+    function number(name, fallback, min, max){
+      var value = Number(option(name, String(fallback)));
+      return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+    }
+    var effect = option('effect', 'rain') === 'cascade' ? 'cascade' : 'rain';
+    var speed = number('speed', 1, 0.1, 5), fps = number('fps', 30, 1, 60);
+    var palette = option('palette', 'green');
+    var colors = {green: '#52ed86', amber: '#ffb347', gold: '#ffd700'};
+    var color = colors[palette] || colors.green;
+    var root = document.createElement('main');
+    root.id = 'hive-matrix';
+    root.style.setProperty('--matrix-color', color);
+    document.body.appendChild(root);
+    function element(tag, className, text){
+      var el = document.createElement(tag);
+      el.className = className;
+      if (text) el.textContent = text;
+      root.appendChild(el);
+      return el;
+    }
+    var canvas = element('canvas', 'matrix-canvas');
+    canvas.setAttribute('aria-label', 'Pushed code lines · Matrix ' + effect);
+    var list = element('div', 'matrix-list');
+    var notice = element('p', 'matrix-notice', 'Waiting for pushed lines…');
+    notice.setAttribute('role', 'status');
+    var labels = element('div', 'matrix-labels');
+    var source = document.createElement('div');
+    source.textContent = 'Source: lines pushed by hive · public allowlisted repos';
+    var freshness = document.createElement('div');
+    var pausedLabel = document.createElement('div');
+    labels.append(source, freshness, pausedLabel);
+    var ctx = canvas.getContext('2d');
+    var motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    var lines = [], lastSeq = 0, lastAt = 0, startedAt = Date.now();
+    var enabled = false, manualPause = false, loading = false, pending = false;
+    var frame = 0, previous = 0, page = 0, pageTimer = 0, drops = [];
+    var atlas = document.createElement('canvas'), glyphs = new Map();
+    var width = 0, height = 0, cell = 20;
+    function paused(){ return manualPause || document.hidden; }
+    function resize(){
+      width = window.innerWidth; height = window.innerHeight;
+      canvas.width = width; canvas.height = height;
+      drops = [];
+    }
+    function clearContent(message){
+      enabled = false; lines = []; drops = []; glyphs.clear();
+      lastSeq = 0; lastAt = 0;
+      list.replaceChildren(); ctx.clearRect(0, 0, width, height);
+      notice.textContent = message;
+      sync();
+    }
+    function updateLabels(){
+      var minutes = Math.floor(Math.max(0, Date.now() - (lastAt || startedAt)) / 60000);
+      freshness.textContent = minutes >= 10 ? 'stale · no new lines for ' + minutes + 'm' :
+        (lastAt ? 'last line ' + (minutes ? minutes + 'm ago' : 'just now') : 'waiting for first line');
+      pausedLabel.textContent = paused() ? 'paused' : 'p / Space to pause';
+    }
+    function caption(line){ return line.repo + '#' + line.pr + ' · ' + line.path; }
+    function staticPage(){
+      list.replaceChildren();
+      var latest = lines.slice(-60).reverse();
+      if (page * 8 >= latest.length) page = 0;
+      latest.slice(page * 8, page * 8 + 8).forEach(function(line){
+        var row = document.createElement('div');
+        var label = document.createElement('small');
+        label.textContent = caption(line);
+        var text = document.createElement('pre');
+        text.textContent = line.line;
+        row.append(label, text); list.appendChild(row);
+      });
+    }
+    function buildAtlas(){
+      // Bounded by the same latest-line window as the renderer. No synthetic
+      // characters: every glyph in a column belongs to an incoming line.
+      glyphs.clear();
+      lines.forEach(function(line){ Array.from(line.line).forEach(function(g){
+        if (!glyphs.has(g)) glyphs.set(g, glyphs.size);
+      }); });
+      atlas.width = 64 * cell;
+      atlas.height = Math.max(cell, Math.ceil(glyphs.size / 64) * cell);
+      var ac = atlas.getContext('2d');
+      ac.font = '16px monospace'; ac.fillStyle = color;
+      glyphs.forEach(function(i, g){ ac.fillText(g, (i % 64) * cell, Math.floor(i / 64) * cell + 16); });
+    }
+    function spawn(x){
+      var line = lines[Math.floor(Math.random() * lines.length)];
+      return {x: x, y: -Math.random() * height, speed: 25 + Math.random() * 65,
+        line: line, chars: Array.from(line.line)};
+    }
+    function draw(now){
+      frame = 0;
+      if (paused() || motion.matches || !enabled) return;
+      if (!previous) previous = now;
+      var elapsed = now - previous;
+      if (elapsed >= 1000 / fps) {
+        previous = now;
+        var dt = Math.min(elapsed, 100) / 1000 * speed;
+        ctx.fillStyle = effect === 'rain' ? 'rgba(0, 8, 4, 0.18)' : '#000804';
+        ctx.fillRect(0, 0, width, height);
+        ctx.font = '16px monospace';
+        if (lines.length) {
+          var count = effect === 'rain' ? Math.ceil(width / cell) : 12;
+          while (drops.length < count) drops.push(spawn(effect === 'rain' ? drops.length * cell : Math.random() * width * 0.5));
+          drops.forEach(function(drop, i){
+            drop.y += drop.speed * dt;
+            if (drop.y > height + 40) { drops[i] = spawn(drop.x); return; }
+            if (effect === 'cascade') {
+              ctx.fillStyle = color; ctx.fillText(drop.line.line, drop.x, drop.y, width - drop.x);
+              ctx.fillStyle = '#b8ccbb'; ctx.font = '12px monospace';
+              ctx.fillText(caption(drop.line), drop.x, drop.y + 18, width - drop.x);
+              ctx.font = '16px monospace';
+            } else if (drop.chars.length) {
+              var g = drop.chars[Math.floor(drop.y / cell + drop.chars.length * 100) % drop.chars.length];
+              var index = glyphs.get(g);
+              if (index !== undefined) ctx.drawImage(atlas, (index % 64) * cell, Math.floor(index / 64) * cell, cell, cell, drop.x, drop.y, cell, cell);
+              ctx.fillStyle = '#effff2'; ctx.fillText(g, drop.x, drop.y + 16);
+            }
+          });
+        }
+      }
+      frame = requestAnimationFrame(draw);
+    }
+    function sync(){
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0; previous = 0;
+      clearTimeout(pageTimer); pageTimer = 0;
+      updateLabels();
+      canvas.hidden = motion.matches || !enabled;
+      list.hidden = !motion.matches || !enabled;
+      if (!enabled || paused()) return;
+      if (motion.matches) {
+        staticPage();
+        pageTimer = setTimeout(function(){ page++; sync(); }, 15000);
+      } else frame = requestAnimationFrame(draw);
+    }
+    pull = function(){
+      if (loading) { pending = true; return; }
+      loading = true; pending = false;
+      fetch('/api/matrix/lines?since=' + lastSeq, {cache: 'no-store', credentials: 'same-origin'})
+        .then(function(response){
+          if (response.status === 404) { clearContent('Matrix mode is not enabled on this hive'); return null; }
+          if (response.status === 401 || response.status === 403) { clearContent('Sign in with permission to read Matrix lines'); return null; }
+          if (!response.ok) throw new Error('Matrix pull failed');
+          return response.json();
+        }).then(function(data){
+          if (!data) return;
+          var incoming = (Array.isArray(data.lines) ? data.lines : []).filter(function(line){ return typeof line.line === 'string'; });
+          var seq = Number(data.seq) || 0;
+          // A restarted hive can reset its sequence; replace the old backlog.
+          if (seq < lastSeq) { lines = []; drops = []; }
+          if (seq !== lastSeq && incoming.length) {
+            var at = Date.parse(incoming[incoming.length - 1].at);
+            lastAt = Number.isFinite(at) ? at : Date.now();
+          }
+          lastSeq = seq;
+          lines = lines.concat(incoming).slice(-120);
+          enabled = true;
+          notice.textContent = lines.length ? '' : 'Waiting for pushed lines…';
+          if (!motion.matches) buildAtlas();
+          sync();
+        }).catch(function(){ clearContent('Matrix lines unavailable · retrying'); })
+        .finally(function(){ loading = false; if (pending) pull(); });
+    };
+    document.addEventListener('visibilitychange', function(){ sync(); if (!document.hidden) pull(); });
+    document.addEventListener('keydown', function(event){
+      if (event.ctrlKey || event.metaKey || event.altKey || event.repeat ||
+          /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable) return;
+      if (event.key === 'p' || event.key === 'P' || event.code === 'Space') {
+        event.preventDefault(); manualPause = !manualPause; sync();
+      }
+    });
+    motion.addEventListener('change', function(){
+      ctx.clearRect(0, 0, width, height);
+      if (!motion.matches) buildAtlas();
+      sync();
+    });
+    window.addEventListener('resize', resize);
+    resize(); sync(); pull();
+    // Recover from missed nudges, endpoint activation and transient failures.
+    if (typeof dashboardSetInterval === 'function') {
+      dashboardSetInterval('matrix-poll', function(){ updateLabels(); if (!document.hidden) pull(); }, 30000);
+    }
+  };
+})();
 // Apply layout immediately and hide content until first data render.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.
@@ -7019,8 +7242,13 @@
 // shared chrome-less layout in css/popout.css keys on (full screen adds it at
 // runtime); popout-mode and display-mode keep their view-specific rules.
 (function(){
-  var kiosk=false, popout=false, display=false, sound=true, density='', shift=false;
-  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, display=false, view='', sound=true, density='', shift=false;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; view=u.searchParams.get('view'); popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  window.HIVE_MATRIX = kiosk && view === 'matrix';
+  if(window.HIVE_MATRIX){
+    document.body.classList.add('matrix-mode');
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
+  }
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
   window.HIVE_DISPLAY=display&&!kiosk;
@@ -15816,6 +16044,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // under the issue (merged, closed, filtered) has nothing left to say
     // and is not drawn.
     function stageTrackerLinkedSupersededGone(lp, issue) {
+      if (lp && lp.terminal_merge === true && Number(lp.stage) === STAGE_TRACKER_TERMINAL) return false;
       return !!lp && String(lp.state || '') === 'closed' && !stageTrackerLinkedSuperseder(lp, issue);
     }
     function stageTrackerCoveringPR(item) {
@@ -16031,7 +16260,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const kind = mg.prior_head_merge_failed_kind || (fallback && fallback.kind) || '';
       const detail = kind === 'checks-pending' ? 'required checks had not reported' : (STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || stageTrackerMergeFailedShort(why));
       const head = String(mg.prior_head_merge_failed_head || '').slice(0, 7);
-      return 'merge attempt on previous head' + (head ? ' ' + head : '') + ' failed: ' + detail;
+      return 'earlier merge attempt' + (head ? ' on head ' + head : '') + ' failed: ' + detail;
     }
     // Pure: a refusal's first line, cut to STAGE_TRACKER_MERGE_FAILED_SHORT_MAX
     // (tooltips and toasts; the pill detail comes from the refusal kind).
@@ -16266,7 +16495,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Guarded: the test harnesses load helpers by name.
       if (typeof stageTrackerAdoptionQueued === 'function' && stageTrackerAdoptionQueued(item)) return STAGE_TRACKER_ADOPTION_QUEUED_CHIP;
       if (stageTrackerAdoptOffered(item)) return 'adopt?';
-      if (a.blocked_by) return 'not adopted';
+      if (a.blocked_by) {
+        switch (a.blocked_by) {
+          case 'author-is-person': return 'author-owned';
+          case 'author-is-maintainer': return 'maintainer-owned';
+          case 'operator-admission': return 'contributor-managed';
+          default: return 'adoption blocked';
+        }
+      }
       // Guarded: the test harnesses load helpers by name.
       const text = 'waiting on ' + (a.author ? '@' + a.author : 'author');
       return typeof stageTrackerReworkSuffix === 'function' ? stageTrackerReworkSuffix(text, item) : text;
@@ -16298,8 +16534,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPresenceOf(item) {
       const p = item && item.presence;
       if (!p || typeof p !== 'object' || !p.login) return null;
-      const state = STAGE_TRACKER_PRESENCE_STATES.indexOf(p.state) >= 0 ? p.state : 'unknown';
-      return { login: String(p.login), state, kind: p.kind === 'clanker' ? 'clanker' : 'human', since: p.since || '', last_seen: p.last_seen || '', next: p.next === 'adopt' ? 'adopt' : 'wait', adopt_at: p.adopt_at || '' };
+      const humanAuthor = (item.author_kind === 'human' || item.adoption && item.adoption.blocked_by === 'author-is-person')
+        && String(item.author || '').toLowerCase() === String(p.login).toLowerCase();
+      const kind = !humanAuthor && p.kind === 'clanker' ? 'clanker' : 'human';
+      const state = kind === 'human' ? 'unknown' : STAGE_TRACKER_PRESENCE_STATES.indexOf(p.state) >= 0 ? p.state : 'unknown';
+      return { login: String(p.login), state, kind, since: p.since || '', last_seen: kind === 'clanker' ? p.last_seen || '' : '', next: kind === 'clanker' && p.next === 'adopt' ? 'adopt' : 'wait', adopt_at: kind === 'clanker' ? p.adopt_at || '' : '' };
     }
     // "26h" / "40m" / "3d": how long the clanker has been gone, counted from
     // its last heartbeat or the start of the wait, whichever is later.
@@ -16341,7 +16580,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
       } else if (p.kind === 'human') {
         head = 'Waiting on @' + p.login + ' (human)';
-        next = 'waiting for a human reply' + (adopt ? '; adoption ' + adopt : '');
+        next = 'human availability is unknown; waiting for a human reply';
       } else {
         head = hive + 'not registered here)';
         next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
@@ -16432,14 +16671,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //             the hive.
     const STAGE_TRACKER_PUSH_NEXT = { ci: 'CI running', 're-review': 're-review queued' };
     function stageTrackerPushOf(item) {
-      const p = item && item.kind === 'pr' ? item.push : null;
-      if (!p || (p.state !== 'waiting' && p.state !== 'pushed')) return null;
+      const p = item && (item.kind === 'pr' || item.via_pr) ? item.push : null;
+      if (!p || (p.state !== 'waiting' && p.state !== 'pushed' && p.state !== 'checking')) return null;
       return p;
     }
-    // Pure: whether the author's push has landed — the row is the hive's again.
+    // Whether the row is the hive's again: a push, or observed same-head CI.
     function stageTrackerPushedBack(item) {
       const p = stageTrackerPushOf(item);
-      return !!(p && p.state === 'pushed');
+      return !!(p && (p.state === 'pushed' || p.state === 'checking'));
     }
     // Pure: the short age of the state ("38m", "2h"); '' without a time.
     function stageTrackerPushAge(p, nowMs) {
@@ -16461,10 +16700,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: "@zoe pushed abc1234 · 2m"; '' unless the push landed.
     function stageTrackerPushChipText(item, nowMs) {
       const p = stageTrackerPushOf(item);
+      if (p && p.state === 'checking') return 'checks pending · no new push requested';
       if (!p || p.state !== 'pushed') return '';
       const sha = stageTrackerPushSha(p);
       const age = stageTrackerPushAge(p, nowMs);
-      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (age ? ' · ' + age : '');
+      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (p.next === 're-review' ? ' · re-review pending' : '') + (age ? ' · ' + age : '');
     }
     // Pure: whether the row's lineage chip (adopted / rebased copy) carries
     // the push instead of a pill of its own.
@@ -16484,6 +16724,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPushTip(item, nowMs) {
       const p = stageTrackerPushOf(item);
       if (!p) return '';
+      if (p.state === 'checking') return 'checks pending again on the current head — no new push requested';
       const at = Date.parse(p.since || '');
       const when = at > 0 ? stageTrackerAgoText(at, nowMs) + ' (' + agentNowClockTime(at, nowMs) + ')' : '';
       const who = p.login ? '@' + p.login : 'the author';
@@ -16628,12 +16869,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!item || !item.sentinel_alert) return '';
       const head = String(item.head || '').slice(0, STAGE_TRACKER_SHORT_SHA);
       const reason = String(item.sentinel_reason || '').trim();
-      return STAGE_TRACKER_SENTINEL_TIP + (head ? ' at ' + head : '') + ': ' + (reason || STAGE_TRACKER_SENTINEL_TIP_FALLBACK);
+      const lead = item.sentinel_notice ? 'Informational security notice (not a merge gate)' : STAGE_TRACKER_SENTINEL_TIP;
+      const fallback = item.sentinel_notice ? 'informational findings; no blocking sentinel label' : STAGE_TRACKER_SENTINEL_TIP_FALLBACK;
+      return lead + (head ? ' at ' + head : '') + ': ' + (reason || fallback);
     }
     // Whether the item's lit chevron word carries the alert itself (a PR
     // parked at 085, or an issue riding one): the chip then adds nothing.
     function stageTrackerSentinelInLane(item) {
-      return !!(item && item.sentinel_alert) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
     }
     // A returned PR (071/072) keeps its routing word — the human already
     // acted, nothing is owed by the maintainer — and carries the alert as
@@ -16641,7 +16884,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // then adds nothing.
     function stageTrackerSentinelAsSuffix(item) {
       const st = Number(item && item.stage) || 0;
-      return !!(item && item.sentinel_alert) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
     }
     // Pure: whose PR a 071/072 row waits on — the row's own author, or, for
     // an issue row drawn through its one covering PR (via_pr), that PR's
@@ -16679,7 +16922,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else if (who.author && st === 72) text = 'Returned to @' + who.author + stageTrackerToolingSuffix(who.kind);
       return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
     }
-
     // Which strip segment a stage lights: main stages light themselves,
     // 040 shares the PR in progress column with 030, 060 shares CI / Review
     // with 050, 095 and 100 share the Merge gate column with 080, detours
@@ -16707,6 +16949,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const repairing = typeof stageTrackerUnderRepair === 'function' && !!stageTrackerUnderRepair(cur, item && item.reason);
       if (repairing && cur > STAGE_TRACKER_PR_COLUMN && cur !== STAGE_TRACKER_NEEDS_DECISION) return 50;
       const mg = item && item.merge_gate;
+      const refusal = mg && mg.state === 'merge-failed'
+        ? mg.merge_failed_kind || (typeof stageTrackerMergeRefusalFromRaw === 'function' ? stageTrackerMergeRefusalFromRaw(String(mg.merge_failed || '')).kind : '') : '';
+      if ((cur === 50 || cur === 60) && refusal === 'checks-pending') return 50;
       if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       // A merge-train member is a Merge queue matter too, 1st included:
       // the train's facts are mirrored onto its head while the head still
@@ -16903,12 +17148,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const r = String((sa && sa.human_reason) || stageTrackerHumanWhy(item, kind) || STAGE_TRACKER_HUMAN_REASON_FALLBACK).replace(/\s+/g, ' ').trim();
       return r.length > STAGE_TRACKER_HUMAN_REASON_MAX ? r.slice(0, STAGE_TRACKER_HUMAN_REASON_MAX - 1).replace(/\s+\S*$/, '') + '…' : r;
     }
+    function stageTrackerExternalPRWork(item) {
+      if (!item || (item.kind !== 'pr' && !item.via_pr)) return null;
+      let source = item;
+      if (item.via_pr) {
+        const linked = (item.linked_prs || []).filter(lp => lp && stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item));
+        source = linked.length === 1 ? linked[0] : {};
+      }
+      const who = stageTrackerReturnedAuthor(source);
+      const holder = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      if (holder && (!who.author || holder.source !== 'author')) return Object.assign({}, who, { owner: stageTrackerClaimantShort(holder) });
+      return who.kind === 'hive' || who.kind === 'bot' ? null : who;
+    }
     function stageTrackerActorTip(item) {
       // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
       const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';
       const sa = stageTrackerStageActor(item);
       if (!sa) { const k = stageTrackerActorKind(item); const w = humanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
-      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) {
+        const external = typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+        if (external) {
+          if (external.owner) return ' · Recorded PR owner ' + external.owner + ' — current work activity is unknown';
+          return external.author ? ' · Author-owned PR @' + external.author + ' — current work activity is unknown' : ' · PR ownership and current work activity are unknown';
+        }
+        return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      }
       const why = sa.why || humanWhy(item, sa.kind);
       return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
@@ -16957,6 +17221,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sa = stageTrackerStageActor(item);
       if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const external = sa.kind === STAGE_TRACKER_ACTOR_NONE && typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'CI failing') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
       const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
       return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }
@@ -17060,10 +17326,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
-      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
+      const humanIcon = actorKind === 'human' || actorKind === 'maintainer';
+      const humanRequired = typeof stageTrackerHumanAttentionOf !== 'function' || !!stageTrackerHumanAttentionOf(item);
+      const actorIco = actorKind && (!humanIcon || humanRequired) ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
       // Guarded: test harnesses lift this function by name without stageTrackerHumanReason.
-      const humanReason = typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
+      const humanReason = (!humanIcon || humanRequired) && typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
       // "· @odttlnt's clanker · ■ offline 3h": the holder's live state
@@ -17074,7 +17342,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // issue reads "PR in progress") still shows WHO holds it: the
       // holder's own kind icon stands where the actor icon would
       // (hivecommons/hive#15541).
-      const holderIco = holderShort && !actorIco ? stageTrackerIcon(stageTrackerClaimantIconKind(claimant), 'ham-ico ham-actor-ico', stageTrackerClaimantLine(claimant, nowMs)) : '';
+      const holderKind = claimant ? stageTrackerClaimantIconKind(claimant) : '';
+      const holderIco = holderShort && !actorIco && (holderKind !== 'human' || humanRequired) ? stageTrackerIcon(holderKind, 'ham-ico ham-actor-ico', stageTrackerClaimantLine(claimant, nowMs)) : '';
       // Static chevrons carry no data-motion: the CSS only animates the two
       // moving buckets. The hive-acting pulse needs an agent actually on
       // the item (tracker-cues: working); a hive stage with nobody on it is
@@ -17164,8 +17433,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
       const actor = active.cap ? '' : stageTrackerActorTip(item);
+      const by = active.cap && item.terminal_merge && typeof stageTrackerMergedByText === 'function' ? stageTrackerMergedByText(item.merged_by) : '';
       const regressed = stageTrackerRegressionText(item, Date.now());
-      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
+      const text = active.short + (by ? ' ' + by : '') + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
       return `<p class="ham-current-stage">${esc(text)}</p>`;
     }
 
@@ -17317,7 +17587,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerSentinelChipHtml(item) {
       if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item) || stageTrackerSentinelAsSuffix(item) || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
-      return `<span class="ham-badge ham-badge-sentinel" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc('Sentinel alert — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
+      const label = item.sentinel_notice ? 'Informational security notice' : 'Sentinel alert';
+      return `<span class="ham-badge ham-badge-sentinel${item.sentinel_notice ? ' ham-sentinel-notice' : ''}" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc(label + ' — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
     }
 
     // Pure: the hold pill text from the row's `hold` provenance ('' when the
@@ -17613,6 +17884,103 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return true;
     }
+    // A requirement is not an available action or the kind of a claim holder.
+    // Only the finished server snapshot supplies human_attention; its identity
+    // must still match the PR this row actually represents.
+    function stageTrackerHumanAttentionOf(item) {
+      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+        || item.superseded_by || item.adopted_by) return null;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      const a = item.human_attention;
+      if (!a || a.kind !== item.kind || Number(a.number) !== Number(item.number)) return null;
+      if (a.kind === 'pr' && String(a.head || '') !== String(item.head || '')) return null;
+      return a;
+    }
+    function stageTrackerHumanAttentionLine(item) {
+      const a = stageTrackerHumanAttentionOf(item);
+      if (!a) return '';
+      const reason = String(a.reason || '').trim() || 'Human decision required; reason unavailable';
+      const parts = ['Needs human: ' + reason];
+      if (a.owner) parts.push('next move: @' + a.owner);
+      if (a.asked_by) parts.push('requested by ' + a.asked_by);
+      return parts.join(' · ');
+    }
+    function stageTrackerHumanRequirementText(item) {
+      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
+        (item.modifiers || []).some(m => m === 'draft' || m === 'hold' || m === 'merged')) return '';
+      const human = stageTrackerHumanAttentionLine(item);
+      const d = item && item.decided;
+      const review = d && d.current_blocker && String(d.head || '') === String(item.head || '')
+        ? 'Current blocker: ' + d.current_blocker + ' · operator approval recorded separately, not review approval or merge readiness' : '';
+      return [human, review].filter(Boolean).join(' · ');
+    }
+    function stageTrackerHumanContextOf(item, stages) {
+      if (!item) return [];
+      const own = stageTrackerHumanRequirementText(item);
+      const out = own ? [{ item, text: own }] : [];
+      if (item.kind !== 'issue') return out;
+      // Include external drawn_under references, but never walk RFC ancestry
+      // or assign one child's requirement to the issue / its other PRs.
+      for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
+        if (!stageTrackerLinkedPROpen(lp, item)) continue;
+        const pr = stageTrackerLinkedPRItem(item, lp);
+        const text = stageTrackerHumanRequirementText(pr);
+        if (!text) continue;
+        const drawn = stageTrackerLinkedSorted(item, stages);
+        if (drawn.length > 1 && drawn.some(p => Number(p.number) === Number(lp.number))) continue;
+        const where = lp.drawn_under && Number(lp.drawn_under) !== Number(item.number)
+          ? ' · shown under issue #' + lp.drawn_under : '';
+        out.push({ item: pr, text: 'PR #' + pr.number + ' — ' + text + where });
+      }
+      return out;
+    }
+    function stageTrackerHumanContextHtml(item, stages, nowMs, subRows) {
+      const required = stageTrackerHumanContextOf(item, stages);
+      const lines = required.map(entry => {
+        const it = entry.item;
+        const href = it.url || item.url;
+        return `<div class="cue-event ham-human-context"><span>${esc(entry.text)}${href ? ` <a href="${esc(href)}" target="_blank" rel="noopener">View ${it.kind === 'pr' ? 'PR' : 'issue'} #${Number(it.number)}</a>` : ''}</span></div>`;
+      });
+      if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines.join('');
+      const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
+      const staleLinks = item.kind === 'issue' ? (item.linked_prs || []).filter(lp =>
+        stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
+      if (stale || staleLinks.length) {
+        const refs = staleLinks.length ? staleLinks.map(lp => 'PR #' + lp.number).join(', ') : item.kind === 'pr' ? 'PR #' + item.number : 'Issue #' + item.number;
+        return `<div class="cue-event ham-human-context"><span>${esc(refs)} · decision context unavailable for the displayed identity/head${item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''}</span></div>`;
+      }
+      const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
+      if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
+        stageTrackerLinkedPROpen(lp, item) && stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp)))) return '';
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged') || item.superseded_by) return '';
+      const actor = item.stage_actor;
+      const actorHuman = actor && (actor.kind === 'human' || actor.kind === 'maintainer');
+      const claimant = item.claimant;
+      if (actorHuman) {
+        // A person doing author/claim work is not automatically a decision
+        // gate. Keep the actual actor and their full current explanation.
+        const who = actor.login ? '@' + actor.login : 'a person';
+        const prNumber = item.kind === 'issue' && (item.linked_pr || ((item.linked_prs || []).length === 1 && item.linked_prs[0].number));
+        const target = prNumber ? ' on PR #' + prNumber : '';
+        lines.push(`<div class="cue-event ham-human-context"><span>Next move: ${esc(who + target)}${actor.why ? ' — ' + esc(actor.why) : ' · action reason unavailable'}</span></div>`);
+      } else if (claimant && claimant.kind === 'person' && claimant.login) {
+        lines.push(`<div class="cue-event ham-human-context"><span>Claimed by @${esc(claimant.login)} · claim ownership, not a human decision request</span></div>`);
+      }
+      if (typeof stageTrackerLeadActionOnRow === 'function' && typeof stageTrackerActionCtx === 'function') {
+        const ctx = stageTrackerActionCtx(item.repo);
+        if (ctx) {
+          ctx.nowMs = nowMs;
+          ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
+          const action = stageTrackerLeadActionOnRow(item, ctx, subRows);
+          if (action && (action.id === 'decide:delegate' || action.id === 'decide:delegate-all')) {
+            lines.push('<div class="cue-event ham-human-context"><span>Optional delegation: Let hive decide is available; it does not itself mean human input is required.</span></div>');
+          }
+        }
+      }
+      return lines.join('');
+    }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
@@ -17676,8 +18044,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x, issue)) : [];
       const canonical = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/.exec(String(lp.url || ''));
       return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
-        stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null,
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
+        state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
+        stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
@@ -17860,7 +18229,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
-          ${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
+          ${typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(pr, stages, nowMs) : ''}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
         </div>`;
     }
 
@@ -18103,7 +18472,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
+            terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -18164,7 +18534,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}
-        </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
+        </div>${typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(item, stages, nowMs, subRows) : ''}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
       </div>`;
     }
 
@@ -18502,7 +18872,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const auto = ctx && typeof ctx.noteTuck === 'boolean' ? ctx.noteTuck : (typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting());
       const fading = !auto && nowMs - stageTrackerEventShownAt(ev) > STAGE_TRACKER_EVENT_MS * 2 / 3;
       const open = !auto || stageTrackerNoteOpen(ev, nowMs, auto);
-      const who = ev.who === 'you' ? 'You' : 'Hive';
+      const who = ev.who === 'you' ? 'You' : ev.who === 'merge' ? 'Merge' : 'Hive';
       const body = `<span class="cue-event-who">${esc(who)}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`;
       if (!auto) return `<p class="cue-event${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}">${body}</p>`;
       const ico = `<button type="button" class="cue-event-ico" aria-label="${STAGE_TRACKER_NOTE_LABEL}" aria-expanded="${open ? 'true' : 'false'}" title="${esc(stageTrackerNoteTitle(ev, nowMs))}" data-action="stageTrackerNoteToggle" data-arg0="${esc(key)}" data-stop="1">${STAGE_TRACKER_NOTE_ICON}</button>`;
@@ -18914,7 +19284,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (_stageTrackerSettleTimer) return;
       _stageTrackerSettleTimer = setTimeout(() => { _stageTrackerSettleTimer = 0; renderStageTracker(); }, STAGE_TRACKER_SETTLE_MS);
     }
-
     // What a PR row's issue slot shows: the issue the PR closes (number,
     // title, url) — an open one first, else the closed one GitHub links
     // it to, with closed: true so the row draws it struck through under a
@@ -20117,7 +20486,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!el) return;
       const nowMs = Date.now();
       // Rows under a "Merging" hold the payload already dropped ride along (#15245).
-      const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
+      const held = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
+      const d = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(held, nowMs) : held;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
         if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
         if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(null, [], nowMs, '');
@@ -20127,6 +20497,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return;
       }
       const f = _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      if (typeof stageTrackerTerminalEvents === 'function') stageTrackerTerminalEvents(nowMs);
       const stages = d.stages || [];
       const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
       const sel = document.getElementById('activity-monitor-repo');
@@ -20227,7 +20598,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : itemRow(pageItems[i], i);
       const trainRows = stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null);
       const inlineRows = typeof stageTrackerPreparationInlineRows === 'function' ? stageTrackerPreparationInlineRows(trainRows, pageItems, stages) : trainRows;
-      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs);
+      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
@@ -20634,7 +21005,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }).join('');
     }
     function stageTrackerItemsForKeys(keys) {
-      return keys.map(k => stageTrackerItemByKey(_stageTracker, k)).filter(Boolean);
+      const data = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(_stageTracker, Date.now()) : _stageTracker;
+      return keys.map(k => stageTrackerItemByKey(data, k)).filter(Boolean);
     }
     // What the signed-in viewer may do on this repo. Hold permission is
     // looked up lazily (the server answers 403 either way); needs-human is
@@ -20861,6 +21233,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
+      if (typeof stageTrackerMergedPRKnown === 'function' && stageTrackerMergedPRKnown(item)) {
+        return [
+          { id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+          { id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+        ];
+      }
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const has = m => mods.indexOf(m) >= 0;
       const write = ctx.canHold !== false;
@@ -21630,6 +22008,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: which endpoint an action hits for one item. `once` marks a
     // hive-wide call made one time per batch.
     function stageTrackerActionRequest(item, id, payload) {
+      if (typeof stageTrackerTerminalView === 'function') {
+        item = stageTrackerTerminalView({ items: [item] }, Date.now()).items[0];
+        if (!item || (typeof stageTrackerMergedPRKnown === 'function' && stageTrackerMergedPRKnown(item))) return null;
+      }
       payload = payload || {};
       const p = repoParts(item.repo);
       const n = Number(item.number) || 0;
@@ -21911,7 +22293,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // flagged PR, so the operator reads the security reason before
     // choosing Approve; '' when nothing in items is flagged.
     function stageTrackerSentinelPreface(items) {
-      return (items || []).filter(it => it && it.sentinel_alert).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
+      return (items || []).filter(it => it && it.sentinel_alert && !it.sentinel_notice).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
     }
     // Every confirm a row action raises can be opted out of per browser,
     // per action id (the dialog's "Don't ask again for this action" box;
@@ -23039,6 +23421,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const repo = String(it.repo || '');
         const slash = repo.lastIndexOf('/');
         if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
+          if (!lp || !Number(lp.number)) continue;
+          const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(it, lp) : Object.assign({ repo: it.repo }, lp);
+          const prRepo = String(pr.repo || ''), at = prRepo.lastIndexOf('/');
+          if (at > 0) { const short = prRepo.slice(at + 1); byShort[short] = (short in byShort && byShort[short] !== prRepo) ? '' : prRepo; }
+          if (lp.state === 'closed' && Number(lp.stage) < STAGE_TRACKER_TERMINAL) continue;
+          out[stageTrackerPRKey(pr.repo, pr.number)] = (Number(pr.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+        }
         if (it.kind !== 'pr') continue;
         out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
       }
@@ -23054,14 +23444,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
 
-    // Pure: next plus every PR prev listed open that next no longer lists at
-    // all, kept as open. A PR the snapshot dropped before the audit log
+    // Pure: merged facts are irreversible; dropped open observations remain
+    // comparable. A PR the snapshot dropped before the audit log
     // recorded its merge stays comparable until recently_merged settles it
     // (or, when it was closed unmerged, for the life of the tab — a few keys).
     function stageTrackerCarryOpen(prev, next) {
       const out = Object.assign({}, next || {});
       if (!prev) return out;
-      for (const k of Object.keys(prev)) if (prev[k] === false && !(k in out)) out[k] = false;
+      for (const k of Object.keys(prev)) {
+        if (prev[k] === true) out[k] = true;
+        else if (prev[k] === false && !(k in out)) out[k] = false;
+      }
       return out;
     }
 
@@ -23126,6 +23519,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerMergeState = next;
       // A merged PR is no longer in this payload, so its last host survives.
       if (typeof stageTrackerPRHosts === 'function') Object.assign(_stageTrackerPRHost, stageTrackerPRHosts(d));
+      if (typeof stageTrackerTerminalObserve === 'function') stageTrackerTerminalObserve(d, fresh, nowMs);
       // With the celebration on, each fresh merge is counted (and the zap
       // plays) when its token lands on the counter; off, both happen now.
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
@@ -23782,6 +24176,159 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!stageTrackerMergedInFlight() && stageTrackerSoundGate()) stageTrackerPlayZap(1);
     }
     var _stageTrackerCelebrating = {};
+    var _stageTrackerTerminalRows = {};
+    var _stageTrackerTerminalFacts = {};
+    // Keep models, not stale HTML, for the existing short terminal/pin window.
+    // No queue/admission observation is required for a verified merged fact.
+    function stageTrackerTerminalObserve(d, fresh, nowMs) {
+      const previous = _stageTrackerTerminalRows, rows = Object.assign({}, previous);
+      const current = new Set();
+      for (const item of (d && Array.isArray(d.items) ? d.items : [])) if (item) {
+        const key = stageTrackerItemKey(item);
+        current.add(key);
+        rows[key] = { item, at: nowMs, visible_prs: (item.linked_prs || []).map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))) };
+      }
+      const el = document.getElementById('activity-monitor-panel');
+      for (const key of fresh) {
+        let rowKey = stageTrackerCelebrateRowKey(key, el) || _stageTrackerPRHost[key] || key;
+        if (!rows[rowKey] && rows[key]) rowKey = key;
+        if (!rows[rowKey]) continue;
+        const prior = _stageTrackerCelebrating[rowKey] || {};
+        _stageTrackerTerminalFacts[key] = Object.assign({}, _stageTrackerTerminalFacts[key], {
+          observed_at: nowMs, until: nowMs + STAGE_TRACKER_CELEBRATE_PIN_MS,
+        });
+        _stageTrackerCelebrating[rowKey] = Object.assign({}, prior, {
+          key, keys: Array.from(new Set((prior.keys || []).concat(key))), kind: 'merged',
+          until: Math.max(Number(prior.until) || 0, nowMs + STAGE_TRACKER_CELEBRATE_PIN_MS),
+        });
+        stageTrackerScheduleRelease(STAGE_TRACKER_CELEBRATE_PIN_MS);
+      }
+      const wanted = new Set();
+      const detached = [];
+      for (const rowKey of Object.keys(rows)) {
+        const pin = _stageTrackerCelebrating[rowKey], active = pin && pin.until > nowMs;
+        const item = rows[rowKey].item, old = previous[rowKey] && previous[rowKey].item;
+        if (item.kind === 'issue' && old && Array.isArray(old.linked_prs)) {
+          const linked = (item.linked_prs || []).slice(), keys = new Set(linked.map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))));
+          let unresolved = 0;
+          for (const lp of old.linked_prs) {
+            const key = stageTrackerItemKey(stageTrackerLinkedPRItem(old, lp));
+            const fact = _stageTrackerTerminalFacts[key];
+            if (keys.has(key)) continue;
+            if (fact && fact.until > nowMs) { linked.push(lp); keys.add(key); }
+            else if (_stageTrackerMergeState[key] === false && unresolved < STAGE_TRACKER_MERGED_LIST_MAX) {
+              linked.push(lp); keys.add(key); unresolved++;
+            }
+          }
+          rows[rowKey] = Object.assign({}, rows[rowKey], { item: Object.assign({}, item, { linked_prs: linked }) });
+        }
+        const source = rows[rowKey].item;
+        const prs = source.kind === 'pr' ? [source] : (source.linked_prs || []).map(lp => stageTrackerLinkedPRItem(source, lp));
+        if (!current.has(rowKey) && !active) {
+          if (!prs.some(pr => _stageTrackerMergeState[stageTrackerItemKey(pr)] === false)) { delete rows[rowKey]; continue; }
+          detached.push(rowKey);
+        }
+      }
+      // Missing-but-unsettled rows are bounded history, not visible holds.
+      // Keep them available when the canonical merge ledger lags eviction.
+      detached.sort((a, b) => rows[b].at - rows[a].at);
+      for (const key of detached.slice(STAGE_TRACKER_MERGED_LIST_MAX)) delete rows[key];
+      for (const row of Object.values(rows)) {
+        if (row.item.kind === 'pr') wanted.add(stageTrackerItemKey(row.item));
+        for (const lp of (row.item.linked_prs || [])) wanted.add(stageTrackerItemKey(stageTrackerLinkedPRItem(row.item, lp)));
+      }
+      _stageTrackerTerminalRows = rows;
+      // Reuse the canonical merge observer's alias resolution, without adding
+      // any item stages to this one-record observation.
+      const teaching = Object.values(rows).map(row => ({ repo: row.item.repo }));
+      const ledger = d && d.merged && Array.isArray(d.merged.recent) ? d.merged.recent : [];
+      for (const m of (d && Array.isArray(d.recently_merged) ? d.recently_merged : []).concat(ledger)) {
+        const facts = stageTrackerMergeState({ items: teaching, recently_merged: [m] }, _stageTrackerMergeState);
+        for (const key of Object.keys(facts)) {
+          if (!wanted.has(key)) continue;
+          const prior = _stageTrackerTerminalFacts[key] || {};
+          _stageTrackerTerminalFacts[key] = Object.assign({}, prior, {
+            merged_by: m.merged_by || prior.merged_by || '',
+          });
+        }
+      }
+      for (const key of Object.keys(_stageTrackerTerminalFacts)) if (!wanted.has(key)) delete _stageTrackerTerminalFacts[key];
+    }
+    function stageTrackerTerminalItem(item, key) {
+      const fact = _stageTrackerTerminalFacts[key] || {};
+      return Object.assign({}, item, {
+        stage: STAGE_TRACKER_TERMINAL, stage_slug: 'merged', state: 'closed', terminal_merge: true,
+        merged_by: fact.merged_by || item.merged_by || '', modifiers: [], deferred_modifiers: [],
+        caption: 'Merged', reason: '', preparation: null, merge_train: null, merge_gate: null,
+        decision_needed: null, human_attention: null, decided: null, hold: null, adoption: null,
+        manual_merge: false, human_merge_reason: '', human_merge_reason_text: '', human_approver: '',
+        superseded: null, superseded_by: 0, adopted_by: 0,
+        push: null, rework: null, presence: null, claimant: null,
+        stage_actor: { kind: 'none', why: 'merged' }, sentinel_alert: false,
+      });
+    }
+    function stageTrackerTerminalView(d, nowMs) {
+      if (!d || !Array.isArray(d.items)) return d;
+      const items = d.items.map(item => {
+        const rowKey = stageTrackerItemKey(item), pin = _stageTrackerCelebrating[rowKey];
+        const active = pin && pin.until > nowMs;
+        if (item.kind === 'pr' && _stageTrackerMergeState[rowKey] === true) {
+          const fact = _stageTrackerTerminalFacts[rowKey];
+          return (fact && fact.until > nowMs) || Number(item.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(item, rowKey) : null;
+        }
+        if (item.kind !== 'issue') return item;
+        const saved = _stageTrackerTerminalRows[rowKey];
+        const source = (item.linked_prs || []).slice();
+        const keys = new Set(source.map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))));
+        if (active && saved) for (const lp of (saved.item.linked_prs || [])) {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(saved.item, lp)), fact = _stageTrackerTerminalFacts[key];
+          if (fact && fact.until > nowMs && !keys.has(key)) { source.push(lp); keys.add(key); }
+        }
+        const linked = source.map(lp => {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp));
+          if (_stageTrackerMergeState[key] !== true) return lp;
+          const fact = _stageTrackerTerminalFacts[key];
+          return (fact && fact.until > nowMs) || Number(lp.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(lp, key) : null;
+        }).filter(Boolean);
+        return Object.assign({}, item, { linked_prs: linked });
+      }).filter(Boolean);
+      return Object.assign({}, d, { items });
+    }
+    function stageTrackerTerminalPinnedItem(rowKey, nowMs) {
+      const saved = _stageTrackerTerminalRows[rowKey];
+      if (!saved) return null;
+      let item = saved.item;
+      if (item.kind === 'issue') {
+        const visible = new Set(saved.visible_prs || []);
+        item = Object.assign({}, item, { linked_prs: (item.linked_prs || []).filter(lp => {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp)), fact = _stageTrackerTerminalFacts[key];
+          return visible.has(key) || (fact && fact.until > nowMs);
+        }) });
+      }
+      return stageTrackerTerminalView({ items: [item] }, nowMs).items[0] || null;
+    }
+    function stageTrackerTerminalEvents(nowMs) {
+      let nextUntil = Infinity;
+      for (const rowKey of Object.keys(_stageTrackerCelebrating)) {
+        const pin = _stageTrackerCelebrating[rowKey];
+        if (pin.kind !== 'merged' || pin.until <= nowMs) continue;
+        for (const key of (pin.keys || [pin.key])) {
+          const fact = _stageTrackerTerminalFacts[key] || {};
+          if (!fact.observed_at || fact.until <= nowMs) continue;
+          nextUntil = Math.min(nextUntil, fact.until);
+          const by = stageTrackerMergedByText(fact.merged_by);
+          const number = Number(key.slice(key.lastIndexOf('/pr#') + 4));
+          const event = { who: 'merge', at: fact.observed_at, text: 'Merged PR #' + number + (by ? ' ' + by : '') };
+          _stageTrackerEvents[key] = Object.assign({}, _stageTrackerEvents[key], event);
+          if (key === pin.key) _stageTrackerEvents[rowKey] = Object.assign({}, _stageTrackerEvents[rowKey], event);
+        }
+      }
+      if (Number.isFinite(nextUntil)) stageTrackerScheduleRelease(nextUntil - nowMs);
+    }
+    function stageTrackerMergedPRKnown(item) {
+      return !!item && item.kind === 'pr' && typeof _stageTrackerMergeState !== 'undefined' &&
+        !!_stageTrackerMergeState && _stageTrackerMergeState[stageTrackerItemKey(item)] === true;
+    }
     var _stageTrackerFlights = 0;
     // Pure: the PR keys a row draws, space-separated — its own key for a
     // PR row, the covering PRs for an issue row (one inline, several as
@@ -23790,7 +24337,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerRowPRKeys(item) {
       if (!item) return '';
       if (item.kind === 'pr') return stageTrackerPRKey(item.repo, item.number);
-      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0).map(lp => stageTrackerPRKey(lp.repo || item.repo, lp.number)).join(' ');
+      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0 && (!Number(lp.drawn_under) || Number(lp.drawn_under) === Number(item.number))).map(lp => {
+        const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : { repo: lp.repo || item.repo, number: lp.number };
+        return stageTrackerPRKey(pr.repo, pr.number);
+      }).join(' ');
     }
     // PR key → the row key it was last drawn on (from the previous payload's
     // nested_under / linked_prs), for a merge whose row left the DOM
@@ -23801,7 +24351,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         if (it.kind === 'pr') out[stageTrackerPRKey(it.repo, it.number)] = Number(it.nested_under) > 0 ? stageTrackerItemKey({ repo: it.repo, kind: 'issue', number: it.nested_under }) : stageTrackerItemKey(it);
-        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) if (lp && Number(lp.number) > 0) out[stageTrackerPRKey(lp.repo || it.repo, lp.number)] = stageTrackerItemKey(it);
+      }
+      for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
+        if (!it || it.kind !== 'issue') continue;
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
+          if (!lp || !Number(lp.number) || (Number(lp.drawn_under) && Number(lp.drawn_under) !== Number(it.number))) continue;
+          const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(it, lp) : { repo: lp.repo || it.repo, number: lp.number };
+          out[stageTrackerPRKey(pr.repo, pr.number)] = stageTrackerItemKey(it);
+        }
       }
       return out;
     }
@@ -23829,12 +24386,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       keys.forEach((key, i) => {
         const rowKey = stageTrackerCelebrateRowKey(key, el);
         const startAt = now + i * STAGE_TRACKER_CELEBRATE_STAGGER_MS;
-        if (rowKey) _stageTrackerCelebrating[rowKey] = { key, kind: 'merged', until: startAt + STAGE_TRACKER_CELEBRATE_PIN_MS };
+        const fact = typeof _stageTrackerTerminalFacts !== 'undefined' ? _stageTrackerTerminalFacts[key] : null;
+        if (fact && fact.observed_at) fact.until = Math.max(fact.until, startAt + STAGE_TRACKER_CELEBRATE_PIN_MS);
+        if (rowKey) _stageTrackerCelebrating[rowKey] = Object.assign({}, _stageTrackerCelebrating[rowKey], {
+          key, kind: 'merged', until: Math.max((_stageTrackerCelebrating[rowKey] || {}).until || 0, startAt + STAGE_TRACKER_CELEBRATE_PIN_MS),
+        });
         const number = Number(key.slice(key.indexOf('/pr#') + 4)) || 0;
         const banner = stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
         setTimeout(() => {
           const row = rowKey && el ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
-          if (row) celebrateRow(row, { kind: 'merged', key, number });
+          if (row) celebrateRow(row, { kind: 'merged', key, number, merged_by: fact && fact.merged_by });
           else celebrateDetached(key, banner);
         }, i * STAGE_TRACKER_CELEBRATE_STAGGER_MS);
       });
@@ -23866,7 +24427,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: the rows a render must keep although the payload dropped them —
     // every celebrating row still inside its pin window, as the node it
     // already has (its HTML is replayed so the reconcile keeps it).
-    function stageTrackerPinnedRows(el, rows, nowMs) {
+    function stageTrackerPinnedRows(el, rows, nowMs, renderItem) {
       const keys = Object.keys(_stageTrackerCelebrating);
       if (!keys.length || !el) return rows;
       const have = {};
@@ -23875,7 +24436,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const k of keys) {
         const c = _stageTrackerCelebrating[k];
         if (c.until <= nowMs) { delete _stageTrackerCelebrating[k]; continue; }
-        if (have[k]) continue;
+        if (have[k]) { stageTrackerScheduleRelease(c.until - nowMs); continue; }
+        const item = c.kind === 'merged' && typeof renderItem === 'function' && typeof stageTrackerTerminalPinnedItem === 'function' ? stageTrackerTerminalPinnedItem(k, nowMs) : null;
+        if (item) {
+          out.push({ key: k, html: renderItem(item), pinned: true });
+          stageTrackerScheduleRelease(c.until - nowMs);
+          continue;
+        }
         const node = el.querySelector(`[data-ham-key="${CSS.escape(k)}"]`);
         if (!node) { delete _stageTrackerCelebrating[k]; continue; }
         out.push({ key: k, html: stageTrackerRowSrcOf(node) || node.outerHTML, pinned: true });
@@ -23916,9 +24483,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       rowEl.classList.add('cue-merged');
       if (preview) setTimeout(() => rowEl.classList.remove('cue-merged'), STAGE_TRACKER_CELEBRATE_PIN_MS);
       else {
-        const text = kind === 'merged' ? `merged${opts.number ? ' #' + opts.number : ''} · by hive` : `closed by merge${opts.number ? ' of #' + opts.number : ''}`;
+        const by = opts.merged_by ? (opts.merged_by === 'hive' ? 'by hive' : 'by @' + opts.merged_by) : '';
+        const text = kind === 'merged' ? `merged${opts.number ? ' #' + opts.number : ''}${by ? ' · ' + by : ''}` : `closed by merge${opts.number ? ' of #' + opts.number : ''}`;
         stageTrackerNoteOwnerEvent(rowEl.dataset.hamKey, text, Date.now());
-        _stageTrackerEvents[rowEl.dataset.hamKey].who = 'hive';
+        _stageTrackerEvents[rowEl.dataset.hamKey].who = kind === 'merged' ? 'merge' : 'hive';
         stageTrackerEventLineInject(rowEl, rowEl.dataset.hamKey, text);
       }
       if (kind !== 'merged') return { flew: false };
@@ -23968,6 +24536,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const k = String(b.key || '').match(/\/pr#(\d+)$/);
       return k && Number(k[1]) > 0 ? k[1] : '';
     }
+    // Event identity only: never borrow the currently selected/primary repo.
+    // Keep an explicit short audit repo when no canonical identity is carried.
+    function stageTrackerMergeBannerRepo(b) {
+      if (!b) return '';
+      const repo = String(b.repo || (b.pr && b.pr.repo) || '');
+      if (repo.indexOf('/') > 0) return repo;
+      const key = String(b.key || '').match(/^(.+)\/pr#\d+$/);
+      if (key) return key[1];
+      const url = String(b.url || (b.pr && b.pr.url) || '').match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/);
+      return url ? url[1] : repo;
+    }
     function stageTrackerMergeBannerText(b, nowMs) {
       const d = new Date(b.at || nowMs);
       const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -23987,9 +24566,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!document.body) return null;
       let box = document.getElementById('merge-banners');
       if (!box) { box = document.createElement('div'); box.id = 'merge-banners'; box.className = 'merge-banners'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
-      const recent = ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergedIdent(e.repo, e.number) === stageTrackerMergedIdent(b.repo, b.number));
-      const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b);
+      const repo = stageTrackerMergeBannerRepo(b);
+      const recent = repo ? ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergeBannerRepo(e).toLowerCase() === repo.toLowerCase() && stageTrackerMergeBannerNumber(e) === stageTrackerMergeBannerNumber(b)) : null;
+      const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b, { repo });
       const num = stageTrackerMergeBannerNumber(info);
+      const repoChip = stageTrackerRepoChipHtml(repo, { repoChips: { primary: stageTrackerPrimaryRepo(), active: _stageTrackerFilter.repo } });
       // A live merge the ledger has not listed yet still links: the key carries owner/name.
       if (!info.url && info.repo && info.repo.indexOf('/') > 0 && num && !info.preview) info.url = `https://github.com/${info.repo}/pull/${num}`;
       const t = stageTrackerMergeBannerText(info, Date.now());
@@ -23997,7 +24578,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       el.className = 'merge-banner';
       el.setAttribute('role', 'status');
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
       toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
@@ -49940,6 +50521,7 @@ function burnAreaChart() {
       if (_eventSource) { _eventSource.onerror = null; _eventSource.onmessage = null; _eventSource.close(); _eventSource = null; }
       const source = new EventSource('/api/events');
       _eventSource = source;
+      if (window.HIVE_MATRIX) window.hiveMatrixAttach(source);
       _sseOpenedAtMs = Date.now();
       _sseLastFrameAtMs = 0;
       const conn = document.getElementById('conn');
@@ -50248,7 +50830,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
-      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts' },
+      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts governor.labels.stage.adoption.rebase_attempt_timeout rebase attempt timeout' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
@@ -57127,7 +57709,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label for="cfg-stage-grace-offline">Offline contributor grace ${yamlHint('governor.labels.stage.contributor_grace_offline')}</label>
           <input type="text" id="cfg-stage-grace-offline" value="${esc(stageGraceOffline)}" placeholder="1h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_offline" data-arg-types="s,s,w">
-          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on). When the hive supersedes instead, it closes the original in the same pass that opens its copy — one note naming the copy, <code>hive/superseded</code> — and reopens it if the copy is closed unmerged or red at two heads ${yamlHint('governor.labels.stage.adoption.supersede.close_first')} (default on; off keeps the original open at stage 074 until the copy merges). A clanker- or hive-authored original closes in that pass by policy even without the repo's write-back opt-in label, since the copy carries its commits and sign-off ${yamlHint('governor.labels.stage.adoption.close_superseded')} (default <code>on_adopt</code>; <code>on_merge</code> waits for the copy to merge; a person's PR always waits unless the label is present). A copy that conflicts with the base is handed to the fixer's rebase-resolve episode (two attempts, then stage 085 <code>rebase-failed-twice</code>); an adoption attempt that opened nothing is retried once the author's clanker has stayed offline for ${yamlHint('governor.labels.stage.adoption.offline_grace')} (default 30m).</div>
+          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on). When the hive supersedes instead, it closes the original in the same pass that opens its copy — one note naming the copy, <code>hive/superseded</code> — and reopens it if the copy is closed unmerged or red at two heads ${yamlHint('governor.labels.stage.adoption.supersede.close_first')} (default on; off keeps the original open at stage 074 until the copy merges). A clanker- or hive-authored original closes in that pass by policy even without the repo's write-back opt-in label, since the copy carries its commits and sign-off ${yamlHint('governor.labels.stage.adoption.close_superseded')} (default <code>on_adopt</code>; <code>on_merge</code> waits for the copy to merge; a person's PR always waits unless the label is present). A copy that conflicts with the base is handed to the fixer's rebase-resolve episode (two attempts, then stage 085 <code>rebase-failed-twice</code>); each fixer rebase attempt that sees no push within ${yamlHint('governor.labels.stage.adoption.rebase_attempt_timeout')} (default 15m) counts as failed, and an in-place adoption whose attempts are spent re-homes to a superseding PR at once; an adoption attempt that opened nothing is retried once the author's clanker has stayed offline for ${yamlHint('governor.labels.stage.adoption.offline_grace')} (default 30m).</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>

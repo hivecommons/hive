@@ -59,7 +59,7 @@ jobs:
         run=false
         while IFS= read -r path; do
           case "$path" in
-            CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*)
+            CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*|.github/integration-candidate.template.yml)
               run=true
               ;;
           esac
@@ -94,7 +94,9 @@ jobs:
           || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
     - name: Check readonly candidate CI generation
       working-directory: .
-      run: python3 .github/scripts/generate-integration-ci.py --check
+      run: |
+        python3 .github/scripts/generate-integration-ci.py --check
+        python3 .github/scripts/test-generate-integration-ci.py
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
@@ -331,7 +333,7 @@ jobs:
       run: node --test src/pkg/hivectl/commands/*.test.js
     - name: Integration candidate materializer contracts
       working-directory: .
-      run: node --test .github/scripts/integration-materialize.test.cjs
+      run: node --test .github/scripts/integration-*.test.cjs
     - name: Contributor Relay Syntax + Tests
       working-directory: .
       run: |

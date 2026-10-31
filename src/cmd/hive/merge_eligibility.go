@@ -830,6 +830,19 @@ func hiveAuthoredPR(pr github.PullRequest) bool {
 // rebaseAttempts is the conflict loop-guard ledger; tests swap it.
 var rebaseAttempts = rebasemerge.SharedAttempts
 
+// rebaseAttemptNow is the clock for the rebase episode; tests swap it.
+var rebaseAttemptNow = time.Now
+
+// rebaseAttemptTimeout is how long one fixer rebase attempt may wait for a
+// push before it counts as failed
+// (governor.labels.stage.adoption.rebase_attempt_timeout, default 15m).
+func rebaseAttemptTimeout(cfg *config.Config) time.Duration {
+	if cfg == nil {
+		return config.DefaultAdoptRebaseAttemptTimeout
+	}
+	return cfg.Governor.Labels.Stage.Adoption.EffectiveRebaseAttemptTimeout()
+}
+
 // mergeTrainRebaseRequester is the RequestedBy the merge train writes on a
 // rebase episode it opens for a member it could not update-branch
 // (hivecommons/hive#15117 → #15104).
@@ -1236,13 +1249,30 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			// Loop guard: attempt n of MaxRebaseAttempts per conflict
 			// episode; a fixer's pushed head that is still dirty is the
 			// next attempt, and past the cap the hive stops re-kicking.
-			attempt := rebaseAttempts().Observe(fullRepo, pr.Number, pr.HeadSHA, time.Now())
+			// A fixer-owned attempt (adopted, trusted-author, requested)
+			// that saw no push within its deadline is the next attempt too
+			// (hivecommons/hive#16023): a busy fixer must not hold the
+			// episode at attempt 1 forever.
+			fixerRebase := adopted || trustedRebase || requested
+			rebaseNow := rebaseAttemptNow()
+			attempt := rebaseAttempts().Observe(fullRepo, pr.Number, pr.HeadSHA, rebaseNow)
+			var timedOut *rebasemerge.Attempt
+			if fixerRebase {
+				prev := attempt
+				if next, ok := rebaseAttempts().Expire(fullRepo, pr.Number, rebaseAttemptTimeout(cfg), rebaseNow); ok {
+					timedOut, attempt = &prev, next
+				}
+			}
 			row.RebaseAttempt = attempt.Count()
 			row.RebaseAttemptsMax = rebasemerge.MaxRebaseAttempts
 			row.BaseRef = pr.BaseRef
 			row.TrustedAuthor = trustedRebase
 			if attempt.Exhausted() {
-				logger.Warn("rebase attempts exhausted; leaving the conflict to a person", "repo", fullRepo, "number", pr.Number, "head", pr.HeadSHA, "attempts", attempt.Count()-1, "max", rebasemerge.MaxRebaseAttempts, "mergeable_state", pr.MergeableState)
+				args := []any{"repo", fullRepo, "number", pr.Number, "head", pr.HeadSHA, "attempts", attempt.Count() - 1, "max", rebasemerge.MaxRebaseAttempts, "timed_out", attempt.Stalled, "mergeable_state", pr.MergeableState}
+				if timedOut != nil {
+					args = append(args, "waited_for", timedOut.Fixer, "waited", timedOut.Waiting(rebaseNow).Round(time.Second).String())
+				}
+				logger.Warn("rebase attempts exhausted; leaving the conflict to a person", args...)
 				continue
 			}
 			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
@@ -1262,8 +1292,17 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			if trustedRebase || requested {
 				row.ReachableAction = github.ReachableActionPush
 			}
-			if adopted || trustedRebase || requested {
-				logger.Info("PR routed to fixer for rebase", "repo", fullRepo, "number", pr.Number, "work", "rebase", "adopted", adopted, "trusted_author", trustedRebase, "requested_by", attempt.RequestedBy, "attempt", attempt.Count(), "max", rebasemerge.MaxRebaseAttempts, "mergeable_state", pr.MergeableState, "fixer", agent, "sentinel_alert", row.SentinelAlert)
+			if fixerRebase {
+				// The row stays listed every sweep (the fixer's kick overlay
+				// reads it), but each attempt is routed and announced once;
+				// the dispatch time is the attempt's deadline clock.
+				if _, first := rebaseAttempts().Dispatch(fullRepo, pr.Number, agent, rebaseNow); first {
+					args := []any{"repo", fullRepo, "number", pr.Number, "work", "rebase", "adopted", adopted, "trusted_author", trustedRebase, "requested_by", attempt.RequestedBy, "attempt", attempt.Count(), "max", rebasemerge.MaxRebaseAttempts, "mergeable_state", pr.MergeableState, "fixer", agent, "sentinel_alert", row.SentinelAlert}
+					if timedOut != nil {
+						args = append(args, "previous_attempt_timed_out", true, "waited_for", timedOut.Fixer, "waited", timedOut.Waiting(rebaseNow).Round(time.Second).String())
+					}
+					logger.Info("PR routed to fixer for rebase", args...)
+				}
 			}
 			failing = append(failing, row)
 			continue

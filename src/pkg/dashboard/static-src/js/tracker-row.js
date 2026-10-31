@@ -25,6 +25,9 @@
       const repairing = typeof stageTrackerUnderRepair === 'function' && !!stageTrackerUnderRepair(cur, item && item.reason);
       if (repairing && cur > STAGE_TRACKER_PR_COLUMN && cur !== STAGE_TRACKER_NEEDS_DECISION) return 50;
       const mg = item && item.merge_gate;
+      const refusal = mg && mg.state === 'merge-failed'
+        ? mg.merge_failed_kind || (typeof stageTrackerMergeRefusalFromRaw === 'function' ? stageTrackerMergeRefusalFromRaw(String(mg.merge_failed || '')).kind : '') : '';
+      if ((cur === 50 || cur === 60) && refusal === 'checks-pending') return 50;
       if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       // A merge-train member is a Merge queue matter too, 1st included:
       // the train's facts are mirrored onto its head while the head still
@@ -221,12 +224,31 @@
       const r = String((sa && sa.human_reason) || stageTrackerHumanWhy(item, kind) || STAGE_TRACKER_HUMAN_REASON_FALLBACK).replace(/\s+/g, ' ').trim();
       return r.length > STAGE_TRACKER_HUMAN_REASON_MAX ? r.slice(0, STAGE_TRACKER_HUMAN_REASON_MAX - 1).replace(/\s+\S*$/, '') + '…' : r;
     }
+    function stageTrackerExternalPRWork(item) {
+      if (!item || (item.kind !== 'pr' && !item.via_pr)) return null;
+      let source = item;
+      if (item.via_pr) {
+        const linked = (item.linked_prs || []).filter(lp => lp && stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item));
+        source = linked.length === 1 ? linked[0] : {};
+      }
+      const who = stageTrackerReturnedAuthor(source);
+      const holder = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      if (holder && (!who.author || holder.source !== 'author')) return Object.assign({}, who, { owner: stageTrackerClaimantShort(holder) });
+      return who.kind === 'hive' || who.kind === 'bot' ? null : who;
+    }
     function stageTrackerActorTip(item) {
       // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
       const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';
       const sa = stageTrackerStageActor(item);
       if (!sa) { const k = stageTrackerActorKind(item); const w = humanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
-      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) {
+        const external = typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+        if (external) {
+          if (external.owner) return ' · Recorded PR owner ' + external.owner + ' — current work activity is unknown';
+          return external.author ? ' · Author-owned PR @' + external.author + ' — current work activity is unknown' : ' · PR ownership and current work activity are unknown';
+        }
+        return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      }
       const why = sa.why || humanWhy(item, sa.kind);
       return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
@@ -275,6 +297,8 @@
       const sa = stageTrackerStageActor(item);
       if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const external = sa.kind === STAGE_TRACKER_ACTOR_NONE && typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'CI failing') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
       const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
       return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }
