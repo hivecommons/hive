@@ -23,7 +23,7 @@ function eventTarget(row, sub) {
   } };
 }
 const writes = [], toasts = [];
-global.navigator = { clipboard: { async writeText(text) { writes.push(text); } } };
+const navigator = { clipboard: { async writeText(text) { writes.push(text); } } };
 global.showToast = (text, kind) => toasts.push({ text, kind });
 (async () => {
   const cases = [
@@ -39,8 +39,8 @@ global.showToast = (text, kind) => toasts.push({ text, kind });
     assert.strictEqual(mapped.items.length, 1);
     assert.strictEqual(mapped.items[0].kind, kind);
     await runRowAction('copy', mapped.items);
+    assert.strictEqual(toasts.at(-1).kind, 'success', toasts.at(-1).text);
     assert.strictEqual(writes.at(-1), url, 'copy follows the exact root, single-linked or nested target');
-    assert.strictEqual(toasts.at(-1).kind, 'success');
   }
   const explicit = stageTrackerLinkedPRItem(issue, { repo: 'other/project', number: 45, url: '' });
   assert.strictEqual(explicit.repo, 'other/project', 'explicit linked repo is not replaced by the parent repo');
@@ -59,7 +59,7 @@ global.showToast = (text, kind) => toasts.push({ text, kind });
     assert.strictEqual(writes.length, count, 'never copy a parent, wrong-kind, wrong-number or partial selection');
     assert.strictEqual(toasts.at(-1).kind, 'error');
   }
-  global.navigator.clipboard.writeText = async () => { throw new Error('denied'); };
+  navigator.clipboard.writeText = async () => { throw new Error('denied'); };
   await runRowAction('copy', issue);
   assert.strictEqual(toasts.at(-1).kind, 'error');
   assert.ok(toasts.at(-1).text.includes('denied'), 'clipboard failures use styled app feedback');
