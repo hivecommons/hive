@@ -51,7 +51,8 @@ function load() {
   for (const name of ['stageTrackerTrainIconHtml', 'stageTrackerTrainAccentClass', 'stageTrackerOrdinal']) vm.runInContext(fn('tracker-words-core', name), ctx);
   for (const name of ['stageTrackerLinkedSuperseder', 'stageTrackerLinkedSupersededGone', 'stageTrackerLinkedSupersededText', 'stageTrackerLinkedSupersededTip']) vm.runInContext(fn('tracker-words-gate', name), ctx);
   for (const name of ['stageTrackerPRKey', 'stageTrackerItemKey', 'stageTrackerRowPRKeys']) vm.runInContext(fn('tracker-merged', name), ctx);
-  for (const name of ['stageTrackerLinkedPRItem', 'stageTrackerLinkedPROpen', 'stageTrackerLinkedDrawnHere', 'stageTrackerLinkedSorted', 'stageTrackerAdoptOrphanPRs', 'stageTrackerHeadColsHtml', 'stageTrackerSubRowHtml', 'stageTrackerRowHtml']) vm.runInContext(fn('tracker-row-layout', name), ctx);
+  for (const name of ['stageTrackerLinkedPRItem', 'stageTrackerLinkedPROpen', 'stageTrackerLinkedDrawnHere', 'stageTrackerLinkedSorted', 'stageTrackerAdoptOrphanPRs', 'stageTrackerHeadColsHtml', 'stageTrackerSubRowHtml']) vm.runInContext(fn('tracker-row-layout', name), ctx);
+  vm.runInContext(fn('tracker-row-render', 'stageTrackerRowHtml'), ctx);
   for (const name of ['stageTrackerPreparationWord', 'stageTrackerPreparationAge', 'stageTrackerPreparationChipHtml']) vm.runInContext(fn('tracker-queue', name), ctx);
   for (const name of ['stageTrackerSort', 'stageTrackerPage', 'stageTrackerPRIssueSlot']) vm.runInContext(fn('tracker-filter', name), ctx);
   ctx.stageTrackerChipsHtml = item => ctx.stageTrackerPreparationChipHtml(item);
