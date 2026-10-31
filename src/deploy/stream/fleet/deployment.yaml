@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive-stream-fleet
+  namespace: hive-stream-fleet
+  labels:
+    app.kubernetes.io/name: hive-stream-fleet
+spec:
+  # Disabled by default: the owner scales to 1 only after enabling the
+  # broadcast (docs: "The hivecommonsfleet broadcast").
+  replicas: 0
+  revisionHistoryLimit: 2
+  # Twitch accepts ONE publisher per key; two pods would fight for it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hive-stream-fleet
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hive-stream-fleet
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: stream
+          image: ghcr.io/hivecommons/hive-stream:v5-latest
+          imagePullPolicy: Always
+          # The stream key is the only credential, referenced by Secret name;
+          # there is deliberately no dashboard-token Secret (public-safe = anonymous).
+          envFrom:
+            - configMapRef:
+                name: hive-stream-fleet
+            - secretRef:
+                name: twitch-stream-hivecommonsfleet
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Same sizing as ../k8s/deployment.yaml (see the notes there).
+          resources:
+            requests:
+              cpu: "1"
+              memory: 3Gi
+            limits:
+              cpu: "3"
+              memory: 6Gi
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: run
+              mountPath: /run/stream
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+        - name: run
+          emptyDir:
+            sizeLimit: 256Mi

@@ -301,6 +301,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
 			it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
 		}
+		it.AuthorKind, it.AuthorKindSource = stageTrackerRegistryAuthorKind(it.AuthorKind, it.AuthorKindSource, it.Author, isClankerOwner)
 		if l, ok := config.FirstOriginLabel(issue.Labels); ok {
 			it.Origin = config.OriginSourceOf(l)
 		} else {
@@ -374,6 +375,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.BaseRef = pr.BaseRef
 		it.ciRed = strings.EqualFold(pr.CIStatus, "failure") || len(pr.FailingChecks) > 0
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
+		it.AuthorKind, it.AuthorKindSource = stageTrackerRegistryAuthorKind(it.AuthorKind, it.AuthorKindSource, it.Author, isClankerOwner)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
 		}

@@ -84,6 +84,10 @@ RELOAD_SECONDS="$(to_seconds "$RELOAD_EVERY")"
 
 case "$STREAM_AUDIO" in pulse|silent) ;; *) echo "STREAM_AUDIO must be 'pulse' or 'silent' (got '$STREAM_AUDIO')" >&2; exit 1 ;; esac
 
+# STREAM_PROFILE=public-safe (the hivecommonsfleet deployment, #15966) fails
+# closed here, before any process starts; unset, the gate is a no-op.
+"$(dirname "$0")/public-safe-gate.sh"
+
 export DISPLAY="$DISPLAY_NUM" AUTHPROXY_LISTEN DASHBOARD_URL DASHBOARD_TOKEN
 mkdir -p "$RUN_DIR/profile"; rm -f "$RUN_DIR/done"
 # Per-user PulseAudio under RUN_DIR: the pod's only writable volume besides
