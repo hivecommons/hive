@@ -1391,6 +1391,9 @@
           "401": {
             "description": "Missing or invalid dashboard authentication."
           },
+          "403": {
+            "description": "Read access required."
+          },
           "404": {
             "description": "Matrix mode disabled."
           }

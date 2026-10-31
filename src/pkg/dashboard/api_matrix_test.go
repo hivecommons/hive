@@ -35,6 +35,7 @@ func TestHandleMatrixLines_404WhenOff(t *testing.T) {
 
 	// 1. Matrix source is nil
 	req := httptest.NewRequest(http.MethodGet, "/api/matrix/lines", nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
 	rr := httptest.NewRecorder()
 	s.handleMatrixLines(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -118,6 +119,7 @@ func TestHandleMatrixLines_PerRepoFilter(t *testing.T) {
 
 	// 1. Normal read sees only allowlisted repo lines
 	req := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=0", nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
 	rr := httptest.NewRecorder()
 	s.handleMatrixLines(rr, req)
 	if rr.Code != http.StatusOK {
@@ -140,20 +142,13 @@ func TestHandleMatrixLines_PerRepoFilter(t *testing.T) {
 		}
 	}
 
-	// 2. Caller without read access receives no lines
+	// 2. Caller without read access receives 403 Forbidden
 	reqNone := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=0", nil)
 	reqNone.Header.Set("X-Hive-Role", "none")
 	rrNone := httptest.NewRecorder()
 	s.handleMatrixLines(rrNone, reqNone)
-	if rrNone.Code != http.StatusOK {
-		t.Fatalf("code = %d, want 200", rrNone.Code)
-	}
-	var respNone matrixLinesResponse
-	if err := json.Unmarshal(rrNone.Body.Bytes(), &respNone); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(respNone.Lines) != 0 {
-		t.Fatalf("caller with role=none got %d lines, want 0", len(respNone.Lines))
+	if rrNone.Code != http.StatusForbidden {
+		t.Fatalf("code = %d, want 403", rrNone.Code)
 	}
 
 	// 3. Removing repo from allowlist hides its lines immediately
@@ -192,6 +187,7 @@ func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 
 	// Response header: Cache-Control: no-store
 	req := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=0", nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
 	rr := httptest.NewRecorder()
 	s.handleMatrixLines(rr, req)
 	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
@@ -200,6 +196,7 @@ func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 
 	// Paging with since=5 returns strictly newer lines (seq 6..10)
 	reqSince := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=5", nil)
+	reqSince.Header.Set("X-Hive-Role", config.RoleRead)
 	rrSince := httptest.NewRecorder()
 	s.handleMatrixLines(rrSince, reqSince)
 	var respSince matrixLinesResponse
@@ -220,6 +217,7 @@ func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 
 	// Clamping: max=3 returns 3 lines
 	reqMax3 := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=0&max=3", nil)
+	reqMax3.Header.Set("X-Hive-Role", config.RoleRead)
 	rrMax3 := httptest.NewRecorder()
 	s.handleMatrixLines(rrMax3, reqMax3)
 	var respMax3 matrixLinesResponse
@@ -230,6 +228,7 @@ func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 
 	// Clamping: max=0 clamped to min (1)
 	reqMax0 := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=0&max=0", nil)
+	reqMax0.Header.Set("X-Hive-Role", config.RoleRead)
 	rrMax0 := httptest.NewRecorder()
 	s.handleMatrixLines(rrMax0, reqMax0)
 	var respMax0 matrixLinesResponse
@@ -240,6 +239,7 @@ func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 
 	// Clamping: max=-5 clamped to min (1)
 	reqMaxNeg := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=0&max=-5", nil)
+	reqMaxNeg.Header.Set("X-Hive-Role", config.RoleRead)
 	rrMaxNeg := httptest.NewRecorder()
 	s.handleMatrixLines(rrMaxNeg, reqMaxNeg)
 	var respMaxNeg matrixLinesResponse
@@ -250,6 +250,7 @@ func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 
 	// Clamping: max=999 clamped to max (500)
 	reqMax999 := httptest.NewRequest(http.MethodGet, "/api/matrix/lines?since=0&max=999", nil)
+	reqMax999.Header.Set("X-Hive-Role", config.RoleRead)
 	rrMax999 := httptest.NewRecorder()
 	s.handleMatrixLines(rrMax999, reqMax999)
 	var respMax999 matrixLinesResponse
@@ -263,7 +264,7 @@ func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 func TestMatrixLinesNudger_CoalescingBurst(t *testing.T) {
 	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	timers := &fakeTimers{}
-	nudger := &matrixLinesNudger{now: func() time.Time { return now }, newTimer: timers.newTimer}
+	nudger := &stageTrackerNudger{interval: matrixLinesNudgeInterval, now: func() time.Time { return now }, newTimer: timers.newTimer}
 
 	var sent []uint64
 	send := func(seq uint64) { sent = append(sent, seq) }
