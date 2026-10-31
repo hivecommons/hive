@@ -424,6 +424,10 @@ func stageTrackerAlsoCloses(pr *StageTrackerItem, parent int) []StageTrackerLink
 	return out
 }
 
+// stageTrackerCoveredDecisionClause follows "Covered by PR #N" on an issue
+// whose covering PR is parked on a person's decision.
+const stageTrackerCoveredDecisionClause = "waiting for a decision on the PR"
+
 // Link evidence arrives after the issue's stage/new narration, including
 // reverse closing references from PRs. Do not narrate a completed intake
 // step as work the scanner still needs to do.
@@ -461,7 +465,12 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 			continue
 		}
 		text := fmt.Sprintf("PR #%d", pr.Number)
-		if pr.Caption != "" {
+		if pr.Stage == trackerNumberNeedsDecision {
+			// The decision and its button live on the PR's row; the issue
+			// says it waits there instead of repeating the PR's question
+			// (hivecommons/hive#15773).
+			text += " — " + stageTrackerCoveredDecisionClause
+		} else if pr.Caption != "" {
 			text += " — " + pr.Caption
 		}
 		progress = append(progress, text)

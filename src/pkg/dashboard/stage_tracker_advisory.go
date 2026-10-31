@@ -148,9 +148,9 @@ func applyStageTrackerAdvisory(it *StageTrackerItem, adv *StageTrackerAdvisory) 
 	}
 	it.DecisionNeeded = nil
 	it.Blocker = nil
-	why := stageTrackerAdvisoryWhy
+	why, reason := stageTrackerAdvisoryWhy, "advisory — read, then close"
 	if adv.Total > 0 {
-		why = stageTrackerAdvisoryWorkingWhy
+		why, reason = stageTrackerAdvisoryWorkingWhy, "advisory checklist in progress"
 	}
-	it.StageActor = &StageTrackerActor{Kind: StageActorHuman, Why: why, Since: it.StageSince}
+	it.StageActor = &StageTrackerActor{Kind: StageActorHuman, Why: why, Since: it.StageSince, HumanReason: reason}
 }

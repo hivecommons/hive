@@ -875,14 +875,41 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeLabel"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeable"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeReason"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_PREFETCH_MS"),
+		jsConstLine(t, html, "_stageTrackerPlanPrefetch"),
+		jsFunc(t, html, "stageTrackerPlanRequestKey"),
+		jsFunc(t, html, "stageTrackerPostDelegatePlan"),
+		jsFunc(t, html, "stageTrackerPrefetchDelegatePlan"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_SKELETON_LINES"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_RETRY"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_BUTTONS_OPEN"),
+		jsFunc(t, html, "stageTrackerDelegatePlanSkeletonContent"),
+		jsFunc(t, html, "stageTrackerDelegatePlanSkeletonHtml"),
+		jsFunc(t, html, "stageTrackerDelegatePlanErrorContent"),
+		jsFunc(t, html, "stageTrackerDelegatePlanSubject"),
+		jsConstLine(t, html, "_stageTrackerDelegatePreviewing"),
 		jsFunc(t, html, "stageTrackerDelegatePreview"),
 		jsFunc(t, html, "stageTrackerActionPayload"),
 		jsFunc(t, html, "stageTrackerDirectionCarrier"),
-		// The preview dialog is recorded like the confirms; its answer is
-		// the "Let hive do that" button unless a test sets planAnswer.
-		`let planAnswer = null;
-function stageTrackerDelegatePlanDialog(plans, sentinel) { const view = stageTrackerDelegatePlanView(plans, sentinel); const html = stageTrackerDelegatePlanHtml(view); dialogs.push({ kind: 'plan', cfg: { title: view.title, message: stageTrackerDelegatePlanVisibleText(html), html, view, plans } }); return Promise.resolve(planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer); }`,
+		// The preview dialog is recorded like the confirms: it opens as the
+		// skeleton (planGate, when a test sets it, holds the plan back), then
+		// shows the plan or the inline error; its answer is the "Let hive do
+		// that" button unless a test sets planAnswer.
+		`let planAnswer = null; let planGate = null;
+function stageTrackerDelegatePlanDialog(load, sentinel, opts) {
+  const skeleton = { kind: 'plan-skeleton', cfg: { html: stageTrackerDelegatePlanSkeletonHtml((opts && opts.subject) || '', sentinel, opts && opts.caption), opts } };
+  dialogs.push(skeleton);
+  return Promise.resolve(planGate).then(() => load()).then(plans => {
+    if (opts && typeof opts.onSettled === 'function') opts.onSettled();
+    dialogs.splice(dialogs.indexOf(skeleton), 1);
+    const failed = plans.filter(p => p.error);
+    if (failed.length) { dialogs.push({ kind: 'plan-error', cfg: { html: stageTrackerDelegatePlanErrorContent((opts && opts.subject) || '', failed), failed } }); return null; }
+    const view = stageTrackerDelegatePlanView(plans, sentinel); const html = stageTrackerDelegatePlanHtml(view);
+    dialogs.push({ kind: 'plan', cfg: { title: view.title, message: stageTrackerDelegatePlanVisibleText(html), html, view, plans } });
+    return planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer;
+  });
+}`,
 		`const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
 global.window = { _hiveUser: 'clubanderson' };
 const dialogs = []; let dialogAnswer = true;

@@ -89,6 +89,9 @@ type delegatedDecisionRequest struct {
 	// Chosen names the preview button that sent this request
 	// (hivecommons/hive#15126); the ledger records it as the action's note.
 	Chosen string `json:"chosen,omitempty"`
+	// Head is the PR head the tracker row showed; it only keys the
+	// preview's plan cache, so a push asks GitHub afresh.
+	Head string `json:"head,omitempty"`
 }
 
 // delegatedDecisionJob is the wire shape of one job.
@@ -138,6 +141,9 @@ type delegatedOutcome struct {
 type delegatedDecisionJobs struct {
 	mu   sync.Mutex
 	jobs map[string]*delegatedDecisionJob
+	// plans is the preview's short-lived plan cache
+	// (api_repo_item_decide_delegated_plan.go).
+	plans delegatedPlanCache
 }
 
 func delegatedJobKey(repo string, number int) string {
@@ -261,6 +267,10 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 		Status: delegatedJobStatusRunning, Requester: user, StartedAt: now, Marker: delegatedecision.Marker(s.delegateHiveID()),
 	}
 	snapshot, started := s.delegatedJobs.start(key, job, now)
+	if started {
+		// The decision is being recorded: a cached preview would hide it.
+		s.delegatedJobs.plans.forget(repoFull, number)
+	}
 	if !started {
 		w.WriteHeader(http.StatusConflict)
 		jsonResponse(w, snapshot)

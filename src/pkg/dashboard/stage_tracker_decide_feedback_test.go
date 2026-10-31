@@ -39,9 +39,10 @@ func TestStageTrackerLetHiveDecideBusyCSS(t *testing.T) {
 func TestStageTrackerLetHiveDecidePreviewTagsPend(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"stageTrackerActingCaption('decide:delegate:preview'), undefined, 'decide:delegate');",
+		"const caption = stageTrackerActingCaption('decide:delegate:preview');",
+		"caption, undefined, 'decide:delegate');",
 		`'decide:delegate:preview': 'Asking the hive…'`,
-		"try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { stageTrackerClearPending(pend); }",
+		"picked = await stageTrackerDelegatePlanDialog(() => Promise.all(items.map(stageTrackerFetchDelegatePlan)), stageTrackerSentinelPreface(items), { subject: stageTrackerDelegatePlanSubject(items), caption, onSettled: () => stageTrackerClearPending(pend) });",
 		"stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] ? busy[key].busy : '', busy[key] ? busy[key].caption : '');",
 	} {
 		if !strings.Contains(html, want) {
@@ -108,7 +109,8 @@ func TestStageTrackerCoveredIssueDropsPRChipNode(t *testing.T) {
 	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
 const NOW = Date.parse('2026-10-30T18:00:00Z');
 const ctx = { user: true, canHold: true, canHuman: true, login: 'octo', nowMs: NOW, governor: {} };
-const buttons = h => (h.match(/<button\b/g) || []).length;
+// The decision buttons; the passive chip is a button too, but only to scroll.
+const buttons = h => (h.match(/<button type="button" class="ham-lead-act/g) || []).length;
 const asking = { number: 15647, url: 'https://github.com/o/r/pull/15647', title: 'Fix it', author: 'hive', author_kind: 'hive', stage: 85, modifiers: ['needs-decision'],
   decision_needed: { question: 'Approve or send back?', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: true }, { action: 'decide:approve', label: 'Approve', enabled: true }] } };
 const issue = { repo: 'o/r', kind: 'issue', number: 15320, title: 'Tracker lead chips', url: 'https://github.com/o/r/issues/15320', stage: 40, actor: 'maintainer', modifiers: [], linked_prs: [asking] };
@@ -125,7 +127,7 @@ ctx.rows = [issue];
 let a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.strictEqual(a.id, 'decide:delegate'); assert.ok(!a.passive);
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(issue, ctx)), 1);
-// Listed as its own row: passive, naming the PR; the chip is a span, no button.
+// Listed as its own row: passive, naming the PR; the chip carries no decision button.
 ctx.rows = [issue, prRow];
 a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.strictEqual(a.passive, 15647, JSON.stringify(a));
@@ -133,6 +135,9 @@ let h = stageTrackerLeadActionHtml(issue, ctx);
 assert.strictEqual(buttons(h), 0, 'no second button: ' + h);
 assert.ok(h.includes('decision pending on #15647'), h);
 assert.ok(h.includes('Let hive decide lives on its row'), h);
+// Clicking the chip goes to the PR's row (hivecommons/hive#15773).
+assert.ok(h.startsWith('<button type="button" class="ham-badge ham-decision-pending" data-ham-scroll-to="o/r/pr#15647" title="'), h);
+assert.ok(!h.includes('data-ham-act') && !h.includes('data-ham-scroll-row'), 'the chip runs no action: ' + h);
 // The PR's own row still carries the button.
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(prRow, ctx)), 1);
 // Nested under the issue (stage_tracker_links.go sets nested_under): the PR
@@ -181,6 +186,7 @@ assert.strictEqual(a.passive, 15759, JSON.stringify(a)); assert.strictEqual(a.pa
 h = stageTrackerLeadActionHtml(secondary, ctx);
 assert.strictEqual(buttons(h), 0, 'no second Let hive decide on #15503: ' + h);
 assert.ok(h.includes('decision pending on #15759') && h.includes('Let hive decide lives on the row of #15502, which draws the PR'), h);
+assert.ok(h.includes('data-ham-scroll-to="o/r/pr#15759" data-ham-scroll-row="o/r/issue#15502"'), 'the chip goes to #15502, which draws the PR: ' + h);
 // #15502 filtered off the page: #15503 is the only row that can carry it.
 ctx.rows = [secondary];
 a = stageTrackerLeadActionOnRow(secondary, ctx);
