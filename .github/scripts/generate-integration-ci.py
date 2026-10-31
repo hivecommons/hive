@@ -216,7 +216,7 @@ def compose(documents):
                      "const actual = policy.digest(members);\n"
                      "if (actual !== process.env.EXPECTED_METADATA_DIGEST) throw new Error('Member metadata drifted');\n"
                      "core.setOutput('metadata_digest', actual);\n"
-                     f"await policy.verify('{kind}', subject, members);\n"
+                     f"await policy.verify('{kind}', subject, members, github);\n"
                  )}},
             ],
         }

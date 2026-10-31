@@ -1988,7 +1988,7 @@ jobs:
           const actual = policy.digest(members);
           if (actual !== process.env.EXPECTED_METADATA_DIGEST) throw new Error('Member metadata drifted');
           core.setOutput('metadata_digest', actual);
-          await policy.verify('dco', subject, members);
+          await policy.verify('dco', subject, members, github);
   governance-changelog:
     name: changelog-fragment-guard
     needs:
@@ -2017,7 +2017,7 @@ jobs:
           const actual = policy.digest(members);
           if (actual !== process.env.EXPECTED_METADATA_DIGEST) throw new Error('Member metadata drifted');
           core.setOutput('metadata_digest', actual);
-          await policy.verify('changelog', subject, members);
+          await policy.verify('changelog', subject, members, github);
   governance-contents:
     name: verify PR contents
     needs:
@@ -2046,7 +2046,7 @@ jobs:
           const actual = policy.digest(members);
           if (actual !== process.env.EXPECTED_METADATA_DIGEST) throw new Error('Member metadata drifted');
           core.setOutput('metadata_digest', actual);
-          await policy.verify('contents', subject, members);
+          await policy.verify('contents', subject, members, github);
   governance-attribution:
     name: Sign-off survives the squash
     needs:
@@ -2075,7 +2075,7 @@ jobs:
           const actual = policy.digest(members);
           if (actual !== process.env.EXPECTED_METADATA_DIGEST) throw new Error('Member metadata drifted');
           core.setOutput('metadata_digest', actual);
-          await policy.verify('attribution', subject, members);
+          await policy.verify('attribution', subject, members, github);
   receipt:
     name: integration producer receipt
     needs:

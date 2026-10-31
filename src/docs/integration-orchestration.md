@@ -36,8 +36,12 @@ The five governance contexts run trusted read-only policy:
   titles, including prefixes not accepted by that immutable policy, fail
   explicitly rather than nominally succeeding.
 * `Sign-off survives the squash` validates the original exact member heads and
-  authors under their reviewed merge policy. The candidate itself is a tested
-  merge object, not a fabricated bot-authored squash PR.
+  authors under their reviewed merge policy. Bounded read-only forge GraphQL
+  batches resolve original commit-author identities before invoking the pinned
+  checker; an unavailable/unlinked author cannot use its legacy degraded-success
+  fallback. That context stops explicitly until truthful attribution is
+  available. The candidate itself is a tested merge object, not a fabricated
+  bot-authored squash PR.
 
 Candidate receipt schema 2 signs the actual job/check/App/suite identities and
 conclusions for all eleven contexts, plus the exact subject/run/attempt and a
@@ -50,6 +54,9 @@ the live promotion guard re-reads current member metadata. State/base/time
 changes from a documented exact-prefix merge do not themselves invalidate
 otherwise identical metadata. Historical schema 1 remains replayable, but
 cannot satisfy the new literal protected-context profile.
+Metadata drift invalidates proof; it does not authorize an automatic rerun or
+steal an existing dispatch claim. Existing bounded owner-repair/authority rules
+still apply.
 
 This source profile does **not** enable the producer policy, create authority,
 change GitHub protection or App permissions, dispatch candidates, deploy a
