@@ -138,7 +138,8 @@ func TestActivityEventRing_DedupesByAcknowledgedSeq(t *testing.T) {
 	batch.EventsDropped = 3
 
 	st.record("hive-a", batch, activityT0)
-	// The spoke lost the ack and resends the same batch plus one new event.
+	// The spoke lost the ack and resends the same batch plus one new event;
+	// its cumulative disclosure restates the 3 drops already counted.
 	resend := withEvents(batch, append(batch.Events, activityEv(12, hubactivity.EventMerged, "o/a", 1))...)
 	st.record("hive-a", resend, activityT0.Add(time.Minute))
 	// A batch with nothing new does not count its drops again.
@@ -151,8 +152,25 @@ func TestActivityEventRing_DedupesByAcknowledgedSeq(t *testing.T) {
 	if got := st.eventsAck("hive-a"); got != 12 {
 		t.Fatalf("ack = %d, want 12", got)
 	}
-	if snap.dropped["hive-a"] != 6 {
-		t.Fatalf("disclosed drops = %d, want 3 per batch with new events (6)", snap.dropped["hive-a"])
+	if snap.dropped["hive-a"] != 3 {
+		t.Fatalf("disclosed drops = %d, want 3 (a resend restates, not repeats, them)", snap.dropped["hive-a"])
+	}
+
+	// A resend whose disclosure grew counts only the increase.
+	grown := withEvents(resend, append(resend.Events, activityEv(13, hubactivity.EventStage, "o/a", 1))...)
+	grown.EventsDropped = 5
+	st.record("hive-a", grown, activityT0.Add(3*time.Minute))
+	if got := st.eventsSnapshot([]string{"hive-a"}).dropped["hive-a"]; got != 5 {
+		t.Fatalf("drops after grown resend = %d, want 5", got)
+	}
+
+	// After the ack lands the spoke trims and resets its disclosure, so a
+	// batch of only new events discloses only new drops, counted in full.
+	acked := withEvents(activityDigest("o/a", 1), activityEv(14, hubactivity.EventStage, "o/a", 1))
+	acked.EventsDropped = 2
+	st.record("hive-a", acked, activityT0.Add(4*time.Minute))
+	if got := st.eventsSnapshot([]string{"hive-a"}).dropped["hive-a"]; got != 7 {
+		t.Fatalf("drops after acked batch = %d, want 7", got)
 	}
 }
 

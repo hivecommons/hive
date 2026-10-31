@@ -35,8 +35,14 @@ type activityEventHive struct {
 	lastSeq uint64
 	// dropped sums the drops the spoke disclosed and the hub's own cap
 	// applied to its batches.
-	dropped  int
-	lastSeen time.Time
+	dropped int
+	// disclosed is the drop count the latest counted batch claimed (the
+	// spoke's disclosure plus the hub's cap). The spoke's disclosure is
+	// cumulative until an ack covers its latest build, so a batch resent
+	// after a lost ack restates the drops already counted; only the
+	// increase over disclosed is added then.
+	disclosed int
+	lastSeen  time.Time
 }
 
 // activityEventRing is guarded by activityStore.mu. The zero value is
@@ -63,9 +69,13 @@ func (r *activityEventRing) ingest(hiveID string, events []hubactivity.Event, dr
 		r.byHive[hiveID] = h
 	}
 	h.lastSeen = now
-	fresh := 0
+	fresh, restated := 0, false
 	for _, e := range clean {
 		if e.Seq <= h.lastSeq {
+			// The spoke trims acknowledged events, so holding one proves
+			// it never saw the ack and its drop disclosure is cumulative
+			// over the one already counted.
+			restated = true
 			continue
 		}
 		h.lastSeq = e.Seq
@@ -75,7 +85,13 @@ func (r *activityEventRing) ingest(hiveID string, events []hubactivity.Event, dr
 	if fresh == 0 {
 		return
 	}
-	h.dropped = hubactivity.ClampCount(h.dropped + hubactivity.ClampCount(dropped) + capped)
+	claimed := hubactivity.ClampCount(hubactivity.ClampCount(dropped) + capped)
+	add := claimed
+	if restated {
+		add = max(claimed-h.disclosed, 0)
+	}
+	h.disclosed = claimed
+	h.dropped = hubactivity.ClampCount(h.dropped + add)
 	if over := len(r.entries) - activityEventRingSize; over > 0 {
 		r.entries = slices.Delete(r.entries, 0, over)
 	}
