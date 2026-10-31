@@ -1,0 +1,1 @@
+- A declared DAG request (`--parent`/`--blocked-by`) now still reuses an open review-backlog issue whose title differs only by the leading agent tag, instead of filing a duplicate (#16074).

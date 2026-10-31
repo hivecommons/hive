@@ -169,9 +169,9 @@ func (e *Env) remotePS(ctx context.Context, c *api.Client, args []string) int {
 func (e *Env) remoteLogs(ctx context.Context, c *api.Client, args []string) int {
 	fs := e.subFlags("logs")
 	lines := fs.Int("n", defaultLogLines, "lines to print from the pane or buffer; with -f, buffered lines to replay before following")
-	buffer := fs.Bool("buffer", false, "read the ring buffer instead of the live pane")
+	buffer := fs.Bool("buffer", false, "read the ring buffer instead of the live pane; implied by -f")
 	full := fs.Bool("full", false, "capture the whole scrollback")
-	follow := fs.Bool("f", false, "follow the ring buffer until interrupted")
+	follow := fs.Bool("f", false, "follow the ring buffer until interrupted (always reads the ring buffer; -buffer is redundant)")
 	asJSON := fs.Bool("json", false, "emit JSON instead of raw lines")
 	if code, ok := parseSub(fs, args); !ok {
 		return code

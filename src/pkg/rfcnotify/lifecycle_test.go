@@ -269,10 +269,17 @@ func TestLifecycle_DuplicatesInOnePollKeepTheOlderOne(t *testing.T) {
 
 func TestNormalizeTitle(t *testing.T) {
 	for in, want := range map[string]string{
-		"📝 RFC: Richer   RFC publishing ✨": "richer rfc publishing",
-		"[RFC] Richer RFC publishing":      "richer rfc publishing",
-		"Richer RFC publishing!":           "richer rfc publishing",
-		"🚀🚀":                               "",
+		"📝 RFC: Richer   RFC publishing ✨":    "richer rfc publishing",
+		"[RFC] Richer RFC publishing":         "richer rfc publishing",
+		"Richer RFC publishing!":              "richer rfc publishing",
+		"🚀🚀":                                  "",
+		"📝 [v5 RFC] Richer RFC publishing":    "richer rfc publishing",
+		"RFC: [v5] Richer RFC publishing":     "richer rfc publishing",
+		"[v6] RFC: Richer RFC publishing":     "richer rfc publishing",
+		"📝 RFC: [v6] [hub] Richer publishing": "richer publishing",
+		"[RFC v6]: Richer RFC publishing":     "richer rfc publishing",
+		"[v5 RFC]":                            "",
+		"RFC #123 follow-up":                  "123 follow-up",
 	} {
 		if got := NormalizeTitle(in); got != want {
 			t.Errorf("NormalizeTitle(%q) = %q, want %q", in, got, want)

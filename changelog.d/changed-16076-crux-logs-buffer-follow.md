@@ -1,0 +1,1 @@
+- Documented that `crux logs -f` always reads the ring buffer, so `-buffer` is implied and redundant with `-f` ([#16076](https://github.com/hivecommons/hive/issues/16076), [#16077](https://github.com/hivecommons/hive/issues/16077)). Previously the flag help text and documentation did not mention this relationship.
