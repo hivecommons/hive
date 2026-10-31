@@ -1,1 +1,1 @@
-- Explain current human requirements and their actual PR/requester on Activity Monitor rows, distinguish optional delegation and claim ownership, and preserve specific covering-PR reasons without changing stages or linked trees.
+- Explain current human requirements and their actual PR/requester on Activity Monitor rows, distinguish optional delegation and claim ownership, preserve specific covering-PR reasons without changing stages or linked trees, and keep current review changes requested visible instead of implying a recorded operator approval makes the PR merge-ready.

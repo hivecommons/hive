@@ -17064,7 +17064,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorIco = actorKind && (!humanIcon || humanRequired) ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
       // Guarded: test harnesses lift this function by name without stageTrackerHumanReason.
-      const humanReason = typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
+      const humanReason = (!humanIcon || humanRequired) && typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
       // "· @odttlnt's clanker · ■ offline 3h": the holder's live state
@@ -17634,9 +17634,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (a.asked_by) parts.push('requested by ' + a.asked_by);
       return parts.join(' · ');
     }
+    function stageTrackerHumanRequirementText(item) {
+      if (!item || item.advisory || item.hold || item.state === 'closed' || item.superseded_by || item.adopted_by ||
+        (item.modifiers || []).some(m => m === 'draft' || m === 'hold' || m === 'merged')) return '';
+      const human = stageTrackerHumanAttentionLine(item);
+      const d = item && item.decided;
+      const review = d && d.current_blocker && String(d.head || '') === String(item.head || '')
+        ? 'Current blocker: ' + d.current_blocker + ' · operator approval recorded separately, not review approval or merge readiness' : '';
+      return [human, review].filter(Boolean).join(' · ');
+    }
     function stageTrackerHumanContextOf(item, stages) {
       if (!item) return [];
-      const own = stageTrackerHumanAttentionLine(item);
+      const own = stageTrackerHumanRequirementText(item);
       const out = own ? [{ item, text: own }] : [];
       if (item.kind !== 'issue') return out;
       // Include external drawn_under references, but never walk RFC ancestry
@@ -17644,7 +17653,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
         if (!stageTrackerLinkedPROpen(lp, item)) continue;
         const pr = stageTrackerLinkedPRItem(item, lp);
-        const text = stageTrackerHumanAttentionLine(pr);
+        const text = stageTrackerHumanRequirementText(pr);
         if (!text) continue;
         const drawn = stageTrackerLinkedSorted(item, stages);
         if (drawn.length > 1 && drawn.some(p => Number(p.number) === Number(lp.number))) continue;
@@ -17662,6 +17671,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return `<div class="cue-event ham-human-context"><span>${esc(entry.text)}${href ? ` <a href="${esc(href)}" target="_blank" rel="noopener">View ${it.kind === 'pr' ? 'PR' : 'issue'} #${Number(it.number)}</a>` : ''}</span></div>`;
       });
       if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines.join('');
+      const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
+      const staleLinks = item.kind === 'issue' ? (item.linked_prs || []).filter(lp =>
+        stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
+      if (stale || staleLinks.length) {
+        const refs = staleLinks.length ? staleLinks.map(lp => 'PR #' + lp.number).join(', ') : item.kind === 'pr' ? 'PR #' + item.number : 'Issue #' + item.number;
+        return `<div class="cue-event ham-human-context"><span>${esc(refs)} · decision context unavailable for the displayed identity/head${item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''}</span></div>`;
+      }
       const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
       if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
         stageTrackerLinkedPROpen(lp, item) && stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp)))) return '';

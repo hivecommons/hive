@@ -31,7 +31,7 @@
       const actorIco = actorKind && (!humanIcon || humanRequired) ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
       // Guarded: test harnesses lift this function by name without stageTrackerHumanReason.
-      const humanReason = typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
+      const humanReason = (!humanIcon || humanRequired) && typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
       // "· @odttlnt's clanker · ■ offline 3h": the holder's live state

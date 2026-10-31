@@ -20,6 +20,11 @@ context; **Let hive decide** can be an optional delegation action, not a status
 indicator. These lines do not change stages, sorting, reference-versus-closing
 links, preparation train styling, native queues, or live notes' tuck/reopen
 controls. Cleared decisions and mismatching PR heads lose the requirement.
+An operator's recorded approval is not a review verdict: current-head review
+changes requested remain the visible blocker and keep the author/rework stage.
+The tracker records the approval separately rather than claiming that the merge
+queue will take the PR. Approval on an earlier head is historical, not permission
+or current review proof for a new head.
 
 ### First use: find the next action
 

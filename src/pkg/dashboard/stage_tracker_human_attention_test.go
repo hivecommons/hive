@@ -3,7 +3,10 @@ package dashboard
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -24,6 +27,7 @@ func TestStageTrackerHumanAttentionIsARequirementNotAnAffordance(t *testing.T) {
 		{"mirrored issue", StageTrackerItem{Kind: "issue", Stage: trackerNumberNeedsDecision, Mirrored: true}, false},
 		{"answered", StageTrackerItem{Kind: "pr", Stage: trackerNumberReviewPending, Decided: &StageTrackerDecided{Effect: "pending"}}, false},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.item.Number, tt.item.Head = 15985, "current-head"
@@ -44,6 +48,44 @@ func TestStageTrackerHumanAttentionIsARequirementNotAnAffordance(t *testing.T) {
 				t.Fatalf("decision reason lost: %+v", got)
 			}
 		})
+	}
+}
+
+func TestStageTrackerOperatorApprovalDoesNotHideCurrentReviewChanges(t *testing.T) {
+	now := time.Date(2026, 10, 31, 11, 0, 0, 0, time.UTC)
+	for _, stage := range []stagelabels.Stage{stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor, stagelabels.NeedsDecision, stagelabels.ReadyForHumanMerge} {
+		for _, action := range []string{operatorActionLetHiveDecide, operatorActionApprove, operatorActionQueueMerge, operatorActionMergeNow} {
+			t.Run(stage.String()+"/"+action, func(t *testing.T) {
+				it := StageTrackerItem{Kind: "pr", Repo: "o/r", Number: 15977, Head: "current", Stage: stage.Number(),
+					Author: "thatguywob", AuthorKind: authorKindClanker, Reason: "contributor-lane:changes-requested",
+					Caption:        "Changes requested by the current-head review",
+					DecisionNeeded: &StageTrackerDecision{Question: "Address the review findings"},
+					LastOperatorAction: &StageTrackerOperatorAction{Action: action, Verdict: string(delegatedecision.VerdictApprove),
+						HeadSHA: "current", StageAt: stage.Number(), At: now.Add(-time.Minute), Outcome: operatorActionOutcomeApplied}}
+				d := stageTrackerDecided(it, automerge.SweepState{}, now, time.Hour)
+				if d == nil || d.Effect != decidedEffectNone || d.Stage != 0 || d.CurrentBlocker == "" || d.Head != it.Head {
+					t.Fatalf("approval wrongly outranked current review: %+v", d)
+				}
+				if strings.Contains(d.Text, "merge queue takes it") || !strings.Contains(d.Text, "waiting on @thatguywob") {
+					t.Fatalf("wrong precedence/explanation: %+v", d)
+				}
+				beforeStage, beforeReason := it.Stage, it.Reason
+				stageTrackerProjectDecided(&it, d, automerge.SweepState{}, now)
+				if it.Stage != beforeStage || it.Reason != beforeReason || it.DecisionNeeded == nil {
+					t.Fatalf("actual blocker/decision was cleared: %+v", it)
+				}
+				it.Head, it.Stage, it.Reason = "new-head", trackerNumberReadyForHuman, ""
+				d = stageTrackerDecided(it, automerge.SweepState{}, now, time.Hour)
+				if d.Effect != decidedEffectNone || d.Stage != 0 || d.CurrentBlocker != "" || !strings.Contains(d.Text, "previous head") {
+					t.Fatalf("new head borrowed old approval/blocker proof: %+v", d)
+				}
+				it.LastOperatorAction.HeadSHA = "new-head"
+				d = stageTrackerDecided(it, automerge.SweepState{}, now, time.Hour)
+				if d.CurrentBlocker != "" {
+					t.Fatalf("cleared review blocker lingered: %+v", d)
+				}
+			})
+		}
 	}
 }
 

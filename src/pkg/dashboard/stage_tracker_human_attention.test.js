@@ -144,7 +144,9 @@ test('partial reference metadata and unrelated RFC requirements are not inherite
 test('unverified head does not inherit current human proof from a matching number in another snapshot', () => {
   const c = load(), child = pr(), item = issue([child]);
   child.head = 'next-head';
-  assert.doesNotMatch(c.stageTrackerHumanContextHtml(item, [], 1), /Needs human:/);
+  const stale = c.stageTrackerHumanContextHtml(item, [], 1);
+  assert.doesNotMatch(stale, /Needs human:|Confirm the compatibility policy|Next move:/);
+  assert.match(stale, /decision context unavailable for the displayed identity\/head/);
   child.human_attention = { ...child.human_attention, head: 'next-head', reason: 'New current-head question' };
   assert.match(c.stageTrackerHumanContextHtml(item, [], 1), /Needs human: New current-head question/);
   child.human_attention = null;
@@ -158,11 +160,28 @@ test('strip uses the person glyph only for a current requirement; claimant and s
     stageTrackerSegments: () => [{ number: 40, state: 'active', label: 'PR in progress', short: 'PR in progress' }],
     stageTrackerActorKind: it => it.stage_actor.kind === 'none' ? '' : it.stage_actor.kind,
     stageTrackerActorTip: () => '', stageTrackerMotion: () => 'static',
+    stageTrackerHumanReason: () => 'needs a person',
     stageTrackerClaimant: it => it.claimant || null,
     stageTrackerClaimantShort: it => it.login ? '@' + it.login : '',
     stageTrackerClaimantIconKind: it => it.kind === 'person' ? 'human' : it.kind,
     stageTrackerClaimantLine: it => it.login,
     STAGE_TRACKER_PRE_MERGE_SOAK: 95, STAGE_TRACKER_READY_FOR_HUMAN_MERGE: 90,
+  });
+
+  test('operator approval plus current changes-requested shows the real blocker on PR and covered issue, not readiness', () => {
+    const c = load(), child = { ...pr(15977), stage: 72, author_kind: 'clanker', human_attention: null,
+      stage_actor: { kind: 'clanker' }, decided: { effect: 'none', word: 'Review changes requested', head: 'current-15977',
+        current_blocker: "Review changes requested on the current head · waiting on @thatguywob's contributor agent to address the review" } };
+    const item = issue([child]);
+    const html = c.stageTrackerRowHtml(item, [], { nowMs: 1 });
+    assert.match(html, /data-stage="72"/);
+    assert.match(html, /PR #15977 — Current blocker: Review changes requested on the current head/);
+    assert.match(html, /operator approval recorded separately, not review approval or merge readiness/);
+    assert.doesNotMatch(html, /Approved · merge queue|Needs human:|data-stage="80"/);
+    child.head = 'new-head';
+    assert.doesNotMatch(c.stageTrackerHumanContextHtml(child, [], 1), /Review changes requested on the current head/);
+    child.decided = null;
+    assert.doesNotMatch(c.stageTrackerHumanContextHtml(child, [], 1), /Current blocker:/);
   });
   vm.runInContext(fn('tracker-row-strip', 'stageTrackerStripItems'), c);
   item.stage = 40;
@@ -171,6 +190,7 @@ test('strip uses the person glyph only for a current requirement; claimant and s
   item.claimant = { kind: 'person', login: 'author' };
   let html = c.stageTrackerStripItems(item, [], null, 1, {});
   assert.doesNotMatch(html, /data-kind="human"/);
+  assert.doesNotMatch(html, /needs a person/);
   assert.match(html, /PR in progress.*@author/);
   item.stage_actor = { kind: 'none' };
   html = c.stageTrackerStripItems(item, [], null, 1, {});
