@@ -423,7 +423,17 @@ func TestRemoveRegistryEntryPersistsSynchronously(t *testing.T) {
 		t.Fatalf("seed registry: %v", err)
 	}
 
+	srv.activity.record(dropID, activityDigest("o/r", 1), time.Now().UTC())
+	srv.activity.record(keepID, activityDigest("o/r", 2), time.Now().UTC())
+
 	srv.removeRegistryEntry(dropID, "tester")
+
+	if got := srv.activity.snapshot([]string{dropID}); len(got) != 0 {
+		t.Error("removeRegistryEntry left the removed hive's activity digest in memory")
+	}
+	if got := srv.activity.snapshot([]string{keepID}); len(got) != 1 {
+		t.Error("removeRegistryEntry purged an unrelated hive's activity digest")
+	}
 
 	// No sleep: the write must already have happened.
 	if helperPersistedRegistryHasHive(t, dropID) {
