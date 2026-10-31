@@ -180,15 +180,11 @@ func defuseLinks(s string) string {
 }
 
 func isTableHeaderOrSeparator(key, val string) bool {
-	if key == "field" || key == "key" || strings.HasPrefix(key, "---") || strings.HasPrefix(val, "---") {
-		return true
-	}
-	return false
+	return key == "field" || key == "key" || strings.HasPrefix(key, "---") || strings.HasPrefix(val, "---")
 }
 
 func isRelatedKey(k string) bool {
-	return k == "related" || k == "related rfcs" || k == "related rfc" ||
-		k == "builds on" || k == "supersedes" || strings.HasPrefix(k, "related")
+	return k == "builds on" || k == "supersedes" || strings.HasPrefix(k, "related")
 }
 
 func splitTableCols(line string) []string {
