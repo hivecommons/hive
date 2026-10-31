@@ -292,6 +292,13 @@ func (m *matrixSource) removeLocked(key string) {
 // Since returns up to limit backlog lines with Seq > seq, oldest first, and the
 // latest sequence number. limit <= 0 means a default page.
 func (m *matrixSource) Since(seq uint64, limit int) ([]matrixLine, uint64) {
+	return m.SinceMatching(seq, limit, nil)
+}
+
+// SinceMatching is Since restricted to lines keep accepts (nil keeps all).
+// limit counts only kept lines, so a page is never emptied by lines the caller
+// may not see while kept lines remain past it (hivecommons/hive#15979).
+func (m *matrixSource) SinceMatching(seq uint64, limit int, keep func(matrixLine) bool) ([]matrixLine, uint64) {
 	if limit <= 0 {
 		limit = matrixDefaultSinceMax
 	}
@@ -301,7 +308,7 @@ func (m *matrixSource) Since(seq uint64, limit int) ([]matrixLine, uint64) {
 	out := make([]matrixLine, 0, min(limit, n))
 	for i := 0; i < n && len(out) < limit; i++ {
 		l := m.ring[(m.next+i)%n]
-		if l.Seq > seq {
+		if l.Seq > seq && (keep == nil || keep(l)) {
 			out = append(out, l)
 		}
 	}
