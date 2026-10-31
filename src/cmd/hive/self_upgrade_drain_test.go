@@ -304,3 +304,21 @@ func TestUpgradeDrain_ReportCarriesTurnElapsed(t *testing.T) {
 		t.Fatal("no names, no map")
 	}
 }
+
+func TestWedgedKickSummaries(t *testing.T) {
+	if got := wedgedKickSummaries(nil); got != nil {
+		t.Fatalf("empty = %v, want nil", got)
+	}
+	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	got := wedgedKickSummaries([]wedgedKick{
+		{Agent: "alpha", KickAt: at, Age: 90*time.Minute + 400*time.Millisecond, Ceiling: 45 * time.Minute},
+		{Agent: "beta", KickAt: at, Age: 2 * time.Hour, Ceiling: 45 * time.Minute},
+	})
+	want := []string{
+		"alpha kick_at=2026-10-14T12:00:00Z age=1h30m0s ceiling=45m0s",
+		"beta kick_at=2026-10-14T12:00:00Z age=2h0m0s ceiling=45m0s",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

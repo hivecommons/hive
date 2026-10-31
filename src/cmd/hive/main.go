@@ -4887,12 +4887,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						}
 						return 0
 					})
-					for _, w := range selfUpgradeWedgedKicks.fresh(wedged) {
-						b.logger.Warn("self-upgrade drain: ignoring wedged agent kick that never reported a turn end",
-							"agent", w.Agent,
-							"kick_at", w.KickAt.UTC().Format(time.RFC3339),
-							"age", w.Age.Round(time.Second),
-							"ceiling", w.Ceiling,
+					// One line per pass, not per agent: the fleet self-report
+					// slogfeed keys WARNs on the message alone, so a fleet-wide
+					// wedge must not count N times (#16079).
+					if fresh := selfUpgradeWedgedKicks.fresh(wedged); len(fresh) > 0 {
+						b.logger.Warn("self-upgrade drain: ignoring wedged agent kicks that never reported a turn end",
+							"agents", wedgedKickAgents(fresh),
+							"kicks", wedgedKickSummaries(fresh),
+							"count", len(fresh),
 						)
 					}
 					ignoredWedged := wedgedKickAgents(wedged)
