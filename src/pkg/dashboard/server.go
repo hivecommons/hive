@@ -3719,7 +3719,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Enabled}
+	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active()}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
@@ -3740,8 +3740,9 @@ type statusWithWebhooks struct {
 	// signals, the last one, webhook-triggered kicks and unmatched heads.
 	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
 	*EvalLoopStatus
-	// MatrixEnabled mirrors dashboard.matrix.enabled so the header can show
-	// the Matrix tab only on hives that opted in.
+	// MatrixEnabled reports whether the Matrix block is active (enabled with
+	// at least one repo, see config.MatrixConfig.Active) so the header shows
+	// the Matrix tab only on hives whose /api/matrix/lines will serve it.
 	MatrixEnabled bool `json:"matrixEnabled"`
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
 	// machine (scheduled / draining / pulling / … / missed) with the drain
