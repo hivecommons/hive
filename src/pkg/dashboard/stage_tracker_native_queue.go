@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/forgequeue"
+	forgequeue "github.com/hivecommons/hive/pkg/forgestate"
 )
 
 const (
@@ -24,7 +24,7 @@ const (
 type nativeQueueHint struct {
 	repo, base string
 	at         time.Time
-	candidate  forgequeue.Candidate
+	candidate  forgequeue.QueueCandidate
 }
 
 type nativeQueueTrackerRuntime struct {
@@ -32,7 +32,7 @@ type nativeQueueTrackerRuntime struct {
 	lastAttempt  time.Time
 	inFlight     bool
 	scopeOffset  int
-	observations map[string]forgequeue.Observation
+	observations map[string]forgequeue.QueueObservation
 	hints        map[string]nativeQueueHint
 }
 
@@ -98,7 +98,7 @@ func (s *Server) ReconcileNativeQueues(ctx context.Context) error {
 	if s.deps.GHClient == nil || !s.deps.GHClient.NativeMergeQueueAvailable() {
 		runtime.mu.Lock()
 		if runtime.observations == nil {
-			runtime.observations = make(map[string]forgequeue.Observation)
+			runtime.observations = make(map[string]forgequeue.QueueObservation)
 		}
 		for key, scope := range scopes {
 			observation := runtime.observations[key]
@@ -121,7 +121,7 @@ func (s *Server) ReconcileNativeQueues(ctx context.Context) error {
 			}
 		}
 		sort.Slice(orderedHints, func(i, j int) bool { return orderedHints[i].at.After(orderedHints[j].at) })
-		hints := make([]forgequeue.Candidate, 0, len(orderedHints))
+		hints := make([]forgequeue.QueueCandidate, 0, len(orderedHints))
 		for _, hint := range orderedHints {
 			hints = append(hints, hint.candidate)
 		}
@@ -129,7 +129,7 @@ func (s *Server) ReconcileNativeQueues(ctx context.Context) error {
 		observation, err := s.deps.GHClient.ReadNativeQueueObservation(ctx, scope[0], scope[1], hints)
 		runtime.mu.Lock()
 		if runtime.observations == nil {
-			runtime.observations = make(map[string]forgequeue.Observation)
+			runtime.observations = make(map[string]forgequeue.QueueObservation)
 		}
 		prior, exists := runtime.observations[key]
 		if err != nil {
@@ -149,9 +149,9 @@ func (s *Server) ReconcileNativeQueues(ctx context.Context) error {
 }
 
 // Caller holds mu; old scopes cannot accumulate across Settings changes.
-func (runtime *nativeQueueTrackerRuntime) storeObservation(key string, observation forgequeue.Observation) {
+func (runtime *nativeQueueTrackerRuntime) storeObservation(key string, observation forgequeue.QueueObservation) {
 	if runtime.observations == nil {
-		runtime.observations = make(map[string]forgequeue.Observation)
+		runtime.observations = make(map[string]forgequeue.QueueObservation)
 	}
 	if _, exists := runtime.observations[key]; !exists && len(runtime.observations) >= nativeQueueObservationCache {
 		oldest := ""
@@ -165,8 +165,8 @@ func (runtime *nativeQueueTrackerRuntime) storeObservation(key string, observati
 	runtime.observations[key] = observation
 }
 
-func nativeQueueObservationDelta(prior, next forgequeue.Observation, now time.Time) forgequeue.Observation {
-	next.Outcomes = append([]forgequeue.Outcome{}, prior.Outcomes...)
+func nativeQueueObservationDelta(prior, next forgequeue.QueueObservation, now time.Time) forgequeue.QueueObservation {
+	next.Outcomes = append([]forgequeue.QueueOutcome{}, prior.Outcomes...)
 	if !prior.EntriesComplete || !next.EntriesComplete {
 		return next
 	}
@@ -176,7 +176,7 @@ func nativeQueueObservationDelta(prior, next forgequeue.Observation, now time.Ti
 			found = found || entry.ID == current.ID
 		}
 		if !found {
-			next.Outcomes = appendNativeQueueOutcome(next.Outcomes, forgequeue.Outcome{
+			next.Outcomes = appendNativeQueueOutcome(next.Outcomes, forgequeue.QueueOutcome{
 				Kind: "entry-removed", PR: entry.PR, Head: entry.Head, ObservedAt: now, Source: "complete-queue-snapshot-difference",
 			})
 		}
@@ -184,7 +184,7 @@ func nativeQueueObservationDelta(prior, next forgequeue.Observation, now time.Ti
 	return next
 }
 
-func appendNativeQueueOutcome(out []forgequeue.Outcome, next forgequeue.Outcome) []forgequeue.Outcome {
+func appendNativeQueueOutcome(out []forgequeue.QueueOutcome, next forgequeue.QueueOutcome) []forgequeue.QueueOutcome {
 	for _, prior := range out {
 		if prior.Kind == next.Kind && prior.PR == next.PR && prior.Head == next.Head &&
 			prior.CandidateSHA == next.CandidateSHA && prior.MergeSHA == next.MergeSHA {
@@ -220,7 +220,7 @@ func (s *Server) observeNativeQueueEvent(event string, body []byte, at time.Time
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	if runtime.observations == nil {
-		runtime.observations = make(map[string]forgequeue.Observation)
+		runtime.observations = make(map[string]forgequeue.QueueObservation)
 	}
 	key := nativeQueueScopeKey(repo, base)
 	observation := runtime.observations[key]
@@ -246,10 +246,10 @@ func (s *Server) observeNativeQueueEvent(event string, body []byte, at time.Time
 				delete(runtime.hints, oldest)
 			}
 			runtime.hints[hintKey] = nativeQueueHint{repo: repo, base: base, at: at,
-				candidate: forgequeue.Candidate{SHA: group.HeadSHA, Ref: group.HeadRef, BaseSHA: group.BaseSHA}}
+				candidate: forgequeue.QueueCandidate{SHA: group.HeadSHA, Ref: group.HeadRef, BaseSHA: group.BaseSHA}}
 		case "destroyed":
 			delete(runtime.hints, hintKey)
-			observation.Outcomes = appendNativeQueueOutcome(observation.Outcomes, forgequeue.Outcome{
+			observation.Outcomes = appendNativeQueueOutcome(observation.Outcomes, forgequeue.QueueOutcome{
 				Kind: "candidate-destroyed", CandidateSHA: group.HeadSHA, ObservedAt: at, Source: "signed-merge-group-webhook",
 			})
 			for i := range observation.Candidates {
@@ -273,7 +273,7 @@ func (s *Server) observeNativeQueueEvent(event string, body []byte, at time.Time
 			}
 		}
 		if observedMember && pr.GetMergeCommitSHA() != "" {
-			observation.Outcomes = appendNativeQueueOutcome(observation.Outcomes, forgequeue.Outcome{
+			observation.Outcomes = appendNativeQueueOutcome(observation.Outcomes, forgequeue.QueueOutcome{
 				Kind: "merged", PR: pr.GetNumber(), Head: pr.GetHead().GetSHA(), MergeSHA: pr.GetMergeCommitSHA(),
 				ObservedAt: at, Source: "signed-pull-request-merged-webhook",
 			})
@@ -283,32 +283,32 @@ func (s *Server) observeNativeQueueEvent(event string, body []byte, at time.Time
 }
 
 // Cached projection only; it never consults GitHub from a tracker request.
-func (s *Server) stageTrackerNativeQueues(now time.Time) []forgequeue.Observation {
+func (s *Server) stageTrackerNativeQueues(now time.Time) []forgequeue.QueueObservation {
 	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.AutoMerge.NativeMergeQueue.Enabled {
 		return nil
 	}
 	runtime := &s.nativeQueueTracker
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	result := []forgequeue.Observation{}
+	result := []forgequeue.QueueObservation{}
 	for _, original := range runtime.observations {
 		if !s.nativeQueueScopeAllowed(original.Repo, original.Base) {
 			continue
 		}
 		// Copy nested slices: event writes must not mutate an encoded response.
 		observation := original
-		observation.Entries = append([]forgequeue.Entry{}, original.Entries...)
+		observation.Entries = append([]forgequeue.QueueEntry{}, original.Entries...)
 		for i := range observation.Entries {
 			if original.Entries[i].EnqueuedAt != nil {
 				at := *original.Entries[i].EnqueuedAt
 				observation.Entries[i].EnqueuedAt = &at
 			}
 		}
-		observation.Outcomes = append([]forgequeue.Outcome{}, original.Outcomes...)
-		observation.Candidates = append([]forgequeue.Candidate{}, original.Candidates...)
+		observation.Outcomes = append([]forgequeue.QueueOutcome{}, original.Outcomes...)
+		observation.Candidates = append([]forgequeue.QueueCandidate{}, original.Candidates...)
 		for i := range observation.Candidates {
-			observation.Candidates[i].Members = append([]forgequeue.Member{}, original.Candidates[i].Members...)
-			observation.Candidates[i].Checks = append([]forgequeue.Check{}, original.Candidates[i].Checks...)
+			observation.Candidates[i].Members = append([]forgequeue.QueueMember{}, original.Candidates[i].Members...)
+			observation.Candidates[i].Checks = append([]forgequeue.QueueCheck{}, original.Candidates[i].Checks...)
 		}
 		observation.Stale = observation.Stale || observation.ObservedAt.IsZero() || now.Sub(observation.ObservedAt) > 2*nativeQueueObservationInterval
 		observation.FreshForS = int64((2 * nativeQueueObservationInterval).Seconds())
@@ -324,12 +324,12 @@ func (s *Server) stageTrackerNativeQueues(now time.Time) []forgequeue.Observatio
 			exists = exists || nativeQueueScopeKey(repo, base) == nativeQueueScopeKey(observation.Repo, observation.Base)
 		}
 		if !exists {
-			result = append(result, forgequeue.Observation{Provider: "github-native", Repo: repo, Base: base, State: "unknown", Stale: true,
+			result = append(result, forgequeue.QueueObservation{Provider: "github-native", Repo: repo, Base: base, State: "unknown", Stale: true,
 				Reason: "No authoritative snapshot for this scope yet; bounded background reconciliation rotates across scopes."})
 		}
 	}
 	if len(result) == 0 {
-		result = append(result, forgequeue.Observation{Provider: "github-native", State: "unknown", Stale: true,
+		result = append(result, forgequeue.QueueObservation{Provider: "github-native", State: "unknown", Stale: true,
 			Reason: "No authoritative queue snapshot yet. Select exact repo/base scopes in Settings; authenticated events and background reconciliation supply observations."})
 	}
 	sort.Slice(result, func(i, j int) bool {

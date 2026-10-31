@@ -87,7 +87,7 @@ never substitutes green PR-head checks. Classic protection and applicable rules
 must both be readable before required policy is known. Missing/pending/skipped
 checks or unreadable policy are never portrayed as passing.
 
-The provider-neutral `forgequeue.Observation` contract is read-only and carries
+The provider-neutral `forgestate.QueueObservation` contract is read-only and carries
 no admission or merge authority. The GitHub adapter feeds an in-memory cache
 from the existing governor cycle, at most once per three minutes, rotating
 across two scopes per pass with one 45-second background budget. Each scope

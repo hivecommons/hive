@@ -9,7 +9,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/forgequeue"
+	forgequeue "github.com/hivecommons/hive/pkg/forgestate"
 )
 
 const (
@@ -21,10 +21,10 @@ const (
 // ReadNativeQueueObservation is bounded, read-only and never grants merge
 // authority. Only signed merge_group event identities supply a group's base;
 // workflow runs can discover candidate SHAs but cannot prove membership.
-func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base string, hints []forgequeue.Candidate) (forgequeue.Observation, error) {
-	out := forgequeue.Observation{Provider: "github-native", Repo: repo, Base: base,
-		State: "unavailable", ObservedAt: time.Now(), Entries: []forgequeue.Entry{},
-		Candidates: []forgequeue.Candidate{}, Outcomes: []forgequeue.Outcome{}}
+func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base string, hints []forgequeue.QueueCandidate) (forgequeue.QueueObservation, error) {
+	out := forgequeue.QueueObservation{Provider: "github-native", Repo: repo, Base: base,
+		State: "unavailable", ObservedAt: time.Now(), Entries: []forgequeue.QueueEntry{},
+		Candidates: []forgequeue.QueueCandidate{}, Outcomes: []forgequeue.QueueOutcome{}}
 	parts := strings.Split(repo, "/")
 	if len(parts) != 2 || base == "" {
 		return out, fmt.Errorf("native queue scope unavailable")
@@ -79,7 +79,7 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 			continue
 		}
 		seenIDs[entry.ID], seenPRs[entry.PullRequest.Number] = true, true
-		e := forgequeue.Entry{ID: entry.ID, Position: entry.Position, PR: entry.PullRequest.Number,
+		e := forgequeue.QueueEntry{ID: entry.ID, Position: entry.Position, PR: entry.PullRequest.Number,
 			Head: entry.PullRequest.HeadRefOID, State: entry.State}
 		if !entry.EnqueuedAt.IsZero() {
 			at := entry.EnqueuedAt
@@ -97,9 +97,9 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 	}
 	// Candidate identity comes from actual merge_group runs/events, never FIFO
 	// seats or the PR number encoded in a synthetic ref.
-	candidates := make(map[string]forgequeue.Candidate)
+	candidates := make(map[string]forgequeue.QueueCandidate)
 	order := []string{}
-	hintBySHA := make(map[string]forgequeue.Candidate)
+	hintBySHA := make(map[string]forgequeue.QueueCandidate)
 	for _, hint := range hints {
 		if integrationOID(hint.SHA) && strings.HasPrefix(hint.Ref, "refs/heads/gh-readonly-queue/"+base+"/") {
 			hintBySHA[hint.SHA] = hint
@@ -129,7 +129,7 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 				out.Reason = "Candidate cohort exceeds the bounded observation budget."
 				break
 			}
-			candidates[run.GetHeadSHA()] = forgequeue.Candidate{SHA: run.GetHeadSHA(), Ref: "refs/heads/" + run.GetHeadBranch()}
+			candidates[run.GetHeadSHA()] = forgequeue.QueueCandidate{SHA: run.GetHeadSHA(), Ref: "refs/heads/" + run.GetHeadBranch()}
 			if hint, exists := hintBySHA[run.GetHeadSHA()]; exists {
 				candidates[run.GetHeadSHA()] = hint
 			}
@@ -154,8 +154,8 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 	required, requiredKnown := c.nativeObservationRequired(ctx, parts[0], parts[1], base)
 	for _, key := range order {
 		candidate := candidates[key]
-		candidate.Membership, candidate.Members = "unknown", []forgequeue.Member{}
-		candidate.CI, candidate.Checks = "unknown", []forgequeue.Check{}
+		candidate.Membership, candidate.Members = "unknown", []forgequeue.QueueMember{}
+		candidate.CI, candidate.Checks = "unknown", []forgequeue.QueueCheck{}
 		// Expired refs are not proof of failure, rebuild or merge.
 		ref, _, refErr := c.client.Git.GetRef(ctx, parts[0], parts[1], strings.TrimPrefix(candidate.Ref, "refs/"))
 		if refErr != nil || ref.GetObject().GetSHA() != candidate.SHA {
@@ -188,7 +188,7 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 				if proven {
 					candidate.Membership, candidate.Tree = "proven", group.Tree
 					for _, member := range group.Members {
-						candidate.Members = append(candidate.Members, forgequeue.Member{PR: member.PR, Head: member.Head})
+						candidate.Members = append(candidate.Members, forgequeue.QueueMember{PR: member.PR, Head: member.Head, Entry: member.Entry, Position: member.Position, BaseCommit: member.BaseCommit, HeadCommit: member.HeadCommit})
 					}
 				}
 			}
@@ -255,8 +255,8 @@ func (c *Client) nativeObservationRequired(ctx context.Context, owner, repo, bas
 	return required, known
 }
 
-func (c *Client) nativeObservationChecks(ctx context.Context, owner, repo, sha string, required map[string]int64, known bool) ([]forgequeue.Check, string, bool) {
-	checks := []forgequeue.Check{}
+func (c *Client) nativeObservationChecks(ctx context.Context, owner, repo, sha string, required map[string]int64, known bool) ([]forgequeue.QueueCheck, string, bool) {
+	checks := []forgequeue.QueueCheck{}
 	if len(required) == 0 {
 		return checks, "unknown", known
 	}
@@ -287,7 +287,7 @@ func (c *Client) nativeObservationChecks(ctx context.Context, owner, repo, sha s
 		state = "unknown"
 	}
 	for _, name := range names {
-		check := forgequeue.Check{Name: name, Status: "missing"}
+		check := forgequeue.QueueCheck{Name: name, Status: "missing"}
 		var latest *gh.CheckRun
 		for _, run := range runs.CheckRuns {
 			if run.GetName() == name && run.GetHeadSHA() == sha && (required[name] == 0 || run.GetApp().GetID() == required[name]) &&

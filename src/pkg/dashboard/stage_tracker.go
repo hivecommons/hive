@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
-	"github.com/hivecommons/hive/pkg/forgequeue"
+	forgequeue "github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -46,7 +46,7 @@ type StageTrackerResponse struct {
 	Stages            []StageTrackerStage            `json:"stages"`
 	Items             []StageTrackerItem             `json:"items"`
 	BasePreparation   []StageTrackerPreparationQueue `json:"base_preparation,omitempty"`
-	IntegrationQueues []forgequeue.Observation       `json:"integration_queues,omitempty"`
+	IntegrationQueues []forgequeue.QueueObservation  `json:"integration_queues,omitempty"`
 	// OpenIssues and OpenPRs count Items by kind. Items is the canonical
 	// open-items set (open_items.go), so these equal the Overview tile's
 	// total open issues and PRs; the SPA prints them in the section header

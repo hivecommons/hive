@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/forgequeue"
+	forgequeue "github.com/hivecommons/hive/pkg/forgestate"
 )
 
 func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
@@ -97,7 +97,7 @@ func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
 			}))
 			defer api.Close()
 			client := NewClient("token", "o", []string{"r"}, nil, api.URL)
-			hints := []forgequeue.Candidate{{SHA: candidate, Ref: "refs/heads/gh-readonly-queue/v5/pr-7", BaseSHA: base}}
+			hints := []forgequeue.QueueCandidate{{SHA: candidate, Ref: "refs/heads/gh-readonly-queue/v5/pr-7", BaseSHA: base}}
 			if mode == "no-event" {
 				hints = nil
 			}
