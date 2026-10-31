@@ -52,6 +52,10 @@ const ui = new Function('_configState', 'document', 'fetch', '_inceptionAuthHead
   assert.equal(toasts.at(-1).msg, 'Save error: HTTP 401');
   await ui.removeChannel(0);
   assert.equal(JSON.stringify(state.data), before);
+  response = {ok: true, status: 200, json: async () => { throw Error('private proxy response'); }};
+  await ui.addChannel();
+  assert.equal(JSON.stringify(state.data), before);
+  assert.equal(toasts.at(-1).msg, 'Save error: Invalid server response (HTTP 200)');
   response = {ok: true, status: 200, json: async () => ({status: 'updated'})};
   const saving = ui.addChannel();
   assert.equal(JSON.stringify(state.data), before, 'must not mutate before server acceptance');

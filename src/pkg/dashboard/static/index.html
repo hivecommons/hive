@@ -53806,8 +53806,14 @@ function burnAreaChart() {
       if (state.tab === 'Channels') renderConfigTab('Channels');
       return fetch('/api/config/agent/' + encodeURIComponent(name) + '/channels', {method:'PUT', headers:_inceptionAuthHeaders(), body:JSON.stringify({channels:channels})})
         .then(async r => {
-          const data = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          let data;
+          try {
+            data = await r.json();
+          } catch (_) {
+            if (r.ok) throw new Error('Invalid server response (HTTP ' + r.status + ')');
+            throw new Error('HTTP ' + r.status);
+          }
+          if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
           return data;
         })
         .then(() => {
