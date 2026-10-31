@@ -74,7 +74,7 @@ func TestStageTrackerSingleLinkedPRCopyBoundary(t *testing.T) {
 const issue = { repo: 'acme/console', kind: 'issue', number: 7, title: 'Issue', url: 'https://github.com/acme/console/issues/7',
   stage: 40, linked_prs: [{ number: 42, title: 'PR', url: 'https://forge.example/other/project/pull/42', stage: 50 }] };
 const row = stageTrackerRowHtml(issue, stages, ctx);
-assert.ok(row.includes('<span data-ham-target-key="other/project/pr#42">'), 'the single covering PR has its own menu target');
+assert.ok(row.includes('<li class="ham-seg ham-head-pr" data-ham-target-key="other/project/pr#42">'), 'the single covering PR cell has its own menu target without changing flex children');
 assert.ok(/data-ham-target-key="other\/project\/pr#42">[\s\S]*?href="https:\/\/forge.example\/other\/project\/pull\/42"/.test(row), 'the target surrounds the actual PR reference');
 assert.ok(row.includes('href="' + issue.url + '"'), 'the parent issue keeps its own link');
 assert.ok(row.includes('aria-label="Actions for acme/console#7"'), 'the issue kebab remains issue-targeted');
