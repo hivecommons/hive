@@ -271,7 +271,9 @@ type ActivityHiveView struct {
 	// Truncated is how many of this hive's items its digest left out.
 	Truncated int `json:"truncated,omitempty"`
 	// EventsDropped is how many of this hive's events the spoke's or the
-	// hub's per-block cap dropped before they reached the ring (#15964).
+	// hub's per-block cap dropped before they reached the ring, plus those
+	// the full ring evicted (#15964). Events that aged out of the 24-hour
+	// retention window are not counted.
 	EventsDropped int `json:"events_dropped,omitempty"`
 }
 

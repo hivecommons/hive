@@ -292,8 +292,8 @@ func TestActivityEventRing_OldEventExpiresWhileHiveKeepsHeartbeating(t *testing.
 		st.record("hive-b", activityDigest("o/b", 1), activityT0.Add(h*time.Hour))
 	}
 	b := st.eventsSnapshot([]string{"hive-b"})
-	if len(b.events) != 0 || b.dropped["hive-b"] != 1 {
-		t.Fatalf("hive-b has %d events, dropped %d; want its old event aged out and counted", len(b.events), b.dropped["hive-b"])
+	if len(b.events) != 0 || b.dropped["hive-b"] != 0 {
+		t.Fatalf("hive-b has %d events, dropped %d; want its old event aged out without counting as a drop", len(b.events), b.dropped["hive-b"])
 	}
 }
 

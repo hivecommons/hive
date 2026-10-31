@@ -21,7 +21,8 @@ import (
 // activityEventRingSize bounds the fleet-wide ring. When it is full, the
 // oldest event of the hive holding the most events is dropped first, so a
 // single hive cannot evict the other hives' events. Independently of that,
-// an event is dropped once it has been held for activityForgetAfter.
+// an event ages out once it has been held for activityForgetAfter; ageing
+// out is retention, not loss, so it is not counted as a drop.
 const activityEventRingSize = 1000
 
 // activityEvent is one stored event tagged with its hive.
@@ -35,8 +36,9 @@ type activityEvent struct {
 type activityEventHive struct {
 	// lastSeq is the highest event sequence number accepted (the ack).
 	lastSeq uint64
-	// dropped sums the drops the spoke disclosed and the hub's own cap
-	// applied to its batches.
+	// dropped sums the drops the spoke disclosed, the hub's own cap
+	// applied to its batches and the ring's fair-share evictions. Events
+	// that age out after activityForgetAfter are not counted.
 	dropped int
 	// disclosed is the drop count the latest counted batch claimed (the
 	// spoke's disclosure plus the hub's cap). The spoke's disclosure is
@@ -158,10 +160,12 @@ func (r *activityEventRing) forget(hiveID string) {
 	r.entries = slices.DeleteFunc(r.entries, func(e activityEvent) bool { return e.hiveID == hiveID })
 }
 
-// forgetOld forgets hives that sent nothing for maxAge, and drops any event
-// held longer than maxAge from the hives that remain, so fair-share eviction
-// never keeps a low-volume hive's events in memory indefinitely. Expired
-// events count as drops for their hive.
+// forgetOld forgets hives that sent nothing for maxAge, and ages out any
+// event held longer than maxAge from the hives that remain, so fair-share
+// eviction never keeps a low-volume hive's events in memory indefinitely.
+// Ageing out is not counted in dropped: every retained event eventually
+// expires, so counting it would turn the loss counter into a running total
+// and hide real cap drops.
 func (r *activityEventRing) forgetOld(now time.Time, maxAge time.Duration) {
 	for id, h := range r.byHive {
 		if now.Sub(h.lastSeen) > maxAge {
@@ -169,13 +173,7 @@ func (r *activityEventRing) forgetOld(now time.Time, maxAge time.Duration) {
 		}
 	}
 	r.entries = slices.DeleteFunc(r.entries, func(e activityEvent) bool {
-		if now.Sub(e.receivedAt) <= maxAge {
-			return false
-		}
-		if h := r.byHive[e.hiveID]; h != nil {
-			h.dropped = hubactivity.ClampCount(h.dropped + 1)
-		}
-		return true
+		return now.Sub(e.receivedAt) > maxAge
 	})
 }
 
