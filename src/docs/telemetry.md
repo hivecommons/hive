@@ -60,6 +60,20 @@ hub:
 | `task_titles` | Leaderboard `current_task` | Hub leaderboard shows who is active but not what they are working on. |
 | `dashboard_urls` | `dashboard_url`, `snapshot_url`, public-URL self-check | Hub cannot link to the hive's dashboard or snapshot, and cannot probe URL reachability. |
 
+## Activity digest
+
+`hub.activity` controls the bounded, read-only activity digest the heartbeat carries for the hub-wide Activity Monitor ([#15963](https://github.com/hivecommons/hive/issues/15963), RFC [#15861](https://github.com/hivecommons/hive/issues/15861)). It is built in process from the dashboard's stage tracker: repo, number, kind, title, author kind, stage and modifier pills of open items, plus totals by stage and modifier.
+
+```yaml
+hub:
+  activity:
+    enabled: true        # default: on for hosted spokes (hub.hive_type: hosted) not withholding repos; off for self-hosted
+    max_items: 100       # default 100; clamped to the hub's 250-item ceiling
+    share_private: false # private-repository items are dropped (still counted in totals) unless true
+```
+
+When the cap applies, items needing a human or a decision are kept first, then stalled ones, then the furthest stage, and the number left out is reported as `truncated`. A repository counts as public only when the hub lists the hive as public (`hub.is_public`, its project repos) or it is on `HIVE_PUBLIC_REPOS`. Once the hub acknowledges a digest's etag, later beats send only `etag` and `generated_at` until the tracker changes. A tracker change also sends an activity-only update over the heartbeat endpoint and bearer, at most one every 15 seconds; changes arriving meanwhile are merged into it. `hub.heartbeat_omit` applies: `repos` withholds every item (totals remain) and `task_titles` blanks titles.
+
 ## Telemetry agent
 
 The telemetry agent audits and, once opted in, improves the **observability of the managed project** — the repositories the hive watches, not the hive's own internal metrics/tracing (see [Config.OTel/Tracing](operator-reference.md) for that, a deliberately separate concern). It is an L5/L6-only agent: absent from the roster below L5 and paused in every governor mode at L5/L6 until an operator explicitly opts in.
