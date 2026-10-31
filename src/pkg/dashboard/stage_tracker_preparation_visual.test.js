@@ -49,7 +49,7 @@ function load() {
     vm.runInContext(found[0], ctx);
   }
   for (const name of ['stageTrackerTrainIconHtml', 'stageTrackerTrainAccentClass', 'stageTrackerOrdinal']) vm.runInContext(fn('tracker-words-core', name), ctx);
-  for (const name of ['stageTrackerLinkedSuperseder', 'stageTrackerLinkedSupersededGone']) vm.runInContext(fn('tracker-words-gate', name), ctx);
+  for (const name of ['stageTrackerLinkedSuperseder', 'stageTrackerLinkedSupersededGone', 'stageTrackerLinkedSupersededText', 'stageTrackerLinkedSupersededTip']) vm.runInContext(fn('tracker-words-gate', name), ctx);
   for (const name of ['stageTrackerPRKey', 'stageTrackerItemKey', 'stageTrackerRowPRKeys']) vm.runInContext(fn('tracker-merged', name), ctx);
   for (const name of ['stageTrackerLinkedPRItem', 'stageTrackerLinkedPROpen', 'stageTrackerLinkedDrawnHere', 'stageTrackerLinkedSorted', 'stageTrackerAdoptOrphanPRs', 'stageTrackerHeadColsHtml', 'stageTrackerSubRowHtml', 'stageTrackerRowHtml']) vm.runInContext(fn('tracker-row-layout', name), ctx);
   for (const name of ['stageTrackerPreparationWord', 'stageTrackerPreparationAge', 'stageTrackerPreparationChipHtml']) vm.runInContext(fn('tracker-queue', name), ctx);
@@ -82,6 +82,11 @@ function render(ctx, f, page = f.data.items, listed = page, events = {}) {
 }
 function content(rows) { return rows.map(row => row.html).join(''); }
 function rootKeys(rows) { return rows.filter(row => !row.key.startsWith('preparation')).map(row => row.key); }
+function rootRow(rows, number, kind = 'pr') {
+  const row = rows.find(row => row.key === REPO + '/' + kind + '#' + number);
+  assert.ok(row, 'actual ' + kind + ' row #' + number);
+  return row;
+}
 function model(ctx, f, listed = f.data.items, page = listed) {
   return ctx.stageTrackerPreparationVisualModel(f.data, listed, page, []);
 }
@@ -123,11 +128,11 @@ test('unrelated rows terminate rails; filtered FIFO gaps use dashed continuation
   const other = { ...f.first, number: 80, head: 'other', preparation: null };
   f.data.items.push(other);
   let rows = render(ctx, f, [f.owner, other, f.first, f.second]);
-  assert.match(rows.find(row => row.key.endsWith('/pr#45')).html, /ham-train-last/);
-  assert.doesNotMatch(rows.find(row => row.key.endsWith('/pr#80')).html, /ham-preparation-member|ham-preparation-node/);
+  assert.match(rootRow(rows, 45).html, /ham-train-last/);
+  assert.doesNotMatch(rootRow(rows, 80).html, /ham-preparation-member|ham-preparation-node/);
   assert.equal(rows.filter(row => row.key.startsWith('preparation:')).length, 2);
   rows = render(ctx, f, [f.owner, f.second], [f.owner, f.second]);
-  assert.match(rows.find(row => row.key.endsWith('/pr#2')).html, /ham-preparation-gap/);
+  assert.match(rootRow(rows, 2).html, /ham-preparation-gap/);
   assert.match(rows[0].html, /2 of 3 PRs here/);
   assert.match(rows[0].html, /#9 · Waiting 1st for preparation · hidden by filters/);
   assert.deepEqual(rootKeys(rows), [45, 2].map(n => REPO + '/pr#' + n));
@@ -152,7 +157,7 @@ test('release/handoff clears former owner decoration and pill suppression; readm
   f.second.preparation.behind = f.first.number;
   const rows = render(ctx, f, [f.first, f.second, f.owner]);
   assert.match(rows[0].html, /front: #9/);
-  assert.doesNotMatch(rows.find(row => row.key.endsWith('/pr#45')).html, /ham-preparation-member/);
+  assert.doesNotMatch(rootRow(rows, 45).html, /ham-preparation-member/);
   assert.equal(ctx.stageTrackerPreparationRepresented(f.owner), false);
   f.q.waiting.push({ ...f.owner.preparation, role: 'waiting', behind: 9 });
   assert.deepEqual(plain(model(ctx, f)[0].waiting.map(e => e.ticket.number)), [2, 45]);
@@ -167,7 +172,7 @@ test('unverified owner gets a hollow node and concise current commentary, never 
   const rows = render(ctx, f, [f.owner, f.first, f.second]);
   assert.match(rows[0].html, /2 confirmed PRs · recorded front: #45/);
   assert.match(rows[1].html, /ham-preparation-unverified/);
-  assert.doesNotMatch(rows[1].html, /ham-train-front|OLD HEAD APPROVED|ham-badge/);
+  assert.doesNotMatch(rows[1].html, /ham-train-front|OLD HEAD APPROVED|<span class="ham-badge"/);
   assert.match(rows[1].html, /Head changed; current preparation unverified/);
   assert.match(rows[1].html, /Review swarm requested; waiting for a verdict on the current head/);
   assert.equal(ctx.stageTrackerPreparationChipHtml(f.owner), '');
@@ -198,7 +203,7 @@ test('inactive, closed, held and draft candidates do not become active rail memb
     assert.equal(group.inactive, 1);
     assert.deepEqual(plain(group.waiting.map(e => [e.ticket.number, e.position])), [[2, 1]]);
     const rows = render(ctx, f);
-    assert.doesNotMatch(rows.find(row => row.key.endsWith('/pr#9')).html, /ham-preparation-member/);
+    assert.doesNotMatch(rootRow(rows, 9).html, /ham-preparation-member/);
   }
 });
 
@@ -215,7 +220,7 @@ test('multiple/shared issue trees keep their actual nested rows and PR stages wi
   assert.match(html, /data-ham-stage="70" data-ham-sub-key="hivecommons\/hive\/pr#2"/);
   assert.match(html, /shown under issue #500/);
   assert.deepEqual(plain(f.data), before);
-  assert.match(rows.find(row => row.key.endsWith('/issue#500')).html, /ham-preparation-gap/);
+  assert.match(rootRow(rows, 500, 'issue').html, /ham-preparation-gap/);
 });
 
 test('mixed linked trees mark only preparation children and stop before an unrelated child', () => {
@@ -235,21 +240,22 @@ test('single covering PR retains the original issue stage and PR-driven strip; i
   const { ctx } = load(), f = fixture();
   const issue = { kind: 'issue', repo: REPO, number: 500, stage: 40, linked_prs: [f.first] };
   f.data.items = [issue, f.owner, f.second];
-  const html = render(ctx, f).find(row => row.key.endsWith('/issue#500')).html;
+  const html = rootRow(render(ctx, f), 500, 'issue').html;
   assert.match(html, /data-ham-kind="issue".*data-ham-stage="40"/);
   assert.match(html, /data-stage="50"/);
   assert.match(html, /shown under issue #500/);
-  assert.doesNotMatch(html, /data-ham-sub-key=|ham-badge/);
+  assert.doesNotMatch(html, /data-ham-sub-key=|<span class="ham-badge"/);
 });
 
 test('still-rendered closed children prevent a parent rail through unrelated work', () => {
   const { ctx } = load(), f = fixture();
-  const closed = { ...f.first, number: 80, stage: 75, state: 'closed', head: 'closed', preparation: null };
+  const closed = { ...f.first, number: 80, stage: 75, state: 'closed', head: 'closed', preparation: null, superseded_by: f.first.number };
   const issue = { kind: 'issue', repo: REPO, number: 500, stage: 40, linked_prs: [f.first, closed] };
   f.data.items = [issue, f.owner, f.second];
-  const html = render(ctx, f).find(row => row.key.endsWith('/issue#500')).html;
+  const html = rootRow(render(ctx, f), 500, 'issue').html;
   assert.match(html, /<div class="ham-row" tabindex="0" data-ham-kind="issue"/);
-  assert.match(html, /class="ham-sub" data-ham-kind="pr" data-ham-stage="75"/);
+  assert.match(html, /class="ham-sub ham-sub-superseded" data-ham-kind="pr" data-ham-stage="75"/);
+  assert.match(html, /superseded · closed · hive adopted → #9/);
   assert.match(html, /class="ham-sub ham-train ham-train-k3 ham-preparation-member ham-train-last"/);
   assert.equal((html.match(/ham-preparation-node/g) || []).length, 1);
 });
@@ -257,7 +263,7 @@ test('still-rendered closed children prevent a parent rail through unrelated wor
 test('real ready/native train attributes and rails remain untouched rather than claiming preparation seats', () => {
   const { ctx } = load(), f = fixture();
   f.owner.merge_train = { id: 'real-ready', position: 2 };
-  const before = plain(f.data), rows = render(ctx, f), owner = rows.find(row => row.key.endsWith('/pr#45'));
+  const before = plain(f.data), rows = render(ctx, f), owner = rootRow(rows, 45);
   assert.match(owner.html, /class="ham-row ham-train ham-train-k0"/);
   assert.match(owner.html, /data-ham-train="real-ready"/);
   assert.doesNotMatch(owner.html, /ham-train-k3|ham-preparation-member/);

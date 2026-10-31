@@ -46,9 +46,10 @@
             && (!p.current_head || p.current_head === found.item.head) && found.item.base_ref === q.base_ref
             && (!here || (here.item.head === p.head_sha && here.item.base_ref === q.base_ref));
           const drawable = here && stageTrackerLinkedPROpen(here.item, here.host) && here.item.base_ref === q.base_ref;
+          const row = drawable ? here : found;
           const entry = { ticket: p, role, position: 0, state: exact ? 'current' : 'unverified',
             sequence: out.members.length, location: drawable ? 'page' : listed.has(key) ? 'offpage' : 'filtered',
-            row: drawable ? here : found };
+            row, head: row && row.item.head || '', base: q.base_ref, ticketHead: p.head_sha, ticketState: p.state };
           out.members.push(entry);
           if (!exact) {
             out.unverified.push(entry);
@@ -94,7 +95,7 @@
       if (!item || (item.kind !== 'pr' && !item.via_pr)) return null;
       const number = item.via_pr && item.preparation ? item.preparation.number : item.number;
       const e = _stageTrackerPreparationShown.get(stageTrackerPreparationKey(item.repo, number));
-      return e && e.row.item.head === item.head && (!item.base_ref || item.base_ref === e.row.item.base_ref) ? e : null;
+      return e && e.head === item.head && (!item.base_ref || item.base_ref === e.base) ? e : null;
     }
     function stageTrackerPreparationRowInfo(item, stages) {
       if (!item || (typeof stageTrackerTrainKey === 'function' && stageTrackerTrainKey(item))) return null;
@@ -120,8 +121,8 @@
           + (e.location === 'page' ? '' : e.location === 'offpage' ? ' · another page or collapsed repo' : ' · hidden by filters or absent from snapshot')
           + (e.state === 'unverified' ? ' · ' + (e.ticket.detail || 'current identity or eligibility unknown') : '')
           + ' · ticket age ' + stageTrackerPreparationAge(e.ticket, _stageTrackerPreparationNow)
-          + ' · ticket head ' + (e.ticket.head_sha || 'unknown')
-          + ' · current head ' + (e.row && e.row.item.head || 'unknown'));
+          + ' · ticket head ' + (e.ticketHead || 'unknown')
+          + ' · current head ' + (e.head || 'unknown'));
       }
       return details.join(' — ');
     }
@@ -225,6 +226,6 @@
       if (!p || p.state === 'inactive') return false;
       if (item.kind === 'pr' ? Number(item.number) !== Number(p.number) : !item.via_pr) return false;
       const shown = _stageTrackerPreparationRendered.get(stageTrackerPreparationKey(item.repo, p.number));
-      return !!(shown && item.head === shown.row.item.head && p.head_sha === shown.ticket.head_sha
-        && (!item.base_ref || item.base_ref === shown.row.item.base_ref));
+      return !!(shown && item.head === shown.head && p.head_sha === shown.ticketHead && p.state === shown.ticketState
+        && p.role === shown.role && (!item.base_ref || item.base_ref === shown.base));
     }

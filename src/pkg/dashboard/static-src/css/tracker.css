@@ -209,7 +209,7 @@
     .ham-preparation-head .ham-train-chip { white-space: normal; }
     .ham-preparation-head .ham-preparation-help { background: none; border-color: var(--ham-train-accent); color: var(--muted); }
     .ham-preparation-help::before { content: '?'; }
-    .ham-preparation-node.config-info { position: absolute; left: calc(var(--sp-2) - 2px); top: calc(50% - var(--sp-2)); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
+    .config-info.ham-preparation-node { position: absolute; left: calc(var(--sp-2) - 2px); top: calc(50% - var(--sp-2)); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
     .ham-preparation-node:focus-visible { outline: var(--focus-ring-width) solid var(--ham-train-accent); outline-offset: var(--sp-1); }
     .ham-row.ham-preparation-gap::before, .ham-sub.ham-preparation-member.ham-preparation-gap::before { border-left-style: dashed; }
     .ham-row.ham-preparation-unverified::after, .ham-sub.ham-preparation-member.ham-preparation-unverified::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
@@ -222,7 +222,7 @@
     .ham-sub.ham-preparation-member.ham-train-last::before { bottom: 50%; }
     .ham-sub.ham-preparation-member::after { content: ''; position: absolute; left: -1px; top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-sub.ham-preparation-member.ham-train-front::after { background: var(--text); }
-    .ham-sub .ham-preparation-node.config-info { left: calc(-1 * var(--sp-1)); }
+    .ham-sub .config-info.ham-preparation-node { left: calc(-1 * var(--sp-1)); }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
     .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
     .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }
