@@ -21,10 +21,7 @@ func TestSpacingRampSuppliedByTokensOnRoot(t *testing.T) {
 	if rootRule == nil {
 		t.Fatal("tokens.css has no :root rule")
 	}
-	for _, want := range []string{
-		"--sp-0: 0;", "--sp-1: 2px;", "--sp-2: 4px;", "--sp-3: 6px;", "--sp-4: 8px;",
-		"--sp-5: 12px;", "--sp-6: 16px;", "--sp-7: 20px;", "--sp-8: 24px;", "--sp-9: 32px;",
-	} {
+	for _, want := range spRamp {
 		if !strings.Contains(rootRule[1], want) {
 			t.Errorf("tokens.css :root lacks %s", want)
 		}

@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+// spRamp lists the expected spacing scale, which is defined globally in
+// tokens.css :root. Both TestSpacingRampSuppliedByTokensOnRoot (which verifies
+// the ramp on :root) and TestAppearanceThemeHoverCannotResizeSettingsModal
+// (which verifies --sp-7 is pinned in .config-modal) reference this shared list
+// so the two assertions stay in sync if the ramp changes.
+var spRamp = []string{
+	"--sp-0: 0;", "--sp-1: 2px;", "--sp-2: 4px;", "--sp-3: 6px;", "--sp-4: 8px;",
+	"--sp-5: 12px;", "--sp-6: 16px;", "--sp-7: 20px;", "--sp-8: 24px;", "--sp-9: 32px;",
+}
+
 func TestAppearanceThemeUITabWired(t *testing.T) {
 	b, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
@@ -165,7 +175,7 @@ func TestAppearanceThemeHoverCannotResizeSettingsModal(t *testing.T) {
 		"--font-ui: Inter, ui-sans-serif",
 		"--font-mono: 'SF Mono'",
 		"--fs-base: .82rem;",
-		"--sp-7: 20px;",
+		spRamp[7],
 		"--r: 6px;",
 		"--radius: var(--r);",
 	} {
