@@ -57,13 +57,14 @@ func TestSettingHelpMarksAreDocsLinks(t *testing.T) {
 		}
 		found := false
 		for _, line := range strings.Split(string(raw), "\n") {
-			if strings.HasPrefix(line, "#") && sectionHelpSlug(strings.TrimLeft(line, "# ")) == m[2] {
+			if (strings.HasPrefix(line, "#") && sectionHelpSlug(strings.TrimLeft(line, "# ")) == m[2]) ||
+				strings.Contains(line, `<a id="`+m[2]+`"></a>`) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("settings help link %s points at a heading that does not exist", m[0])
+			t.Errorf("settings help link %s points at an anchor that does not exist", m[0])
 		}
 	}
 }
