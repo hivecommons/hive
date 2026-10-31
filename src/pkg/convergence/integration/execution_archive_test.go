@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/hivecommons/hive/pkg/forgestate"
 )
 
 func executionSignedArchive(t *testing.T, proof ExecutionProof, key *rsa.PrivateKey) *ExecutionArchive {
@@ -29,7 +30,7 @@ func executionSignedArchive(t *testing.T, proof ExecutionProof, key *rsa.Private
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyHash, payloadHash := sha256.Sum256(spki), sha256.Sum256(payload)
+	keyHash := sha256.Sum256(spki)
 	last := proof.Subject.Prefixes[len(proof.Subject.Prefixes)-1]
 	archive := &ExecutionArchive{
 		Role: "candidate", Issuer: executionArchiveIssuer, KeyID: "historical-key", SigningKeySPKI: spki,
@@ -39,22 +40,102 @@ func executionSignedArchive(t *testing.T, proof ExecutionProof, key *rsa.Private
 		Ref: "refs/tags/hive-integration/" + proof.Subject.ID, Event: "workflow_dispatch",
 		JobStartedAt: proof.ObservedAt.Add(-time.Minute), JobCompletedAt: proof.ObservedAt,
 	}
+	executionSignArchive(t, archive, key, proof.Subject.Repo, proof.RunID, proof.Attempt)
+	return archive
+}
+
+func executionSignArchive(t *testing.T, archive *ExecutionArchive, key *rsa.PrivateKey, repo string, runID int64, attempt int) {
+	t.Helper()
+	payloadHash := sha256.Sum256(archive.Payload)
+	audience := "hive-integration-producer-v1/"
+	if archive.Role == "materializer" {
+		audience = "hive-integration-materializer-v1/"
+	}
 	claims := jwt.MapClaims{
-		"iss": archive.Issuer, "aud": "hive-integration-producer-v1/" + hex.EncodeToString(payloadHash[:]),
-		"repository": proof.Subject.Repo, "repository_id": "6", "actor_id": "7",
-		"run_id": strconv.FormatInt(proof.RunID, 10), "run_attempt": strconv.Itoa(proof.Attempt), "check_run_id": "5",
-		"workflow_ref": proof.Subject.Repo + "/" + archive.WorkflowPath + "@" + archive.Ref, "workflow_sha": archive.WorkflowSHA,
+		"iss": archive.Issuer, "aud": audience + hex.EncodeToString(payloadHash[:]),
+		"repository": repo, "repository_id": strconv.FormatInt(archive.RepositoryID, 10), "actor_id": strconv.FormatInt(archive.ActorID, 10),
+		"run_id": strconv.FormatInt(runID, 10), "run_attempt": strconv.Itoa(attempt), "check_run_id": strconv.FormatInt(archive.FinalizerCheckID, 10),
+		"workflow_ref": repo + "/" + archive.WorkflowPath + "@" + archive.Ref, "workflow_sha": archive.WorkflowSHA,
 		"ref": archive.Ref, "event_name": archive.Event, "runner_environment": "github-hosted",
-		"iat": proof.ObservedAt.Add(-30 * time.Second).Unix(), "nbf": proof.ObservedAt.Add(-30 * time.Second).Unix(),
-		"exp": proof.ObservedAt.Add(30 * time.Minute).Unix(),
+		"iat": archive.VerifiedAt.Add(-30 * time.Second).Unix(), "nbf": archive.VerifiedAt.Add(-30 * time.Second).Unix(),
+		"exp": archive.VerifiedAt.Add(30 * time.Minute).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = archive.KeyID
-	archive.Token, err = token.SignedString(key)
+	signed, err := token.SignedString(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return archive
+	archive.Token = signed
+}
+
+func TestExecutionMaterializerPrivateReplayAndPartialPrefix(t *testing.T) {
+	store, cfg, in := executionAdmissionFixture(t)
+	admitted, err := store.PlanExecution(cfg, in)
+	if err != nil || admitted.Plan == nil {
+		t.Fatalf("plan: %+v %v", admitted, err)
+	}
+	plan := *admitted.Plan
+	request := map[string]any{"schema": 1, "protocol": "integration-prefix-v1", "engine": "hive",
+		"repo": plan.Recipe.Repo, "base": plan.Recipe.Base, "baseSHA": plan.Recipe.BaseSHA, "policy": plan.Recipe.Policy,
+		"generation": int64(plan.Attempt), "members": plan.Recipe.Members, "createdAt": plan.AttemptAt.UTC().Format(time.RFC3339Nano)}
+	_, plan.RequestDigest, err = forgestate.CanonicalIntegrationPreparation(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := executionProofFixture().Subject
+	subject.Repo, subject.Base, subject.BaseSHA, subject.Policy, subject.WorkflowTree = plan.Recipe.Repo, plan.Recipe.Base, plan.Recipe.BaseSHA, plan.Recipe.Policy, plan.Recipe.WorkflowTree
+	subject.Members = plan.Recipe.Members[:1]
+	subject.PreparedBy = forgestate.IntegrationPreparationSource{SourceSHA: cfg.Scopes[0].WorkflowTree, RequestDigest: plan.RequestDigest, GitVersion: "git fixture"}
+	plan.Prepared = []forgestate.IntegrationCandidateSubject{subject}
+	receipt := map[string]any{"schema": 1, "protocol": "integration-materializer-receipt-v1", "request": request, "preparedBy": subject.PreparedBy,
+		"prepared": []any{map[string]any{"subject": subject, "publication": "accepted", "dispatch": "accepted"}}}
+	payload, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := executionProofFixture()
+	archive := executionSignedArchive(t, proof, key)
+	archive.Role, archive.Payload, archive.WorkflowSHA, archive.WorkflowPath, archive.Ref, archive.Event =
+		"materializer", payload, subject.PreparedBy.SourceSHA, ".github/workflows/integration-candidate-prepare.yml", "refs/heads/v5", "repository_dispatch"
+	plan.MaterializerRunID, plan.MaterializerAttempt, plan.Materialization = 20, 1, archive
+	executionSignArchive(t, archive, key, plan.Recipe.Repo, 20, 1)
+	plan.Generation++
+	if err := store.AppendExecution("partial-materialization", in.Now, ExecutionEvent{Version: ExecutionSchemaVersion, Plan: &plan}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenExecution(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, ok := reopened.ExecutionPlan(plan.Recipe.ID())
+	if !ok || saved.Materialization == nil || len(saved.Prepared) != 1 || len(saved.Recipe.Members) != 2 {
+		t.Fatal("lost partial prefix/private request archive")
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*ExecutionPlan)
+	}{
+		{"request", func(p *ExecutionPlan) { p.RequestDigest = strings.Repeat("f", 64) }},
+		{"generation", func(p *ExecutionPlan) { p.Attempt++ }},
+		{"scope", func(p *ExecutionPlan) { p.Recipe.Base = "other" }},
+		{"head", func(p *ExecutionPlan) { p.Recipe.Members[0].Head = strings.Repeat("f", 40) }},
+		{"prefix", func(p *ExecutionPlan) { p.Prepared[0].Prefixes[0].Tree = strings.Repeat("f", 40) }},
+		{"publication", func(p *ExecutionPlan) { p.Prepared = nil }},
+		{"payload", func(p *ExecutionPlan) { p.Materialization.Payload = []byte("{") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := cloneExecution(saved)
+			test.change(&changed)
+			if err := validateMaterializationArchive(changed); err == nil {
+				t.Fatal("accepted altered materializer request/prefix history")
+			}
+		})
+	}
 }
 
 func TestExecutionArchivedProducerHistoricalReplayAndIsolation(t *testing.T) {

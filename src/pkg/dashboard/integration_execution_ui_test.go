@@ -33,6 +33,7 @@ assert.match(stageTrackerExecutionHtml(item),/live merge guards still required/)
 assert.equal(stageTrackerExecutionHtml({...item,number:1,head:'aaa'}),'','AB proof must not become A proof');
 assert.equal(stageTrackerExecutionHtml({...item,head:'changed'}),'');
 assert.equal(stageTrackerExecutionHtml({...item,base_ref:'other'}),'');
+assert.equal(stageTrackerExecutionHtml({...item,base_ref:''}),'','unknown scope must not borrow a prefix receipt');
 assert.equal(stageTrackerExecutionHtml({...item,kind:'issue'}),'');
 assert.equal(JSON.stringify(item),original,'caption must not alter row/stage/order/filter facts');
 stageTrackerExecutionSync(data,now+61000);

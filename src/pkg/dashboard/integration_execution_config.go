@@ -23,7 +23,7 @@ func executionReleasedScopes(previous, next config.IntegrationExecutionConfig) [
 	out := []config.IntegrationExecutionScope{}
 	for _, old := range previous.Scopes {
 		current, enrolled := executionEnrolledScope(next.Effective(), old.Repo, old.Base)
-		if next.Effective().Mode != config.IntegrationEnforce || !enrolled || current.AuthorityCommit != old.AuthorityCommit || current.Authority != old.Authority {
+		if next.Effective().Mode != config.IntegrationEnforce || !enrolled || !reflect.DeepEqual(current, old) {
 			out = append(out, old)
 		}
 	}
@@ -37,6 +37,13 @@ func (s *Server) executionHandoverGuard(ctx context.Context, previous, next conf
 	for _, old := range executionReleasedScopes(previous, next) {
 		if old.Authority != "hive" {
 			continue
+		}
+		current, enrolled := executionEnrolledScope(next, old.Repo, old.Base)
+		if next.Effective().Mode == config.IntegrationEnforce && enrolled &&
+			current.Authority == old.Authority && current.ExecutorID == old.ExecutorID &&
+			current.AuthorityRef == old.AuthorityRef && current.AuthorityCommit == old.AuthorityCommit &&
+			current.ProviderProfileDigest() == old.ProviderProfileDigest() {
+			continue // Scheduling bounds alone do not hand promotion authority away.
 		}
 		if s.deps == nil || s.deps.GHClient == nil {
 			return fmt.Errorf("revoke old forge authority epoch before releasing Hive promotion authority; live reader unavailable")

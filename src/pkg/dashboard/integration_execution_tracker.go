@@ -46,7 +46,8 @@ func (s *Server) refreshExecutionTracker(store *integration.Store, cfg config.In
 		Candidates: []IntegrationExecutionTrackerCandidate{}}
 	latest := map[string]integration.ExecutionProof{}
 	for _, proof := range snapshot.Proofs {
-		if _, enrolled := cfg.Scope(proof.Subject.Repo, proof.Subject.Base); !enrolled {
+		scope, enrolled := cfg.Scope(proof.Subject.Repo, proof.Subject.Base)
+		if !enrolled || scope.Authority != "hive" || scope.Policy != proof.Subject.Policy || scope.WorkflowTree != proof.Subject.WorkflowTree {
 			continue
 		}
 		old, exists := latest[proof.Subject.ID]
@@ -63,7 +64,8 @@ func (s *Server) refreshExecutionTracker(store *integration.Store, cfg config.In
 			State: proof.State, RunID: proof.RunID, Attempt: proof.Attempt, Reason: proof.Reason, ObservedAt: proof.ObservedAt})
 	}
 	for _, plan := range snapshot.Plans {
-		if _, enrolled := cfg.Scope(plan.Recipe.Repo, plan.Recipe.Base); !enrolled || len(plan.Prepared) > 0 {
+		scope, enrolled := cfg.Scope(plan.Recipe.Repo, plan.Recipe.Base)
+		if !enrolled || scope.Authority != "hive" || scope.Policy != plan.Recipe.Policy || scope.WorkflowTree != plan.Recipe.WorkflowTree || len(plan.Prepared) > 0 {
 			continue
 		}
 		view.Candidates = append(view.Candidates, IntegrationExecutionTrackerCandidate{
@@ -85,7 +87,10 @@ func (s *Server) refreshExecutionTracker(store *integration.Store, cfg config.In
 		if rank(a.State) != rank(b.State) {
 			return rank(a.State) < rank(b.State)
 		}
-		return a.ObservedAt.After(b.ObservedAt)
+		if !a.ObservedAt.Equal(b.ObservedAt) {
+			return a.ObservedAt.After(b.ObservedAt)
+		}
+		return a.SubjectID < b.SubjectID
 	})
 	if len(view.Candidates) > config.MaxIntegrationExecutionCandidates {
 		view.Candidates = view.Candidates[:config.MaxIntegrationExecutionCandidates]

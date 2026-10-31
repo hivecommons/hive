@@ -675,6 +675,10 @@ func (s *Server) handleIntegrationConfigPut(w http.ResponseWriter, r *http.Reque
 	s.integration.mu.Lock()
 	defer s.integration.mu.Unlock()
 	previous := s.deps.Config.IntegrationOrchestration
+	if !executionConfigEqual(previous.Execution, previousExecution) {
+		jsonError(w, "execution profile changed during authority preflight; reload before saving", http.StatusPreconditionFailed)
+		return
+	}
 	if !executionConfigEqual(previous.Execution, next.Execution) &&
 		(request.ExpectedExecution == nil || !executionConfigEqual(previous.Execution, *request.ExpectedExecution)) {
 		jsonError(w, "execution configuration changed or expected_execution missing; reload before saving", http.StatusPreconditionFailed)

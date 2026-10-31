@@ -10,13 +10,13 @@
 
     function stageTrackerExecutionHtml(item) {
       const view = _stageTrackerExecution;
-      if (!view || !item || item.kind !== 'pr' || !item.head) return '';
+      if (!view || !item || item.kind !== 'pr' || !item.head || !item.base_ref) return '';
       const candidate = view.candidates.find(entry => {
         const members = entry.members || [];
         const member = members[members.length - 1];
         return member && String(entry.repo).toLowerCase() === String(item.repo).toLowerCase()
           && Number(member.pr) === Number(item.number) && member.head === item.head
-          && (!item.base_ref || entry.base === item.base_ref);
+          && entry.base === item.base_ref;
       });
       if (!candidate) return '';
       const candidateAt = Date.parse(candidate.observed_at);
