@@ -61,8 +61,6 @@ func toPublisher(post any) Publisher {
 	switch p := post.(type) {
 	case Publisher:
 		return p
-	case Poster:
-		return p
 	case func(content string) error:
 		return Poster(p)
 	default:

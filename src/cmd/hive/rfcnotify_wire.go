@@ -46,7 +46,7 @@ type rfcNotifyState struct {
 	// statePath is rfcNotifyStatePath in production; tests point it at a
 	// temp dir.
 	statePath string
-	// newPoster builds the Discord poster; nil means discordRFCPoster.
+	// newPoster builds the Discord poster; nil builds botPublisher.
 	// Tests inject a recorder.
 	newPoster func(token, channel string) rfcnotify.Poster
 	// newPublisher builds the Discord publisher; nil adapts newPoster or builds botPublisher.
@@ -102,10 +102,6 @@ func (s *rfcNotifyState) ensure(cfg *config.Config, repos int, logger *slog.Logg
 	if !ok {
 		return false
 	}
-	newPoster := s.newPoster
-	if newPoster == nil {
-		newPoster = discordRFCPoster(logger)
-	}
 	gates := rfcNotifyGatesFor(cfg, repos)
 	if s.sweeper == nil || s.gates != gates {
 		s.sweeper = rfcnotify.NewSweeper(rfcnotify.Options{
@@ -150,15 +146,6 @@ func (p botPublisher) Post(content string) error {
 
 func (p botPublisher) PostCard(content string, embed rfcnotify.Embed) (string, error) {
 	return p.bot.SendEmbedTo(p.channel, content, embed)
-}
-
-// discordRFCPoster posts through the bot token to the RFC channel without
-// starting the command bot.
-func discordRFCPoster(logger *slog.Logger) func(token, channel string) rfcnotify.Poster {
-	return func(token, channel string) rfcnotify.Poster {
-		bot := discord.NewBot(discord.Config{Token: token}, logger)
-		return func(content string) error { return bot.SendMessageTo(channel, content) }
-	}
 }
 
 type rfcRepoVisibility struct {
