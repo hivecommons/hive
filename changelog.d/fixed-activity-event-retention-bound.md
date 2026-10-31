@@ -1,0 +1,1 @@
+- The hub activity event ring now also drops any event held longer than 24 hours, so a low-volume hive that keeps heartbeating no longer keeps old events in hub memory indefinitely after the fair-share eviction change; expired events count in `events_dropped` ([#16072](https://github.com/hivecommons/hive/issues/16072)).

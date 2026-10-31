@@ -285,6 +285,18 @@ func TestActivityEventRing_FloodCannotEvictOtherHive(t *testing.T) {
 	}
 }
 
+func TestActivityEventRing_OldEventExpiresWhileHiveKeepsHeartbeating(t *testing.T) {
+	var st activityStore
+	st.record("hive-b", withEvents(activityDigest("o/b", 1), activityEv(1, hubactivity.EventStage, "o/b", 1)), activityT0)
+	for h := time.Duration(1); h <= 30; h++ {
+		st.record("hive-b", activityDigest("o/b", 1), activityT0.Add(h*time.Hour))
+	}
+	b := st.eventsSnapshot([]string{"hive-b"})
+	if len(b.events) != 0 || b.dropped["hive-b"] != 1 {
+		t.Fatalf("hive-b has %d events, dropped %d; want its old event aged out and counted", len(b.events), b.dropped["hive-b"])
+	}
+}
+
 func TestActivityEventRing_DropsMalformedEvents(t *testing.T) {
 	var st activityStore
 	st.record("hive-a", withEvents(activityDigest("o/a", 1),

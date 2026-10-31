@@ -20,7 +20,8 @@ import (
 
 // activityEventRingSize bounds the fleet-wide ring. When it is full, the
 // oldest event of the hive holding the most events is dropped first, so a
-// single hive cannot evict the other hives' events.
+// single hive cannot evict the other hives' events. Independently of that,
+// an event is dropped once it has been held for activityForgetAfter.
 const activityEventRingSize = 1000
 
 // activityEvent is one stored event tagged with its hive.
@@ -157,13 +158,25 @@ func (r *activityEventRing) forget(hiveID string) {
 	r.entries = slices.DeleteFunc(r.entries, func(e activityEvent) bool { return e.hiveID == hiveID })
 }
 
-// forgetOld forgets hives that sent nothing for maxAge.
+// forgetOld forgets hives that sent nothing for maxAge, and drops any event
+// held longer than maxAge from the hives that remain, so fair-share eviction
+// never keeps a low-volume hive's events in memory indefinitely. Expired
+// events count as drops for their hive.
 func (r *activityEventRing) forgetOld(now time.Time, maxAge time.Duration) {
 	for id, h := range r.byHive {
 		if now.Sub(h.lastSeen) > maxAge {
 			r.forget(id)
 		}
 	}
+	r.entries = slices.DeleteFunc(r.entries, func(e activityEvent) bool {
+		if now.Sub(e.receivedAt) <= maxAge {
+			return false
+		}
+		if h := r.byHive[e.hiveID]; h != nil {
+			h.dropped = hubactivity.ClampCount(h.dropped + 1)
+		}
+		return true
+	})
 }
 
 // activityEventsSnapshot is the events and drop counts of a set of hives.
