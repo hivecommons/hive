@@ -882,6 +882,12 @@ func IsBenignMessage(msg string) bool {
 	if strings.TrimSpace(m) == "hold guard: branch moved while hold-gated — blocking auto-merge, requiring fresh review" {
 		return true
 	}
+	// A sentinel finding flags a PR for a human: the sweep working as designed,
+	// not a runtime defect (#16112). Match only the finding notice; "sentinel
+	// sweep failed" and "sentinel sweep: PR skipped" stay reportable.
+	if strings.TrimSpace(m) == "sentinel alert" {
+		return true
+	}
 	// A CI gate refusal is the merge safety policy working as designed, even
 	// when a required check remains unsuccessful across repeated polls (#14364).
 	// Keep the operator warning, but do not turn it into a runtime defect.
