@@ -193,7 +193,7 @@ Set `notifications.discord.rfc_channel_id` (or the env var `HIVE_DISCORD_RFC_CHA
 - is closed: `RFC closed (completed): ...` or `RFC closed (not planned): ...`, from GitHub's close reason
 - is taken off hold so it can be implemented: `RFC ready to implement (hold removed): #N <title> - <url>`, when the `hold` label (Prow `/unhold`) comes off an open RFC, or a held RFC moves to `stage/010-actionable`. One notice per hold episode.
 
-An issue is an RFC when it carries the `rfc` label or its title starts with `RFC` after any leading emoji or `[tag]` (`RFC: ...`, `[RFC] ...`, `📝 RFC: [v6] ...`). A hive that manages several repos prefixes the number with the repo (`owner/repo#N`).
+An issue is an RFC when it carries the `rfc` label, its title starts with `RFC` after any leading emoji or `[tag]` (`RFC: ...`, `[RFC] ...`, `📝 RFC: [v6] ...`), or one of its leading `[tags]` contains the word `RFC` (`📝 [v5 RFC] ...`, `[RFC v6] ...`; `[RFC #N]` references an RFC and does not count). A hive that manages several repos prefixes the number with the repo (`owner/repo#N`).
 
 The default is empty, which turns the notices off. `channel_id` is not required: the notices only post with the bot token and never start the command bot. The hive polls GitHub every three minutes for issues updated since its last poll (one list call per repo) and keeps per-issue records in `/data/rfc-notify.json`, so a restart never re-announces a transition. The first poll after the key is set only records the current open RFCs; transitions announce from the next poll on. Each post is also written to the audit log as `rfc-notify`.
 
