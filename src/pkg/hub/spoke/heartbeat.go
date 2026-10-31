@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
+	"github.com/hivecommons/hive/pkg/hubactivity"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/nous"
 	spokesig "github.com/hivecommons/hive/pkg/spoke"
@@ -1161,6 +1162,10 @@ type HeartbeatPayload struct {
 	FreshAgentStats bool `json:"fresh_agent_stats,omitempty"`
 	// SelfExperimentsOptIn is local consent; absent or false means opted out.
 	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
+	// Activity is the optional bounded activity digest for the hub-wide
+	// Activity Monitor (#15861/#15951). Nil until the publisher (#15963)
+	// populates it; omitempty keeps the beat unchanged meanwhile.
+	Activity *hubactivity.Digest `json:"activity,omitempty"`
 }
 
 const (
@@ -2856,6 +2861,9 @@ type HeartbeatResponse struct {
 	SigVersion  int    `json:"sig_v,omitempty"`
 	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
 	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
+	// ActivityETag is the activity digest etag the hub acknowledged ("" =
+	// it holds none), decoded from hub.HeartbeatResponse.ActivityETag.
+	ActivityETag string `json:"activity_etag,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
