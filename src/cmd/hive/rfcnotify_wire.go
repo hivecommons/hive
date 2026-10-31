@@ -25,6 +25,10 @@ const rfcNotifyStatePath = "/data/rfc-notify.json"
 // trusted before it is looked up again.
 const rfcRepoVisibilityTTL = time.Hour
 
+// rfcNotPRCacheMax bounds the negative PR classification cache; it is
+// cleared when it grows past this many entries.
+const rfcNotPRCacheMax = 512
+
 // rfcNotifyState is the process-lifetime half of the RFC lifecycle notices
 // (notifications.discord.rfc_channel_id): the sweeper and the Discord
 // poster, built once from the config that enabled them.
@@ -38,6 +42,10 @@ type rfcNotifyState struct {
 	// visibility caches each repo's resolved privacy, refreshed at most
 	// every rfcRepoVisibilityTTL. Failed lookups are not cached.
 	visibility map[string]rfcRepoVisibility
+	// notRFCPRs remembers, per "owner/name#number", the head SHA at which a
+	// PR was classified as not an RFC, so its files are not listed again on
+	// every poll. A new head SHA is classified afresh. In memory only.
+	notRFCPRs map[string]string
 	// lookupPrivate overrides the GitHub visibility lookup in tests.
 	lookupPrivate func(ctx context.Context, repo string) (bool, error)
 	// now is the clock for the visibility cache; nil means time.Now.
@@ -165,6 +173,22 @@ func (s *rfcNotifyState) repoPrivate(ctx context.Context, c *github.Client, repo
 	return private, nil
 }
 
+// notRFCPR reports whether key was classified as not an RFC at sha.
+func (s *rfcNotifyState) notRFCPR(key, sha string) bool {
+	return s != nil && sha != "" && s.notRFCPRs[key] == sha
+}
+
+// rememberNotRFCPR records a negative classification of key at sha.
+func (s *rfcNotifyState) rememberNotRFCPR(key, sha string) {
+	if s == nil || sha == "" {
+		return
+	}
+	if s.notRFCPRs == nil || (len(s.notRFCPRs) >= rfcNotPRCacheMax && s.notRFCPRs[key] == "") {
+		s.notRFCPRs = map[string]string{}
+	}
+	s.notRFCPRs[key] = sha
+}
+
 // githubRepoPrivate resolves an "owner/name" repo's visibility. Anything
 // but a public repository counts as private.
 func githubRepoPrivate(c *github.Client) func(ctx context.Context, repo string) (bool, error) {
@@ -213,7 +237,7 @@ func (s rfcNotifySource) ListUpdatedSince(ctx context.Context, since time.Time) 
 // ListPRsUpdatedSince implements rfcnotify.PRSource. Per repo it pages the
 // pulls list newest-updated first and stops at the first PR updated before
 // since. A PR whose title does not mark it as an RFC has its files listed,
-// so the lookup is bounded to PRs updated since the watermark; a new open
+// so the lookup is bounded to PRs updated since the watermark, and a PR found not to be an RFC is not looked up again until its head SHA changes; a new open
 // one that proposes an RFC doc also has the doc read for its first heading.
 func (s rfcNotifySource) ListPRsUpdatedSince(ctx context.Context, since time.Time) ([]rfcnotify.Issue, error) {
 	api := s.c.GoGitHub()
@@ -264,6 +288,10 @@ func (s rfcNotifySource) rfcNotifyPR(ctx context.Context, api *gh.Client, owner,
 	if rfcnotify.IsRFCPR(is.Title, nil) {
 		return is, nil
 	}
+	cacheKey, sha := fmt.Sprintf("%s/%s#%d", owner, name, is.Number), pr.GetHead().GetSHA()
+	if s.state.notRFCPR(cacheKey, sha) {
+		return is, nil
+	}
 	fopts := &gh.ListOptions{PerPage: 100}
 	for {
 		files, resp, err := api.PullRequests.ListFiles(ctx, owner, name, is.Number, fopts)
@@ -279,6 +307,9 @@ func (s rfcNotifySource) rfcNotifyPR(ctx context.Context, api *gh.Client, owner,
 			break
 		}
 		fopts.Page = resp.NextPage
+	}
+	if !rfcnotify.IsRFCPR(is.Title, is.Files) {
+		s.state.rememberNotRFCPR(cacheKey, sha)
 	}
 	if !is.Open() || !is.CreatedAt.After(since) {
 		return is, nil
