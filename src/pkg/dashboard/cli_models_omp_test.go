@@ -51,7 +51,7 @@ func TestOmpHomeWithoutSignInIsNotAWarning(t *testing.T) {
 	if !r.fallback {
 		t.Fatalf("expected static fallback when no HOME has a sign-in: %+v", r)
 	}
-	var sawMiss bool
+	var sawMiss, sawFallback bool
 	for _, line := range strings.Split(buf.String(), "\n") {
 		if strings.Contains(line, "found no models for this HOME") {
 			sawMiss = true
@@ -59,11 +59,20 @@ func TestOmpHomeWithoutSignInIsNotAWarning(t *testing.T) {
 				t.Fatalf("per-HOME miss must not log at WARN (fleet reporter files it as a defect): %s", line)
 			}
 		}
+		if strings.Contains(line, "omp model discovery unavailable") {
+			sawFallback = true
+			if strings.Contains(line, "level=WARN") {
+				t.Fatalf("all-homes-failed fallback must not log at WARN (fleet reporter files it as a defect): %s", line)
+			}
+		}
 	}
 	if !sawMiss {
 		t.Fatal("per-HOME miss should still be logged below WARN")
 	}
-	if !strings.Contains(buf.String(), "level=WARN msg=\"omp model discovery unavailable") {
-		t.Fatalf("all-homes-failed warning must remain: %s", buf.String())
+	if !sawFallback {
+		t.Fatal("all-homes-failed fallback should still be logged below WARN")
+	}
+	if strings.Contains(buf.String(), "level=WARN") {
+		t.Fatalf("discoverOmpModels must not emit any WARN for a HOME without a sign-in: %s", buf.String())
 	}
 }
