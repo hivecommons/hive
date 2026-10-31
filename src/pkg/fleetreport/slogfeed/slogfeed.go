@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || reviewCommentCapped(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -188,6 +188,27 @@ func upstreamUnavailableError(r slog.Record) bool {
 		return true
 	})
 	return unavailable
+}
+
+// inferenceBlockedStall reports whether r is the watchdog's "agent not
+// producing" warning raised because the provider refused inference
+// ("blocked: inference (<class>)": 429 rate limit, budget_exceeded, ...). The
+// cause is upstream and already shown as a blocked agent on the dashboard, so
+// the stall is not a hive defect to file as unclassified_error_repeated
+// (hivecommons/hive#15986). A stall with any other detail stays reportable.
+func inferenceBlockedStall(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "watchdog: agent not producing" {
+		return false
+	}
+	blocked := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "detail" {
+			blocked = strings.HasPrefix(a.Value.String(), "blocked: inference (")
+			return false
+		}
+		return true
+	})
+	return blocked
 }
 
 // failClosedStatus500 reports whether r is one of the two gates that fail
