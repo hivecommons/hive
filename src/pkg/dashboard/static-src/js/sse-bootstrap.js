@@ -2,7 +2,14 @@
     var _eventSourceReconnectTimer = null;
     var _sseLastFrameAtMs = 0;
     var _sseOpenedAtMs = 0;
-    function noteSSEFrame() { _sseLastFrameAtMs = Date.now(); }
+    // The newest frame ever seen; unlike _sseLastFrameAtMs a reconnect does
+    // not reset it, so display mode can say how long the stream has been
+    // quiet (tracker-display.js).
+    var _sseEverFrameAtMs = 0;
+    function noteSSEFrame() {
+      _sseLastFrameAtMs = _sseEverFrameAtMs = Date.now();
+      if (typeof stageTrackerDisplayNoteFrame === 'function') stageTrackerDisplayNoteFrame();
+    }
     // sseWatchdogTick recycles a silent stream (see sseStreamIdle). `force`
     // (tab became visible again) always refetches /api/status: Safari and
     // Chrome throttle hidden-tab timers to once a minute or less, so the tick
@@ -138,6 +145,7 @@
         }
         source.close();
         if (_eventSource === source) _eventSource = null;
+        if (typeof stageTrackerDisplayNoteReconnectFailed === 'function') stageTrackerDisplayNoteReconnectFailed();
         if (!_eventSourceReconnectTimer) {
           _eventSourceReconnectTimer = setTimeout(function() { _eventSourceReconnectTimer = null; connect(); }, 3000);
         }

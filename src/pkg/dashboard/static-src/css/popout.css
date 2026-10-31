@@ -80,3 +80,57 @@
       body.display-mode .ham-playlist-track { display: none; }
       body.display-mode .ham-playlist-next { display: inline-block; }
     }
+
+    /* Display liveness (#15930): a header with the hive id, a clock and a
+       live dot, and — once the stream or the payload goes quiet — a dimmed
+       board under a "Stale: last update N ago" banner. Display mode only;
+       the "updated … ago" chip is unchanged everywhere. */
+    .ham-display-head, .ham-display-stale { display: none; }
+    body.display-mode .ham-display-head { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+    body.display-mode .ham-display-dot { color: var(--green); }
+    body.display-mode .ham-display-hive { font-weight: 600; color: var(--text); }
+    body.display-mode .ham-display-clock { margin-left: auto; }
+    body.display-mode.display-stale .ham-display-dot { color: var(--amber); }
+    body.display-mode.display-stale .ham-display-stale:not([hidden]) { display: block; margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-4); border: var(--line-width) solid var(--amber); border-radius: var(--r-sm); background: color-mix(in srgb, var(--amber) 14%, var(--panel)); color: var(--amber); font-size: var(--fs-md); font-weight: 600; }
+    body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
+    body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: opacity .6s ease, filter .6s ease; }
+    body.display-mode.display-stale #activity-monitor-panel, body.display-mode.display-stale #activity-monitor-meta,
+    body.display-mode.display-stale #activity-monitor-sticky, body.display-mode.display-stale #activity-monitor-native-queue { opacity: .45; filter: grayscale(.7); }
+
+    /* density=tv (#15931): larger type, only the stage strip, the title and
+       the stage/actor line, no filters or pager — the rows that fit and a
+       "+N more" footer (stageTrackerDisplayRowCap). */
+    body.display-density-tv #activity-monitor-section {
+      --fs-2xs: .9rem;
+      --fs-xs: 1rem;
+      --fs-sm: 1.15rem;
+      --fs-base: 1.25rem;
+      --fs-md: 1.4rem;
+    }
+    body.display-density-tv #activity-monitor-toolbar, body.display-density-tv #activity-monitor-labels,
+    body.display-density-tv #activity-monitor-native-queue, body.display-density-tv #activity-monitor-section .ham-pager,
+    body.display-density-tv #activity-monitor-section .ham-head-pr, body.display-density-tv #activity-monitor-section .ham-badges,
+    body.display-density-tv #activity-monitor-section .ham-since, body.display-density-tv #activity-monitor-section [data-ham-sub-key],
+    body.display-density-tv #activity-monitor-section .cue-event, body.display-density-tv #activity-monitor-section .ham-review-notes { display: none !important; }
+    body.display-density-tv #activity-monitor-section .ham-head-cols .ham-seg.ham-head-lead { flex: 1 1 0; }
+    body.display-density-tv .ham-display-more { display: block; text-align: center; font-size: var(--fs-md); font-weight: 600; color: var(--muted); }
+
+    /* shift=1 (#15931): an OLED burn-in shift — the board steps 1–2 px to a
+       new spot every 4 minutes. Off by default and inert under reduced
+       motion. */
+    @keyframes ham-display-shift {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(2px, 1px); }
+      50% { transform: translate(1px, 2px); }
+      75% { transform: translate(-1px, 1px); }
+      100% { transform: translate(0, 0); }
+    }
+    body.display-shift #activity-monitor-section { animation: ham-display-shift 16min steps(1, end) infinite; }
+
+    /* Reduced motion on a display: no burn-in shift and no dim transition,
+       the way the toasts already go linear; row movement is switched off in
+       JS (stageTrackerDisplayMotionEffect plays no effect at all). */
+    @media (prefers-reduced-motion: reduce) {
+      body.display-shift #activity-monitor-section { animation: none; }
+      body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
+      body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: none; }    }
