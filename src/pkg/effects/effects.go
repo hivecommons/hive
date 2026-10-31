@@ -31,17 +31,18 @@ var (
 )
 
 type (
-	Boundary        = cruxeffects.Boundary
-	Claim           = cruxeffects.Claim
-	Expirer         = cruxeffects.Expirer
-	ExternalState   = cruxeffects.ExternalState
-	LoggingBoundary = cruxeffects.LoggingBoundary
-	Lookup          = cruxeffects.Lookup
-	NoopBoundary    = cruxeffects.NoopBoundary
-	Reconciler      = cruxeffects.Reconciler
-	Recorder        = cruxeffects.Recorder
-	Result          = cruxeffects.Result
-	Stats           = cruxeffects.Stats
+	Boundary          = cruxeffects.Boundary
+	JournaledBoundary = cruxeffects.JournaledBoundary
+	Claim             = cruxeffects.Claim
+	Expirer           = cruxeffects.Expirer
+	ExternalState     = cruxeffects.ExternalState
+	LoggingBoundary   = cruxeffects.LoggingBoundary
+	Lookup            = cruxeffects.Lookup
+	NoopBoundary      = cruxeffects.NoopBoundary
+	Reconciler        = cruxeffects.Reconciler
+	Recorder          = cruxeffects.Recorder
+	Result            = cruxeffects.Result
+	Stats             = cruxeffects.Stats
 )
 
 var (

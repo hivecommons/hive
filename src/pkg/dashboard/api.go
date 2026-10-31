@@ -52,6 +52,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/export.json", s.handleConfigExport)
 	s.mux.HandleFunc("GET /api/config/provenance", s.handleConfigProvenance)
 	s.mux.HandleFunc("GET /api/config/variables", s.handleVariablesList)
+	s.mux.HandleFunc("GET /api/config/triggers", s.handleEventTriggersGet)
+	s.mux.HandleFunc("PUT /api/config/triggers", s.handleEventTriggersPut)
 	s.mux.HandleFunc("GET /api/config/authorized-users", s.handleAuthorizedUsersList)
 	s.mux.HandleFunc("GET /api/config/dashboard/theme", s.handleDashboardThemeGet)
 	s.mux.HandleFunc("PUT /api/config/dashboard/theme", s.handleDashboardThemePut)

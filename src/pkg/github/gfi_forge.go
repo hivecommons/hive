@@ -41,6 +41,7 @@ func (c *Client) UpsertIssueMarkerComment(ctx context.Context, repo string, numb
 		if _, _, err := c.client.Issues.EditComment(ctx, owner, repoName, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			return res, fmt.Errorf("editing marker comment on %s/%s#%d: %w", owner, repoName, number, err)
 		}
+		c.noteCommentEdited()
 		return res, nil
 	}
 	if !create || body == "" {

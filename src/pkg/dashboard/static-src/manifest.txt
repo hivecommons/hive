@@ -124,6 +124,7 @@ js/config-agent.js
 js/config-governor.js
 js/config-watchdog-security.js
 js/config-features.js
+js/config-event-triggers.js
 js/config-sentinel.js
 js/compliance.js
 js/config-helpers.js

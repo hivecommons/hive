@@ -108,10 +108,12 @@ func NewDefaultSecurityScanner() *DefaultSecurityScanner {
 
 var (
 	// Path arguments need shell terminators, not word boundaries: /, * and ~
-	// are non-word characters. $HOME and ~ may carry a trailing / or /* and
-	// still name the whole home directory. The fork bomb likewise needs no
-	// word boundary.
-	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+-[rRfF]+\s+(/|\*|/\*|(\$HOME|~)(/\*?)?)(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
+	// are non-word characters. $HOME, ${HOME} and ~ may carry a trailing / or
+	// /* and still name the whole home directory. Equivalent spellings of the
+	// same target are accepted too: split flags (-r -f), repeated slashes
+	// (//), a trailing dot (/.) and surrounding single or double quotes. The
+	// fork bomb likewise needs no word boundary.
+	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?(/+\.?|/*\*|(\$HOME|\$\{HOME\}|~)(/\*?)?)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
 )
 

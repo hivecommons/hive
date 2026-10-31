@@ -471,6 +471,10 @@ type webhookEventPayload struct {
 		HTMLURL      string         `json:"html_url"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
 	} `json:"check_run"`
+	WorkflowRun *struct {
+		HeadSHA      string         `json:"head_sha"`
+		PullRequests []webhookPRRef `json:"pull_requests"`
+	} `json:"workflow_run"`
 	SHA       string `json:"sha"`
 	State     string `json:"state"`
 	Context   string `json:"context"`
@@ -562,6 +566,9 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		c.RecordReviewEvidenceRevert(merged)
 	}
 	res.HeadSHA = webhookHeadSHA(event, p)
+	if res.HeadSHA != "" {
+		sharedCIReportingCache.invalidate(p.Repository.FullName, res.HeadSHA)
+	}
 	numbers := webhookInvalidationTargets(event, p, aliases)
 	// Capture the failed-check identity and the PRs it resolved to BEFORE
 	// invalidation drops their cache entries: the receiver reacts to a red
@@ -712,6 +719,10 @@ func webhookHeadSHA(event string, p webhookEventPayload) string {
 		}
 	case "status":
 		return strings.TrimSpace(p.SHA)
+	case "workflow_run":
+		if p.WorkflowRun != nil {
+			return strings.TrimSpace(p.WorkflowRun.HeadSHA)
+		}
 	}
 	return ""
 }
@@ -764,6 +775,11 @@ func webhookInvalidationTargets(event string, p webhookEventPayload, aliases []s
 		}
 	case "status":
 		bySHA(p.SHA)
+	case "workflow_run":
+		if p.WorkflowRun != nil {
+			addRefs(p.WorkflowRun.PullRequests)
+			bySHA(p.WorkflowRun.HeadSHA)
+		}
 	case "push":
 		if ref, ok := strings.CutPrefix(p.Ref, "refs/heads/"); ok && ref != "" {
 			addMatching(func(_, headRef, baseRef string) bool { return headRef == ref || baseRef == ref })

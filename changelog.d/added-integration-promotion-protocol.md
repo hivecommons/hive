@@ -1,0 +1,1 @@
+- Add an isolated Integration-aware promotion protocol foundation with exact tested commit/tree and ordered-parent verification, journaled destination compare-and-swap, live-guard fencing and conservative ambiguous-result reconciliation; execution remains unwired and disabled, with producer, permissions and protection prerequisites documented.
