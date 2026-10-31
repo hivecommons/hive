@@ -118,14 +118,10 @@ func (s *Server) handleMatrixLines(w http.ResponseWriter, r *http.Request) {
 		limit = matrixBacklogCap // 2000
 	}
 
-	rawLines, latest := src.Since(since, limit)
-
-	lines := make([]matrixLine, 0, len(rawLines))
-	for _, l := range rawLines {
-		if cfg.RepoAllowed(l.Repo) {
-			lines = append(lines, l)
-		}
-	}
+	// Filter inside the scan so max counts only lines this caller may see.
+	lines, latest := src.SinceMatching(since, limit, func(l matrixLine) bool {
+		return cfg.RepoAllowed(l.Repo)
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := matrixLinesResponse{

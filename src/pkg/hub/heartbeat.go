@@ -476,6 +476,10 @@ type HeartbeatResponse struct {
 	// this hive ("" = none). A spoke whose etag differs sends its full
 	// digest instead of an unchanged marker on the next beat.
 	ActivityETag string `json:"activity_etag,omitempty"`
+	// ActivityEventsAck is the highest activity event sequence number the
+	// hub holds for this hive (#15964); the spoke drops buffered events up
+	// to it. 0/absent = none. Decoded by spoke.HeartbeatResponse.
+	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
