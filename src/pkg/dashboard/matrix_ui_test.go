@@ -23,7 +23,7 @@ func TestMatrixUIWiring(t *testing.T) {
 			t.Errorf("matrix.js contains forbidden sink/stream %q", forbidden)
 		}
 	}
-	for _, want := range []string{"visibilitychange", "prefers-reduced-motion: reduce", "cancelAnimationFrame", "text.textContent = line.line", "source.addEventListener('code-lines'", "hive.matrix.", "mx."} {
+	for _, want := range []string{"visibilitychange", "prefers-reduced-motion: reduce", "cancelAnimationFrame", "text.textContent = line.line", "source.addEventListener('code-lines'", "hive.matrix.", "mx.", "'ghost'", "'terminal'", "effect === 'ghost'", "effect === 'terminal'"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("matrix.js missing %q", want)
 		}
@@ -120,7 +120,9 @@ async function scenario(query, reduced = false, status = 200) {
     assert.equal(raf.size, 1);
     for (const time of [1, 100]) {const fn = [...raf.values()][0]; raf.clear(); fn(time)}
     assert(draws.length > 0);
-    if (query.includes('cascade')) assert(draws.some(a => a[0] === 'org/repo#2 · main.go'));
+    if (/cascade|ghost|terminal/.test(query)) assert(draws.some(a => a[0] === 'org/repo#2 · main.go'));
+    if (query.includes('ghost')) assert(draws.some(a => a[0] === 'main.go'));
+    if (query.includes('terminal')) assert(draws.some(a => a[0] === '+ <script>alert(1)</script>'));
   }
   doc.hidden = true; docEvents.visibilitychange.forEach(fn => fn());
   assert.equal(raf.size, 0); assert.equal(timers.size, 0);
@@ -138,6 +140,8 @@ async function scenario(query, reduced = false, status = 200) {
   await scenario(''); await scenario('?view=matrix'); await scenario('?kiosk=1');
   await scenario('?kiosk=1&view=matrix');
   await scenario('?kiosk=1&view=matrix&mx.effect=cascade');
+  await scenario('?kiosk=1&view=matrix&mx.effect=ghost');
+  await scenario('?kiosk=1&view=matrix&mx.effect=terminal');
   await scenario('?kiosk=1&view=matrix', true);
   for (const status of [404, 401, 403]) await scenario('?kiosk=1&view=matrix', false, status);
 })().catch(e => {console.error(e); process.exit(1)});

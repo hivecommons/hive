@@ -1,0 +1,1 @@
+- Add the Ghost coder (`mx.effect=ghost`) and Terminal (`mx.effect=terminal`) effects to the opt-in Matrix display, plus an `mx.captions=off` toggle; both render only lines already served by `/api/matrix/lines` (#16041, RFC #15862).
