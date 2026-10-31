@@ -193,6 +193,17 @@ func (d rfcDiscordThreads) Echo(content string) error {
 	return d.bot.SendMessageTo(d.channel, content)
 }
 
+// rfcDiscordThreads edits cards and renames threads when an RFC is retitled.
+var _ rfcnotify.Editor = rfcDiscordThreads{}
+
+func (d rfcDiscordThreads) EditMessage(messageID, content string) error {
+	return d.bot.EditMessage(d.channel, messageID, content)
+}
+
+func (d rfcDiscordThreads) RenameThread(threadID, name string) error {
+	return d.bot.RenameChannel(threadID, name)
+}
+
 func (d rfcDiscordThreads) ThreadURL(threadID string) (string, error) {
 	return d.bot.ThreadURL(threadID)
 }

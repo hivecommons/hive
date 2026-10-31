@@ -596,3 +596,13 @@ func TestSweeperUnknownVisibilityRetriesNextPoll(t *testing.T) {
 		t.Fatalf("retry: %+v %v", res, posted)
 	}
 }
+
+func TestFormat_BoundsTargetAndStatusValues(t *testing.T) {
+	huge := strings.Repeat("x", 3000)
+	for _, k := range []Kind{KindTargetChanged, KindStatusChanged} {
+		msg := Format(Event{Kind: k, Issue: Issue{Repo: "o/r", Number: 1, Title: "t"}, From: "v5", To: huge}, false)
+		if n := len([]rune(msg)); n > 500 {
+			t.Errorf("kind %v: message has %d runes, want bounded", k, n)
+		}
+	}
+}
