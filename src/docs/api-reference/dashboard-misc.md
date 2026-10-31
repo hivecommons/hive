@@ -65,4 +65,4 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:337` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:338` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:339` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1664` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1665` |
