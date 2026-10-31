@@ -70,7 +70,7 @@ ioscan:
   classifier:
     enabled: true        # default: on at ACMM L4–L6, off at L1–L3
     fail_mode: closed    # default: follows ioscan.fail_mode (closed at L5–L6)
-    model: ""            # empty uses the governor's default model
+    model: ""            # empty uses the governor's default model (CLI backends: the CLI's own; omp: the omp agents' model)
     backend: ""          # empty = model endpoint, or the agents' CLI when none; "claude"/"copilot"/"omp" = tool-less CLI
     cli_budget_per_eval: 8   # CLI backend only: calls per scheduler pass (max 64)
     cli_daily_quota: 500     # CLI backend only: calls per UTC day
@@ -192,19 +192,30 @@ and `omp`.
   and never `GH_TOKEN`/`GITHUB_TOKEN`, which copilot would otherwise honour.
 * **omp.** omp is launched as `omp -p --mode text --no-tools --no-lsp
   --no-extensions --no-skills --no-rules --no-session --no-title
-  --no-context-files --profile hive-ioscan --system-prompt <text> [--model m]`,
+  --no-context-files --profile hive-ioscan --system-prompt <text> --model m`,
   with the prompt on stdin.
   The `hive-ioscan` profile is never configured, so no MCP server, hook or
   context file from the agents' profile loads, and the default system prompt
   is replaced. The environment adds only `OMP_AUTH_BROKER_URL` and
-  `OMP_AUTH_BROKER_TOKEN` (when set) and never `GH_TOKEN`/`GITHUB_TOKEN`.
+  `OMP_AUTH_BROKER_TOKEN` (when set) and never `GH_TOKEN`/`GITHUB_TOKEN`;
+  omp reads the broker pair from the environment inside the isolated
+  profile too, so no `auth.broker.*` setting is needed in that profile.
+  Because `--profile` also isolates settings, the profile has **no default
+  model**: a launch without `--model` prints `No default model selected`
+  (exit 0) instead of a verdict. omp therefore always gets `--model`:
+  `classifier.model` when set, otherwise the model most of the hive's `omp`
+  agents run with (`agents.*.model`, ties by name). With neither, boot
+  refuses the backend with one log line naming the fix and behaves as for
+  any classifier that cannot be built (see **Refused backends**).
 * **Refused backends.** `codex` and `gemini` have no command-line
   flag that removes every tool, so boot refuses them with one log line and
   then behaves as for any classifier that cannot be built: at a closed
   classifier fail mode untrusted text is withheld, at open the classifier
   does not run. Settings will not save them.
 * `classifier.model`, when set, is passed to the CLI as `--model`; empty
-  uses the CLI's own default.
+  uses the CLI's own default for `claude` and `copilot`, and the omp
+  agents' model for `omp`, which has none of its own in its isolated
+  profile.
 * **Per-pass budget.** Each call starts a CLI process, so the per-pass
   budget drops from 64 to `cli_budget_per_eval` (default 8, at most 64).
   This is the bound for a pass with many uncached texts: a pass with 64

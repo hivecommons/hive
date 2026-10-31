@@ -79,4 +79,11 @@ func TestNewCLIClassifier_RefusesBackendsWithoutToollessMode(t *testing.T) {
 			t.Fatalf("NewCLIClassifier(%s): %v", backend, err)
 		}
 	}
+	// omp has no default model in its isolated profile: a model is required.
+	if _, err := NewCLIClassifier("omp", "", 0, nil); !errors.Is(err, ErrCLIModelRequired) {
+		t.Fatalf("NewCLIClassifier(omp, \"\") = %v, want ErrCLIModelRequired", err)
+	}
+	if _, err := NewCLIClassifier("omp", "anthropic/claude-sonnet-5", 0, nil); err != nil {
+		t.Fatalf("NewCLIClassifier(omp, model): %v", err)
+	}
 }

@@ -39,11 +39,17 @@ const (
 // it as the value of promptFlag (copilot ignores stdin in prompt mode). The
 // prompt is bounded by DefaultClassifierMaxInputChars plus the fixed system
 // text, far below any argv limit.
+//
+// requiresModel marks CLIs that have no default model in the isolated state
+// the classifier runs them in, so a launch without --model answers "no
+// default model selected" instead of a verdict; NewCLIChatClient refuses an
+// empty model for them.
 var cliToollessArgs = map[string]struct {
-	binary       string
-	args         []string
-	promptViaArg bool
-	promptFlag   string
+	binary        string
+	args          []string
+	promptViaArg  bool
+	promptFlag    string
+	requiresModel bool
 }{
 	"copilot": {
 		binary: "copilot",
@@ -89,12 +95,20 @@ var cliToollessArgs = map[string]struct {
 		// even if the profile or cwd ever gains one. --system-prompt replaces
 		// the default coding-assistant prompt, which otherwise steers the
 		// model away from answering in the classifier's format. The prompt
-		// itself is read from stdin (-p with no text).
+		// itself is read from stdin (-p with no text). The hive-ioscan profile
+		// also isolates settings, so it holds no default model: --model is
+		// mandatory (requiresModel), or omp prints "No default model
+		// selected" with exit 0 and the call yields no verdict.
 		args: []string{"-p", "--mode", "text", "--no-tools", "--no-lsp", "--no-extensions",
 			"--no-skills", "--no-rules", "--no-session", "--no-title", "--no-context-files",
 			"--profile", cliOmpProfile, "--system-prompt", cliOmpSystemPrompt},
+		requiresModel: true,
 	},
 }
+
+// ErrCLIModelRequired is returned by NewCLIChatClient for a backend that has
+// no default model in the classifier's isolated state when no model is given.
+var ErrCLIModelRequired = errors.New("backend has no default model in the classifier's isolated profile; set ioscan.classifier.model")
 
 // cliOmpProfile is the omp settings profile the classifier runs in. It is
 // never configured, so it carries no MCP servers, hooks or context files.
@@ -124,7 +138,11 @@ var cliEnvAllowlist = map[string][]string{
 	"":        {"PATH", "HOME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME"},
 	"claude":  {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"},
 	"copilot": {"COPILOT_HOME", "COPILOT_GITHUB_TOKEN", "COPILOT_GH_HOST", "GH_HOST", "NO_COLOR"},
-	// omp authenticates through the fleet's auth broker.
+	// omp authenticates through the fleet's auth broker. omp reads these two
+	// from the environment even inside an isolated --profile that has no
+	// auth.broker.* of its own (verified: a fresh profile pointed at an
+	// unreachable OMP_AUTH_BROKER_URL fails with "Auth broker ... is
+	// unreachable" rather than falling back to local credentials).
 	"omp": {"OMP_AUTH_BROKER_URL", "OMP_AUTH_BROKER_TOKEN"},
 }
 
@@ -146,6 +164,14 @@ func ToollessBackends() []string {
 	return out
 }
 
+// RequiresModel reports whether backend must be given a model: its CLI has
+// no default model in the isolated state the classifier runs it in, so boot
+// has to supply one (from ioscan.classifier.model or the hive's agents) or
+// refuse the backend.
+func RequiresModel(backend string) bool {
+	return cliToollessArgs[strings.TrimSpace(backend)].requiresModel
+}
+
 // CLIChatClient is a ChatClient that runs the classifier prompt through a
 // subscription CLI backend launched tool-less, in an empty temporary working
 // directory, with a scrubbed environment.
@@ -157,17 +183,23 @@ type CLIChatClient struct {
 }
 
 // NewCLIChatClient constructs a CLI-backed classifier client. It refuses
-// backends that cannot be launched tool-less.
+// backends that cannot be launched tool-less, and an empty model for
+// backends that have none of their own in the classifier's isolated state
+// (ErrCLIModelRequired).
 func NewCLIChatClient(backend, model string, timeout time.Duration) (*CLIChatClient, error) {
 	backend = strings.TrimSpace(backend)
+	model = strings.TrimSpace(model)
 	spec, ok := cliToollessArgs[backend]
 	if !ok {
 		return nil, fmt.Errorf("ioscan classifier: backend %q cannot be launched without tools", backend)
 	}
+	if spec.requiresModel && model == "" {
+		return nil, fmt.Errorf("ioscan classifier: backend %q: %w", backend, ErrCLIModelRequired)
+	}
 	if timeout <= 0 {
 		timeout = DefaultCLIClassifierTimeout
 	}
-	return &CLIChatClient{backend: backend, model: strings.TrimSpace(model), timeout: timeout, binary: spec.binary}, nil
+	return &CLIChatClient{backend: backend, model: model, timeout: timeout, binary: spec.binary}, nil
 }
 
 // NewCLIClassifier builds the classifier boot installs for

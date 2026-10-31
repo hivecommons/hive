@@ -81,6 +81,12 @@ func TestSupportsToolless(t *testing.T) {
 			t.Errorf("NewCLIChatClient(%q) accepted a backend that cannot run tool-less", backend)
 		}
 	}
+	// Only omp runs in an isolated profile with no default model of its own.
+	for backend, want := range map[string]bool{"claude": false, "copilot": false, "omp": true, " omp ": true, "codex": false, "": false} {
+		if got := RequiresModel(backend); got != want {
+			t.Errorf("RequiresModel(%q) = %v, want %v", backend, got, want)
+		}
+	}
 }
 
 func TestCLIChatClientGoodReply(t *testing.T) {
