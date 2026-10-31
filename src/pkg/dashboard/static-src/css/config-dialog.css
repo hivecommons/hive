@@ -248,6 +248,8 @@
     /* .config-save / .config-cancel — primary/ghost buttons (system recipe) */
 
     .config-field { margin-bottom: 14px; }
+    .event-trigger-expression { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .event-trigger-form { margin-top: var(--sp-4); }
     .am-trusted-bots { margin-top: 12px; }
     .am-bot-row { margin-top: 6px; }
     .am-bot-source { color: var(--muted); font-weight: 400; }
@@ -581,4 +583,3 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
-

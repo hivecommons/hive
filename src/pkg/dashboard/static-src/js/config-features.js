@@ -666,6 +666,7 @@
         `)}
 
         ${featuresSectionHtml('work-intake', `
+        ${renderEventTriggersSection()}
         <div class="settings-subsection">
           <div class="settings-subsection-title">Tier classifier</div>
           <p class="config-help">Override the issue-title keywords that map work to Simple or Complex tiers. Empty lists keep the built-in defaults.</p>

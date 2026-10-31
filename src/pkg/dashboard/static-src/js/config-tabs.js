@@ -56,6 +56,7 @@
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
+        if (tabId === 'Features') loadEventTriggers();
         // Review Gate → Reviewers: the eligibility summary and engine warning
         // are derived from the rendered rows and the fan-out/combined switches.
         if (tabId === 'Features') refreshReviewerAgentSummary();
@@ -2920,4 +2921,3 @@
     function contribRepoMatchingDisabledEntries(repoFull, disabled) {
       return (disabled || []).filter(function(entry) { return contribRepoDisabledEntryMatches(repoFull, entry); });
     }
-
