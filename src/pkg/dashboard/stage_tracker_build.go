@@ -301,6 +301,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
 			it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
 		}
+		it.AuthorKind, it.AuthorKindSource = stageTrackerRegistryAuthorKind(it.AuthorKind, it.AuthorKindSource, it.Author, isClankerOwner)
 		if l, ok := config.FirstOriginLabel(issue.Labels); ok {
 			it.Origin = config.OriginSourceOf(l)
 		} else {
@@ -374,6 +375,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.BaseRef = pr.BaseRef
 		it.ciRed = strings.EqualFold(pr.CIStatus, "failure") || len(pr.FailingChecks) > 0
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
+		it.AuthorKind, it.AuthorKindSource = stageTrackerRegistryAuthorKind(it.AuthorKind, it.AuthorKindSource, it.Author, isClankerOwner)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
 		}
@@ -570,7 +572,9 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 	if slices.Contains(stageTrackerNeedsHumanStages, it.Stage) {
 		return true
 	}
-	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman
+	// The author pushed and the hive has not evaluated the new head yet:
+	// the ball is with the hive, not a person (hivecommons/hive#16021).
+	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman && !stageTrackerPushPending(it)
 }
 
 // stageTrackerOnHold mirrors the dashboard's stageTrackerItemOnHold: the

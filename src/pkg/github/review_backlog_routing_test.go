@@ -271,7 +271,7 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 	for _, want := range []string{
 		"PR: #5 (https://github.com/o/r/pull/5)",
 		"Severity: medium (P2)",
-		"Evidence: `pkg/a.go:7` (https://github.com/o/r/blob/abc/pkg/a.go#L7)",
+		"Finding: unused variable\nEvidence: `pkg/a.go:7`\nhttps://github.com/o/r/blob/abc/pkg/a.go#L7\n",
 		"below the blocking line (P1)",
 		"x is assigned and never read",
 		"Fingerprint: `" + ReviewFindingFingerprint(outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Summary: "x is assigned and never read"}) + "`",
@@ -280,6 +280,9 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 		if !strings.Contains(first.Body, want) {
 			t.Errorf("item body missing %q:\n%s", want, first.Body)
 		}
+	}
+	if strings.Index(first.Body, "Finding:") > strings.Index(first.Body, "Evidence:") || strings.Contains(first.Body, "(https://github.com/o/r/blob") {
+		t.Errorf("body must put Finding before Evidence with an unparenthesised link:\n%s", first.Body)
 	}
 	for _, item := range sink.created {
 		if strings.Contains(item.Title, "blocking bug") || strings.Contains(item.Title, "no evidence") {
@@ -739,8 +742,7 @@ func TestReviewBacklogFoldedTwinKeepsFullFinding(t *testing.T) {
 		"- [ ] unused variable (`pkg/a.go:7`)",
 		"Perspective: correctness",
 		"Severity: medium (P2)",
-		"Evidence: `pkg/a.go:7` (https://github.com/o/r/blob/abc/pkg/a.go#L7)",
-		"Finding: unused variable",
+		"Finding: unused variable\nEvidence: `pkg/a.go:7`\nhttps://github.com/o/r/blob/abc/pkg/a.go#L7\n",
 		"x is assigned and never read",
 		"Fingerprint: `" + fp + "`",
 		reviewBacklogFooter,
