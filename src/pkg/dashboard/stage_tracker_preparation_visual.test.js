@@ -453,10 +453,12 @@ test('expanded captions and adjacent nested members share a full-height connecto
   assert.equal((html.match(/ham-train-last/g) || []).length, 1);
   assert.doesNotMatch(html, /continuation/);
   assert.match(html, /class="ham-sub" data-ham-kind="pr" data-ham-stage="90"/);
-  assert.match(html, /ham-preparation-member" data-ham-kind="pr" data-ham-stage="70"/);
-  assert.match(html, /ham-preparation-member ham-train-front ham-train-last" data-ham-kind="pr" data-ham-stage="50"/);
+  assert.match(html, /ham-preparation-member ham-train-last" data-ham-kind="pr" data-ham-stage="70"/);
+  assert.match(html, /ham-preparation-member ham-train-front" data-ham-kind="pr" data-ham-stage="50"/);
   assert.match(html, /Expanded current-head CI and review detail\./);
-  assert.ok(html.indexOf('/pr#80') < html.indexOf('/pr#9'));
+  const childKey = number => html.indexOf('data-ham-sub-key="' + REPO + '/pr#' + number + '"');
+  assert.ok(childKey(80) < childKey(45));
+  assert.ok(childKey(45) < childKey(9));
   const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
   assert.match(css, /\.ham-row\.ham-preparation-member::before \{ top: calc\(-1 \* var\(--line-width\)\)/);
 });
