@@ -1,0 +1,1 @@
+- A watchdog "agent not producing" stall caused by the inference provider refusing requests (`blocked: inference (...)`, e.g. a 429 `budget_exceeded` hard cap) is no longer filed as an `unclassified_error_repeated` self-report; the cause is upstream and already shown as a blocked agent, so the fleet issue tracker stops collecting it as a hive defect (#15986).

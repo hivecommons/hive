@@ -5,56 +5,36 @@
    menu, chat FAB or notices, every other section out of flow — but attended:
    the cursor stays, the gear works, and a ⤶ Return link goes back to the
    opener. The ⛶ button puts the document into the Fullscreen API and sets
-   body.ham-fullscreen, which shares every rule below — the document rather
-   than the section so the body-level toasts (waiting on you, merges) stay
-   visible while full screen. */
-    body.popout-mode, body.ham-fullscreen,
-    body.display-mode { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
-    body.popout-mode .oc-sidebar, body.popout-mode .oc-sidebar-resize, body.popout-mode .oc-topbar,
-    body.popout-mode #dash-notices, body.popout-mode #oc-agent-detail, body.popout-mode .hive-chat-fab,
-    body.popout-mode .hive-chat-panel, body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
-    body.ham-fullscreen .oc-sidebar, body.ham-fullscreen .oc-sidebar-resize, body.ham-fullscreen .oc-topbar,
-    body.ham-fullscreen #dash-notices, body.ham-fullscreen #oc-agent-detail, body.ham-fullscreen .hive-chat-fab,
-    body.ham-fullscreen .hive-chat-panel,
-    body.display-mode .oc-sidebar, body.display-mode .oc-sidebar-resize, body.display-mode .oc-topbar,
-    body.display-mode #dash-notices, body.display-mode #oc-agent-detail, body.display-mode .hive-chat-fab,
-    body.display-mode .hive-chat-panel, body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }
+   body.ham-fullscreen — the document rather than the section so the
+   body-level toasts (waiting on you, merges) stay visible while full screen.
+   Every chrome-less view (pop-out, full screen, display mode) also carries
+   body.ham-chromeless, which the shared layout rules below key on, so a new
+   view adds the class instead of another copy of every selector. */
+    body.ham-chromeless { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
+    body.ham-chromeless .oc-sidebar, body.ham-chromeless .oc-sidebar-resize, body.ham-chromeless .oc-topbar,
+    body.ham-chromeless #dash-notices, body.ham-chromeless #oc-agent-detail, body.ham-chromeless .hive-chat-fab,
+    body.ham-chromeless .hive-chat-panel { display: none !important; }
+    /* The welcome tour and NPS card stay in the main window; full screen
+       keeps them, as it always has. */
+    body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
+    body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }
     /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
        display:grid!important with id specificity; beat it with (1,2,2). */
-    html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
-    html body.display-mode #oc-topbar[id] { display: none !important; }
-    body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
-    body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
-    body.display-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
-    body.popout-mode #activity-monitor-section .dashboard-grip, body.popout-mode #activity-monitor-section .section-chevron,
-    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron,
-    body.display-mode #activity-monitor-section .dashboard-grip, body.display-mode #activity-monitor-section .section-chevron { display: none !important; }
+    html body.ham-chromeless #oc-topbar[id] { display: none !important; }
+    body.ham-chromeless #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.ham-chromeless #activity-monitor-section .dashboard-grip, body.ham-chromeless #activity-monitor-section .section-chevron { display: none !important; }
     /* The header cannot collapse the only section on the page, but its
        gear, full-screen and return buttons must still take clicks. */
-    body.popout-mode #activity-monitor-section .section-header-toggle,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle,
-    body.display-mode #activity-monitor-section .section-header-toggle { pointer-events: none; }
-    body.popout-mode #activity-monitor-section .section-header-toggle button,
-    body.popout-mode #activity-monitor-section .section-header-toggle .config-info,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle button,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info,
-    body.display-mode #activity-monitor-section .section-header-toggle button,
-    body.display-mode #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
+    body.ham-chromeless #activity-monitor-section .section-header-toggle { pointer-events: none; }
+    body.ham-chromeless #activity-monitor-section .section-header-toggle button,
+    body.ham-chromeless #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
     /* A collapsed state saved from the main window would leave an empty
        page with a header that cannot be clicked: always show the body. */
-    body.popout-mode #activity-monitor-section .section-body.collapsed,
-    body.ham-fullscreen #activity-monitor-section .section-body.collapsed,
-    body.display-mode #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
-    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions,
-    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
-    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary,
-    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
-    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky,
-    body.display-mode .ham-sticky { top: 0; }
-    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols,
-    body.display-mode .ham-cols { top: var(--ham-sticky-bar-h); }
+    body.ham-chromeless #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
+    body.ham-chromeless #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
+    body.ham-chromeless #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
+    body.ham-chromeless .ham-sticky { top: 0; }
+    body.ham-chromeless .ham-cols { top: var(--ham-sticky-bar-h); }
 
     /* Header tools: ⧉ pop out, ⛶ full screen and 📺 display sit beside the gear and
        share its chip styling; the return link is a pop-out-only text pill. */
@@ -100,3 +80,57 @@
       body.display-mode .ham-playlist-track { display: none; }
       body.display-mode .ham-playlist-next { display: inline-block; }
     }
+
+    /* Display liveness (#15930): a header with the hive id, a clock and a
+       live dot, and — once the stream or the payload goes quiet — a dimmed
+       board under a "Stale: last update N ago" banner. Display mode only;
+       the "updated … ago" chip is unchanged everywhere. */
+    .ham-display-head, .ham-display-stale { display: none; }
+    body.display-mode .ham-display-head { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+    body.display-mode .ham-display-dot { color: var(--green); }
+    body.display-mode .ham-display-hive { font-weight: 600; color: var(--text); }
+    body.display-mode .ham-display-clock { margin-left: auto; }
+    body.display-mode.display-stale .ham-display-dot { color: var(--amber); }
+    body.display-mode.display-stale .ham-display-stale:not([hidden]) { display: block; margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-4); border: var(--line-width) solid var(--amber); border-radius: var(--r-sm); background: color-mix(in srgb, var(--amber) 14%, var(--panel)); color: var(--amber); font-size: var(--fs-md); font-weight: 600; }
+    body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
+    body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: opacity .6s ease, filter .6s ease; }
+    body.display-mode.display-stale #activity-monitor-panel, body.display-mode.display-stale #activity-monitor-meta,
+    body.display-mode.display-stale #activity-monitor-sticky, body.display-mode.display-stale #activity-monitor-native-queue { opacity: .45; filter: grayscale(.7); }
+
+    /* density=tv (#15931): larger type, only the stage strip, the title and
+       the stage/actor line, no filters or pager — the rows that fit and a
+       "+N more" footer (stageTrackerDisplayRowCap). */
+    body.display-density-tv #activity-monitor-section {
+      --fs-2xs: .9rem;
+      --fs-xs: 1rem;
+      --fs-sm: 1.15rem;
+      --fs-base: 1.25rem;
+      --fs-md: 1.4rem;
+    }
+    body.display-density-tv #activity-monitor-toolbar, body.display-density-tv #activity-monitor-labels,
+    body.display-density-tv #activity-monitor-native-queue, body.display-density-tv #activity-monitor-section .ham-pager,
+    body.display-density-tv #activity-monitor-section .ham-head-pr, body.display-density-tv #activity-monitor-section .ham-badges,
+    body.display-density-tv #activity-monitor-section .ham-since, body.display-density-tv #activity-monitor-section [data-ham-sub-key],
+    body.display-density-tv #activity-monitor-section .cue-event, body.display-density-tv #activity-monitor-section .ham-review-notes { display: none !important; }
+    body.display-density-tv #activity-monitor-section .ham-head-cols .ham-seg.ham-head-lead { flex: 1 1 0; }
+    body.display-density-tv .ham-display-more { display: block; text-align: center; font-size: var(--fs-md); font-weight: 600; color: var(--muted); }
+
+    /* shift=1 (#15931): an OLED burn-in shift — the board steps 1–2 px to a
+       new spot every 4 minutes. Off by default and inert under reduced
+       motion. */
+    @keyframes ham-display-shift {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(2px, 1px); }
+      50% { transform: translate(1px, 2px); }
+      75% { transform: translate(-1px, 1px); }
+      100% { transform: translate(0, 0); }
+    }
+    body.display-shift #activity-monitor-section { animation: ham-display-shift 16min steps(1, end) infinite; }
+
+    /* Reduced motion on a display: no burn-in shift and no dim transition,
+       the way the toasts already go linear; row movement is switched off in
+       JS (stageTrackerDisplayMotionEffect plays no effect at all). */
+    @media (prefers-reduced-motion: reduce) {
+      body.display-shift #activity-monitor-section { animation: none; }
+      body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
+      body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: none; }    }

@@ -88,6 +88,7 @@ js/tracker-queue.js
 js/tracker-sound.js
 js/tracker-waiting.js
 js/tracker-popout.js
+js/tracker-display.js
 js/agent-cards.js
 js/banners.js
 js/governor-view.js

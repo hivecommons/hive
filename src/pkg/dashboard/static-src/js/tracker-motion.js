@@ -625,7 +625,8 @@
     // effect the setting picks, unless the tab is hidden or too many moved.
     function stageTrackerAnimateMoves(root) {
       if (!root) return 0;
-      const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      let effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      if (typeof stageTrackerDisplayEffect === 'function') effect = stageTrackerDisplayEffect(effect);
       const strips = Array.from(root.querySelectorAll('.ham-strip[data-ham-prev-col]'));
       const play = !!effect && !document.hidden && strips.length > 0 && strips.length <= STAGE_TRACKER_MOTION_MAX_ROWS;
       let n = 0;
