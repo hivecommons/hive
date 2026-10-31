@@ -37,7 +37,6 @@ type integrationRuntime struct {
 	executionStore                *integration.Store
 	executionErr                  error
 	executionPath                 string
-	executionGates                map[string]integrationExecutionGate
 	executionLastReconcile        time.Time
 	executionLastNudge            time.Time
 	executionReconciling          bool

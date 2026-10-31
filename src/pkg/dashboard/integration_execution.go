@@ -15,14 +15,6 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 )
 
-const integrationExecutionMaxGateCache = 128
-
-type integrationExecutionGate struct {
-	gate         automerge.IntegrationEligibilityGate
-	head, author string
-	observedAt   time.Time
-}
-
 func (s *Server) SetIntegrationExecutionEvaluators(prepare, promote automerge.IntegrationEligibilityGate) {
 	s.integration.mu.Lock()
 	defer s.integration.mu.Unlock()
@@ -149,21 +141,6 @@ func (s *Server) IntegrationExecutionRoute(_ context.Context, repo string, pr *g
 			integration.ExecutionEvent{Version: integration.ExecutionSchemaVersion, Eligibility: &eligible}); err != nil {
 			return block("integration normal-lane receipt unavailable; no fallback", err)
 		}
-		s.integration.mu.Lock()
-		if s.integration.executionGates == nil {
-			s.integration.executionGates = map[string]integrationExecutionGate{}
-		}
-		for key, existing := range s.integration.executionGates {
-			if now.Sub(existing.observedAt) > cfg.ObservationAge {
-				delete(s.integration.executionGates, key)
-			}
-		}
-		_, cached := s.integration.executionGates[eligible.Key()]
-		if cached || len(s.integration.executionGates) < integrationExecutionMaxGateCache {
-			s.integration.executionGates[eligible.Key()] = integrationExecutionGate{
-				gate: gate, head: eligible.Head, author: pr.GetUser().GetLogin(), observedAt: now}
-		}
-		s.integration.mu.Unlock()
 	}
 	if cfg.Mode == config.IntegrationAdvisory {
 		return automerge.IntegrationExecutionDecision{}, nil

@@ -626,6 +626,18 @@ come first; missing telemetry freezes growth, not safety-network execution.
 This implementation does not automatically change live concurrency or enable
 an adaptive pilot.
 
+The initial controller is deliberately bounded, not throughput-qualified: its
+fallback turn is three minutes, event nudges coalesce to at most one per minute,
+and each turn visits at most two enrolled scopes and promotes at most one
+exact step per visited Hive scope. These source limits are real performance
+constraints, not measured 5,000/day capacity. Eligibility probes rotate bounded
+windows past older unready PRs; repository/base turns rotate independently.
+Declared expected jobs/minutes are conservative admission reservations to be
+reviewed against the actual qualified producer fanout and measured cohorts,
+not provider-enforced execution quotas or permission to guess runner capacity.
+Already admitted work may exceed an estimate; actual observed spend remains
+charged and freezes further admission at the configured bounds.
+
 Before exclusive activation, operators must deploy a verified image, stop or
 upgrade/enroll every participating legacy writer, register one executor,
 install and verify the narrowly scoped App/workflow/producer policy, run the
