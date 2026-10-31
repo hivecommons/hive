@@ -106,8 +106,11 @@ func (s *HubServer) handleActivityAsset(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write(body)
 }
 
-// registerActivityPageRoutes mounts the page and its row asset.
+// registerActivityPageRoutes mounts the page and its row asset, plus the
+// anonymous public-safe view and its endpoint (activity_public.go, #15966).
 func (s *HubServer) registerActivityPageRoutes() {
 	s.mux.HandleFunc("GET "+activityPagePath, s.handleActivityPage)
+	s.mux.HandleFunc("GET "+activityPublicPagePath, s.handleActivityPublicPage)
+	s.mux.HandleFunc("GET "+activityPublicPath, s.handleHubActivityPublic)
 	s.mux.HandleFunc("GET "+activityAssetPrefix+"{name}", s.handleActivityAsset)
 }

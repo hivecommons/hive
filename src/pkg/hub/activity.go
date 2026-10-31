@@ -163,6 +163,9 @@ type activityHive struct {
 	Owner         string
 	LastHeartbeat string
 	Missing       bool
+	// Public is set only for a registry-public hive on public GitHub; only
+	// the public-safe view (activity_public.go) reads it.
+	Public bool
 }
 
 // visibleActivityHives returns the hives username may see, applying the
@@ -359,16 +362,7 @@ func (s *HubServer) handleHubActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	s.mu.RLock()
-	registry := make([]activityHive, 0, len(s.registry.Hives))
-	for _, h := range s.registry.Hives {
-		name := h.ProjectName
-		if name == "" {
-			name = h.Name
-		}
-		registry = append(registry, activityHive{ID: h.ID, Name: name, Owner: h.Owner, LastHeartbeat: h.LastHeartbeat})
-	}
-	s.mu.RUnlock()
+	registry := s.activityRegistry()
 
 	hives := visibleActivityHives(username, loadSaaSUser(username), registry, now)
 	ids := make([]string, len(hives))
@@ -396,6 +390,24 @@ func (s *HubServer) handleHubActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(body)
+}
+
+// activityRegistry copies the registry slice the activity views need.
+func (s *HubServer) activityRegistry() []activityHive {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	registry := make([]activityHive, 0, len(s.registry.Hives))
+	for _, h := range s.registry.Hives {
+		name := h.ProjectName
+		if name == "" {
+			name = h.Name
+		}
+		registry = append(registry, activityHive{
+			ID: h.ID, Name: name, Owner: h.Owner, LastHeartbeat: h.LastHeartbeat,
+			Public: h.IsPublic && sameGitHubHost(h.GitHubHost, publicGitHubHost),
+		})
+	}
+	return registry
 }
 
 // activityETagMatches is the RFC 9110 weak comparison of If-None-Match.

@@ -41,6 +41,11 @@ const ACTIVITY_STAGE_DETOURS = [
 const ACTIVITY_COLUMN_LABELS = { 0: 'Open', 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 50: 'CI / Review', 80: 'Merge gate', 110: 'Merged' };
 
 const ACTIVITY_API = '/api/hub/activity';
+// The anonymous public-safe view (#15966) serves this same page at
+// ACTIVITY_PUBLIC_PAGE and polls only its own endpoint, without credentials,
+// so it can never show the signed-in view's rows.
+const ACTIVITY_PUBLIC_PAGE = '/activity/public';
+const ACTIVITY_PUBLIC_API = '/api/hub/activity/public';
 const ACTIVITY_POLL_MS = 15000;
 
 // Display mode (#16064): #15860 Part A reused unchanged. `am.*` URL state and
@@ -470,8 +475,16 @@ function activityClock(t) {
   return new Date(t).toLocaleTimeString();
 }
 
-function activityFetchOptions(headers) {
-  const opts = { headers: headers, credentials: 'same-origin', cache: 'no-store' };
+function activityIsPublicPage(pathname) {
+  return String(pathname || '').replace(/\/+$/, '') === ACTIVITY_PUBLIC_PAGE;
+}
+
+function activityApiFor(pathname) {
+  return activityIsPublicPage(pathname) ? ACTIVITY_PUBLIC_API : ACTIVITY_API;
+}
+
+function activityFetchOptions(headers, isPublic) {
+  const opts = { headers: headers, credentials: isPublic ? 'omit' : 'same-origin', cache: 'no-store' };
   if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
     opts.signal = AbortSignal.timeout(ACTIVITY_FETCH_TIMEOUT_MS);
   }
@@ -488,14 +501,15 @@ async function activityPoll() {
   try {
     const headers = {};
     if (activityState.etag) headers['If-None-Match'] = activityState.etag;
+    const isPublic = activityIsPublicPage(window.location.pathname);
     let res;
     try {
-      res = await fetch(ACTIVITY_API, activityFetchOptions(headers));
+      res = await fetch(activityApiFor(window.location.pathname), activityFetchOptions(headers, isPublic));
     } catch (e) {
       activitySetStatus('Hub unreachable — retrying every 15 s', true);
       return;
     }
-    if (res.status === 401) {
+    if (res.status === 401 && !isPublic) {
       window.location.assign('/login');
       return;
     }
@@ -589,6 +603,10 @@ function activityBoot() {
   const urlView = activityUrlView(window.location.href);
   activityState.filter = urlView.filter;
   activityState.group = urlView.group;
+  if (activityIsPublicPage(window.location.pathname)) {
+    const sub = document.querySelector('.activity-sub');
+    if (sub) sub.textContent = 'Public view: open issues and pull requests in public repositories of hives listed as public. Private repositories and per-user access are never shown.';
+  }
   const toggle = document.getElementById('activity-group');
   toggle.checked = activityState.group === 'hive';
   // The toggle is am.group: the address bar stays a link to this view

@@ -292,12 +292,36 @@ It reuses the same `hive-stream` image. Its ConfigMap sets
   holds the `CHANGE-ME` placeholder; and `TWITCH_STREAM_KEY` is installed (a
   local dry run with `STREAM_OUTPUT=null` or an absolute local `*.flv` path
   needs no key; a URL such as `rtmp://…/x.flv` or any other raw
-  `STREAM_OUTPUT` is refused). Shipped defaults fail every one of
-  these, and the Deployment is at `replicas: 0` on top.
+  `STREAM_OUTPUT` is refused). Shipped defaults fail the enable,
+  acknowledgement and stream-key checks, and the Deployment is at
+  `replicas: 0` on top.
 - **The auth proxy runs anonymous.** It refuses to start with a token, strips
   any `Authorization` or `Cookie` header the browser sends and drops
   `Set-Cookie` from responses, so no session can form. The kiosk sees exactly
   what an anonymous visitor of the hub sees, and nothing else.
+
+### The public-safe hub view
+
+The source is the hub's anonymous public-safe Fleet activity view,
+`/activity/public?kiosk=1` (`DASHBOARD_PATH` in `fleet/configmap.yaml`). It is
+a separate route from the signed-in `/activity` page and polls its own
+endpoint, `GET /api/hub/activity/public`, which needs no login and ignores any
+cookie or token it is sent. The hub filters the data before it builds the
+view, so private rows never reach the page:
+
+- **Shown:** open issues and pull requests in public repositories of hives the
+  registry lists as public on github.com — number, title, stage, modifiers,
+  author kind — plus their public stage hops, opens and merges, each hive's
+  name and report freshness.
+- **Omitted:** private-repository items and events (and items whose
+  visibility the spoke does not know), hives not listed as public or on a
+  GitHub Enterprise host, per-hive totals, truncation and dropped-event counts
+  (they can count private items), hive owners, and any per-user access grant.
+
+A hub test (`TestActivityPublic_OmitsPrivateRowsByConstruction`) checks that a
+private row is absent from this view whether the request is anonymous or
+carries an admin's session. See also
+[Hub Fleet activity page](hub-fleet-activity.md#public-safe-view).
 
 ### Dashboard authentication does not protect Twitch output
 
@@ -333,15 +357,14 @@ acknowledgement cannot cover new content.
 ### Enabling it (owner only)
 
 Nothing below is done by this repository or by the hive; it is the owner's
-decision on #15861. Status as of this change: the channel is provisioned; the
-stream key is **not** installed and the public-safe hub view does **not** yet
-exist (it follows the Fleet activity page,
-[#15965](https://github.com/hivecommons/hive/issues/15965)).
+decision on #15861. Status as of this change: the channel is provisioned and
+the [public-safe hub view](#the-public-safe-hub-view) exists; the stream key
+is **not** installed and the broadcast is **not** enabled.
 
-1. **Source.** Confirm a hub route renders the public-safe view anonymously
-   and meets the policy above, then set `DASHBOARD_PATH` in
-   `fleet/configmap.yaml` (e.g. with `?kiosk=1`). Open it in a private
-   browser window first: what you see there is what Twitch will show.
+1. **Source.** `DASHBOARD_PATH` already points at
+   `/activity/public?kiosk=1`. Open `https://hive.hivecommons.dev/activity/public`
+   in a private browser window and confirm it meets the policy above: what
+   you see there is what Twitch will show.
 2. **Stream key.** In the `hivecommonsfleet` Creator Dashboard, copy the
    Primary Stream key and install it without echoing it or writing it to a
    file, a commit or an issue comment:

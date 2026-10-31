@@ -128,12 +128,35 @@ The playlist follows the spoke's rules:
 
 The spoke-only wall options `density=tv` and `shift=1` are ignored here.
 
+## Public-safe view
+
+`https://<hub>/activity/public` is the same board served to anyone, without a
+session ([#15966](https://github.com/hivecommons/hive/issues/15966)). It is the
+source of the `twitch.tv/hivecommonsfleet` broadcast
+([Streaming the Activity Monitor](streaming-the-activity-monitor.md#the-hivecommonsfleet-broadcast)).
+On that path the page polls `GET /api/hub/activity/public` with
+`credentials: 'omit'`, and the endpoint never reads a cookie, token or
+`Authorization` header, so a signed-in browser or an admin gets the same rows
+as an anonymous visitor.
+
+The view is filtered on the hub before it is built:
+
+- Only hives the registry lists as **public** (the flag the public registry
+  and leaderboard use) on public github.com. A hive with no public flag, or
+  on a GitHub Enterprise host, is left out.
+- Only items and events the spoke marked public. A spoke marks a repository
+  private unless it knows it is public, so unknown visibility is left out.
+- No `totals`, digest `truncated` or `events_dropped`, since those can count
+  private items, and no hive owner.
+- No per-user grants: your own access never widens it.
+
 ## What the page does not do
 
 - It has no action menus. The hub is visibility-only: act on an item on
   GitHub, or from the hive's own tracker.
-- It is not a broadcast source. Display mode only changes how the signed-in
-  page looks; the page still needs a hub session and shows only your hives.
+- `/activity` is not a broadcast source. Display mode only changes how the
+  signed-in page looks; the page still needs a hub session and shows only
+  your hives. Broadcast only the [public-safe view](#public-safe-view).
 
 ## Security
 
@@ -146,7 +169,8 @@ The spoke-only wall options `density=tv` and `shift=1` are ignored here.
 - The page, its script and the shared row-presentation and view assets are revalidated
   on every load (`Cache-Control: no-cache` with a content ETag), so a hub
   upgrade is picked up on the next visit.
-- `/activity` is marked `noindex` and is disallowed in `robots.txt`.
+- `/activity` (including `/activity/public`) is marked `noindex` and is
+  disallowed in `robots.txt`.
 
 ## For operators
 
