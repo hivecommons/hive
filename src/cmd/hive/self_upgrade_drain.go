@@ -256,7 +256,8 @@ func agentKicksInFlight(statuses map[string]*crux.Process, processStart, now tim
 }
 
 // wedgedKickNotices remembers which wedged kicks were already logged, so the
-// per-heartbeat upgrade check warns once per kick instead of every beat.
+// per-heartbeat upgrade check only mentions a kick in the single per-pass
+// warning the first time it is seen, instead of repeating it every beat.
 type wedgedKickNotices struct {
 	mu     sync.Mutex
 	logged map[string]time.Time
