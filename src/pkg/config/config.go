@@ -4865,6 +4865,9 @@ type DashboardConfig struct {
 	//
 	// Deprecated: set dashboard.experiment_lab instead.
 	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
+	// Matrix is the experimental, default-off Activity Monitor Matrix block
+	// (#15862). Nothing reads it yet; see dashboard_matrix.go.
+	Matrix MatrixConfig `yaml:"matrix,omitempty" json:"matrix,omitempty"`
 	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to
 	// embed the public, read-only /snapshot document. Empty keeps the historical
 	// fail-closed framing policy (X-Frame-Options: DENY plus CSP

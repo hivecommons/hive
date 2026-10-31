@@ -227,6 +227,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		c.Dashboard.SnapshotFrameAncestors = normalized
 	}
 
+	if err := c.Dashboard.Matrix.Validate(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateDashboardPublicURL(c.Dashboard.PublicURL); err != nil {
 		return err
 	} else {
