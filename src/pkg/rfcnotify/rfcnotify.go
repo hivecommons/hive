@@ -281,13 +281,15 @@ func NeedsDecision(labels []string) bool {
 }
 
 // NormalizeTitle is the title duplicate detection compares: lowercased,
-// with the RFC prefix, emoji and surrounding punctuation stripped and
-// whitespace collapsed.
+// with the RFC prefix, leading bracketed tags such as [v5 RFC] or [v6],
+// emoji and surrounding punctuation stripped and whitespace collapsed, so
+// "📝 [v5 RFC] Foo", "RFC: [v5] Foo" and "RFC: Foo" all compare as "foo".
 func NormalizeTitle(title string) string {
-	title = strings.TrimSpace(title)
+	title = leadingTagsRE.ReplaceAllString(strings.TrimSpace(title), "")
 	if loc := rfcTitleRE.FindStringIndex(title); loc != nil {
 		title = title[loc[1]:]
 	}
+	title = leadingTagsRE.ReplaceAllString(title, "")
 	var b strings.Builder
 	for _, r := range strings.ToLower(title) {
 		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsPunct(r) {
