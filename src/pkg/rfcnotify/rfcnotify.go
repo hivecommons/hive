@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -315,9 +316,9 @@ func Format(e Event, includeRepo bool) string {
 	case KindDecisions:
 		return fmt.Sprintf("RFC decisions: %s → %s open: %s", e.From, e.To, tail)
 	case KindTargetChanged:
-		return fmt.Sprintf("RFC target: %s → %s: %s", e.From, e.To, tail)
+		return fmt.Sprintf("RFC target: %s → %s: %s", fieldValue(e.From), fieldValue(e.To), tail)
 	case KindStatusChanged:
-		return fmt.Sprintf("RFC status: %s → %s: %s", e.From, e.To, tail)
+		return fmt.Sprintf("RFC status: %s → %s: %s", fieldValue(e.From), fieldValue(e.To), tail)
 	case KindNeedsDecision:
 		return "RFC needs a decision: " + tail
 	case KindRetitled:
@@ -326,4 +327,13 @@ func Format(e Event, includeRepo bool) string {
 		return fmt.Sprintf("RFC duplicate filed as %s - <%s>", ref, strings.TrimSpace(e.Issue.URL))
 	}
 	return "RFC " + string(e.Kind) + ": " + tail
+}
+
+// maxNoticeFieldRunes bounds a target or status value interpolated into a
+// notice so an oversized table cell cannot push the message past Discord's
+// content limit.
+const maxNoticeFieldRunes = 100
+
+func fieldValue(s string) string {
+	return truncateRunes(logscrub.ScrubString(s), maxNoticeFieldRunes)
 }

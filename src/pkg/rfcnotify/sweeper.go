@@ -261,7 +261,6 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 			if tr != nil {
 				tr.retitle(ev)
 			}
-			delivered[ev.Issue.Key()] = true
 			continue
 		}
 		msg := Format(ev, s.opts.IncludeRepo)

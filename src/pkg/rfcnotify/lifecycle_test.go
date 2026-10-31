@@ -485,3 +485,18 @@ func TestSweeperFailureDoesNotRepeatAnAnnouncedEventOfTheSameRFC(t *testing.T) {
 		t.Fatalf("repeated the announced event: %+v posted=%v", res, posted)
 	}
 }
+
+func TestLifecycle_DecisionsKeepVisibilityUnknown(t *testing.T) {
+	is := withBody(rfc(1, "open"), rfcBody("v5", "Draft", 2, 0))
+	is.VisibilityUnknown = true
+	d := lifecycleDetector(is)
+	rec := d.state.Issues["hivecommons/hive#1"]
+	if !rec.VisibilityUnknown {
+		t.Fatalf("record lost the unknown visibility: %+v", rec)
+	}
+	rec.DecisionsAnnounced, rec.DecisionsChangedAt = 0, time.Time{}
+	evs := d.decisions(t0.Add(time.Hour))
+	if len(evs) != 1 || !evs[0].Issue.VisibilityUnknown {
+		t.Fatalf("events = %+v", evs)
+	}
+}

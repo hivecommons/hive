@@ -78,6 +78,9 @@ type issueRecord struct {
 	Author    string    `json:"author,omitempty"`
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	Private   bool      `json:"private,omitempty"`
+	// VisibilityUnknown records that the visibility lookup behind Private
+	// failed, so synthesised events can be retried instead of dropped.
+	VisibilityUnknown bool `json:"visibility_unknown,omitempty"`
 	// Target, Status and OpenDecisions are ParseRFC's view of the body.
 	Target        string `json:"target,omitempty"`
 	Status        string `json:"status,omitempty"`
@@ -396,7 +399,7 @@ func (d *Detector) decisions(now time.Time) []Event {
 		if err != nil {
 			continue
 		}
-		is := Issue{Repo: repo, Number: n, Title: rec.Title, URL: rec.URL, Author: rec.Author, State: "open", CreatedAt: rec.CreatedAt, Private: rec.Private}
+		is := Issue{Repo: repo, Number: n, Title: rec.Title, URL: rec.URL, Author: rec.Author, State: "open", CreatedAt: rec.CreatedAt, Private: rec.Private, VisibilityUnknown: rec.VisibilityUnknown}
 		out = append(out, Event{Kind: KindDecisions, Issue: is, From: strconv.Itoa(rec.DecisionsAnnounced), To: strconv.Itoa(rec.OpenDecisions)})
 		rec.DecisionsAnnounced, rec.DecisionsChangedAt = rec.OpenDecisions, now
 	}
@@ -447,6 +450,8 @@ func recordOf(is Issue, now time.Time) *issueRecord {
 		Author:    strings.TrimSpace(is.Author),
 		CreatedAt: is.CreatedAt,
 		Private:   is.Private || is.VisibilityUnknown,
+
+		VisibilityUnknown: is.VisibilityUnknown,
 	}
 	if !is.IsPR {
 		r.NeedsDecision = NeedsDecision(is.Labels)
