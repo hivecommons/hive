@@ -24,7 +24,7 @@
     html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
     html body.display-mode #oc-topbar[id] { display: none !important; }
     body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
-    body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
+    body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
     body.display-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
     body.popout-mode #activity-monitor-section .dashboard-grip, body.popout-mode #activity-monitor-section .section-chevron,
     body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron,
