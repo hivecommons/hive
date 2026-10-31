@@ -218,15 +218,16 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 			continue
 		}
 		msg := Format(ev, s.opts.IncludeRepo)
-		var postErr error
+		var card *Embed
 		if s.opts.Format == FormatCard {
-			meta := ParseRFC(ev.Issue.Body)
-			if meta.Empty() {
-				postErr = pub.Post(msg)
-			} else {
-				card := Card(ev, meta, s.opts.IncludeRepo)
-				_, postErr = pub.PostCard(msg, card)
+			if meta := ParseRFC(ev.Issue.Body); !meta.Empty() {
+				c := Card(ev, meta, s.opts.IncludeRepo)
+				card = &c
 			}
+		}
+		var postErr error
+		if card != nil {
+			_, postErr = pub.PostCard(msg, *card)
 		} else {
 			postErr = pub.Post(msg)
 		}

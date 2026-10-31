@@ -260,9 +260,6 @@ func (b *Bot) postMessage(channelID string, payload map[string]any) (string, err
 	if strings.TrimSpace(channelID) == "" {
 		return "", fmt.Errorf("discord send: channel id not configured")
 	}
-	if payload == nil {
-		payload = make(map[string]any)
-	}
 	payload["allowed_mentions"] = map[string]any{"parse": []string{}}
 	data, err := json.Marshal(payload)
 	if err != nil {

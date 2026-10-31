@@ -64,6 +64,7 @@ func ParseRFC(body string) RFCMeta {
 
 	inSummary := false
 	inDecisions := false
+	decisionsLevel := 0
 	var summaryLines []string
 
 	for i := 0; i < len(lines); i++ {
@@ -76,11 +77,15 @@ func ParseRFC(body string) RFCMeta {
 				continue
 			} else if headingDecisionsRE.MatchString(line) {
 				inDecisions = true
+				decisionsLevel = headingLevel(line)
 				inSummary = false
 				continue
 			} else {
 				inSummary = false
-				inDecisions = false
+				// Sub-sections of the decisions heading keep counting.
+				if inDecisions && headingLevel(line) <= decisionsLevel {
+					inDecisions = false
+				}
 			}
 		}
 
@@ -131,11 +136,11 @@ func ParseRFC(body string) RFCMeta {
 					switch {
 					case key == "target":
 						if meta.Target == "" {
-							meta.Target = val
+							meta.Target = defuseLinks(val)
 						}
 					case key == "status":
 						if meta.Status == "" {
-							meta.Status = val
+							meta.Status = defuseLinks(val)
 						}
 					case isRelatedKey(key):
 						links := extractRFCLinks(val)
@@ -145,8 +150,8 @@ func ParseRFC(body string) RFCMeta {
 									meta.RelatedRFCLinks = append(meta.RelatedRFCLinks, l)
 								}
 							}
-						} else if val != "" && !containsString(meta.RelatedRFCLinks, val) {
-							meta.RelatedRFCLinks = append(meta.RelatedRFCLinks, val)
+						} else if val != "" && !containsString(meta.RelatedRFCLinks, defuseLinks(val)) {
+							meta.RelatedRFCLinks = append(meta.RelatedRFCLinks, defuseLinks(val))
 						}
 					}
 				}
@@ -156,10 +161,20 @@ func ParseRFC(body string) RFCMeta {
 
 	if len(summaryLines) > 0 {
 		rawSummary := strings.Join(strings.Fields(strings.Join(summaryLines, " ")), " ")
-		meta.Summary = truncateRunes(logscrub.ScrubString(rawSummary), MaxSummaryRunes)
+		meta.Summary = truncateRunes(defuseLinks(logscrub.ScrubString(rawSummary)), MaxSummaryRunes)
 	}
 
 	return meta
+}
+
+func headingLevel(line string) int {
+	return len(line) - len(strings.TrimLeft(line, "#"))
+}
+
+// defuseLinks breaks markdown [text](url) syntax so body text cannot render
+// as a masked link in a Discord embed.
+func defuseLinks(s string) string {
+	return strings.ReplaceAll(s, "](", "] (")
 }
 
 func isTableHeaderOrSeparator(key, val string) bool {

@@ -503,7 +503,7 @@ func TestRunRFCNotifySweepRFCPRs(t *testing.T) {
 	}
 }
 
-func TestRFCNotifyIssues_MapsBody(t *testing.T) {
+func TestRFCNotifyIssuesMapsBody(t *testing.T) {
 	snaps := []github.IssueSnapshot{
 		{
 			Repo:   "o/r",
@@ -536,7 +536,7 @@ func (p *testCardPublisher) PostCard(content string, embed rfcnotify.Embed) (str
 	return "msg-id-1", nil
 }
 
-func TestRFCNotifyWire_CardFormatPostsEmbed(t *testing.T) {
+func TestRFCNotifyWireCardFormatPostsEmbed(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := &config.Config{
 		Notifications: config.NotificationsConfig{

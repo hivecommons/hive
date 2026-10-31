@@ -510,3 +510,14 @@ func TestSweeperCardFormat_PreservesTransitions(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRFCDecisionsSubHeadingsAndLinks(t *testing.T) {
+	body := "## Summary\n\nSee [click](http://evil.example) now.\n\n## Decisions for maintainers\n\n### Context\n\n### 1. First\n\n1. Pick A\n2. Pick B\n\n## Other\n\n3. not counted\n"
+	m := ParseRFC(body)
+	if m.OpenDecisions != 2 {
+		t.Fatalf("OpenDecisions = %d, want 2", m.OpenDecisions)
+	}
+	if strings.Contains(m.Summary, "](") {
+		t.Fatalf("summary keeps masked link: %q", m.Summary)
+	}
+}
