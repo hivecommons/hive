@@ -270,7 +270,7 @@ func (d *Detector) Observe(issues []Issue, now time.Time) []Event {
 					events = append(events, Event{Kind: KindOpened, Issue: is})
 				}
 			}
-		case prev.Open && !cur.Open && d.lifecycle && prev.DuplicateOf != "":
+		case prev.Open && !cur.Open && prev.DuplicateOf != "":
 			// A duplicate was never announced, so its close is not either.
 		case prev.Open && !cur.Open:
 			events = append(events, Event{Kind: KindClosed, Issue: is})
@@ -503,16 +503,45 @@ func (d *Detector) checkpoint(path string, base *State, key string) error {
 
 // rollback restores the records of the issues behind unposted events to
 // what they were in before, and moves the watermark back so the next poll
-// lists them again. Records of issues whose events were posted are kept.
-func (d *Detector) rollback(before State, unposted []Event) {
+// lists them again. An issue with an event already announced in this batch
+// (delivered) keeps its record apart from the fields the unposted events
+// own, so the announced event is not repeated but the failed one is.
+func (d *Detector) rollback(before State, unposted []Event, delivered map[string]bool) {
 	for _, ev := range unposted {
 		key := ev.Issue.Key()
-		if rec, ok := before.Issues[key]; ok {
-			cp := *rec
+		old, hadOld := before.Issues[key]
+		cur, hasCur := d.state.Issues[key]
+		switch {
+		case delivered[key] && hasCur && hadOld:
+			restoreFields(cur, old, ev.Kind)
+		case delivered[key]:
+		case hadOld:
+			cp := *old
 			d.state.Issues[key] = &cp
-		} else {
+		default:
 			delete(d.state.Issues, key)
 		}
 	}
 	d.state.Watermark = before.Watermark
+}
+
+// restoreFields puts back the record fields that decide whether an event of
+// the given kind is emitted again.
+func restoreFields(cur, old *issueRecord, k Kind) {
+	switch k {
+	case KindTargetChanged:
+		cur.Target = old.Target
+	case KindStatusChanged:
+		cur.Status = old.Status
+	case KindNeedsDecision:
+		cur.NeedsDecision = old.NeedsDecision
+	case KindRetitled:
+		cur.Title = old.Title
+	case KindDecisions:
+		cur.DecisionsAnnounced, cur.DecisionsChangedAt = old.DecisionsAnnounced, old.DecisionsChangedAt
+	case KindClosed, KindDocAccepted:
+		cur.Open = old.Open
+	case KindReady:
+		cur.Held, cur.Actionable, cur.ReadyAnnounced = old.Held, old.Actionable, old.ReadyAnnounced
+	}
 }

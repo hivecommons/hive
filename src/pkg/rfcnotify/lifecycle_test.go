@@ -456,7 +456,7 @@ func TestSweeperLineModeIgnoresLifecycleChanges(t *testing.T) {
 	}
 }
 
-func TestSweeperFailureDoesNotRepeatAnAnnouncedEventOfTheSameRFC(t *testing.T) {
+func TestSweeperFailureRetriesOnlyTheUnpostedEventOfTheSameRFC(t *testing.T) {
 	src := &fakeSource{}
 	sw, tick := gateSweeper(t, Options{Format: FormatCard, Announcer: true}, src)
 	tick()
@@ -481,8 +481,9 @@ func TestSweeperFailureDoesNotRepeatAnAnnouncedEventOfTheSameRFC(t *testing.T) {
 		t.Fatalf("res=%+v err=%v posted=%v", res, err, posted)
 	}
 	tick()
-	if res, _ := sw.Run(context.Background(), src, post); len(res.Posted) != 0 || len(posted) != 1 {
-		t.Fatalf("repeated the announced event: %+v posted=%v", res, posted)
+	res, _ = sw.Run(context.Background(), src, post)
+	if len(res.Posted) != 1 || len(posted) != 2 || !strings.HasPrefix(posted[1], "RFC status: ") {
+		t.Fatalf("want only the failed status event retried: %+v posted=%v", res, posted)
 	}
 }
 
@@ -498,5 +499,17 @@ func TestLifecycle_DecisionsKeepVisibilityUnknown(t *testing.T) {
 	evs := d.decisions(t0.Add(time.Hour))
 	if len(evs) != 1 || !evs[0].Issue.VisibilityUnknown {
 		t.Fatalf("events = %+v", evs)
+	}
+}
+
+func TestLifecycle_DuplicateCloseStaysSilentAfterRichModeIsDisabled(t *testing.T) {
+	d := lifecycleDetector()
+	first := sameRFC(10, "📝 RFC: Same Thing", "alice", t0.Add(time.Minute))
+	d.Observe([]Issue{first}, t0.Add(2*time.Minute))
+	dup := sameRFC(11, "RFC: same thing", "alice", t0.Add(30*time.Minute))
+	d.Observe([]Issue{dup}, t0.Add(31*time.Minute))
+	d.lifecycle = false
+	if evs := d.Observe([]Issue{withReason(dup, "not_planned")}, t0.Add(34*time.Minute)); len(evs) != 0 {
+		t.Fatalf("duplicate close announced in line mode = %v", kinds(evs))
 	}
 }

@@ -240,14 +240,14 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 		tr = &threadRun{s: s, res: &res, base: &base}
 	}
 	// delivered holds the issues with an event already announced in this
-	// batch. A later failure for the same issue does not roll its record
-	// back, so the announced event is never repeated.
+	// batch. A later failure for the same issue rolls back only the fields
+	// of the unposted events, so the announced event is never repeated.
 	delivered := map[string]bool{}
 	for i, ev := range events {
 		if ev.Issue.VisibilityUnknown && !s.opts.IncludePrivate {
 			res.Unresolved++
 			s.opts.Logger.Debug("rfc notify: repository visibility unknown; retrying next poll", "issue", ev.Issue.Key(), "kind", ev.Kind)
-			s.det.rollback(before, events[i:i+1])
+			s.det.rollback(before, events[i:i+1], delivered)
 			continue
 		}
 		if ev.Issue.Private && !s.opts.IncludePrivate {
@@ -271,9 +271,9 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 				// A card whose write-ahead intent is saved is retried by
 				// reconciliation, so only the events after it are replayed.
 				if keep {
-					s.det.rollback(before, undelivered(events[i+1:], delivered))
+					s.det.rollback(before, events[i+1:], delivered)
 				} else {
-					s.det.rollback(before, undelivered(events[i:], delivered))
+					s.det.rollback(before, events[i:], delivered)
 				}
 				break
 			}
@@ -282,7 +282,7 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 			s.opts.Logger.Warn("rfc notify: post failed", "issue", ev.Issue.Key(), "kind", ev.Kind, "error", err)
 			// Keep what was announced, forget what was not: replay the
 			// snapshot for the unposted issues on top of the old records.
-			s.det.rollback(before, undelivered(events[i:], delivered))
+			s.det.rollback(before, events[i:], delivered)
 			break
 		}
 		delivered[ev.Issue.Key()] = true
@@ -315,21 +315,6 @@ func lifecycleKind(k Kind) bool {
 		return true
 	}
 	return false
-}
-
-// undelivered drops the events of issues that already had an event
-// announced in this batch, so a rollback cannot make them repeat.
-func undelivered(events []Event, delivered map[string]bool) []Event {
-	if len(delivered) == 0 {
-		return events
-	}
-	out := make([]Event, 0, len(events))
-	for _, ev := range events {
-		if !delivered[ev.Issue.Key()] {
-			out = append(out, ev)
-		}
-	}
-	return out
 }
 
 func (s *Sweeper) save() error {
