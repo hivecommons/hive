@@ -51,7 +51,14 @@ func TestEventTriggersPresetPersistenceAndPreservation(t *testing.T) {
 	if get.Code != http.StatusOK || meta["version"] != get.Header().Get("ETag") || meta["requires_restart"] != false {
 		t.Fatalf("get: %d %s", get.Code, get.Body.String())
 	}
-	repo := meta["repositories"].([]any)[0].(map[string]any)
+	repositories, ok := meta["repositories"].([]any)
+	if !ok || len(repositories) != 1 {
+		t.Fatalf("invalid repository metadata: %v", meta["repositories"])
+	}
+	repo, ok := repositories[0].(map[string]any)
+	if !ok {
+		t.Fatalf("invalid repository entry: %v", repositories[0])
+	}
 	if repo["value"] != "repo1" || repo["label"] != "myorg/repo1" {
 		t.Fatalf("must retain configured event.repo spelling: %v", repo)
 	}
