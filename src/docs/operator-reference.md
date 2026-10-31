@@ -18,6 +18,29 @@ read or mutate live `/data` state and have killed agent sessions. Human
 operators can debug inside the pod by setting `HIVE_ALLOW_LOCAL_GO_TEST=1`; all
 other Go subcommands pass through unchanged.
 
+## Abandoned contributor PRs
+
+An abandoned PR is a contributor PR the hive adopts to finish, either **in
+place** on the contributor's branch or by **supersession** into a hive PR.
+Operator **Adopt now** / `adoption/supersede` takeovers count with reason
+`operator_takeover`; automatic adoptions carry `offline` or `unresponsive`.
+A relay disconnect or failed task alone is not a PR adoption.
+
+The adoption recorder deduplicates by repository and original PR: adopting the
+same PR again does not increment the count. If an in-place adoption is later
+superseded, its existing record gains `adopted_into_pr` rather than counting
+again. A zero `adopted_into_pr` means adoption in place. Records also carry the
+original `repo`, `pr`, `reason`, and timestamp `at`.
+
+The dashboard **Contributors** tile shows **Abandoned N** in muted red only for
+nonzero counts. Hover for the five most recent adopted PRs, newest first, with
+the superseding PR (or “in-place”), reason, and timestamp.
+`/api/status.contributorPool` exposes the historical `abandoned` total and
+`abandoned_by_login` counts (lowercase login keys), including offline and
+revoked profiles. `/api/contributors` exposes the underlying per-profile
+`abandoned` and `abandoned_prs` data. These counters are independent of
+Completed/Failed task counts and do not change contributor trust tiers.
+
 ## Minimum required configuration
 
 Most of `hive.yaml.example` is optional. The smallest config the hive will start
@@ -1764,8 +1787,12 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   check-run/review entries for the affected PR and mark it dirty. Check and
   status events are matched by PR number and head SHA (fork PRs arrive
   without a PR list); `push` invalidates every open PR whose base or head
-  branch is the pushed branch. `issues` `labeled`/`unlabeled`/`reopened`
-  mark the issue for the next un-park sweep.
+  branch is the pushed branch. `issues` `opened`/`labeled`/`unlabeled`
+  mark the issue dirty and wake evaluation; `reopened` wakes evaluation too.
+  To select the scanner for newly seen actionable issues, configure a
+  top-level [CEL trigger](cel-triggers.md#run-the-scanner-for-newly-seen-github-issues)
+  matching `event.kind == "issue.opened"`. Agent Channels is not a webhook
+  installer and only supports the governor `kick` runtime.
 - `pull_request` `opened`/`synchronize`/`reopened` also hands the PR to the
   [sentinel](#suspicious-activity-alerts-sentinel), which evaluates it now
   instead of waiting for its reconcile cadence

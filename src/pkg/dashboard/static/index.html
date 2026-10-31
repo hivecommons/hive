@@ -3287,6 +3287,7 @@
     .contrib-status-badge.is-online { background: var(--status-ok); color: var(--bg); }
     .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
     .contrib-status-dot.online { background: var(--status-ok); }
+    .contrib-abandoned { color: var(--status-error); font-weight: 600; }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;
@@ -19421,7 +19422,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderStageTracker(data, countRefresh = false) {
-      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerReconcileMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
       // Row-action feedback rides the payload: a result toast leaves and a
       // row stops "acting" once the item it targets reads a new state.
       if (data && typeof data === 'object' && typeof stageTrackerResultToastsSync === 'function') { stageTrackerNoteEvents(data); stageTrackerResultToastsSync(data); stageTrackerPendingExpire(data); }
@@ -22055,10 +22056,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: PR key → merged? for one payload. Issues are not tracked. A
     // recently_merged repo given by its short name is resolved against the
     // owner/name of the items (any kind, any repo) when exactly one matches.
-    function stageTrackerMergeState(d) {
+    function stageTrackerMergeState(d, prev) {
       const out = {};
       if (!d || typeof d !== 'object') return out;
       const byShort = {};
+      // A dropped row (including one from before a reload) still teaches
+      // the short repo alias used by the audit side list.
+      for (const key of Object.keys(prev || {})) {
+        const repo = key.slice(0, key.lastIndexOf('/pr#'));
+        const slash = repo.lastIndexOf('/');
+        if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+      }
       for (const it of (Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         // Every item of every repo (issues too) teaches the short → full
@@ -22098,10 +22106,40 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Object.keys(next).filter(k => next[k] === true && prev[k] === false).sort();
     }
 
+    const STAGE_TRACKER_MERGE_SESSION_KEY = 'hive.tracker.merge-session.v1';
+    // Shape of a stageTrackerPRKey() key as stored in the session record.
+    const STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE = /^.+\/pr#[1-9][0-9]*$/;
+    var _stageTrackerMergeSessionLoaded = false;
+    // Persist both the last observation and the delivered keys: saving only
+    // delivered keys loses an open→merged transition across a reload. The
+    // first visit still seeds history silently rather than replaying it.
+    function stageTrackerReconcileMerges(d) {
+      if (!_stageTrackerMergeSessionLoaded) {
+        _stageTrackerMergeSessionLoaded = true;
+        try {
+          const saved = JSON.parse(sessionStorage.getItem(STAGE_TRACKER_MERGE_SESSION_KEY));
+          if (saved && saved.state && typeof saved.state === 'object' && !Array.isArray(saved.state)) {
+            const state = {}, delivered = {};
+            for (const key of Object.keys(saved.state)) {
+              if (!STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) || typeof saved.state[key] !== 'boolean') continue;
+              state[key] = saved.state[key];
+            }
+            for (const key of Object.keys(saved.delivered || {})) {
+              if (STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) && saved.delivered[key] === true) delivered[key] = true;
+            }
+            _stageTrackerMergeState = state;
+            _stageTrackerZapped = delivered;
+          }
+        } catch {} // Storage disabled/corrupt: keep the in-memory path.
+      }
+      stageTrackerNoteMerges(d);
+      try { sessionStorage.setItem(STAGE_TRACKER_MERGE_SESSION_KEY, JSON.stringify({ state: _stageTrackerMergeState, delivered: _stageTrackerZapped })); } catch {}
+    }
+
     function stageTrackerNoteMerges(d) {
       const nowMs = Date.now();
       _stageTrackerMergingHoldMs = stageTrackerMergingHoldMsOf(d, _stageTrackerMergingHoldMs);
-      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d));
+      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d, _stageTrackerMergeState));
       // The merge gate's hold (hivecommons/hive#15245, #15808) keeps a
       // row the payload dropped mid-merge on the board at "Merging" until
       // the merged fact arrives (then the merge is fresh at once) or the
@@ -22255,7 +22293,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergingHoldRelease() {
       _stageTrackerMergingHoldTimer = 0;
       if (!_stageTracker || typeof _stageTracker !== 'object') return;
-      stageTrackerNoteMerges(_stageTracker);
+      stageTrackerReconcileMerges(_stageTracker);
       renderStageTracker(undefined, true);
     }
 
@@ -22996,7 +23034,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
       el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
-      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
+      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
       toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
       return el;
     }
@@ -41076,6 +41114,15 @@ function burnAreaChart() {
       });
     }
 
+    function contributorAbandonedBadge(c) {
+      const count = Number(c.abandoned) || 0;
+      if (count <= 0) return '';
+      const recent = (Array.isArray(c.abandoned_prs) ? c.abandoned_prs : []).slice()
+        .sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
+      const tooltip = recent.map(r => `${r.repo}#${r.pr} → ${r.adopted_into_pr ? '#' + r.adopted_into_pr : 'in-place'} · ${r.reason || 'unknown'} · ${r.at || 'unknown time'}`).join('\n') || 'PRs adopted by the hive';
+      return `<span class="contrib-abandoned" title="${esc(tooltip)}">Abandoned ${count}</span>`;
+    }
+
     function renderContributors(contributors) {
       refreshSectionCardShell('contributors-section');
       setSectionSummary('contributors-section', contributorsSectionSummary(contributors, null));
@@ -41149,8 +41196,9 @@ function burnAreaChart() {
             </div>
             ${tierProv ? `<div class="fs-sm text-muted mb-3 contrib-tier-provenance">${esc(tierProv)}</div>` : ''}
             ${cliLine ? `<div class="fs-sm text-muted mb-3">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div class="fs-sm text-muted mb-3">${roleLine}</div>` : '')}
-            <div style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
+            <div style="display:flex;flex-wrap:wrap;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
               <span>Completed: <strong class="text-default">${c.total_tasks_completed || 0}</strong></span>
+              ${contributorAbandonedBadge(c)}
               <span>Failed: <strong style="color:${(c.total_tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--fg)'}">${c.total_tasks_failed || 0}</strong></span>
             </div>
             ${(c.active_tasks && c.active_tasks.length > 0) ? '<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current tasks</div>' + c.active_tasks.map(t => `<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-2);padding:6px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(t.kind)}</span> <a href="https://github.com/${esc(t.repo)}/issues/${t.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(t.repo)}#${t.number} ↗</a> — ${esc(t.title)}</div>`).join('') : (c.current_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current task</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:8px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(c.current_task.kind)}</span> <a href="https://github.com/${esc(c.current_task.repo)}/issues/${c.current_task.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(c.current_task.repo)}#${c.current_task.number} ↗</a> — ${esc(c.current_task.title)}</div>` : (c.last_completed_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Last completed</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:6px 10px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-success">${esc(c.last_completed_task.kind)}</span> <a href="https://github.com/${esc(c.last_completed_task.repo)}/issues/${c.last_completed_task.number}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:underline">${esc(c.last_completed_task.repo)}#${c.last_completed_task.number} ↗</a> — ${esc(c.last_completed_task.title)}</div>` : (c.active ? '<div style="font-size:var(--fs-sm);color:var(--green);margin-bottom:10px">Idle — waiting for task</div>' : '')))}
@@ -43967,6 +44015,7 @@ function burnAreaChart() {
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
+        case 'loadIntegrationOrchestration': loadIntegrationOrchestration(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'loadUpstreamWatch': loadUpstreamWatch(); break;
@@ -44815,7 +44864,6 @@ function burnAreaChart() {
         el.disabled = false;
       }
     }
-
     // ── Plan review view (#7537) ─────────────────────────────────────────
     // The governor PLANNING tile links here: openPlanList() enumerates every
     // plan (GET /api/plans, drafts first) and openPlanReview(epicID) shows one
@@ -53794,10 +53842,11 @@ function burnAreaChart() {
     // --- Channels tab ---
 
     const CHANNEL_COLORS = {kick:'var(--blue)',webhook:'var(--green)',discord:'#7c3aed',schedule:'var(--orange)',bead:'#0891b2'};
-    const CHANNEL_TYPES = ['kick','webhook','discord','schedule','bead'];
+    const CHANNEL_TYPES = ['kick'];
 
     function renderAgentChannels(channels) {
-      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px"><b>What this is.</b> The trigger channels that can wake this agent: governor timer kick, webhook, discord, schedule (cron), or bead. <b>Why use it.</b> They let an agent respond to real events (a pushed commit, a Discord message, a cron tick) instead of only the governor timer. <b>Where it shows up.</b> Each active channel is listed here; with no channels defined the agent falls back to governor timer kicks. <b>How to configure.</b> Add a channel by type and fill its fields (a schedule channel needs a cron expression, a webhook needs events); toggle to enable or disable.</div>';
+      const disabled = _configState.savingChannels ? ' disabled' : '';
+      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px"><b>What this is.</b> Governor kick channels. Only <code>kick</code> has a supported channel runtime; webhook, discord, schedule, and bead channels are not supported. <b>How to configure.</b> Add a kick channel or toggle an existing channel; with no explicit channels the agent uses governor kicks by default. <b>GitHub issue triggers.</b> To select an agent for a newly seen actionable issue, configure a top-level <code>triggers:</code> CEL rule using <code>event.kind == "issue.opened"</code> and the agent name. Signed GitHub webhooks wake evaluation through the existing GitHub App/hub relay or <code>/api/webhook/github</code> receiver. Saving a channel does not register a GitHub webhook. See <code>docs/cel-triggers.md</code> and <code>docs/operator-reference.md</code> for setup and restart semantics.</div>';
       if (!channels || channels.length === 0) {
         html += '<div style="font-size:0.8rem;color:var(--muted);padding:var(--sp-6) var(--sp-0);text-align:center;border:1px dashed var(--border);border-radius:8px">No explicit channels — this agent uses governor timer kicks by default.</div>';
       } else {
@@ -53814,8 +53863,8 @@ function burnAreaChart() {
           if (ch.match) html += 'match: '+Object.entries(ch.match).map(([k,v]) => '<code>'+esc(k)+'='+esc(v)+'</code>').join(', ');
           if (ch.repos && ch.repos.length) html += ' (repos: '+ch.repos.join(', ')+')';
           html += '</div>';
-          html += '<label style="font-size:0.7rem;display:flex;align-items:center;gap:var(--sp-2);cursor:pointer"><input type="checkbox" '+(enabled?'checked':'')+' data-change-action="toggleChannel" data-arg0="+i+" data-arg-types="s,c"> on</label>';
-          html += '<button class="hv-btn btn-danger" data-action="removeChannel" data-arg0="+i+">✕</button>';
+          html += '<label style="font-size:0.7rem;display:flex;align-items:center;gap:var(--sp-2);cursor:pointer"><input type="checkbox" '+(enabled?'checked':'')+disabled+' data-change-action="toggleChannel" data-arg0="'+i+'" data-arg-types="s,c"> on</label>';
+          html += '<button class="hv-btn btn-danger" data-action="removeChannel" data-arg0="'+i+'"'+disabled+'>✕</button>';
           html += '</div>';
         }
       }
@@ -53824,68 +53873,68 @@ function burnAreaChart() {
       html += '<div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:end">';
       html += '<div><label style="font-size:0.7rem;color:var(--muted)">Type</label><select id="ch-add-type" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg)" data-change-action="channelTypeChanged">'+CHANNEL_TYPES.map(t => '<option value="'+t+'">'+t+'</option>').join('')+'</select></div>';
       html += '<div id="ch-add-fields" style="display:flex;gap:var(--sp-3);flex:1;flex-wrap:wrap"></div>';
-      html += '<button class="hv-btn btn-primary btn-sm" data-action="addChannel">Add</button>';
+      html += '<button class="hv-btn btn-primary btn-sm" data-action="addChannel"'+disabled+'>Add</button>';
       html += '</div></div>';
       setTimeout(channelTypeChanged, 0);
       return html;
     }
 
     function channelTypeChanged() {
-      const type = (document.getElementById('ch-add-type') || {}).value;
       const el = document.getElementById('ch-add-fields');
       if (!el) return;
-      let h = '';
-      if (type === 'webhook') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Events (comma-sep)</label><input id="ch-add-events" type="text" placeholder="issues.opened, push" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:200px"></div><div><label style="font-size:0.7rem;color:var(--muted)">Repos (optional)</label><input id="ch-add-repos" type="text" placeholder="repo1, repo2" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:120px"></div>';
-      else if (type === 'discord') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Patterns</label><input id="ch-add-patterns" type="text" placeholder="!deploy*" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:200px"></div>';
-      else if (type === 'schedule') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Cron expression</label><input id="ch-add-schedule" type="text" placeholder="0 */6 * * *" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:160px"></div>';
-      else if (type === 'bead') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Match key=value</label><input id="ch-add-match" type="text" placeholder="nudge_target=scanner" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:200px"></div>';
-      el.innerHTML = h;
+      el.textContent = 'Governor kick — no additional fields.';
     }
 
     function addChannel() {
       const type = (document.getElementById('ch-add-type') || {}).value;
-      const ch = {type: type};
-      if (type === 'webhook') {
-        const evts = (document.getElementById('ch-add-events') || {}).value || '';
-        ch.events = evts.split(',').map(s => s.trim()).filter(Boolean);
-        const repos = (document.getElementById('ch-add-repos') || {}).value || '';
-        if (repos.trim()) ch.repos = repos.split(',').map(s => s.trim()).filter(Boolean);
-      } else if (type === 'discord') {
-        const pats = (document.getElementById('ch-add-patterns') || {}).value || '';
-        ch.patterns = pats.split(',').map(s => s.trim()).filter(Boolean);
-      } else if (type === 'schedule') {
-        ch.schedule = (document.getElementById('ch-add-schedule') || {}).value || '';
-      } else if (type === 'bead') {
-        const matchStr = (document.getElementById('ch-add-match') || {}).value || '';
-        ch.match = {};
-        matchStr.split(',').forEach(pair => { const [k,v] = pair.split('='); if (k && v) ch.match[k.trim()] = v.trim(); });
+      if (!CHANNEL_TYPES.includes(type)) {
+        showToast('Only kick channels are supported. Use triggers: for GitHub issue routing.', 'error');
+        return;
       }
       const channels = (_configState.data.channels || []).slice();
-      channels.push(ch);
-      _configState.data.channels = channels;
-      saveChannels(channels);
+      channels.push({type: type});
+      return saveChannels(channels);
     }
 
     function removeChannel(idx) {
       const channels = (_configState.data.channels || []).slice();
       channels.splice(idx, 1);
-      _configState.data.channels = channels;
-      saveChannels(channels);
+      return saveChannels(channels);
     }
 
     function toggleChannel(idx, enabled) {
       const channels = (_configState.data.channels || []).slice();
-      if (channels[idx]) channels[idx].enabled = enabled;
-      _configState.data.channels = channels;
-      saveChannels(channels);
+      if (channels[idx]) channels[idx] = {...channels[idx], enabled: enabled};
+      return saveChannels(channels);
     }
 
     function saveChannels(channels) {
-      const name = _configState.agent;
-      fetch('/api/config/agent/' + name + '/channels', {method:'PUT', headers:_inceptionAuthHeaders(), body:JSON.stringify({channels:channels})})
-        .then(r => { if (!r.ok) throw new Error('save failed'); return r.json(); })
-        .then(() => { showToast('Channels saved', 'success'); renderConfigTab('Channels'); })
-        .catch(e => showToast('Save error: ' + e.message, 'error'));
+      const state = _configState;
+      if (state.savingChannels) return Promise.resolve();
+      const name = state.agent;
+      state.savingChannels = true;
+      if (state.tab === 'Channels') renderConfigTab('Channels');
+      return fetch('/api/config/agent/' + encodeURIComponent(name) + '/channels', {method:'PUT', headers:_inceptionAuthHeaders(), body:JSON.stringify({channels:channels})})
+        .then(async r => {
+          let data;
+          try {
+            data = await r.json();
+          } catch (_) {
+            if (r.ok) throw new Error('Invalid server response (HTTP ' + r.status + ')');
+            throw new Error('HTTP ' + r.status);
+          }
+          if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+          return data;
+        })
+        .then(() => {
+          state.data.channels = channels;
+          if (_configState === state) showToast('Channels saved', 'success');
+        })
+        .catch(e => { if (_configState === state) showToast('Save error: ' + e.message, 'error'); })
+        .finally(() => {
+          state.savingChannels = false;
+          if (_configState === state && state.tab === 'Channels') renderConfigTab('Channels');
+        });
     }
 
     // --- Tools tab ---
@@ -54629,7 +54678,6 @@ function burnAreaChart() {
       else note = 'No hive default set, so agents that leave Explain Mode unset do not explain.';
       return 'In force now: <strong class="text-default">' + esc(effective) + '</strong>. ' + esc(note) + ' Applies from the next kick &mdash; no restart needed.';
     }
-
     // ── Governor Tab Renderers ──
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
@@ -57887,6 +57935,7 @@ function burnAreaChart() {
       am = am || {};
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
+      const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -58888,6 +58937,48 @@ function burnAreaChart() {
           <div class="config-help">Checkpoint, triage and recheck settings are applied live; no restart is needed.</div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Integration orchestration</div>
+          <div class="config-help">Default OFF. Coordinates authoring admission above existing preparation and native queues; never replaces CI, review, holds or current-base guards. Advisory cannot block. Enforce requires explicit repository/base scopes and complete runner telemetry. No native queue jumping or GitHub build-window control. 5,000/day is a capacity target, not a measured result.</div>
+          <div class="config-field"><label>Mode ${yamlHint('integration_orchestration.mode')} ${settingHelpMark('settings', 'features', 'Integration mode', `Off preserves existing dispatch. Advisory records observations but cannot block. Enforce applies only enrolled, authoritative constraints; it never replaces merge gates.`)}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(m => `<option value="${esc(m)}" ${io.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Exact scopes (one owner/repo#base per line) ${yamlHint('integration_orchestration.scopes[].repo')} ${yamlHint('integration_orchestration.scopes[].base')} ${settingHelpMark('settings', 'features', 'Integration scopes', `At most eight exact repository/base destinations. No wildcard enrollment. Multiple enrolled bases leave issue destination unknown rather than guessing.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="scope_lines" data-arg-types="s,s,v">${esc((io.scopes || []).map(s => s.repo + '#' + s.base).join('\n'))}</textarea>
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['max_active','Active admissions',2,'integration_orchestration.max_active'],
+              ['max_jobs','Executed jobs per window',20,'integration_orchestration.max_jobs'],
+              ['max_runner_minutes','Runner minutes per window',60,'integration_orchestration.max_runner_minutes'],
+              ['max_attempts','Attempt bound',2,'integration_orchestration.max_attempts'],
+              ['admission_jobs','Job allocation per admission',1,'integration_orchestration.admission_jobs'],
+              ['admission_runner_minutes','Minute allocation per admission',10,'integration_orchestration.admission_runner_minutes']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Validated static admission bound, not a capacity measurement. Outstanding allocations count conservatively alongside actual assigned-runner execution. Missing accounting freezes growth; retries never rerun or cancel GitHub jobs.`)}</label><input type="number" min="1" value="${esc(String(io[key] || def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['lease_ttl','Reservation TTL (minutes)',5,'integration_orchestration.lease_ttl'],
+              ['window','Accounting window (minutes)',60,'integration_orchestration.window'],
+              ['max_observation_age','Maximum observation age (minutes)',30,'integration_orchestration.max_observation_age']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Lease TTL is 1–15 minutes and clipped to live ownership. Accounting window is 1 minute–24 hours. Maximum observation age is 1–60 minutes; stale observations are unknown, not zero.`)}</label><input type="number" min="1" value="${esc(String(io[key] ? io[key] / (60 * 1e9) : def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}_minutes" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field"><label>Pinned workflow evidence contracts (JSON array) ${settingHelpMark('settings', 'features', 'Integration workflow contracts', `Pins a separately reviewed workflow blob, event engine, exact required job names and producer App ID. Empty means policy evidence remains unknown. This does not activate native queues or replace full CI, review, DCO or other gates.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="policy_json" data-arg-types="s,s,v">${esc(JSON.stringify(io.policies || [], null, 2))}</textarea>
+          </div>
+          <div class="config-help">${[
+            'integration_orchestration.policies[].repo', 'integration_orchestration.policies[].base',
+            'integration_orchestration.policies[].engine', 'integration_orchestration.policies[].workflow',
+            'integration_orchestration.policies[].blob', 'integration_orchestration.policies[].app_id',
+            'integration_orchestration.policies[].jobs[]'
+          ].map(path => yamlHint(path)).join(' ')} Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
+          <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
+          <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
           <div class="config-field">
             <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
@@ -58903,7 +58994,6 @@ function burnAreaChart() {
         </div>
         `)}`;
     }
-
     function markReleaseSentinelList(key, value) {
       markDirty('release-sentinel', key, splitConfigLines(value));
     }
@@ -60796,6 +60886,7 @@ function burnAreaChart() {
             : 'No soak telemetry recorded yet — it accumulates one row per eval cycle, so give it a few cycles.';
           return;
         }
+
         const groups = {};
         for (const e of entries) {
           const k = `${e.commit || '?'} / ${e.mode || '?'} (gen ${e.generation || 0})`;
@@ -60828,6 +60919,32 @@ function burnAreaChart() {
         out.innerHTML = rows.join('');
       } catch (err) {
         out.textContent = `Failed to load soak telemetry: ${err.message}`;
+      }
+    }
+
+    async function loadIntegrationOrchestration() {
+      const out = document.getElementById('integration-orchestration-summary');
+      if (!out) return;
+      out.textContent = 'Loading authoritative observations…';
+      try {
+        const res = await fetch('/api/integration-orchestration', { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const preparation = await fetch('/api/stage-tracker', { headers: _inceptionAuthHeaders() });
+        if (preparation.ok) {
+          const tracker = await preparation.json();
+          data.preparation = {
+            source: '/api/stage-tracker.base_preparation',
+            state: Array.isArray(tracker.base_preparation) ? 'observed' : 'unavailable',
+            queues: Array.isArray(tracker.base_preparation) ? tracker.base_preparation : null,
+            meaning: 'Preparation ownership/backlog only; not green or approved train seats, and not native queue membership.'
+          };
+        } else {
+          data.preparation = { state: 'unavailable', reason: `Tracker HTTP ${preparation.status}` };
+        }
+        out.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        out.textContent = `Integration observations unknown: ${e.message}`;
       }
     }
 
@@ -60994,7 +61111,6 @@ function burnAreaChart() {
       if (!await hiveConfirm({ title: `Stop watching ${repo}?`, message: 'The watch stops polling its upstream. Recorded state and issues already filed are kept.', confirmLabel: 'Stop watching', danger: true })) return;
       putUpstreamWatch({ repos: { [repo]: null } }, `Stopped watching ${repo}`);
     }
-
     // ── Linear agent (RFC #4492 Part 2) ─────────────────────────────────────
     // loadLinearAgentStatus paints install/workspace/session state from the
     // owner-only status endpoint into the Features tab's Linear Agent panel.
@@ -61765,6 +61881,33 @@ function burnAreaChart() {
             });
             if (!slaRes.ok) throw new Error(await saveErrorMessage(slaRes));
             _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
+          } else if (_configState.type === 'governor' && section === 'integration_orchestration') {
+            const body = Object.assign({}, (_configState.data || {}).integration_orchestration || {}, values);
+            const integrationMinuteNanoseconds = 60 * 1e9;
+            for (const key of ['lease_ttl', 'window', 'max_observation_age']) {
+              if (Object.prototype.hasOwnProperty.call(body, key + '_minutes')) {
+                body[key] = Number(body[key + '_minutes']) * integrationMinuteNanoseconds;
+                delete body[key + '_minutes'];
+              }
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'policy_json')) {
+              body.policies = JSON.parse(body.policy_json);
+              if (!Array.isArray(body.policies)) throw new Error('Integration workflow contracts must be a JSON array');
+              delete body.policy_json;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'scope_lines')) {
+              body.scopes = String(body.scope_lines).split('\n').map(s => s.trim()).filter(Boolean).map(s => {
+                const at = s.indexOf('#');
+                if (at < 1 || at === s.length - 1) throw new Error('Each integration scope must be owner/repo#base');
+                return { repo: s.slice(0, at), base: s.slice(at + 1) };
+              });
+              delete body.scope_lines;
+            }
+            const ioRes = await fetch('/api/config/integration-orchestration', {
+              method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify(body)
+            });
+            if (!ioRes.ok) throw new Error(await saveErrorMessage(ioRes));
+            _configState.data.integration_orchestration = await ioRes.json();
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence
@@ -61928,7 +62071,6 @@ function burnAreaChart() {
         })
         .catch(() => {});
     }
-
     // --- Chat rich formatting ---
     function sanitizeChatText(raw) {
       return String(raw || '')

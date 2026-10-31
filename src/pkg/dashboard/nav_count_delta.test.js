@@ -47,6 +47,7 @@ function load() {
     function fetchBeadSynthStatus() {}
     function fetchFactHistory() {}
     function stageTrackerNoteMerges() {}
+    function stageTrackerReconcileMerges() {}
     function stageTrackerNoteOpened() {}
     function stageTrackerNoteMoves() {}
     function stageTrackerSyncToolbar() {}

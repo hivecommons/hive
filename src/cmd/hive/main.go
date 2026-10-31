@@ -979,20 +979,7 @@ func (b *boot) wireBootClosures() {
 	}
 
 	b.leaderboardForHeartbeat = func() []spoke.LeaderboardEntry {
-		lb := b.dashSrv.LeaderboardForHub()
-		out := make([]spoke.LeaderboardEntry, len(lb))
-		for i, e := range lb {
-			out[i] = spoke.LeaderboardEntry{
-				GitHubUsername: e.GitHubUsername,
-				AvatarURL:      e.AvatarURL,
-				TrustTier:      e.TrustTier,
-				TasksCompleted: e.TasksCompleted,
-				TasksFailed:    e.TasksFailed,
-				Active:         e.Active,
-				CurrentTask:    e.CurrentTask,
-			}
-		}
-		return out
+		return leaderboardForSpoke(b.dashSrv.LeaderboardForHub())
 	}
 
 	var ownerHeartbeatTokenPath string
@@ -3380,7 +3367,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	b.dashSrv.InstallClaimHooks(gfiClaimHooks(b.ctx, b.cfg, b.gfiState(), ghClientFn, b.dashSrv, b.logger,
 		githubClaimHooks(b.ctx, b.cfg, ghClientFn, b.logger)))
 	b.dashSrv.SetGoodFirstIssueStats(func() any { return b.gfiState().sweeper.Stats() })
-	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
+	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient }, b.dashSrv.IntegrationClaimBlockReason)
 	releaseClaimsOnAgentRelaunch(b.agentMgr, b.dashSrv.IssueClaims, b.logger)
 	installContributorClaimGuard(b.cfg, b.dashSrv, b.logger)
 	// Forge App tab inventory: the resolved active key path and the per-app-id
@@ -5639,19 +5626,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 		if b.cfg.Hub.TaskStatusPushEnabled() {
 			deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
 				reg, active := b.dashSrv.ContributorSummary()
-				lb := b.dashSrv.LeaderboardForHub()
-				out := make([]spoke.LeaderboardEntry, len(lb))
-				for i, e := range lb {
-					out[i] = spoke.LeaderboardEntry{
-						GitHubUsername: e.GitHubUsername,
-						AvatarURL:      e.AvatarURL,
-						TrustTier:      e.TrustTier,
-						TasksCompleted: e.TasksCompleted,
-						TasksFailed:    e.TasksFailed,
-						Active:         e.Active,
-						CurrentTask:    e.CurrentTask,
-					}
-				}
+				out := leaderboardForSpoke(b.dashSrv.LeaderboardForHub())
 				return &spoke.TaskStatusPayload{
 					HiveID:       b.cfg.HiveID,
 					Leaderboard:  out,

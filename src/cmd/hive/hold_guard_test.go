@@ -1178,14 +1178,16 @@ func TestEnforceHoldGuardOperatorApprovalCarriesOverHiveBaseRefresh(t *testing.T
 }
 
 // The approval must name the head on the branch now: one recorded on the
-// pre-push head, or by someone outside the merger tier, is not a review of
-// the current tree and the drift path stands.
+// pre-push head, carried from an adopted PR, or by someone outside the merger
+// tier is not a review of the current tree and the drift path stands.
 func TestEnforceHoldGuardOperatorApprovalMustCoverCurrentHeadByTrustedMerger(t *testing.T) {
 	cases := []struct {
 		name, head, actor string
+		body              string
 		users             []string
 	}{
 		{name: "approval on the old head", head: "c1", actor: "clubanderson", users: []string{"clubanderson:owner"}},
+		{name: "carried approval on the current head", head: "p1", actor: "clubanderson", body: "approve (carried from #6 head original)", users: []string{"clubanderson:owner"}},
 		{name: "approver below merger tier", head: "p1", actor: "visitor", users: []string{"visitor:read-write"}},
 		{name: "approver not authorized", head: "p1", actor: "stranger", users: []string{"clubanderson:owner"}},
 	}
@@ -1193,7 +1195,16 @@ func TestEnforceHoldGuardOperatorApprovalMustCoverCurrentHeadByTrustedMerger(t *
 		t.Run(tc.name, func(t *testing.T) {
 			store := newTestHoldGuardStore(t)
 			decisions := swapHoldGuardHumanChangeRequests(t)
-			recordHoldGuardDecision(t, decisions, tc.head, tc.actor, review.HumanChangeRequestKindApprove)
+			body := tc.body
+			if body == "" {
+				body = review.HumanChangeRequestKindApprove
+			}
+			if err := decisions.Record(review.HumanChangeRequest{
+				Repo: "acme/widgets", Number: 7, HeadSHA: tc.head, Source: review.HumanChangeRequestSourceDecision,
+				SourceID: 1, Actor: tc.actor, Body: body, Kind: review.HumanChangeRequestKindApprove,
+			}); err != nil {
+				t.Fatal(err)
+			}
 			fake := &holdGuardServer{commits: map[int][]map[string]any{
 				7: {ghCommit("c1", "odttlnt", "deploy: monitoring"), ghCommit("p1", "odttlnt", "deploy: patch secret")},
 			}}

@@ -97,7 +97,7 @@ func TestStageTrackerMergeSoundWiring(t *testing.T) {
 		`localStorage.getItem(STAGE_TRACKER_SOUND_KEY) === '1'`,
 		`localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0')`,
 		`const STAGE_TRACKER_BUZZ_MASTER_GAIN = 0.2;`,
-		`function stageTrackerMergeState(d)`,
+		`function stageTrackerMergeState(d, prev)`,
 		`function stageTrackerCarryOpen(prev, next)`,
 		`function stageTrackerNewlyMerged(prev, next)`,
 		`function stageTrackerNoteMerges(d)`,
@@ -105,7 +105,7 @@ func TestStageTrackerMergeSoundWiring(t *testing.T) {
 		`function stageTrackerNewlyOpened(prev, next)`,
 		`function stageTrackerNoteOpened(d)`,
 		`function hamSoundToggle()`,
-		`if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }`,
+		`if (data && typeof data === 'object') { _stageTracker = data; stageTrackerReconcileMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }`,
 		`if (stageTrackerSoundGate()) stageTrackerPlayZap(`,
 		`if (stageTrackerSoundGate()) stageTrackerPlayBuzz(`,
 		`function stageTrackerSoundGate() { return !!_stageTrackerSoundOn && !document.hidden; }`,
@@ -228,23 +228,23 @@ assert.deepStrictEqual(stageTrackerMergeState({ items: [P(20, 50), { kind: 'pr',
   { 'a/b/pr#20': false, 'c/b/pr#1': false, 'b/pr#20': true }, 'an ambiguous short name is left alone');
 stageTrackerNoteMerges({ items: [P(21, 50)] });
 stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'b', number: 21 }] });
-assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1], 'short-name entry with no item left to resolve it cannot match…');
+assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1], 'short-name entry resolves against the last observed row after eviction');
 stageTrackerNoteMerges({ items: [P(22, 50)] });
 stageTrackerNoteMerges({ items: [P(22, 50)], recently_merged: [{ repo: 'b', number: 22 }] });
-assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1], '…but one that arrives while the item is still listed does');
+assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1, 1], 'an entry that arrives while the item is still listed also zaps');
 
 // Regression: the PR drops out of items one payload before the audit log
 // lists its merge (webhook-patched snapshot vs poller). Carried as open,
 // it still zaps when recently_merged catches up — once.
 stageTrackerNoteMerges({ items: [P(30, 50), P(31, 60)] });
 stageTrackerNoteMerges({ items: [P(31, 60)] });
-assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1], 'vanished without a merge entry: nothing yet');
+assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1, 1], 'vanished without a merge entry: nothing yet');
 assert.strictEqual(_stageTrackerMergeState['a/b/pr#30'], false, 'carried as still open');
 stageTrackerNoteMerges({ items: [P(31, 60)], recently_merged: [{ repo: 'a/b', number: 30 }] });
-assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1, 1], 'late recently_merged entry zaps');
+assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1, 1, 1], 'late recently_merged entry zaps');
 stageTrackerNoteMerges({ items: [P(31, 60)], recently_merged: [{ repo: 'a/b', number: 30 }] });
 stageTrackerNoteMerges({ items: [P(31, 60)] });
-assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1, 1], 'no replay once the entry ages out');
+assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1, 1, 1], 'no replay once the entry ages out');
 assert.deepStrictEqual(stageTrackerCarryOpen(null, { x: true }), { x: true });
 assert.deepStrictEqual(stageTrackerCarryOpen({ a: false, b: true, c: false }, { c: true }), { a: false, c: true }, 'merged keys are not carried, open ones are');
 `

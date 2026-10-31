@@ -6,7 +6,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/style` | Public | Sanitized custom dashboard CSS | `pkg/dashboard/api.go:46` |
-| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](../branding.md)) | `pkg/dashboard/server.go:1709` |
+| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](../branding.md)) | `pkg/dashboard/server.go:1710` |
 | `GET` | `/api/snapshot/frame-ancestors` | Public | Snapshot framing allowlist | `pkg/dashboard/api.go:80` |
 | `GET` | `/api/snapshot` | Public | Snapshot data | `pkg/dashboard/api.go:81` |
 | `GET` | `/snapshot` | Public | Public read-only snapshot page | `pkg/dashboard/api.go:82` |

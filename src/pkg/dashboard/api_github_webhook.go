@@ -105,6 +105,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]any{"status": "ignored", "reason": "unknown repository", "event": event})
 		return
 	}
+	if err := s.observeIntegrationWebhook(event, r.Header.Get("X-GitHub-Delivery"), body, receivedAt); err != nil {
+		s.webhookLogger().Error("integration observation not durable", "event", event, "error", err)
+	}
 	// HandleWebhookEvent is the legacy writer: it invalidated the PR cache
 	// and dirtied issues for the next cycle. The forgestate writer records
 	// its own sample (WriterForgeState) when it applies the item patch.
@@ -125,6 +128,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if reason, ok := webhookWakeReason(event, res); ok && s.deps.WebhookWake != nil {
 		s.deps.WebhookWake(reason)
 		resp["wake"] = reason
+	}
+	if err := s.integrationFailureIdentity(event, body, res.CIFailure); err != nil {
+		s.webhookLogger().Warn("integration failure identity unavailable", "error", err)
 	}
 	if reactions := s.reactToCIFailure(res); len(reactions) > 0 {
 		resp["ci_failure"] = reactions

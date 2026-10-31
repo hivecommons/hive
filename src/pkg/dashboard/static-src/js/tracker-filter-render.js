@@ -52,7 +52,7 @@
     }
 
     function renderStageTracker(data, countRefresh = false) {
-      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerReconcileMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
       // Row-action feedback rides the payload: a result toast leaves and a
       // row stops "acting" once the item it targets reads a new state.
       if (data && typeof data === 'object' && typeof stageTrackerResultToastsSync === 'function') { stageTrackerNoteEvents(data); stageTrackerResultToastsSync(data); stageTrackerPendingExpire(data); }

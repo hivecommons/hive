@@ -44,6 +44,14 @@ func (s *Server) reactToCIFailure(res github.WebhookEventResult) []ciFailureReac
 		return nil
 	}
 	store := github.CIFailureSignals()
+	var integrationContext *github.IntegrationFailureContext
+	memberHead := ""
+	if owner, context, head := s.integrationFailureOwner(res.Repo, f); owner != nil {
+		copyFailure := *f
+		copyFailure.PRs = []github.CIFailurePR{*owner}
+		f = &copyFailure
+		integrationContext, memberHead = context, head
+	}
 	if len(f.PRs) == 0 {
 		store.RecordUnmatched()
 		return nil
@@ -66,6 +74,9 @@ func (s *Server) reactToCIFailure(res github.WebhookEventResult) []ciFailureReac
 			Repo: repo, Number: pr.Number, HeadSHA: f.HeadSHA, Check: f.Check,
 			Conclusion: f.Conclusion, DetailsURL: f.DetailsURL, Title: pr.Title,
 			Author: pr.Author, HiveAuthored: pr.HiveAuthored, At: now,
+		}
+		if integrationContext != nil {
+			sig.Integration, sig.HeadSHA = integrationContext, memberHead
 		}
 		r := ciFailureReaction{Number: pr.Number, Check: f.Check, Route: "contributor"}
 		if pr.HiveAuthored {

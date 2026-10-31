@@ -1,0 +1,1 @@
+- The fleet self-report no longer files an unclassified-error issue when the review-request watcher suppresses a duplicate review comment under the per-head cap (#15906).

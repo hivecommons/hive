@@ -4,10 +4,17 @@
     // Pure: PR key → merged? for one payload. Issues are not tracked. A
     // recently_merged repo given by its short name is resolved against the
     // owner/name of the items (any kind, any repo) when exactly one matches.
-    function stageTrackerMergeState(d) {
+    function stageTrackerMergeState(d, prev) {
       const out = {};
       if (!d || typeof d !== 'object') return out;
       const byShort = {};
+      // A dropped row (including one from before a reload) still teaches
+      // the short repo alias used by the audit side list.
+      for (const key of Object.keys(prev || {})) {
+        const repo = key.slice(0, key.lastIndexOf('/pr#'));
+        const slash = repo.lastIndexOf('/');
+        if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+      }
       for (const it of (Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         // Every item of every repo (issues too) teaches the short → full
@@ -47,10 +54,40 @@
       return Object.keys(next).filter(k => next[k] === true && prev[k] === false).sort();
     }
 
+    const STAGE_TRACKER_MERGE_SESSION_KEY = 'hive.tracker.merge-session.v1';
+    // Shape of a stageTrackerPRKey() key as stored in the session record.
+    const STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE = /^.+\/pr#[1-9][0-9]*$/;
+    var _stageTrackerMergeSessionLoaded = false;
+    // Persist both the last observation and the delivered keys: saving only
+    // delivered keys loses an open→merged transition across a reload. The
+    // first visit still seeds history silently rather than replaying it.
+    function stageTrackerReconcileMerges(d) {
+      if (!_stageTrackerMergeSessionLoaded) {
+        _stageTrackerMergeSessionLoaded = true;
+        try {
+          const saved = JSON.parse(sessionStorage.getItem(STAGE_TRACKER_MERGE_SESSION_KEY));
+          if (saved && saved.state && typeof saved.state === 'object' && !Array.isArray(saved.state)) {
+            const state = {}, delivered = {};
+            for (const key of Object.keys(saved.state)) {
+              if (!STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) || typeof saved.state[key] !== 'boolean') continue;
+              state[key] = saved.state[key];
+            }
+            for (const key of Object.keys(saved.delivered || {})) {
+              if (STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) && saved.delivered[key] === true) delivered[key] = true;
+            }
+            _stageTrackerMergeState = state;
+            _stageTrackerZapped = delivered;
+          }
+        } catch {} // Storage disabled/corrupt: keep the in-memory path.
+      }
+      stageTrackerNoteMerges(d);
+      try { sessionStorage.setItem(STAGE_TRACKER_MERGE_SESSION_KEY, JSON.stringify({ state: _stageTrackerMergeState, delivered: _stageTrackerZapped })); } catch {}
+    }
+
     function stageTrackerNoteMerges(d) {
       const nowMs = Date.now();
       _stageTrackerMergingHoldMs = stageTrackerMergingHoldMsOf(d, _stageTrackerMergingHoldMs);
-      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d));
+      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d, _stageTrackerMergeState));
       // The merge gate's hold (hivecommons/hive#15245, #15808) keeps a
       // row the payload dropped mid-merge on the board at "Merging" until
       // the merged fact arrives (then the merge is fresh at once) or the
@@ -204,7 +241,7 @@
     function stageTrackerMergingHoldRelease() {
       _stageTrackerMergingHoldTimer = 0;
       if (!_stageTracker || typeof _stageTracker !== 'object') return;
-      stageTrackerNoteMerges(_stageTracker);
+      stageTrackerReconcileMerges(_stageTracker);
       renderStageTracker(undefined, true);
     }
 
@@ -945,7 +982,7 @@
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
       el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
-      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
+      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
       toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
       return el;
     }
