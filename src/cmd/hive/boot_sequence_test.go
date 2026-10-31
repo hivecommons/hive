@@ -1,10 +1,14 @@
 package main
 
 import (
+	"io"
+	"log/slog"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
 func funcName(f interface{}) string {
@@ -29,10 +33,11 @@ func TestDefaultBootSequenceOrder(t *testing.T) {
 	if len(seq.phases) != len(want) {
 		t.Fatalf("phase count = %d, want %d", len(seq.phases), len(want))
 	}
-	// step() wraps non-veto phases in a closure, so their names are not
-	// recoverable through the func value; only the veto-capable bootAdvisory
-	// is pinned by name. defaultBootSequenceNames pins the rest.
-	if got := funcName(seq.phases[2]); got != "bootAdvisory" {
+	// step() and notingPhase() wrap every phase in a closure, so names are
+	// not recoverable through the func values; the veto-capable bootAdvisory
+	// is pinned through the phase table and defaultBootSequenceNames pins
+	// the order.
+	if got := funcName(defaultBootPhases()[2].run); got != "bootAdvisory" {
 		t.Fatalf("phases[2] = %s, want bootAdvisory (the veto-capable phase)", got)
 	}
 	if got := defaultBootSequenceNames(); strings.Join(got, ",") != strings.Join(want, ",") {
@@ -88,5 +93,23 @@ func TestRunBootPhaseVetoSkipsLaterPhasesAndLoop(t *testing.T) {
 	runBoot(b, seq)
 	if got := strings.Join(trace, ","); got != "config,p1,cleanup" {
 		t.Fatalf("trace = %s", got)
+	}
+}
+
+// #15788: each phase reports its name to the dashboard as it starts so a
+// browser reconnecting onto a fresh pod can say what it is waiting on; a
+// phase before bootDashboard has nowhere to report and must not panic.
+func TestNotingPhaseReportsStartupPhaseToDashboard(t *testing.T) {
+	b := &boot{}
+	ran := false
+	phase := notingPhase(namedPhase{name: "bootGitHub", run: func(*boot) bool { ran = true; return false }})
+	if phase(b) || !ran {
+		t.Fatal("wrapper must run the phase and return its verdict")
+	}
+
+	b.dashSrv = dashboard.NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	notingPhase(namedPhase{name: "bootStores", run: func(*boot) bool { return true }})(b)
+	if got := b.dashSrv.StartupPhase(); got != "bootStores" {
+		t.Fatalf("StartupPhase = %q, want bootStores", got)
 	}
 }

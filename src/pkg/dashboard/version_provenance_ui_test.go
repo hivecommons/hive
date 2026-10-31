@@ -27,6 +27,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
+	source.WriteString(jsRollUpgradeFuncs(t, html))
 	source.WriteString(versionProvenanceAssertions)
 	if out, err := exec.Command(node, "-e", source.String()).CombinedOutput(); err != nil {
 		t.Fatalf("version renderer failed: %v\n%s", err, out)

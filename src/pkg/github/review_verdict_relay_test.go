@@ -547,6 +547,9 @@ func TestRecordReviewVerdictRejectsWrongPerspective(t *testing.T) {
 	}
 }
 
+// A lane that is not a reviewer binds only to its own dispatch row; another
+// agent's row does not admit it. (A reviewer-role lane does bind to a sibling
+// reviewer's row since hivecommons/hive#15823: see review_head_move_test.go.)
 func TestRecordReviewVerdictRejectsWrongAgent(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}
@@ -555,7 +558,7 @@ func TestRecordReviewVerdictRejectsWrongAgent(t *testing.T) {
 		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "assigned-reviewer"),
 	}})
 
-	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "other-reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("wrong-agent verdict was recorded: %v", matches)

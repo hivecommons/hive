@@ -413,6 +413,29 @@ and release/skip reason. `automerge update-branch` and the sweep's
 reasons do not consume the branch-update budget. Ready-only train seating and
 reviewer dispatch scheduling are separate policies.
 
+The review planner observes the durable preparation owner once per destination
+per pass. Only its exact live, CI-green, mergeable head with a verdict still
+owed receives `base-preparation` review priority; it does not need a ready train
+seat. A refreshed head must pass the existing App-authored base-refresh proof:
+the attempted head is preserved, the merged base lies on the destination branch,
+and the PR's content is unchanged. The actual merged base can be newer than the
+attempt's recorded base SHA; this remains valid after a restart without rewriting
+ownership. An author's content push or amended merge cannot inherit priority.
+Closed, held, retargeted, released and expired owners receive no promotion.
+Observation is read-only and performs GitHub reads outside preparation locks.
+Busy valid reviews are never interrupted. After a confirmed preparation review
+handoff, other non-pending heads promoted by the existing three-cycle starvation
+rule go first as `base-preparation-fairness`; their confirmed service restores
+preparation preference. Unrelated deliveries cannot clear the owed yield. This
+uses the existing dispatch history, survives restarts, and prevents successive
+owners from indefinitely starving aged work. Without an active eligible owner,
+the existing review order is unchanged. Priority is not review approval or merge
+eligibility: normal label, model, current-head verdict and merge gates still run.
+`review swarm kick planned` exposes `priority=base-preparation`; the normal
+waiting reasons continue to expose reviewer/parallel-slot exhaustion.
+`automerge base preparation observation skipped` with
+`reason=unverified-app-base-refresh` records a failed refreshed-head proof.
+
 Human pushes, direct merges and external automation can still move a base.
 Such a move is coalesced until the preparation owner qualifies again; it must
 then refresh and re-pass current-head gates if still behind. This scheduler
@@ -420,6 +443,42 @@ cannot stop external writers and does not relax strict current-base checks.
 Deploying the changed hive binary activates the policy; no agent, memory,
 review, CI, hold or authorization setting needs changing.
 
+### CI reporting reconciliation
+
+An unfinished required check is not green merely because its Actions workflow
+ended. PR CI evaluation now reports `ci-reporting-stalled` only after two fresh,
+consistent observations separated by a propagation grace. It verifies the exact
+current PR head, Actions App/check/suite provenance, owning workflow execution,
+latest attempt's job-to-check URL, and a final head/base/attempt consistency read.
+A newer execution, changed head, unsupported provider or unavailable API cannot
+be used to declare a stall. Ordinary queued/running workflows remain ordinary
+pending CI, regardless of elapsed time. Workflow success does not fabricate a
+successful check; workflow failure and pending job/check reporting remain
+separately visible.
+
+The structured `CIReportingObservation` and existing reason tooltip identify
+the check, run, latest attempt, job, conclusion and observation time. API refusal
+is `ci-reporting-unverified`, not green. The stage remains CI-pending-compatible,
+and all current-head review, authorization, hold and merge gates remain intact.
+Commit-only/base observations retain their existing behavior. No rendering API
+polling is added: evaluation uses an identity/PR/head/check-set-scoped, bounded
+single-flight cache. `HIVE_CI_REPORTING_RECHECK` and `HIVE_CI_REPORTING_GRACE`
+default to five minutes; verified check/workflow events request a refresh bounded
+to once per minute. Duplicate deliveries cannot shorten grace; cold restart
+requires fresh consistency observations again.
+
+**Automatic recovery is not implemented or enabled.** A confirmed stall exposes
+owner action: inspect the exact workflow's current attempt and logs before one
+affected-workflow rerun. Do not rerun all CI or rebase to hide reporting failure.
+The existing filesystem mutation ledger only serializes users sharing that
+filesystem; shared-CI post-effect comment markers are not atomic cross-hive
+claims. Future recovery must prove a pre-mutation episode claim and enforced
+designated executor (other hives observe only), with durable ambiguous intent
+blocking blind retries. Actions rerun RPCs accept no fencing/idempotency token:
+designated routing or a forge CAS alone is not failover fencing or exactly-once
+execution, and ambiguous intent must not be automatically stolen after a TTL.
+App permission changes, live configuration and experimental integration
+activation are not prerequisites for detection and are not made by this change.
 ### Merge train: ready PRs lead
 
 Every lane groups its candidates on one base whose changed files overlap
@@ -452,6 +511,33 @@ merged until its checks finished. In the Activity Monitor only members at
 080 and beyond ride a train chip in the *Merge queue* column; a member still
 at CI / Review keeps its chevron in its own column with a muted
 "train · joins behind #N when green" note.
+
+**Membership is ready-only** ([#15825](https://github.com/hivecommons/hive/issues/15825)).
+The rule: *items that have not passed the review or CI is not green should
+not be (a) ready for merge, (b) in a merge train.* A PR takes a seat only
+while its **current head** is green, has every required perspective
+verdict recorded, is mergeable, not conflicting and not held. A PR that
+shares files with a train but is short of that is a *candidate*: the
+tracker keeps the overlap note, but it holds no position and is never the
+front. A member that regresses — new push (head moved), CI pending or red,
+a verdict owed again, a conflict with the base — is **ejected** on the
+next evaluation (one INFO line `merge train: member ejected pr=N
+why=head-moved|ci-pending|ci-red|verdict-owed|conflicting`), the next
+ready member fronts and merges, and the ejected PR re-enters at the back
+once it is ready again. Its tracker row drops back to the CI / Review
+column (never the *Merge queue* column) with a caption that says what is
+owed ("left the merge train — new push, CI re-running after push") and a
+gray lineage pill ("left merge train · pushed 3m ago"). Among ready
+members the order is the readiness tiers above, then age. The one
+exception is a member the train itself made dirty by merging the front
+ahead of it: it keeps its seat (trailing every clean member) while the
+resolver rebases it, so the rebase keeps its place in line. Its row still
+shows in the CI / Review column while the rebase runs ("Rebasing · attempt
+1/2"): the rebased head has no CI or verdicts yet. The tracker's train
+header counts seated members only — a candidate or an ejected row never
+adds to "merge train · N PRs" — and a seated row always reads its seat
+("Merge train · 2nd of 2 · behind #15771"); "checking now" is said only
+of the PR the sweep is evaluating at that moment.
 
 ### Trusted-author auto-merge
 
@@ -833,7 +919,11 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
 carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
-hold / sentinel alert → `stage/085-needs-decision`, untrusted author with an approve verdict at the
+hold / sentinel alert → `stage/085-needs-decision`, hive-authored PR whose fix
+dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
+with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /
+hand to a person / close as not planned; a stale `decision-answered` cannot pull it
+back to 070 while the head is unchanged, [#15744](https://github.com/hivecommons/hive/issues/15744)), untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
 missing; the dashboard derives a compact **human-merge reason code** from the
@@ -993,6 +1083,61 @@ recorded trusted decision on a PR's head (the tracker's Approve, or any
 `/hive decision` on it — the downstream gates still judge the merge) is
 what lifts the gate for that PR; closing the other ends it
 ([#15810](https://github.com/hivecommons/hive/issues/15810)).
+
+### Hive-authored superseding PRs auto-merge
+
+Owner rule (@clubanderson): *"if a pr is superseded by a pr that a hive
+agent creates, it should auto merge"* — *"the only exception would be if
+this is sentinel or some other emergent problem with the pr."*
+
+A **hive superseding PR** is a PR the hive App itself authored
+(`@hivecommons-hive[bot]`) whose body declares `Supersedes #N` — the PR a
+takeover, close-first adoption or re-author lead opens to carry a
+contributor's or bot's change. `github.IsHiveSupersedingPR` /
+`github.HiveSupersedingPR` detect it; `PullRequest.Supersedes` carries the
+number. Twice in one morning such PRs (#15649, #15646) parked at
+`stage/085-needs-decision` on a reviewer's security-sensitive
+`requires_human` and the owner had to click approve for work the hive had
+already decided to carry. Under this rule they do not:
+
+- **Reviewer findings go to the fixer.** On a hive superseding PR the
+  aggregate (`review.hiveSupersedingFixRoute`) turns a `requires_human` —
+  a risk-class decision question, a security-sensitive finding, an
+  unresolved escalation — into `changes_requested` with the reason
+  `hive-authored superseding PR: reviewer requires_human routed to the fixer; auto-merges once CI and review are clean`; the fixer
+  addresses it and the swarm re-reviews, exactly like any other finding.
+  A `reject` is not converted: it is an emergent problem with the PR. The
+  stage engine captions the head *"hive-authored superseding PR —
+  auto-merging once CI/review are clean"* (lane reason
+  `hive-superseder:fixer`) rather than "needs your decision", and the
+  reviewer prompts say so (`hiveSupersedingGuidance`).
+- **Green and clean merges with no decision.** Once CI is green and the
+  review has no open findings the PR follows the hive-authored admission
+  path (`stage/080` → merge). The superseded PR is closed as superseded by
+  the existing writeback (`Superseded by #N`) once it merges, as before.
+- **The only exceptions are the hard stops**, computed in one place
+  (`automerge.hiveSupersederHardStop`) and named in the 085 caption
+  (`hive-superseder-hard-stop:<token>`):
+  - `sentinel-unacknowledged` — the sentinel label is on and nobody has
+    acknowledged its finding (`sentinel_acknowledged` in the review
+    evidence bundle; an acknowledged sentinel, as on #15650, is not a
+    stop);
+  - `hold` — a `hold` / decision-class label or a repo/global hold;
+  - `fix-attempts-exhausted` — the fixer spent its cycle cap on the
+    reviewer's findings; reported as `ci-red-after-fixes` when CI is
+    still red, `base-conflict-unresolved` when the head still conflicts;
+  - `base-conflict-unresolved` — the hive's rebase-resolve episode
+    already failed twice.
+
+  A pending check, a first conflict or an ordinary reviewer finding is
+  never a stop. The tracker row reads *"The hive's superseding PR would
+  auto-merge (owner rule), but <stop>"*, and *Let hive decide* answers
+  recommend-only, naming the stop (`delegatedecision.RuleHiveSuperseder`);
+  without a stop it releases the PR under the same rule.
+
+`auto_merge.hive_superseding.auto_merge: false` turns the rule off and
+restores the previous behaviour (a `requires_human` parks the superseding
+PR at 085 like any hive-authored PR).
 
 ### Empty-diff PRs of the hive's own
 

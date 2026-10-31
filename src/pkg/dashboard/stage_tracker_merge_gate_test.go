@@ -363,7 +363,8 @@ func stageTrackerTrainProvisionalJS(t *testing.T, html string) string {
 // stageTrackerSoakClockJS lifts the soak-clock helpers the gate pill reads.
 func stageTrackerSoakClockJS(t *testing.T, html string) string {
 	t.Helper()
-	return jsFunc(t, html, "stageTrackerSoakClock") + "\n" +
+	return jsConstLine(t, html, "STAGE_TRACKER_MERGING_SLOW_MS") + "\n" +
+		jsFunc(t, html, "stageTrackerSoakClock") + "\n" +
 		jsFunc(t, html, "stageTrackerSoakLeftText") + "\n" +
 		jsFunc(t, html, "stageTrackerClockText") + "\n" +
 		jsFunc(t, html, "stageTrackerNextPassWords") + "\n" +

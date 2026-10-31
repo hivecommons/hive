@@ -46,6 +46,8 @@ name: Go Security Analysis
 # Same shape as dashboard/openapi.json in v2-tests.yml: guarded by a job whose
 # filter excluded it.
 on:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [v4, v5, v6]
     # release PRs touch only these; the required contexts must report — #10795

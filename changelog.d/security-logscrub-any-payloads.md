@@ -1,0 +1,1 @@
+- Scrub `[]byte`, `[]string`, map, struct and other composite log attributes (and `TextMarshaler` values) so credential-shaped tokens no longer bypass the log scrubber ([#15735](https://github.com/hivecommons/hive/issues/15735), [#15736](https://github.com/hivecommons/hive/issues/15736)).

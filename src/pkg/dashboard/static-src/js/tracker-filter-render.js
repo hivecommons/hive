@@ -51,8 +51,8 @@
       _stageTrackerPollErrorSince = 0;
     }
 
-    function renderStageTracker(data) {
-      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
+    function renderStageTracker(data, countRefresh = false) {
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerReconcileMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
       // Row-action feedback rides the payload: a result toast leaves and a
       // row stops "acting" once the item it targets reads a new state.
       if (data && typeof data === 'object' && typeof stageTrackerResultToastsSync === 'function') { stageTrackerNoteEvents(data); stageTrackerResultToastsSync(data); stageTrackerPendingExpire(data); }
@@ -62,6 +62,9 @@
       // Rows under a "Merging" hold the payload already dropped ride along (#15245).
       const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
+        if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
+        if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(null, [], nowMs, '');
+        stageTrackerSidebarCountsUnknown();
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
       }
@@ -89,6 +92,8 @@
         ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
         : stageTrackerPage(ordered, f);
       if (page.page !== f.page) f.page = page.page;
+      if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(d, ordered, page.rows, stages, nowMs);
+      if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(d, page.rows, nowMs, f.repo);
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
@@ -108,7 +113,8 @@
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
-      stageTrackerRenderWaiting(d, nowMs);
+      navCountDelta(badge, counts.badge, counts.badgeTitle, !!data || countRefresh);
+      stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
@@ -206,4 +212,3 @@
       _stageTrackerNudgeAt = Date.now();
       fetchStageTracker();
     }
-

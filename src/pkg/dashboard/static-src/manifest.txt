@@ -7,6 +7,7 @@ css/agent-cards.css
 css/auth.css
 css/agent-state.css
 css/tracker.css
+css/tracker-native-queue.css
 css/agent-fields.css
 css/governor.css
 css/advisory-lifecycle.css
@@ -31,6 +32,7 @@ css/recipes-utilities.css
 css/welcome.css
 css/review-campaigns.css
 css/kiosk.css
+css/popout.css
 css/variables.css
 glue/style-close-body-open.html
 js/boot.js
@@ -68,9 +70,15 @@ js/tracker-words-stage.js
 js/tracker-words-gate.js
 js/tracker-words.js
 js/tracker-row.js
+js/tracker-row-strip.js
+js/tracker-row-acted.js
+js/tracker-row-layout.js
 js/tracker-motion.js
 js/tracker-filter.js
 js/tracker-filter-state.js
+js/nav-count-delta.js
+js/tracker-preparation.js
+js/tracker-native-queue.js
 js/tracker-filter-render.js
 js/tracker-filter-fetch.js
 js/tracker-actions.js
@@ -78,6 +86,7 @@ js/tracker-merged.js
 js/tracker-queue.js
 js/tracker-sound.js
 js/tracker-waiting.js
+js/tracker-popout.js
 js/agent-cards.js
 js/banners.js
 js/governor-view.js
@@ -115,6 +124,7 @@ js/config-agent.js
 js/config-governor.js
 js/config-watchdog-security.js
 js/config-features.js
+js/config-event-triggers.js
 js/config-sentinel.js
 js/compliance.js
 js/config-helpers.js

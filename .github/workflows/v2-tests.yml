@@ -1,6 +1,8 @@
 name: v2 Tests
 
 on:
+  merge_group:
+    types: [checks_requested]
   schedule:
     # Hourly, at :30 — deliberately offset from coverage-hourly.yml's :00 run
     # so the two scheduled nets alternate every half hour instead of firing
@@ -49,7 +51,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 env:
   # The race-enabled shards require cgo even on lean self-hosted runner images.
@@ -2004,7 +2005,7 @@ jobs:
   # still parsed for the two states a profile cannot express: FAIL and
   # `? ... [no test files]` — both hard failures, as before.
   coverage:
-    if: ${{ always() && github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/') }}
+    if: ${{ always() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/'))) }}
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
@@ -2457,8 +2458,29 @@ jobs:
           fi
           echo "All packages meet their coverage floor" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Patch coverage on changed Go lines (advisory)
-        if: ${{ steps.cov-scope.outputs.score == 'true' && github.event_name == 'pull_request' && !cancelled() }}
+  patch-coverage:
+    if: ${{ github.event_name == 'pull_request' && needs.coverage.result == 'success' && needs.required-context-scope.outputs.run-tests == 'true' && !cancelled() }}
+    needs: [coverage, required-context-scope]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .coverage-tools
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: test-shard-*
+          path: shards
+          merge-multiple: true
+      - name: Patch coverage on changed Go lines (advisory, trusted base tool)
         continue-on-error: true
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -2471,7 +2493,7 @@ jobs:
               END { print "mode: atomic"; for (key in hits) print key, hits[key] }' \
               shards/coverage-*.out > shards/coverage-merged.out 2>/dev/null || true
           fi
-          bash .github/scripts/patch-coverage.sh \
+          bash .coverage-tools/.github/scripts/patch-coverage.sh \
             --base "origin/$BASE_REF" \
             --profile shards/coverage-merged.out \
             --min-percent 80 --min-uncovered 5 \

@@ -917,7 +917,7 @@ func runEvalCycle(
 	// paused agent or exhausted budget. Fully guarded/cheap: with no `triggers:`
 	// configured, celEngineFor returns nil and celMatchedAgents does zero work.
 	if celEngine := celEngineFor(cfg, logger); celEngine != nil {
-		celAgents := celMatchedAgents(celEngine, actionable, cfg, gov, agentMgr.IsPaused, logger)
+		celAgents := celMatchedAgentsOnce(celEngine, actionable, cfg, gov, agentMgr.IsPaused, logger, &globalCELSeen)
 		if len(celAgents) > 0 {
 			before := len(agentsDue)
 			agentsDue = unionAgents(agentsDue, celAgents)
@@ -939,6 +939,17 @@ func runEvalCycle(
 	// policy, dashboard status, PR/review dispatch, escalation, and every path
 	// not explicitly enrolled.
 	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
+	if cfg.AutoMerge.NativeMergeQueue.Enabled {
+		go func() {
+			if err := dashSrv.ReconcileNativeQueues(ctx); err != nil {
+				logger.Warn("native queue observations incomplete", "error", err)
+			}
+		}()
+	}
+	if err := dashSrv.ReconcileIntegration(ctx); err != nil {
+		logger.Warn("integration observations incomplete", "error", err)
+	}
+	kickActionable = dashSrv.IntegrationKickAdmission(kickActionable)
 
 	sched.SetLastActionable(kickActionable)
 	// The filter compacts agentsDue in place, so snapshot it first to report

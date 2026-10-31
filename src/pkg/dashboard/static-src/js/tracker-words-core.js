@@ -93,6 +93,9 @@
     // it alone); stage_tracker_merge_gate_test.go pins the two equal.
     const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
     // merge_gate.merge_path (the merge call's issuer) in words (#15245).
+    // A merge call (or a sweep's pass on a soaked PR) older than this says
+    // "waiting for GitHub…" rather than spinning without a reason (#15808).
+    const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
     const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
@@ -148,8 +151,9 @@
     const STAGE_TRACKER_TRAIN_ICON_PATH = '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>';
     const STAGE_TRACKER_TRAIN_ICON_TITLE = 'Merge queue';
     // Pure: the inline-SVG train with its "Merge queue" hover.
-    function stageTrackerTrainIconHtml(cls) {
-      return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}"><title>${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
+    function stageTrackerTrainIconHtml(cls, title) {
+      const label = title || STAGE_TRACKER_TRAIN_ICON_TITLE;
+      return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
     }
     // Pure: ordinal place words — "1st", "2nd", "3rd", "4th", "11th",
     // "21st" (the owner's wording for the queue: "Merge queued · 1st").
@@ -475,6 +479,9 @@
     function stageTrackerOverlapBadgeText(item) {
       const o = stageTrackerOverlap(item);
       if (!o) return '';
+      // The server may pin the words (an admitted candidate reads "joins
+      // behind #N next pass" — it is green already, hive#15825).
+      if (o.badge) return String(o.badge);
       if (Number(o.behind) > 0) return STAGE_TRACKER_OVERLAP_CHIP_LEAD + 'joins behind #' + Number(o.behind) + ' when green';
       return STAGE_TRACKER_OVERLAP_CHIP_LEAD + '1st once green';
     }
@@ -490,10 +497,25 @@
       const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
       return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — no member of the train is merge-ready yet; provisionally 1st, merges ahead of ' + (withPRs.length > 1 ? 'them' : 'it') + ' if it is green first';
     }
+    // Pure: the gray lineage pill for a PR the merge train ejected
+    // (hive#15825): `left_train.badge` ("left merge train · pushed 3m
+    // ago"); the hover carries the why ("left the merge train — new push,
+    // CI re-running after push"). '' when the row rides a train or the
+    // server sent no lineage.
+    function stageTrackerLeftTrainBadgeText(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.badge || '');
+    }
     // Pure: the muted badge beside the row's chips; '' without a hint.
     function stageTrackerOverlapBadgeHtml(item) {
       const text = stageTrackerOverlapBadgeText(item);
-      if (!text) return '';
+      if (!text) {
+        const left = stageTrackerLeftTrainBadgeText(item);
+        if (!left) return '';
+        const leftTip = 'Merge train: ' + stageTrackerLeftTrainNote(item);
+        return `<span class="ham-badge ham-badge-overlap" title="${esc(leftTip)}" aria-label="${esc(leftTip)}">${esc(left)}</span>`;
+      }
       const tip = 'Not in the merge queue yet: ' + stageTrackerOverlapTip(item);
       return `<span class="ham-badge ham-badge-overlap" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(text)}</span>`;
     }

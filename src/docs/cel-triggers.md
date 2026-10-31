@@ -56,7 +56,7 @@ The reachable fields, taken from the `cel:"..."` struct tags on
 | CEL field | Go type | Meaning |
 | --- | --- | --- |
 | `event.kind` | string | Event kind — see the `Kind*` constants below. |
-| `event.repo` | string | Fully-qualified repository, e.g. `"org/name"`. |
+| `event.repo` | string | Repository spelling from `project.repos`, e.g. `"name"` or `"org/name"`; use the configured spelling, not necessarily the qualified display label. |
 | `event.labels` | list of string | Labels on the issue/PR. |
 | `event.title` | string | Issue/PR title. |
 | `event.author` | string | Login/handle of the actor that produced the event. |
@@ -88,6 +88,66 @@ pr.closed
 pr.merged
 comment.created
 ```
+
+`issue.opened` and `pr.opened` are edge-triggered: the eval cycle emits them
+once per issue/PR (keyed `repo#number`) per hive process, the first time the
+item is enumerated, not on every cycle while it stays actionable. The seen-set
+is in memory, so a hive restart re-emits currently actionable items once.
+
+### Run the scanner for newly seen GitHub issues
+
+Open **Settings → Features → Work intake & issue lifecycle → Event triggers**,
+or use the **Event triggers** button in **Agent → Configuration → Channels**.
+Owner access is required. Choose **Run scanner when an issue is first seen**,
+enter a rule name, select the existing scanner agent and **one managed
+repository**, then use **Save Event trigger**. No YAML editing is required.
+The repository picker displays qualified labels but saves the exact configured
+repository spelling used by evaluation; there is no all-repositories default.
+
+Existing rules can be edited with **Advanced CEL**, preserving their expression,
+order, target and priority unless explicitly changed. Higher priority sorts
+first; ties retain declaration order. There is no `enabled` field: remove a rule
+to stop its routing. These operations do not change unrelated settings or
+default governor behavior.
+
+The editor validates the complete rule list, including CEL compilation and a
+boolean result, before persistence. New or edited rules must name an existing
+agent. Save errors keep the draft visible; a revision conflict requires
+reloading the latest rules instead of overwriting another operator's changes.
+**Reload (discard draft)** explicitly discards the pending edit. This editor
+has its own save button; the dialog's **Save & close** does not save its draft.
+Successful saves are durable and apply on the **next event evaluation**, with
+no restart required; saving does not immediately kick an agent. Updating rules
+does not reset already-seen item history.
+
+Agent → Configuration → Channels is **not** a GitHub webhook installer.
+Only the governor `kick` channel has a supported runtime; the old `webhook`,
+`discord`, `schedule`, and `bead` channel runtimes were removed.
+For file-based configuration, the equivalent is a top-level rule in
+`hive.yaml` (keep existing rules):
+
+```yaml
+triggers:
+  - name: scanner-new-issue
+    expr: event.kind == "issue.opened" && event.repo == "org/repo"
+    agent: scanner
+```
+
+Replace `org/repo` with the exact spelling from `project.repos` and ensure the
+scanner is enabled. Normal pause, budget, and on-demand gates still apply.
+This means **first seen actionable issue**, not exclusively an issue created
+after the rule was installed: existing actionable issues match once, and
+restart replays them once as described above.
+
+For prompt delivery rather than waiting for reconciliation, use the existing
+signed GitHub webhook receiver and subscribe to `issues`:
+[operator setup](operator-reference.md#webhook-driven-pr-cache-invalidation).
+Hosted hives normally receive the GitHub App's signed deliveries through the
+hub relay; stand-alone hives use `POST /api/webhook/github`.
+The receiver requires `GITHUB_WEBHOOK_SECRET` and a matching HMAC signature.
+Saving a channel or adding a CEL rule neither registers a webhook nor
+configures its secret. Delivery wakes an early governor evaluation subject
+to debounce/minimum-gap pacing; it does not bypass agent execution gates.
 
 ### Available functions
 

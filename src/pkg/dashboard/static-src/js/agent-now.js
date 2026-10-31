@@ -256,8 +256,8 @@
     // The RUNNING tile rotates its cost window — this hour → today → this
     // week → this month — one phrase at a time (#15614). The agent count
     // stays put; only the amount + window phrase crossfades. All four
-    // phrases are rendered into the same grid cell so the tile is always as
-    // wide as its widest phrase and never shifts or wraps. The rotation
+    // phrases share a grid cell below the count, reserving room for the
+    // tallest wrapped phrase without shifting on rotation. The rotation
     // index is module state so a status repaint keeps the current phrase.
     // The hour window keeps cents (it is small and moves fast); the longer
     // windows round to whole dollars (fmtUSDWhole) so the figure stays short.
@@ -339,13 +339,13 @@
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
       fleetCostRotorStart();
-      return `<div class="gov-stat fleet-run-stat" data-fleet-cost-host title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price; $– when a running agent's model is unpriced).&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</div></div>`;
+      return `<div class="gov-stat fleet-run-stat" data-fleet-cost-host title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price; $– when a running agent's model is unpriced).&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run"><span class="fleet-run-count">${f.running || 0}</span>${fleetCostRotorHtml(f)}</div></div>`;
     }
     function fleetRunStripHtml() {
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
       fleetCostRotorStart();
-      return `<div class="gov-metric fleet-run-stat" data-fleet-cost-host title="Agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price)&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</span></div>`;
+      return `<div class="gov-metric fleet-run-stat" data-fleet-cost-host title="Agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price)&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run"><span class="fleet-run-count">${f.running || 0}</span>${fleetCostRotorHtml(f)}</span></div>`;
     }
 
     // Repaints every "Now:" line in place so "ago" keeps counting up (and

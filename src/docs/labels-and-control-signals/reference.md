@@ -784,7 +784,7 @@ Queue label for human/owner merge action; the sweep also requires its normal aut
 
 **Release or override.** Remove label; head changes can de-queue
 
-**Configuration and implementation.** `governor.labels.automerge`, default `lgtm` (`src/pkg/config/config.go:3388-3396`, `src/pkg/config/config.go:4952-4957`, `src/pkg/github/automerge/automerge_sweep.go:966-1036`)
+**Configuration and implementation.** `governor.labels.automerge`, default `lgtm` (`src/pkg/config/config.go:3388-3396`, `src/pkg/config/config.go:4952-4957`, `src/pkg/github/automerge/automerge_sweep_loop.go:13-82`)
 
 #### `reviewer-passed`
 

@@ -116,6 +116,8 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSupersededOriginalClause"),
 		jsFunc(t, html, "stageTrackerLineageTip"),
 		jsFunc(t, html, "stageTrackerLineageChipHtml"),
+		jsFunc(t, html, "stageTrackerAlsoClosesChipHtml"),
+		jsFunc(t, html, "stageTrackerLinkedChipsHtml"),
 		jsFunc(t, html, "stageTrackerLinkedPRItem"),
 		jsFunc(t, html, "stageTrackerLinkedPROpen"),
 		jsFunc(t, html, "stageTrackerNestedOpenPRs"),

@@ -97,7 +97,7 @@ func f3FuncBody(t *testing.T, src, decl, name string) string {
 // path itself must consult the tier gate.
 func TestF3SweepConsultsTrustedMergerGate(t *testing.T) {
 	body := f3FuncBody(t,
-		f3ReadSource(t, "automerge_sweep.go"),
+		f3ReadPackage(t, "."),
 		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
 
@@ -141,7 +141,7 @@ func TestF3SweepConsultsTrustedMergerGate(t *testing.T) {
 // "contains isTrustedMerger" assertion while merging anyway.
 func TestF3GateOrderedBeforeMerge(t *testing.T) {
 	body := f3FuncBody(t,
-		f3ReadSource(t, "automerge_sweep.go"),
+		f3ReadPackage(t, "."),
 		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
 
@@ -226,12 +226,17 @@ func TestF3AuthorizerIsWiredInMain(t *testing.T) {
 // different mechanism (App authorship + required checks) and has no queuer at
 // all. Gating it on a queuer login it never has would disable it permanently.
 func TestF3TrustedMergerGateIsNotBlanket(t *testing.T) {
-	src := f3ReadSource(t, "automerge_sweep.go")
-	// Exactly one non-test call site: the queued sweep. A second would mean the
+	// The sweep is split across four files; scan all of them so a leak onto
+	// the self-authored (loop) or trusted-author path is still caught.
+	var src string
+	for _, f := range []string{"automerge_sweep.go", "automerge_sweep_loop.go", "automerge_sweep_queued.go", "automerge_sweep_trusted.go"} {
+		src += f3ReadSource(t, f) + "\n"
+	}
+	// Exactly one call site across the sweep files. A second would mean the
 	// gate leaked onto a path with no queuer identity.
 	calls := regexp.MustCompile(`c\.isTrustedMerger\(`).FindAllString(src, -1)
 	if len(calls) != 1 {
-		t.Errorf("automerge_sweep.go has %d isTrustedMerger call sites, want exactly 1 (the queued "+
+		t.Errorf("automerge_sweep*.go has %d isTrustedMerger call sites, want exactly 1 (the queued "+
 			"sweep). More than one suggests the gate was copied onto a path that has no queuer "+
 			"identity and would fail closed forever; zero means F3 regressed.", len(calls))
 	}
@@ -243,7 +248,7 @@ func TestF3TrustedMergerGateIsNotBlanket(t *testing.T) {
 // negative assertion in this file.
 func TestF3SweepStillMergesOnTheHappyPath(t *testing.T) {
 	body := f3FuncBody(t,
-		f3ReadSource(t, "automerge_sweep.go"),
+		f3ReadPackage(t, "."),
 		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
 	if !strings.Contains(body, "hgithub.MergeableFromState(") {
@@ -260,7 +265,7 @@ func TestF3SweepStillMergesOnTheHappyPath(t *testing.T) {
 // names still look right. Exactly the signal a sync merge trips.
 func TestF3RejectionReasonCountFloor(t *testing.T) {
 	body := f3FuncBody(t,
-		f3ReadSource(t, "automerge_sweep.go"),
+		f3ReadPackage(t, "."),
 		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
 
