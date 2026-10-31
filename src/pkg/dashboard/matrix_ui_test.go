@@ -94,7 +94,7 @@ async function scenario(query, reduced = false, status = 200) {
   const c = vm.createContext({window: win, document: doc, URL, location: {hash: '#activity'},
     history: {replaceState(){}}, localStorage: {getItem(){return null}, setItem(){}},
     requestAnimationFrame(fn){raf.set(++id, fn); return id}, cancelAnimationFrame(i){raf.delete(i)},
-    setTimeout(fn){timers.set(++id, fn); return id}, clearTimeout(i){timers.delete(i)}, setInterval(){},
+    setTimeout(fn){timers.set(++id, fn); return id}, clearTimeout(i){timers.delete(i)}, setInterval(){}, dashboardSetInterval(){},
     fetch(url){requests.push(url); return Promise.resolve({status: responseStatus, ok: responseStatus === 200,
       json(){return Promise.resolve({seq: responseSeq, lines: [{line: '<script>alert(1)</script>', repo: 'org/repo', pr: 2, path: 'main.go', at: new Date().toISOString()}]})}})},
     Date, Math});
