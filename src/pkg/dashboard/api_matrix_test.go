@@ -61,6 +61,7 @@ func TestHandleMatrixLines_404WhenOff(t *testing.T) {
 func TestHandleMatrixLines_AuthRejectionAndKiosk(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := NewServerWithAuth(0, "matrix-secret-123", logger)
+	s.mux.HandleFunc("GET /api/matrix/lines", s.handleMatrixLines)
 	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
 
 	// isPublicPath must be false
