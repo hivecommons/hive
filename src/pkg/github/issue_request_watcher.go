@@ -164,8 +164,13 @@ type IssueResponse struct {
 	// "subject", "file_set", or "component:<path>" (#14360), so the agent can
 	// tell a true twin from a weak shared-path fold.
 	ConsolidatedReason string `json:"consolidated_reason,omitempty"`
-	// ConsolidationSkippedReason echoes the request's no_consolidate_reason
-	// when the watcher skipped consolidation because the caller asked.
+	// ConsolidationSkippedReason names why the watcher filed a new issue
+	// instead of folding: the request's no_consolidate_reason when the caller
+	// asked (#14360), or the watcher-derived "parent" / "blocked_by" when the
+	// request declared DAG placement and the file-set, component and
+	// canonical-subject folds were skipped (#16065). The DAG-derived values
+	// are reported only on a genuine create, never alongside Consolidated or
+	// AlreadyExisted.
 	ConsolidationSkippedReason string `json:"consolidation_skipped_reason,omitempty"`
 	// RejectedDuplicate reports that no issue was created because a maintainer
 	// recently closed an agent-filed issue covering the same file set as
@@ -757,11 +762,26 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if d.Active {
 			issueDecisionDowngrade = d
 		}
-		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: req.NoConsolidateReason == ""})
+		// A declared parent/blocked-by makes the request a distinct DAG node;
+		// never fold it into a sibling that merely cites the same path (#16065).
+		dagSkipReason := ""
+		if req.Parent > 0 {
+			dagSkipReason = "parent"
+		} else if len(req.BlockedBy) > 0 {
+			dagSkipReason = "blocked_by"
+		}
+		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: req.NoConsolidateReason == "", SkipSharedPathFold: dagSkipReason != ""})
 		if req.NoConsolidateReason != "" {
 			resp.ConsolidationSkippedReason = req.NoConsolidateReason
 			c.logger.Info("issue-request watcher: consolidation skipped at the caller's request",
 				slog.String("repo", req.Repo), slog.String("reason", req.NoConsolidateReason), slog.String("agent", req.Agent))
+		} else if dagSkipReason != "" && err == nil && !res.Consolidated && !res.AlreadyExisted && !res.RejectedTwin {
+			// Only a genuine create reports the skip: an exact-title reuse or
+			// a rejected twin still applies, and the result must not claim
+			// both a fold and a skipped fold.
+			resp.ConsolidationSkippedReason = dagSkipReason
+			c.logger.Info("issue-request watcher: file-set and component folds skipped, request declares DAG placement",
+				slog.String("repo", req.Repo), slog.String("reason", dagSkipReason), slog.String("agent", req.Agent))
 		}
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
@@ -1199,6 +1219,13 @@ type CreateIssueRequest struct {
 	// ConsolidateOpen turns on open-twin consolidation: a finding over the
 	// same files as an open hive-filed issue is folded into it (#9376).
 	ConsolidateOpen bool
+	// SkipSharedPathFold suppresses the file-set, same-component and
+	// canonical-subject folds (#16065) for a request that declares DAG
+	// placement (--parent or --blocked-by): sibling children routinely share
+	// a path and a title stem. The create's idempotency claim keys on the
+	// exact title rather than the canonical stem for the same reason. The
+	// exact-title and rejected-twin gates still apply.
+	SkipSharedPathFold bool
 	// FoldMatch, when set, narrows ConsolidateOpen: a file-set or
 	// same-component twin is folded into only when FoldMatch accepts its
 	// title and body. Sharing a file is not sharing a problem; a refused twin
@@ -1351,6 +1378,13 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		!req.FoldMatch(scan.subject.GetTitle(), scan.subject.GetBody()) {
 		scan.subject = nil
 	}
+	// A declared DAG node keeps only the exact-title match: sibling children
+	// of one decomposition share a title stem ("<RFC>: child A/B") as readily
+	// as they share a path (#16065).
+	if err == nil && scan.subject != nil && req.SkipSharedPathFold &&
+		!issueshape.SameTitle(scan.subject.GetTitle(), title) {
+		scan.subject = nil
+	}
 	if err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
@@ -1375,6 +1409,9 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		fileSetTwin = scan.fileSet
 		componentTwin, componentPath, componentCount = scan.component, scan.componentPath, scan.componentCount
 		openComponent, openComponentOldest = scan.componentCounts, scan.componentOldest
+		if req.SkipSharedPathFold {
+			fileSetTwin, componentTwin, openComponent = nil, nil, nil
+		}
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an
@@ -1495,7 +1532,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		ghReq.Labels = &usable
 	}
 	var issue *gh.Issue
-	claim := issueCreateClaim(owner+"/"+repoName, title, body, issueCreateNow())
+	claim := issueCreateClaimFor(owner+"/"+repoName, title, body, issueCreateNow(), req.SkipSharedPathFold)
 	res, found := c.priorBucketIssueCreate(ctx, claim)
 	if !found {
 		create := func(ctx context.Context) (effects.Result, error) {
@@ -1518,7 +1555,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		var err error
 		res, err = effects.Execute(ctx, boundary, claim, create)
 		if errors.Is(err, effects.ErrNeedsReconciliation) {
-			res, err = c.reconcileIssueCreate(ctx, boundary, claim, owner, repoName, title, body, create, err)
+			res, err = c.reconcileIssueCreate(ctx, boundary, claim, owner, repoName, title, body, req.SkipSharedPathFold, create, err)
 		}
 		if err != nil {
 			return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: %w", owner, repoName, err)
@@ -1527,7 +1564,8 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	if issue == nil {
 		// The mutation boundary replayed this create as already applied
 		// (#11579): another filing of the same finding — same canonical
-		// subject and file set, however the title was reworded — landed
+		// subject and file set, however the title was reworded (or, for a
+		// declared DAG node, the same exact title, #16065) — landed
 		// inside the idempotency window (this bucket or the previous one),
 		// so the effect never ran and there is no API response. Hand back
 		// the journaled issue rather than a zero number with a nil error; an
@@ -1568,7 +1606,12 @@ const issueCreateUnknownTTL = time.Hour
 // needs-reconciliation refusal (still wrapping effects.ErrNeedsReconciliation
 // so the watcher counts the attempt and gives up after
 // issueReconcileMaxAttempts).
-func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repoName, title, body string, create func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
+//
+// exactTitle mirrors CreateIssueRequest.SkipSharedPathFold (#16065): a
+// declared DAG node counts only an exact-title twin as evidence that the
+// earlier attempt applied, since a canonical-stem sibling is a different
+// node, not this create.
+func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repoName, title, body string, exactTitle bool, create func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
 	found, lookupErr := c.scanOpenIssues(WithRESTCaller(ctx, "hive:reconcile_issue_create"), owner, repoName, title, body, nil, "")
 	if lookupErr != nil {
 		expired, expErr := effects.ExpireUnresolved(ctx, boundary, claim, issueCreateUnknownTTL)
@@ -1583,7 +1626,7 @@ func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boun
 		return effects.Execute(ctx, boundary, claim, create)
 	}
 	state := effects.ExternalState{}
-	if existing := found.subject; existing != nil {
+	if existing := found.subject; existing != nil && (!exactTitle || issueshape.SameTitle(existing.GetTitle(), title)) {
 		state = effects.ExternalState{Applied: true, Provenance: existing.GetHTMLURL()}
 	}
 	if recErr := effects.Reconcile(ctx, boundary, claim, state); recErr != nil {
@@ -1634,7 +1677,25 @@ const scanOpenIssuesMaxPages = 3
 // trustworthy canonical subject (see canonicalIssueSubject) and no file
 // references falls back to the exact title, which is the pre-#11579 key.
 func issueCreateClaim(repo, title, body string, now time.Time) effects.Claim {
-	subject := canonicalIssueSubject(title)
+	return issueCreateClaimFor(repo, title, body, now, false)
+}
+
+// issueCreateClaimFor is issueCreateClaim with the key selectable. With
+// exactTitle set — a request that declares DAG placement
+// (CreateIssueRequest.SkipSharedPathFold, #16065) — the subject is the exact
+// title minus its `[<agent>]` tag, the same key the scan's exact-title gate
+// compares on, rather than the canonical stem: sibling children "<RFC>:
+// child A" and "<RFC>: child B" canonicalise alike and routinely cite the
+// same file, so the canonical key would replay the second child's create as
+// the first and hand back its sibling's number. The file set stays in the
+// key so a retried create of one child is still a replay of itself.
+func issueCreateClaimFor(repo, title, body string, now time.Time, exactTitle bool) effects.Claim {
+	var subject string
+	if exactTitle {
+		subject = issueshape.StripAgentPrefix(title)
+	} else {
+		subject = canonicalIssueSubject(title)
+	}
 	if subject == "" {
 		subject = strings.TrimSpace(title)
 	}

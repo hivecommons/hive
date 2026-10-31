@@ -59,10 +59,10 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--remove-label` | — | label | repeatable; labels to take off the item |
 | `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
-| `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
-| `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated) |
+| `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
+| `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
 | `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
-| `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"` |
+| `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"`. A request that declares `--parent` or `--blocked-by` needs no reason: it is a distinct DAG node and never takes the file-set, component or canonical-subject folds, and a genuine create reports `consolidation_skipped_reason` as `parent` or `blocked_by` ([#16065](https://github.com/hivecommons/hive/issues/16065)) |
 | `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed. **This is how you test the tool.** A live call creates a real GitHub issue/comment/label change under the hive's App identity |
@@ -638,6 +638,30 @@ Every consolidated result also carries `consolidated_reason`: `subject` (a
 canonical title match on a human-filed issue), `file_set` (an exact file-set
 twin) or `component:<path>` (a same-component fold on `<path>`), so the agent
 can tell a true twin from a shared-path fold.
+
+### DAG children never take a fold
+
+A request that declares `--parent` or `--blocked-by` is an explicit statement
+that it is a new node in a decomposition DAG
+([#16065](https://github.com/hivecommons/hive/issues/16065)). Its body
+legitimately names the file it will touch, and its title shares a stem with
+its siblings ("RFC title: child A", "RFC title: child B"), so under the rules
+above the third child of an RFC was routinely folded into an older sibling —
+the one place it must never land — and the agent only learned of it from the
+result's `number`. Such a request therefore skips the exact file-set twin,
+the same-component fold and the canonical-subject reuse and files its own
+issue. The create's idempotency replay (the 24-hour journal key that makes a
+reworded re-filing of one finding a replay of the first) is keyed on the
+exact title for such a request too, so two siblings that share a stem and
+cite the same file within the window each get their own issue rather than
+the second being handed the first's `number` as `already_existed`. The
+**exact-title** match (ignoring the `[<agent>]` tag) and the
+rejected-twin gate are unchanged, so a retried create still reuses the issue
+it filed. When the request did create a new issue, the result carries
+`consolidation_skipped_reason: "parent"` (or `"blocked_by"` when only
+`--blocked-by` was given), mirroring `--no-consolidate`; the watcher logs the
+skip. A result that reused an exact-title twin reports `already_existed:
+true` and no skip reason.
 
 ### Unattended comments are rate-limited per issue
 
