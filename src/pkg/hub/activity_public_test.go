@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/hubactivity"
 )
@@ -209,5 +210,38 @@ func TestActivityPublic_PagePollsThePublicEndpointWithoutCredentials(t *testing.
 	}
 	if got.PubCreds != "omit" || got.FullCreds != "same-origin" {
 		t.Errorf("credentials public=%q signed-in=%q, want omit / same-origin", got.PubCreds, got.FullCreds)
+	}
+}
+
+// The anonymous default view is built once per TTL window (#16111), a
+// matching ETag is a 304 served from the cache, and expiry rebuilds.
+func TestActivityPublic_CachesBodyForTTL(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newActivityHub()
+	postActivityHeartbeat(t, s, "hive-a", activityDigest("o/a", 1))
+	setActivityHiveVisibility(t, s, "hive-a", true, "github.com")
+
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldNow := publicActivityNow
+	publicActivityNow = func() time.Time { return clock }
+	defer func() { publicActivityNow = oldNow }()
+
+	first := getPublicActivity(t, s, "", "")
+	etag := first.Header().Get("ETag")
+	postActivityHeartbeat(t, s, "hive-a", activityDigest("o/a", 1, 2))
+
+	second := getPublicActivity(t, s, "", "")
+	if second.Body.String() != first.Body.String() {
+		t.Fatalf("body changed inside the TTL window")
+	}
+	if rec := getPublicActivity(t, s, "", etag); rec.Code != http.StatusNotModified {
+		t.Fatalf("conditional status %d, want 304", rec.Code)
+	}
+
+	clock = clock.Add(publicActivityCacheTTL + time.Second)
+	third := getPublicActivity(t, s, "", "")
+	if third.Body.String() == first.Body.String() {
+		t.Fatalf("body not rebuilt after TTL expiry")
 	}
 }

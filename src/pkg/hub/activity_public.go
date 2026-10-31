@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
@@ -32,6 +33,41 @@ const (
 	activityPublicPagePath = "/activity/public"
 	activityPublicPath     = "/api/hub/activity/public"
 )
+
+// publicActivityCacheTTL bounds how long the anonymous default view is
+// served from one build+marshal (#16111). publicActivityNow is a var so tests
+// can move the clock.
+var (
+	publicActivityCacheTTL = 2 * time.Second
+	publicActivityNow      = time.Now
+)
+
+// publicActivityCache holds the marshalled unfiltered view. Only the
+// default (no query) request is cached: filters are caller-chosen, so keying
+// on them would let anonymous callers grow the cache without bound.
+type publicActivityCache struct {
+	mu      sync.Mutex
+	body    []byte
+	etag    string
+	expires time.Time
+}
+
+// get returns the cached body and ETag, rebuilding at most once per TTL
+// window; concurrent callers wait for that single build.
+func (c *publicActivityCache) get(build func() ([]byte, error)) ([]byte, string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := publicActivityNow()
+	if c.body != nil && now.Before(c.expires) {
+		return c.body, c.etag, nil
+	}
+	body, err := build()
+	if err != nil {
+		return nil, "", err
+	}
+	c.body, c.etag, c.expires = body, webstatic.ETagFor(body), now.Add(publicActivityCacheTTL)
+	return c.body, c.etag, nil
+}
 
 // publicActivityHives returns the registry hives the public-safe view may
 // show. It takes no viewer: no per-user grant can widen it.
@@ -99,13 +135,24 @@ func (s *HubServer) handleHubActivityPublic(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	body, err := json.Marshal(s.buildPublicActivityView(f, time.Now().UTC()))
+	build := func() ([]byte, error) {
+		return json.Marshal(s.buildPublicActivityView(f, publicActivityNow().UTC()))
+	}
+	var body []byte
+	var etag string
+	if r.URL.RawQuery == "" {
+		body, etag, err = s.publicActivity.get(build)
+	} else {
+		body, err = build()
+		if err == nil {
+			etag = webstatic.ETagFor(body)
+		}
+	}
 	if err != nil {
 		s.logger.Error("hub public activity: encode view", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	etag := webstatic.ETagFor(body)
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
 	h.Set("Cache-Control", "no-cache")
