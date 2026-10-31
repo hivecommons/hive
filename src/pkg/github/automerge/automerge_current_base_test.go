@@ -50,6 +50,8 @@ func TestCurrentBaseGate(t *testing.T) {
 						return
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": tc.behindBy, "ahead_by": 1})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
 				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
 					updates++
 					var body map[string]any
@@ -121,6 +123,8 @@ func TestCurrentBaseGateUpdateUnavailableFallback(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/main..."+head:
 					_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
 				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
 					w.WriteHeader(tc.updateStatus)
 					_, _ = w.Write([]byte(tc.updateBody))

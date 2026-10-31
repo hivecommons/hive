@@ -25,17 +25,19 @@ type BasePreparationStore struct {
 }
 
 type preparationCandidate struct {
-	Number int       `json:"number"`
-	Head   string    `json:"head"`
-	Lane   string    `json:"lane"`
-	Repair bool      `json:"repair,omitempty"`
-	Since  time.Time `json:"since"`
+	Number  int       `json:"number"`
+	Head    string    `json:"head"`
+	Lane    string    `json:"lane"`
+	Repair  bool      `json:"repair,omitempty"`
+	Yielded bool      `json:"yielded,omitempty"`
+	Since   time.Time `json:"since"`
 }
 
 type preparationAttempt struct {
-	Head string    `json:"head"`
-	Base string    `json:"base"`
-	At   time.Time `json:"at"`
+	Head              string    `json:"head"`
+	Base              string    `json:"base"`
+	At                time.Time `json:"at"`
+	AuthoritativeBase bool      `json:"authoritative_base,omitempty"`
 }
 
 type basePreparation struct {

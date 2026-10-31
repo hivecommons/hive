@@ -40,6 +40,7 @@ func TestMergePR_ForwardMergeGuard(t *testing.T) {
 					"number": 7,
 					"title":  tt.title,
 					"head":   map[string]any{"ref": tt.head},
+					"base":   map[string]any{"ref": "main"},
 				})
 			})
 			mux.HandleFunc("PUT /repos/o/r/pulls/7/merge", func(w http.ResponseWriter, r *http.Request) {
