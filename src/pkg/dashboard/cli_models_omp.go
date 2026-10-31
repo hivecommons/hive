@@ -84,7 +84,7 @@ func (s *Server) discoverOmpModels() cliModelResult {
 			}
 			lastErr = err
 			if s.logger != nil {
-				s.logger.Warn("omp model discovery found no models for this HOME", "home", home, "err", err.Error())
+				s.logger.Info("omp model discovery found no models for this HOME", "home", home, "err", err.Error())
 			}
 			continue
 		}
