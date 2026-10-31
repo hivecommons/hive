@@ -205,6 +205,23 @@
     .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
+    .ham-preparation { margin: var(--sp-3) 0; border: var(--line-width) solid var(--line); border-radius: var(--r); padding: var(--sp-3); }
+    .ham-preparation-intro, .ham-preparation-note { color: var(--muted); font-size: var(--fs-xs); margin: var(--sp-2) 0; overflow-wrap: anywhere; }
+    .ham-preparation-group { --ham-train-accent: var(--line-strong); min-width: 0; }
+    .ham-preparation-group.ham-train-k0 { --ham-train-accent: var(--blue); }
+    .ham-preparation-group.ham-train-k1 { --ham-train-accent: var(--purple); }
+    .ham-preparation-group.ham-train-k2 { --ham-train-accent: var(--cyan); }
+    .ham-preparation-group.ham-train-k3 { --ham-train-accent: var(--amber); }
+    .ham-preparation .ham-train-head { flex-wrap: wrap; margin: 0; font-weight: normal; }
+    .ham-preparation .ham-train-chip { white-space: normal; }
+    .ham-preparation-rail { list-style: none; margin: 0; padding: 0; }
+    .ham-preparation-member { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-5); font-size: var(--fs-sm); }
+    .ham-preparation-member::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-preparation-member:last-child::before { bottom: 50%; }
+    .ham-preparation-member::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
+    .ham-preparation-owner::after { background: var(--text); }
+    .ham-preparation-ref { min-width: 0; overflow-wrap: anywhere; }
+    .ham-preparation-detail { flex-basis: 100%; color: var(--text-faint); font-size: var(--fs-xs); overflow-wrap: anywhere; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
     .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
     .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }
