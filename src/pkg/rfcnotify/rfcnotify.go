@@ -20,7 +20,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -41,6 +43,26 @@ const (
 	KindReady Kind = "ready"
 	// KindDocAccepted: an RFC document pull request was merged.
 	KindDocAccepted Kind = "doc_accepted"
+
+	// The kinds below are produced only in rich mode (card format or
+	// threads); see Detector.lifecycle.
+
+	// KindDecisions: the open-decision count changed. At most one per RFC
+	// per decisionsDebounce, carrying the latest count.
+	KindDecisions Kind = "decisions"
+	// KindTargetChanged: the RFC field table's Target changed.
+	KindTargetChanged Kind = "target_changed"
+	// KindStatusChanged: the RFC field table's Status changed.
+	KindStatusChanged Kind = "status_changed"
+	// KindNeedsDecision: a needs-decision or needs-human label was added.
+	KindNeedsDecision Kind = "needs_decision"
+	// KindRetitled: the RFC was retitled. Its card is edited and its thread
+	// renamed; no message is posted.
+	KindRetitled Kind = "retitled"
+	// KindDuplicate: the same author opened an RFC with the same title
+	// within duplicateWindow. It is noted once in the first RFC's thread
+	// instead of getting a card of its own.
+	KindDuplicate Kind = "duplicate"
 )
 
 const (
@@ -108,6 +130,9 @@ type Event struct {
 	Thread string
 	// LinkedRFC is the linked RFC issue number behind Thread, or 0.
 	LinkedRFC int
+	// From and To are the old and new value of a KindDecisions,
+	// KindTargetChanged, KindStatusChanged or KindRetitled change.
+	From, To string
 }
 
 // rfcTitleRE matches a title whose first word, after any leading emoji,
@@ -210,6 +235,39 @@ func Actionable(labels []string) bool {
 	return false
 }
 
+// NeedsDecision reports whether labels carry the issue needs-decision stage
+// label (stage/045-needs-decision) or needs-human.
+func NeedsDecision(labels []string) bool {
+	stage := stagelabels.IssueNeedsDecision.Label()
+	for _, l := range labels {
+		l = strings.TrimSpace(l)
+		if strings.EqualFold(l, stage) || strings.EqualFold(l, config.DefaultNeedsHumanLabel) {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeTitle is the title duplicate detection compares: lowercased,
+// with the RFC prefix, emoji and surrounding punctuation stripped and
+// whitespace collapsed.
+func NormalizeTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if loc := rfcTitleRE.FindStringIndex(title); loc != nil {
+		title = title[loc[1]:]
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(title) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsPunct(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(' ')
+		}
+	}
+	trim := func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSpace(r) }
+	return strings.TrimFunc(strings.Join(strings.Fields(b.String()), " "), trim)
+}
+
 // ClosedReason renders GitHub's state_reason for a closed issue.
 func ClosedReason(stateReason string) string {
 	switch strings.ToLower(strings.TrimSpace(stateReason)) {
@@ -254,6 +312,18 @@ func Format(e Event, includeRepo bool) string {
 			return fmt.Sprintf("RFC doc accepted (RFC #%d): %s", e.LinkedRFC, tail)
 		}
 		return "RFC doc accepted: " + tail
+	case KindDecisions:
+		return fmt.Sprintf("RFC decisions: %s → %s open: %s", e.From, e.To, tail)
+	case KindTargetChanged:
+		return fmt.Sprintf("RFC target: %s → %s: %s", e.From, e.To, tail)
+	case KindStatusChanged:
+		return fmt.Sprintf("RFC status: %s → %s: %s", e.From, e.To, tail)
+	case KindNeedsDecision:
+		return "RFC needs a decision: " + tail
+	case KindRetitled:
+		return "RFC retitled: " + tail
+	case KindDuplicate:
+		return fmt.Sprintf("RFC duplicate filed as %s - <%s>", ref, strings.TrimSpace(e.Issue.URL))
 	}
 	return "RFC " + string(e.Kind) + ": " + tail
 }

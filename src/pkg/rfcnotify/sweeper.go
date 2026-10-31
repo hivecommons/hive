@@ -120,6 +120,9 @@ type Result struct {
 	// adopted from channel history after a crash, and Backlinks counts GitHub
 	// backlink comments posted (threads mode).
 	Threads, Reconciled, Backlinks int
+	// Edited counts retitles applied to an RFC's card or thread (threads
+	// mode). A retitle posts no message, so it is not in Posted or Events.
+	Edited int
 }
 
 // Sweeper owns the detector and its cadence.
@@ -157,6 +160,7 @@ func NewSweeper(opts Options) *Sweeper {
 			det = loaded
 		}
 	}
+	det.lifecycle = opts.Rich()
 	return &Sweeper{opts: opts, det: det}
 }
 
@@ -235,6 +239,10 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 		base := cloneState(before)
 		tr = &threadRun{s: s, res: &res, base: &base}
 	}
+	// delivered holds the issues with an event already announced in this
+	// batch. A later failure for the same issue does not roll its record
+	// back, so the announced event is never repeated.
+	delivered := map[string]bool{}
 	for i, ev := range events {
 		if ev.Issue.VisibilityUnknown && !s.opts.IncludePrivate {
 			res.Unresolved++
@@ -247,6 +255,15 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 			s.opts.Logger.Debug("rfc notify: private repository; not posting", "issue", ev.Issue.Key(), "kind", ev.Kind)
 			continue
 		}
+		if ev.Kind == KindRetitled {
+			// Edits the card and renames the thread in place; without a
+			// thread mapping there is nothing to edit and nothing is posted.
+			if tr != nil {
+				tr.retitle(ev)
+			}
+			delivered[ev.Issue.Key()] = true
+			continue
+		}
 		msg := Format(ev, s.opts.IncludeRepo)
 		if tr != nil {
 			if keep, err := tr.deliver(ev, msg); err != nil {
@@ -255,9 +272,9 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 				// A card whose write-ahead intent is saved is retried by
 				// reconciliation, so only the events after it are replayed.
 				if keep {
-					s.det.rollback(before, events[i+1:])
+					s.det.rollback(before, undelivered(events[i+1:], delivered))
 				} else {
-					s.det.rollback(before, events[i:])
+					s.det.rollback(before, undelivered(events[i:], delivered))
 				}
 				break
 			}
@@ -266,9 +283,10 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 			s.opts.Logger.Warn("rfc notify: post failed", "issue", ev.Issue.Key(), "kind", ev.Kind, "error", err)
 			// Keep what was announced, forget what was not: replay the
 			// snapshot for the unposted issues on top of the old records.
-			s.det.rollback(before, events[i:])
+			s.det.rollback(before, undelivered(events[i:], delivered))
 			break
 		}
+		delivered[ev.Issue.Key()] = true
 		res.Posted = append(res.Posted, msg)
 		res.Events = append(res.Events, ev)
 	}
@@ -281,13 +299,38 @@ func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, e
 // publish sends one event outside threads mode: a summary card when the
 // format is card and the body carries RFC metadata, else the plain line.
 func (s *Sweeper) publish(pub Publisher, ev Event, msg string) error {
-	if s.opts.Format == FormatCard {
+	if s.opts.Format == FormatCard && !lifecycleKind(ev.Kind) {
 		if meta := ParseRFC(ev.Issue.Body); !meta.Empty() {
 			_, err := pub.PostCard(msg, Card(ev, meta, s.opts.IncludeRepo))
 			return err
 		}
 	}
 	return pub.Post(msg)
+}
+
+// lifecycleKind reports whether k is a rich-mode lifecycle notice, which is
+// always a plain line (into the RFC's thread in threads mode), never a card.
+func lifecycleKind(k Kind) bool {
+	switch k {
+	case KindDecisions, KindTargetChanged, KindStatusChanged, KindNeedsDecision, KindRetitled, KindDuplicate:
+		return true
+	}
+	return false
+}
+
+// undelivered drops the events of issues that already had an event
+// announced in this batch, so a rollback cannot make them repeat.
+func undelivered(events []Event, delivered map[string]bool) []Event {
+	if len(delivered) == 0 {
+		return events
+	}
+	out := make([]Event, 0, len(events))
+	for _, ev := range events {
+		if !delivered[ev.Issue.Key()] {
+			out = append(out, ev)
+		}
+	}
+	return out
 }
 
 func (s *Sweeper) save() error {
