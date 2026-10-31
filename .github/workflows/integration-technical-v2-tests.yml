@@ -954,10 +954,8 @@ jobs:
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       if: ${{ steps.cov-scope.outputs.score == 'true' }}
       with:
+        cache: false
         go-version-file: src/go.mod
-        cache-dependency-path: |
-          src/go.sum
-          src/crux/go.sum
     - name: Download Go modules (retry transient proxy resets)
       if: ${{ steps.cov-scope.outputs.score == 'true' }}
       uses: ./.github/actions/go-mod-download-retry

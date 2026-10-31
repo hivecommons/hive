@@ -266,7 +266,9 @@ jobs:
         continue-on-error: true
         # Unlike go test/vet, gosec recursively discovers nested modules.
         # Listing ./crux/... too scans every Crux directory twice.
-        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -exclude-generated ./...'
+        # Its default concurrency is host NumCPU, not the runner's CPU quota;
+        # each worker also launches a Go package loader. Bound that fanout.
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency "${HIVE_CI_GOSEC_CONCURRENCY:-2}" -exclude-generated ./...'
 
   golangci-lint:
     needs: required-context-scope

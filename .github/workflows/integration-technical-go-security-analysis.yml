@@ -128,7 +128,7 @@ jobs:
     - name: Scan
       working-directory: src
       continue-on-error: true
-      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -exclude-generated ./...'
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency "${HIVE_CI_GOSEC_CONCURRENCY:-2}" -exclude-generated ./...'
   golangci-lint:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
