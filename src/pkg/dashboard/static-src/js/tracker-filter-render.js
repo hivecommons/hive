@@ -126,7 +126,7 @@
       if (!visible.length && !Object.keys(_stageTrackerCelebrating).length) {
         _stageTrackerMoves = {};
         stageTrackerSelectionSync(el, []);
-        const emptyHtml = `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`;
+        const emptyHtml = (typeof stageTrackerPreparationMissingRows === 'function' ? stageTrackerPreparationMissingRows().map(row => row.html).join('') : '') + `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`;
         // The counter goes back to its toolbar home before the header
         // (and its slot) leaves with the rows.
         if (el.querySelector('[data-ham-key]')) {
@@ -155,8 +155,9 @@
       const rowOf = (e, i) => grouping && !e.item
         ? { key: e.group.key, html: stageTrackerGroupHeaderHtml(e.group, stages, ctx) }
         : itemRow(pageItems[i], i);
-      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]
-        .concat(stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null)), nowMs);
+      const trainRows = stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null);
+      const inlineRows = typeof stageTrackerPreparationInlineRows === 'function' ? stageTrackerPreparationInlineRows(trainRows, pageItems, stages) : trainRows;
+      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs);
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
