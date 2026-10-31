@@ -67,6 +67,60 @@ type SentinelSweepOptions struct {
 	// process-wide cache from SetSentinelPRCache; with neither, or for a
 	// repo the cache has not reconciled yet, the sweep lists the repo.
 	PRCache SentinelPRCache
+	// PatchObserver, when non-nil, receives one observation per successful
+	// patch fetch, before evaluation. It must return quickly and not block:
+	// the sweep waits at most sentinelPatchObserverTimeout for it, recovers a
+	// panic and logs it, and never lets it change the sweep's result. nil is a
+	// strict no-op. PRs the sentinel skips (unchanged heads, exempt authors)
+	// are not observed.
+	PatchObserver func(SentinelPatchObservation)
+}
+
+// SentinelPatchObservation is what PatchObserver sees: the pushed head's
+// patch files exactly as the sentinel fetched them. HiveIdentified is true
+// only when the hive can name its own accounts and the author is one of them.
+type SentinelPatchObservation struct {
+	Repo           string
+	Number         int
+	HeadSHA        string
+	Author         string
+	HiveIdentified bool
+	Private        bool
+	Files          []sentinel.File
+	At             time.Time
+}
+
+// sentinelPatchObserverTimeout bounds how long the sweep waits for an observer.
+var sentinelPatchObserverTimeout = 2 * time.Second
+
+func (c *Client) observeSentinelPatch(displayRepo string, pr *gh.PullRequest, files []sentinel.File, observe func(SentinelPatchObservation)) {
+	obs := SentinelPatchObservation{
+		Repo:           displayRepo,
+		Number:         pr.GetNumber(),
+		HeadSHA:        pr.GetHead().GetSHA(),
+		Author:         pr.GetUser().GetLogin(),
+		HiveIdentified: c.knowsOwnAccounts() && c.isHiveAccount(pr.GetUser()),
+		Private:        pr.GetBase().GetRepo().GetPrivate(),
+		Files:          append([]sentinel.File(nil), files...),
+		At:             time.Now(),
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Warn("sentinel patch observer panicked", "repo", displayRepo, "number", obs.Number, "panic", fmt.Sprint(r))
+			}
+		}()
+		observe(obs)
+	}()
+	timer := time.NewTimer(sentinelPatchObserverTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		c.logger.Warn("sentinel patch observer exceeded its time bound", "repo", displayRepo, "number", obs.Number)
+	}
 }
 
 // SentinelPRCache is the forgestate view the full sweep enumerates from.
@@ -427,6 +481,9 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	files, err := listPRFilesWithPatch(ctx, c.client, owner, repo, pr)
 	if err != nil {
 		return SentinelSweepEvent{}, false, err
+	}
+	if opts.PatchObserver != nil {
+		c.observeSentinelPatch(displayRepo, pr, files, opts.PatchObserver)
 	}
 	findings := sentinel.Evaluate(sentinel.PR{Author: author, Title: pr.GetTitle(), Files: files}, opts.Evaluator)
 	if len(findings) == 0 {
