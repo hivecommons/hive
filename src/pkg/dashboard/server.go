@@ -116,6 +116,11 @@ type Server struct {
 	chatGroundedOnce     sync.Once
 	chatGroundedInflight chan struct{}
 
+	// matrix is the dashboard.matrix line source (matrix_source.go); nil
+	// until MatrixObserver is called with an active config.
+	matrixMu sync.Mutex
+	matrix   *matrixSource
+
 	port       int
 	authToken  string
 	statusMu   sync.RWMutex

@@ -81,6 +81,19 @@
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-display-btn" id="activity-monitor-display" data-action="toggleStageTrackerDisplay" data-stop="1" aria-pressed="false" title="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)" aria-label="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)">📺</button>'
       + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
+    // Display controls (hivecommons/hive#15929): the overlay
+    // stageTrackerDisplayControlsInit() appends to the body in display mode
+    // only. Full screen and Keep awake are explicit clicks; their disabled /
+    // denied states are rendered by stageTrackerRenderDisplayControls().
+    // Full screen and Keep awake get their title from
+    // stageTrackerRenderDisplayControls (STAGE_TRACKER_DISPLAY_CONTROL_LABELS
+    // in tracker-popout.js) as soon as the overlay mounts, so it is not
+    // repeated here.
+    const STAGE_TRACKER_DISPLAY_CONTROLS_HTML = '<button type="button" class="ham-display-control" data-display-control="exit" data-action="stageTrackerDisplayExit" aria-label="Exit display" title="Leave display mode (Esc or d)">✕ Exit display</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="copy" data-action="stageTrackerCopyDisplayLink" aria-label="Copy display link" title="Copy a link that opens this display — view parameters only, never a token">🔗 Copy link</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="fullscreen" data-action="toggleStageTrackerFullscreen" aria-label="Full screen" aria-pressed="false">⛶ Full screen</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="wakelock" data-action="stageTrackerToggleWakeLock" aria-label="Keep screen awake" aria-pressed="false">☀ Keep awake</button>'
+      + '<input type="text" class="ham-input ham-display-link" id="activity-monitor-display-link" readonly aria-label="Display link" hidden>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
       'governor': { title: '🚦 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
