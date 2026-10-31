@@ -54,17 +54,18 @@ func (j *integrationPromotionJournal) LookupApplied(context.Context, effects.Cla
 }
 
 type integrationPromotionFixture struct {
-	request IntegrationPromotion
-	ref     string
-	headRef string
-	tree    string
-	parents []string
-	repoID  string
-	errorAt string
-	reply   string
-	mu      sync.Mutex
-	input   map[string]any
-	writes  atomic.Int32
+	request  IntegrationPromotion
+	ref      string
+	headRef  string
+	tree     string
+	parents  []string
+	repoID   string
+	repoName string
+	errorAt  string
+	reply    string
+	mu       sync.Mutex
+	input    map[string]any
+	writes   atomic.Int32
 }
 
 func integrationPromotionRequest() IntegrationPromotion {
@@ -82,7 +83,7 @@ func promotionFixture() *integrationPromotionFixture {
 	return &integrationPromotionFixture{
 		request: p, ref: p.ExpectedSHA, tree: p.TestedTree,
 		headRef: p.AuthorHead,
-		parents: []string{p.ExpectedSHA, p.AuthorHead}, repoID: "R_repository",
+		parents: []string{p.ExpectedSHA, p.AuthorHead}, repoID: "R_repository", repoName: p.Repo,
 	}
 }
 
@@ -97,7 +98,7 @@ func (f *integrationPromotionFixture) server(t *testing.T) *httptest.Server {
 		}
 		switch r.URL.Path {
 		case "/repos/o/r":
-			_ = json.NewEncoder(w).Encode(map[string]any{"node_id": f.repoID})
+			_ = json.NewEncoder(w).Encode(map[string]any{"node_id": f.repoID, "full_name": f.repoName})
 		case "/repos/o/r/git/commits/" + f.request.TestedSHA:
 			parents := make([]map[string]string, 0, len(f.parents))
 			for _, parent := range f.parents {
@@ -129,11 +130,35 @@ func (f *integrationPromotionFixture) server(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte(f.reply))
 				return
 			}
-			if f.ref != f.request.ExpectedSHA || f.headRef != f.request.AuthorHead {
-				_, _ = w.Write([]byte(`{"errors":[{"type":"UNPROCESSABLE","message":"beforeOid mismatch"}]}`))
+			updates, ok := f.input["refUpdates"].([]any)
+			if !ok {
+				http.Error(w, "missing ref updates", http.StatusBadRequest)
 				return
 			}
-			f.ref = f.request.TestedSHA
+			refs := map[string]string{
+				"refs/heads/" + f.request.Base:    f.ref,
+				"refs/heads/" + f.request.HeadRef: f.headRef,
+			}
+			for _, raw := range updates {
+				update, valid := raw.(map[string]any)
+				name, named := update["name"].(string)
+				current, exists := refs[name]
+				if !valid || !named || !exists || current != update["beforeOid"] || update["force"] != false {
+					_, _ = w.Write([]byte(`{"errors":[{"type":"UNPROCESSABLE","message":"beforeOid mismatch"}]}`))
+					return
+				}
+			}
+			for _, raw := range updates {
+				update, _ := raw.(map[string]any)
+				name, _ := update["name"].(string)
+				after, valid := update["afterOid"].(string)
+				if !valid {
+					http.Error(w, "invalid target", http.StatusBadRequest)
+					return
+				}
+				refs[name] = after
+			}
+			f.ref, f.headRef = refs["refs/heads/"+f.request.Base], refs["refs/heads/"+f.request.HeadRef]
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 				"updateRefs": map[string]any{"clientMutationId": f.input["clientMutationId"]},
 			}})
@@ -202,6 +227,7 @@ func TestIntegrationPromotionRefusesIncompleteOrChangedSubjects(t *testing.T) {
 		{"reversed-parents", func(f *integrationPromotionFixture) { f.parents[0], f.parents[1] = f.parents[1], f.parents[0] }},
 		{"wrong-parent-count", func(f *integrationPromotionFixture) { f.parents = f.parents[:1] }},
 		{"unknown-repository", func(f *integrationPromotionFixture) { f.repoID = "" }},
+		{"renamed-repository", func(f *integrationPromotionFixture) { f.repoName = "another/repository" }},
 		{"repository-read-failed", func(f *integrationPromotionFixture) { f.errorAt = "/repos/o/r" }},
 		{"commit-read-failed", func(f *integrationPromotionFixture) { f.errorAt = "/repos/o/r/git/commits/" + f.request.TestedSHA }},
 	} {
@@ -329,6 +355,14 @@ func TestIntegrationPromotionReconcilesWithoutBlindTTLRetry(t *testing.T) {
 }
 
 func TestIntegrationPromotionInvalidRequestsHaveNoEffects(t *testing.T) {
+	for _, repo := range []string{"r", "o/r/extra", "o/r?query", "o/r#fragment", "o/r%2fother", "../r", "o/..", "o/.", "o/r\x01"} {
+		if integrationPromotionRepo(repo) {
+			t.Errorf("accepted ambiguous repository %q", repo)
+		}
+	}
+	if !integrationPromotionRepo("Owner/repo.name_1") {
+		t.Fatal("valid repository rejected")
+	}
 	fork := integrationPromotionRequest()
 	fork.HeadRepo = "fork/r"
 	if !errors.Is(fork.validate(), ErrIntegrationHeadFenceUnavailable) {

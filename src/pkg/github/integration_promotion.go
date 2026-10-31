@@ -45,9 +45,7 @@ func (p IntegrationPromotion) validate() error {
 	if !strings.EqualFold(p.HeadRepo, p.Repo) {
 		return ErrIntegrationHeadFenceUnavailable
 	}
-	parts := strings.Split(p.Repo, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" ||
-		strings.ContainsAny(p.Repo, " \t\r\n") || !integrationPromotionBranch(p.Base) ||
+	if !integrationPromotionRepo(p.Repo) || !integrationPromotionBranch(p.Base) ||
 		!integrationPromotionBranch(p.HeadRef) || p.HeadRef == p.Base ||
 		!integrationPromotionOID(p.ExpectedSHA) || !integrationPromotionOID(p.TestedSHA) ||
 		!integrationPromotionOID(p.TestedTree) || !integrationPromotionOID(p.AuthorHead) ||
@@ -58,6 +56,23 @@ func (p IntegrationPromotion) validate() error {
 		return fmt.Errorf("incomplete exact integration promotion")
 	}
 	return nil
+}
+
+func integrationPromotionRepo(repo string) bool {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || parts[1] == "." || parts[1] == ".." {
+		return false
+	}
+	for i, part := range parts {
+		for _, character := range part {
+			if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+				character >= '0' && character <= '9' || character == '-' || i == 1 && (character == '.' || character == '_') {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func integrationPromotionJournaled(boundary effects.Boundary) bool {
@@ -145,7 +160,7 @@ func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromot
 	if err != nil {
 		return effects.Result{}, err
 	}
-	if repository.GetNodeID() == "" {
+	if repository.GetNodeID() == "" || !strings.EqualFold(repository.GetFullName(), p.Repo) {
 		return effects.Result{}, fmt.Errorf("integration repository identity unavailable")
 	}
 	commit, _, err := c.client.Git.GetCommit(ctx, owner, repo, p.TestedSHA)

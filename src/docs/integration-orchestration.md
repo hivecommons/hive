@@ -38,6 +38,8 @@ claim binds protocol, repository/base, expected destination, tested commit/tree,
 author head/repository/ref, subject, policy and generation through the existing
 effects boundary.
 `clientMutationId` binds acknowledgement; it is **not** provider idempotency.
+The resolved repository identity must also match the enrolled name: a redirect
+after a repository rename/transfer is not authority to write a different scope.
 
 A durable boundary and non-nil live eligibility guard are mandatory. The
 transport refuses a no-op boundary. The future controller must supply exclusive
