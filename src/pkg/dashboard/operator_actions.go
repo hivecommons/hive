@@ -37,6 +37,7 @@ const (
 	operatorActionCloseSuperseded = "close-superseded"
 	operatorActionWontFix         = "wontfix"
 	operatorActionCloseRead       = "close-read"
+	operatorActionCloseIssue      = "close-issue"
 	operatorActionLetHiveDecide   = "let-hive-decide"
 	operatorActionHold            = "hold"
 	operatorActionRelease         = "release"
@@ -338,6 +339,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Action = operatorActionWontFix
 		case repoItemDecisionCloseRead:
 			out.Action = operatorActionCloseRead
+		case repoItemDecisionCloseIssue:
+			out.Action = operatorActionCloseIssue
 		case repoItemDecisionMergeNow:
 			out.Action = operatorActionMergeNow
 		case repoItemDecisionQueueMerge:
@@ -908,7 +911,7 @@ func operatorActionClosedGrace() time.Duration {
 
 // operatorClosedActions are the row actions whose applied outcome is a
 // closed issue or PR.
-var operatorClosedActions = []string{operatorActionCloseSuperseded, operatorActionWontFix, operatorActionCloseRead}
+var operatorClosedActions = []string{operatorActionCloseSuperseded, operatorActionWontFix, operatorActionCloseRead, operatorActionCloseIssue}
 
 // operatorActionClosedItem reports whether the item's newest recorded
 // action closed it from the dashboard within grace of now: GitHub's list

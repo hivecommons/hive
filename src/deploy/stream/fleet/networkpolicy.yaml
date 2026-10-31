@@ -1,0 +1,30 @@
+# Egress only: DNS, and public addresses on 443 (the hub's public origin) and
+# 1935 (Twitch RTMP). Unlike ../k8s, there is NO in-cluster dashboard rule and
+# RFC1918 space is denied, so the pod cannot reach any spoke dashboard or hub
+# Service directly: the public origin is its only source.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hive-stream-fleet
+  namespace: hive-stream-fleet
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hive-stream-fleet
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+      ports:
+        - { protocol: TCP, port: 1935 }
+        - { protocol: TCP, port: 443 }

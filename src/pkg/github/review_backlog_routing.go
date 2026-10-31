@@ -526,6 +526,15 @@ func reviewBacklogReason(f outputschema.Finding, blockAt string) string {
 	return fmt.Sprintf("a finding below the blocking line (%s)", b)
 }
 
+// writeReviewBacklogEvidence writes the Evidence line, with the permalink on
+// its own line so GitHub renders it as a code widget.
+func writeReviewBacklogEvidence(b *strings.Builder, file string, line int, link string) {
+	fmt.Fprintf(b, "Evidence: `%s:%d`\n", file, line)
+	if link != "" {
+		fmt.Fprintf(b, "%s\n", link)
+	}
+}
+
 func (c *Client) reviewBacklogIssueBody(req ReviewRequest, p review.Perspective, f outputschema.Finding, headSHA, blockAt, fp string) string {
 	owner, repoName := c.splitRepo(req.Repo)
 	var b strings.Builder
@@ -533,11 +542,9 @@ func (c *Client) reviewBacklogIssueBody(req ReviewRequest, p review.Perspective,
 	fmt.Fprintf(&b, "PR: #%d (%s)\n", req.Number, reviewPRURL(owner, repoName, req.Number))
 	fmt.Fprintf(&b, "Perspective: %s\n", p)
 	fmt.Fprintf(&b, "Severity: %s\n", reviewFindingSeverityLine(f))
-	fmt.Fprintf(&b, "Evidence: `%s:%d`", strings.TrimSpace(f.File), f.Line)
-	if link := reviewFindingPermalink(owner, repoName, headSHA, f); link != "" {
-		fmt.Fprintf(&b, " (%s)", link)
-	}
-	fmt.Fprintf(&b, "\nFinding: %s\n\n%s\n\nFingerprint: `%s`\n\n%s\n", strings.TrimSpace(f.Title), strings.TrimSpace(f.Summary), fp, reviewBacklogFooter)
+	fmt.Fprintf(&b, "Finding: %s\n", strings.TrimSpace(f.Title))
+	writeReviewBacklogEvidence(&b, strings.TrimSpace(f.File), f.Line, reviewFindingPermalink(owner, repoName, headSHA, f))
+	fmt.Fprintf(&b, "\n%s\n\nFingerprint: `%s`\n\n%s\n", strings.TrimSpace(f.Summary), fp, reviewBacklogFooter)
 	return b.String()
 }
 
@@ -548,11 +555,8 @@ func (c *Client) reviewBacklogReRaiseComment(req ReviewRequest, p review.Perspec
 	fmt.Fprintf(&b, "Raised again in the Hive review of PR #%d (%s).\n\n", req.Number, reviewPRURL(owner, repoName, req.Number))
 	fmt.Fprintf(&b, "Perspective: %s\n", p)
 	fmt.Fprintf(&b, "Severity: %s\n", reviewFindingSeverityLine(f))
-	fmt.Fprintf(&b, "Evidence: `%s:%d`", strings.TrimSpace(f.File), f.Line)
-	if link := reviewFindingPermalink(owner, repoName, headSHA, f); link != "" {
-		fmt.Fprintf(&b, " (%s)", link)
-	}
-	fmt.Fprintf(&b, "\n\n%s\n", reviewBacklogFooter)
+	writeReviewBacklogEvidence(&b, strings.TrimSpace(f.File), f.Line, reviewFindingPermalink(owner, repoName, headSHA, f))
+	fmt.Fprintf(&b, "\n%s\n", reviewBacklogFooter)
 	return b.String()
 }
 
@@ -575,11 +579,9 @@ func (c *Client) reviewBacklogFoldedComment(req ReviewRequest, p review.Perspect
 	fmt.Fprintf(&b, "- [ ] %s (`%s:%d`)\n\n", strings.TrimSpace(f.Title), file, f.Line)
 	fmt.Fprintf(&b, "Perspective: %s\n", p)
 	fmt.Fprintf(&b, "Severity: %s\n", reviewFindingSeverityLine(f))
-	fmt.Fprintf(&b, "Evidence: `%s:%d`", file, f.Line)
-	if link := reviewFindingPermalink(owner, repoName, headSHA, f); link != "" {
-		fmt.Fprintf(&b, " (%s)", link)
-	}
-	fmt.Fprintf(&b, "\nFinding: %s\n\n%s\n\nFingerprint: `%s`\n\n%s\n", strings.TrimSpace(f.Title), strings.TrimSpace(f.Summary), fp, reviewBacklogFooter)
+	fmt.Fprintf(&b, "Finding: %s\n", strings.TrimSpace(f.Title))
+	writeReviewBacklogEvidence(&b, file, f.Line, reviewFindingPermalink(owner, repoName, headSHA, f))
+	fmt.Fprintf(&b, "\n%s\n\nFingerprint: `%s`\n\n%s\n", strings.TrimSpace(f.Summary), fp, reviewBacklogFooter)
 	return b.String()
 }
 

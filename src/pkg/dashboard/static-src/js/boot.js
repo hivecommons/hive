@@ -34,8 +34,13 @@
 // shared chrome-less layout in css/popout.css keys on (full screen adds it at
 // runtime); popout-mode and display-mode keep their view-specific rules.
 (function(){
-  var kiosk=false, popout=false, display=false, sound=true, density='', shift=false;
-  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, display=false, view='', sound=true, density='', shift=false;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; view=u.searchParams.get('view'); popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  window.HIVE_MATRIX = kiosk && view === 'matrix';
+  if(window.HIVE_MATRIX){
+    document.body.classList.add('matrix-mode');
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
+  }
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
   window.HIVE_DISPLAY=display&&!kiosk;

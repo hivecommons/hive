@@ -25,6 +25,9 @@
       const repairing = typeof stageTrackerUnderRepair === 'function' && !!stageTrackerUnderRepair(cur, item && item.reason);
       if (repairing && cur > STAGE_TRACKER_PR_COLUMN && cur !== STAGE_TRACKER_NEEDS_DECISION) return 50;
       const mg = item && item.merge_gate;
+      const refusal = mg && mg.state === 'merge-failed'
+        ? mg.merge_failed_kind || (typeof stageTrackerMergeRefusalFromRaw === 'function' ? stageTrackerMergeRefusalFromRaw(String(mg.merge_failed || '')).kind : '') : '';
+      if ((cur === 50 || cur === 60) && refusal === 'checks-pending') return 50;
       if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       // A merge-train member is a Merge queue matter too, 1st included:
       // the train's facts are mirrored onto its head while the head still

@@ -1,0 +1,1 @@
+- Show verified external merges at Activity Monitor's existing terminal step on root, inline and nested PR rows, using retained models and the actual recorded merger without inventing queue membership, Hive ownership or a second merge event.

@@ -37,7 +37,14 @@ func main() {
 	flag.Parse()
 
 	token := strings.TrimSpace(os.Getenv("DASHBOARD_TOKEN"))
-	rp, err := newProxy(*target, token)
+	public := os.Getenv("STREAM_PROFILE") == "public-safe"
+	var rp *httputil.ReverseProxy
+	var err error
+	if public {
+		rp, err = newPublicProxy(*target, token)
+	} else {
+		rp, err = newProxy(*target, token)
+	}
 	if err != nil {
 		log.Fatalf("authproxy: %v", err)
 	}
@@ -45,7 +52,11 @@ func main() {
 	mux.HandleFunc("/-/authproxy/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.Handle("/", readOnly(rp))
 	srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: dialTimeout}
-	log.Printf("authproxy: %s -> %s (token %s)", *listen, redactURL(*target), yesNo(token != ""))
+	if public {
+		log.Printf("authproxy: %s -> %s (public-safe: anonymous, no credential, no cookies)", *listen, redactURL(*target))
+	} else {
+		log.Printf("authproxy: %s -> %s (token %s)", *listen, redactURL(*target), yesNo(token != ""))
+	}
 	log.Fatal(srv.ListenAndServe())
 }
 
@@ -93,6 +104,35 @@ func newProxy(target, token string) (*httputil.ReverseProxy, error) {
 			log.Printf("authproxy: upstream redirected %s to login (%s) — DASHBOARD_TOKEN rejected or missing", resp.Request.URL.Path, redactURL(loc))
 		}
 		return nil
+	}
+	return rp, nil
+}
+
+// newPublicProxy is the STREAM_PROFILE=public-safe variant (hivecommonsfleet,
+// hivecommons/hive#15966). Twitch output is public whatever the dashboard's
+// authentication, so this proxy makes the kiosk an anonymous visitor by
+// construction: it refuses to start with a token, strips any Authorization or
+// Cookie the browser sends, and drops Set-Cookie from responses so no session
+// can form behind it. The broadcast can then only ever show what the hub
+// serves to the anonymous public, never a user's private fleet rows.
+func newPublicProxy(target, token string) (*httputil.ReverseProxy, error) {
+	if token != "" {
+		return nil, fmt.Errorf("DASHBOARD_TOKEN must be unset under STREAM_PROFILE=public-safe")
+	}
+	rp, err := newProxy(target, "")
+	if err != nil {
+		return nil, err
+	}
+	rewrite := rp.Rewrite
+	rp.Rewrite = func(pr *httputil.ProxyRequest) {
+		rewrite(pr)
+		pr.Out.Header.Del("Authorization")
+		pr.Out.Header.Del("Cookie")
+	}
+	modify := rp.ModifyResponse
+	rp.ModifyResponse = func(resp *http.Response) error {
+		resp.Header.Del("Set-Cookie")
+		return modify(resp)
 	}
 	return rp, nil
 }

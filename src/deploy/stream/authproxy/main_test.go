@@ -102,3 +102,51 @@ func TestRedactURL(t *testing.T) {
 		t.Errorf("redactURL = %q", got)
 	}
 }
+
+// TestPublicProxyIsAnonymous pins the public-safe guarantee (#15966): whatever
+// the browser holds, the upstream never sees a credential or cookie, and no
+// session cookie reaches the kiosk, so the stream can only show the hub's
+// anonymous public view.
+func TestPublicProxyIsAnonymous(t *testing.T) {
+	var got http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		http.SetCookie(w, &http.Cookie{Name: "hive_session", Value: "v"})
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	rp, err := newPublicProxy(upstream.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(readOnly(rp))
+	defer front.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, front.URL+"/activity", nil)
+	req.Header.Set("Authorization", "Bearer from-browser")
+	req.Header.Set("Cookie", "hive_session=owner")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if v := got.Get("Authorization"); v != "" {
+		t.Errorf("upstream saw Authorization %q, want none", v)
+	}
+	if v := got.Get("Cookie"); v != "" {
+		t.Errorf("upstream saw Cookie %q, want none", v)
+	}
+	if v := resp.Header.Get("Set-Cookie"); v != "" {
+		t.Errorf("kiosk received Set-Cookie %q, want it dropped", v)
+	}
+}
+
+func TestPublicProxyRefusesToken(t *testing.T) {
+	if _, err := newPublicProxy("https://hub.example", "s3cret"); err == nil {
+		t.Fatal("newPublicProxy accepted a DASHBOARD_TOKEN; a public-safe stream must carry none")
+	}
+}

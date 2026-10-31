@@ -28,8 +28,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # A group's candidates must not supply their own evidence validator.
-          # PR-target also uses trusted base code, never candidate code.
-          ref: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          # PR-target checks out the base branch head (trusted base code, never candidate
+          # code); the PR's recorded base.sha lags the branch and can predate these scripts.
+          ref: ${{ github.event.merge_group.base_sha || format('refs/heads/{0}', github.event.pull_request.base.ref) }}
           persist-credentials: false
       - name: Test policy behavior
         run: node --test .github/scripts/native-queue-policy.test.cjs

@@ -66,6 +66,7 @@ const (
 	repoItemDecisionDirection       = "direction"
 	repoItemDecisionCloseSuperseded = "close-superseded"
 	repoItemDecisionCloseWontFix    = "close-wontfix"
+	repoItemDecisionCloseIssue      = "close-issue"
 	// close-read closes an advisory issue (triage/advisory, a dedupe
 	// checklist) as completed once a maintainer has read it
 	// (hivecommons/hive#15381): the row's "Close (read)" action.
@@ -284,6 +285,10 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 		out.Action = rowActionClosed
 		out.Outcome = "Closed as read (advisory acknowledged)."
 		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
+	case repoItemDecisionCloseIssue:
+		out.Action = rowActionClosed
+		out.Outcome = "Issue closed as completed."
+		out.Next = "Only this issue was closed; linked pull requests and other issues are unchanged."
 	case repoItemDecisionAdopt:
 		out.Action = rowActionAdopted
 		out.Outcome = "Adoption queued: `" + label + "` applied."
@@ -422,10 +427,34 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "decision", event.Decision), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "unparked", Label: ghpkg.HumanAckLabel,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, "", ghpkg.HumanAckLabel, nil)})
-	case repoItemDecisionCloseSuperseded, repoItemDecisionCloseWontFix, repoItemDecisionCloseRead:
+	case repoItemDecisionCloseSuperseded, repoItemDecisionCloseWontFix, repoItemDecisionCloseRead, repoItemDecisionCloseIssue:
 		verb := "won't fix"
 		stateReason := issueStateReasonNotPlanned
 		supersededBy := ""
+		if decision == repoItemDecisionCloseIssue {
+			if itemType != "issue" {
+				jsonError(w, "close-issue applies to issues only", http.StatusBadRequest)
+				return
+			}
+			issue, resp, err := gh.GoGitHub().Issues.Get(ctx, owner, repoName, number)
+			if err != nil {
+				if resp != nil && resp.StatusCode == http.StatusNotFound {
+					jsonError(w, "issue not found", http.StatusNotFound)
+					return
+				}
+				jsonError(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			if issue.IsPullRequest() {
+				jsonError(w, "close-issue applies to issues only", http.StatusBadRequest)
+				return
+			}
+			if issue.GetState() != "open" {
+				jsonError(w, "issue is already closed", http.StatusConflict)
+				return
+			}
+			verb, stateReason = "completed", issueStateReasonCompleted
+		}
 		if decision == repoItemDecisionCloseRead {
 			if itemType != "issue" {
 				jsonError(w, "close-read applies to issues", http.StatusBadRequest)
@@ -531,7 +560,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, close-read, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, close-read, close-issue, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
 	}
 }
 

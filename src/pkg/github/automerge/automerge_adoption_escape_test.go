@@ -302,13 +302,72 @@ func TestAdoptionEscapeHelpers(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := inPlaceRehomeReason(tc.obs, tc.rec, policy, tc.at); got != tc.wantRehome {
+			if got := inPlaceRehomeReason(tc.obs, tc.rec, policy, tc.at, false); got != tc.wantRehome {
 				t.Fatalf("inPlaceRehomeReason=%q, want %q", got, tc.wantRehome)
 			}
 			if got := adoptionStalledReason(tc.obs, tc.rec, policy, tc.at); got != tc.wantStall {
 				t.Fatalf("adoptionStalledReason=%q, want %q", got, tc.wantStall)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#16023: an in-place adoption whose fixer rebase episode
+// is exhausted re-homes to a superseding PR at once instead of waiting out
+// the 074 dwell; a live episode, a non-conflicting head or a moved head
+// does not.
+func TestInPlaceRehomeOnExhaustedRebaseEpisode(t *testing.T) {
+	policy := adoptPolicy()
+	now := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	inPlace := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace, AdoptedAt: now, AdoptedHeadAt: now}
+	conflict := stageObservation{Owner: "acme", Repo: "widget", Number: 7, HeadSHA: "aaa", Reason: "conflicting", LaneReason: "conflicting", Labels: []string{"needs-rebase"}}
+	red := stageObservation{Owner: "acme", Repo: "widget", Number: 7, HeadSHA: "aaa", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}
+	moved := conflict
+	moved.HeadSHA = "bbb"
+	at := now.Add(30 * time.Minute)
+	tests := []struct {
+		name      string
+		obs       stageObservation
+		exhausted bool
+		want      string
+	}{
+		{"exhausted conflict re-homes before the dwell", conflict, true, AdoptReasonRebaseRehome},
+		{"live episode waits for the dwell", conflict, false, ""},
+		{"exhausted but not conflicting stays", red, true, ""},
+		{"exhausted on a moved head stays", moved, true, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := inPlaceRehomeReason(tc.obs, inPlace, policy, at, tc.exhausted); got != tc.want {
+				t.Fatalf("inPlaceRehomeReason=%q, want %q", got, tc.want)
+			}
+		})
+	}
+	if got := inPlaceRehomeReason(conflict, inPlace, policy, now.Add(adoptedDwell), false); got != AdoptReasonRebaseRehome {
+		t.Fatalf("dwell path still re-homes: %q", got)
+	}
+
+	episodes := map[int]RebaseEpisode{7: {Attempt: 3, MaxAttempts: 2, Exhausted: true}, 8: {Attempt: 1, MaxAttempts: 2}}
+	e := &Engine{rebaseEpisode: func(repo string, number int) (RebaseEpisode, bool) {
+		if repo != "acme/widget" {
+			return RebaseEpisode{}, false
+		}
+		ep, ok := episodes[number]
+		return ep, ok
+	}}
+	live := conflict
+	live.Number = 8
+	none := conflict
+	none.Number = 9
+	supersede := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeSupersede, AdoptedBy: 90, AdoptedAt: now}
+	if !e.inPlaceRebaseExhausted(conflict, inPlace) {
+		t.Fatal("exhausted episode on the in-place adoption not reported")
+	}
+	if e.inPlaceRebaseExhausted(live, inPlace) || e.inPlaceRebaseExhausted(none, inPlace) || e.inPlaceRebaseExhausted(conflict, supersede) {
+		t.Fatal("live, missing or supersede-mode episode reported exhausted")
+	}
+	if (&Engine{}).inPlaceRebaseExhausted(conflict, inPlace) {
+		t.Fatal("no episode reader reports exhausted")
 	}
 }
 

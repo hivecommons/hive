@@ -10,8 +10,9 @@ import (
 // back to 060 after the automerge lane's merge call drew GitHub's 405 "4
 // of 4 required status checks are expected", and the tracker drew the amber
 // "⟳ Merge failed · retrying ⬡" chip in CI / Review with the raw
-// "PUT https://api.github.com/…" error spilling out of it. A merge outcome
-// always lights the Merge gate column; the chip is a fixed short phrase
+// "PUT https://api.github.com/…" error spilling out of it. An actual queue
+// outcome lights the Merge gate; a premature call waiting for head checks
+// does not admit a 050/060 PR. The chip is a fixed short phrase
 // (no URL, no verb, ≤ 5 words) with GitHub's words in the tooltip's
 // Details line; pending CI is "CI running", never "red"; and the cue
 // names the stage in plain words, not "stage/060-reviewed".
@@ -65,15 +66,20 @@ const words = s => s.trim().split(/\s+/).filter(w => w !== '·');
 const plain = s => !/http|\bPUT\b|api\.github\.com/i.test(s);
 
 // 1. Column: the merge outcome lights Merge gate (80), whatever stage the
-//    lane fell back to; the same stage without a merge call stays in CI /
-//    Review (50); a merged / open row is unaffected.
-assert.strictEqual(stageTrackerAnchor(60, stages, 'pr', row(gate())), STAGE_TRACKER_MERGE_COLUMN, 'merge-failed at 060 → Merge gate');
+//    lane fell back to, except an early refusal waiting for head checks:
+//    that head is still in CI / Review, not admitted by the failed call.
+assert.strictEqual(stageTrackerAnchor(60, stages, 'pr', row(gate())), 50, 'pending head checks at 060 → CI / Review');
 assert.strictEqual(stageTrackerAnchor(60, stages, 'pr', row(gate({ state: 'merging', merge_failed: '' }))), STAGE_TRACKER_MERGE_COLUMN, 'merging at 060 → Merge gate');
-assert.strictEqual(stageTrackerAnchor(50, stages, 'pr', row(gate())), STAGE_TRACKER_MERGE_COLUMN, 'merge-failed at 050 → Merge gate');
+assert.strictEqual(stageTrackerAnchor(50, stages, 'pr', row(gate())), 50, 'pending head checks at 050 → CI / Review');
 assert.strictEqual(stageTrackerAnchor(60, stages, 'pr', row({ state: 'gate-pending', reason: 'check-pending' })), 50, 'no merge call: 060 stays in CI / Review');
 assert.strictEqual(stageTrackerAnchor(60, stages, 'pr'), 50, 'no item: unchanged');
 assert.strictEqual(stageTrackerAnchor(STAGE_TRACKER_TERMINAL, stages, 'pr', row(gate())), STAGE_TRACKER_TERMINAL);
 assert.strictEqual(stageTrackerAnchor(30, stages, 'pr', row(gate())), 30, 'a stale gate on a PR back in progress does not jump it forward');
+const prepared = Object.assign(row(gate({ merge_failed_kind: 'checks-pending', merge_failed_checks: 1 })), {
+  stage: 50, preparation: { role: 'waiting', state: 'current', number: 16014, behind: 16007 },
+});
+assert.strictEqual(stageTrackerAnchor(50, stages, 'pr', prepared), 50, 'preparation is not queue admission');
+assert.strictEqual(stageTrackerAnchor(100, stages, 'pr', prepared), STAGE_TRACKER_MERGE_COLUMN, 'an actual queue-stage outcome stays at the gate');
 
 // 2. The chip for this exact payload (Go translated the 405): the sweep
 //    called too early, so it is "Waiting for CI · 4 checks", not a failure.

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-stream-fleet
+  namespace: hive-stream-fleet
+data:
+  # Fail-closed switches (see ../public-safe-gate.sh). Only the owner flips
+  # STREAM_ENABLED to "true" and sets PUBLIC_SAFE_POLICY_ACK to the policy
+  # version, after provisioning the stream key and the public-safe hub view.
+  STREAM_PROFILE: "public-safe"
+  STREAM_ENABLED: "false"
+  PUBLIC_SAFE_POLICY_ACK: ""
+  # The hub's public origin. The kiosk reaches it anonymously: no dashboard
+  # credential exists in this namespace and the auth proxy refuses one, so the
+  # stream shows only what the hub serves to the public.
+  DASHBOARD_URL: "https://hive.hivecommons.dev"
+  # The separately authorized public-safe hub view (#15966). The placeholder
+  # makes the gate refuse to start until the owner sets the real path.
+  DASHBOARD_PATH: "CHANGE-ME-public-safe-hub-view"
+  TWITCH_INGEST: "rtmp://live.twitch.tv/app"
+  VIDEO_SIZE: "1920x1080"
+  FPS: "30"
+  BITRATE: "4500k"
+  X264_PRESET: "veryfast"
+  RELOAD_EVERY: "30m"
+  STREAM_AUDIO: "pulse"

@@ -214,6 +214,7 @@
     .ham-row.ham-preparation-gap::before, .ham-sub.ham-preparation-member.ham-preparation-gap::before { border-left-style: dashed; }
     .ham-row.ham-preparation-unverified::after, .ham-sub.ham-preparation-member.ham-preparation-unverified::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
     .ham-preparation-comment { animation: none; }
+    .ham-human-context { animation: none; }
     /* Mixed issue trees keep their existing children; only actual prep PRs
        receive a rail, at the original gutter offset minus the parent inset. */
     .ham-row > .ham-preparation-head { margin-left: calc(-1 * var(--sp-2)); }

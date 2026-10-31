@@ -1306,6 +1306,100 @@
         }
       }
     },
+    "/api/matrix/lines": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Serve Activity Monitor Matrix lines",
+        "description": "Serve bounded backlog of pushed lines behind dashboard.matrix. Returns 404 when matrix mode is disabled.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Return lines after this sequence number. since=0 returns the initial backlog up to 2000 lines."
+          },
+          {
+            "name": "max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "description": "Maximum number of lines to return (clamped between 1 and 500, defaults to 200 when since > 0)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matrix lines response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "pr": {
+                            "type": "integer"
+                          },
+                          "head": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "lang": {
+                            "type": "string"
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid dashboard authentication."
+          },
+          "403": {
+            "description": "Read access required."
+          },
+          "404": {
+            "description": "Matrix mode disabled."
+          }
+        }
+      }
+    },
     "/api/status": {
       "get": {
         "tags": [

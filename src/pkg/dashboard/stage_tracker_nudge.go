@@ -14,6 +14,7 @@ const stageTrackerNudgeInterval = 2 * time.Second
 // goes out immediately, later ones inside the window collapse into a single
 // trailing frame carrying the newest seq, sent when the window ends.
 type stageTrackerNudger struct {
+	interval time.Duration // zero -> stageTrackerNudgeInterval
 	mu       sync.Mutex
 	last     time.Time
 	armed    bool
@@ -39,7 +40,11 @@ func (n *stageTrackerNudger) nudge(seq uint64, send func(seq uint64)) {
 		return
 	}
 	now := n.clock()
-	if wait := stageTrackerNudgeInterval - now.Sub(n.last); !n.last.IsZero() && wait > 0 {
+	interval := n.interval
+	if interval == 0 {
+		interval = stageTrackerNudgeInterval
+	}
+	if wait := interval - now.Sub(n.last); !n.last.IsZero() && wait > 0 {
 		n.armed = true
 		newTimer := n.newTimer
 		if newTimer == nil {

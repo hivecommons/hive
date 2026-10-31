@@ -16,8 +16,11 @@ ARG TARGETOS TARGETARCH
 WORKDIR /build
 COPY src/deploy/stream/authproxy/*.go ./
 # Stdlib-only: a throwaway module keeps this stage independent of the root
-# go.mod/go.sum (no download, no replace directives to satisfy).
+# go.mod/go.sum (no download, no replace directives to satisfy). The tests run
+# here because stream-image.yml's PR build is the only CI lane that sees this
+# package (the Go test matrix covers pkg/, cmd/, internal/ and crux/ only).
 RUN go mod init hive-stream/authproxy >/dev/null 2>&1 \
+ && CGO_ENABLED=0 go test -count=1 . \
  && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/authproxy .
 
 FROM ${BASE_REGISTRY}/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
@@ -39,8 +42,8 @@ RUN apt-get update \
  && install -d -o stream -g stream /run/stream
 
 COPY --from=authproxy /out/authproxy /usr/local/bin/authproxy
-COPY src/deploy/stream/entrypoint.sh src/deploy/stream/healthcheck.sh /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh \
+COPY src/deploy/stream/entrypoint.sh src/deploy/stream/healthcheck.sh src/deploy/stream/public-safe-gate.sh /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh /usr/local/bin/public-safe-gate.sh \
  && chromium --version && ffmpeg -version | head -1 && Xvfb -help >/dev/null 2>&1 \
  && pulseaudio --version && ffmpeg -hide_banner -devices 2>/dev/null | grep -q pulse
 

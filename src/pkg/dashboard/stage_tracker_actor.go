@@ -204,7 +204,7 @@ func stageTrackerStageActorOf(it StageTrackerItem, workers map[string]stageTrack
 		// The author's push landed and CI / the re-review for it still
 		// run: the ball is back with the hive, the person glyph goes
 		// (hivecommons/hive#15784).
-		if it.Push != nil && it.Push.State == pushStatePushed {
+		if it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking) {
 			return set(StageActorHive, "", stageTrackerPushWhy(it.Push))
 		}
 		return stageTrackerAuthorStageActor(a, it, stage, workers, now)
@@ -322,6 +322,9 @@ func stageTrackerDecisionWhy(it StageTrackerItem) string {
 // unknown author is StageActorNone.
 func stageTrackerAuthorStageActor(a *StageTrackerActor, it StageTrackerItem, stage stagelabels.Stage, workers map[string]stageTrackerWorker, now time.Time) *StageTrackerActor {
 	kind := stageTrackerAuthorActorKind(it.Author, it.AuthorKind)
+	if it.Adoption != nil && it.Adoption.BlockedBy == stagelabels.AdoptBlockedAuthorPerson {
+		kind = StageActorHuman
+	}
 	a.Kind, a.Login = kind, it.Author
 	switch kind {
 	case StageActorHive:
@@ -459,9 +462,12 @@ func stageTrackerResolveActors(items []StageTrackerItem) {
 			cp := *lead.StageActor
 			// The issue's chevron names the PR the person is wanted on.
 			if cp.Kind == StageActorHuman {
-				ask := "needs a person"
-				if pr := prs[it.Repo+"#"+strconv.Itoa(lead.Number)]; pr != nil {
+				ask := cp.HumanReason
+				if pr := prs[it.Repo+"#"+strconv.Itoa(lead.Number)]; ask == "" && pr != nil {
 					ask = stageTrackerHumanAsk(stageByNumber(pr.Stage))
+				}
+				if ask == "" {
+					ask = "needs a person"
 				}
 				cp.HumanReason = stageTrackerClipReason("#" + strconv.Itoa(lead.Number) + " " + ask)
 			}
