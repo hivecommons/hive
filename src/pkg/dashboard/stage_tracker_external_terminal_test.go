@@ -92,6 +92,9 @@ assert.strictEqual(stageTrackerTerminalView({items:[pr]},until+1).items.length,0
 advance({items:[]},until+STAGE_TRACKER_CELEBRATE_PIN_MS+1);
 assert.strictEqual(Object.keys(_stageTrackerTerminalRows).length,0,'dropped row models are bounded');
 assert.strictEqual(Object.keys(_stageTrackerTerminalFacts).length,0,'actor metadata is bounded with row models');
+reset(); advance({items:[{...pr,nested_under:500}]});
+advance(merged);
+assert.strictEqual(stageTrackerTerminalPinnedItem(key,now).stage,110,'a root PR whose issue is absent uses its actual retained row, not an unavailable host');
 
 reset();
 const host={repo:'hivecommons/console',kind:'issue',number:500,stage:40,title:'Open related issue',

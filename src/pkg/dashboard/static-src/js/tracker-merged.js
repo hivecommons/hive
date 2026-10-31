@@ -791,7 +791,8 @@
       }
       const el = document.getElementById('activity-monitor-panel');
       for (const key of fresh) {
-        const rowKey = stageTrackerCelebrateRowKey(key, el) || _stageTrackerPRHost[key] || key;
+        let rowKey = stageTrackerCelebrateRowKey(key, el) || _stageTrackerPRHost[key] || key;
+        if (!rows[rowKey] && rows[key]) rowKey = key;
         if (!rows[rowKey]) continue;
         const prior = _stageTrackerCelebrating[rowKey] || {};
         _stageTrackerTerminalFacts[key] = Object.assign({}, _stageTrackerTerminalFacts[key], {
