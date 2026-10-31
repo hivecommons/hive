@@ -16,7 +16,12 @@ import (
 
 func TestActiveBasePreparationCurrentHeadLifecycleAndReadOnlyRestart(t *testing.T) {
 	now := time.Date(2026, 10, 30, 20, 40, 0, 0, time.UTC)
-	for _, mode := range []string{"admitted", "refreshed", "author-push", "amended-merge", "wrong-base-parent", "held", "closed", "retargeted", "expired", "released", "policy-off", "released-during-read", "unreadable"} {
+	for _, mode := range []string{
+		"admitted", "refreshed", "advanced-base", "advanced-base-amended", "advanced-base-wrong-branch", "non-app",
+		"author-push", "amended-merge", "wrong-base-parent", "blob-changed-same-patch",
+		"missing-attempt", "proof-unavailable", "held", "closed", "retargeted", "expired",
+		"released", "policy-off", "released-during-read", "released-during-proof", "unreadable",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "preparation")
 			store := NewBasePreparationStore(dir)
@@ -30,6 +35,9 @@ func TestActiveBasePreparationCurrentHeadLifecycleAndReadOnlyRestart(t *testing.
 				}
 				if mode == "released" {
 					st.Owner = preparationCandidate{}
+				}
+				if mode == "missing-attempt" {
+					st.Attempts = nil
 				}
 				return nil
 			}); err != nil {
@@ -73,22 +81,57 @@ func TestActiveBasePreparationCurrentHeadLifecycleAndReadOnlyRestart(t *testing.
 					}
 					_ = json.NewEncoder(w).Encode(pr)
 				case strings.HasSuffix(r.URL.Path, "/commits/refreshed"):
+					if mode == "proof-unavailable" {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
 					parents := []map[string]string{{"sha": "old"}, {"sha": "base1"}}
+					if strings.HasPrefix(mode, "advanced-base") {
+						parents[1]["sha"] = "base2"
+					}
 					if mode == "author-push" {
 						parents = parents[:1]
 					}
 					if mode == "wrong-base-parent" {
 						parents[1]["sha"] = "other-base"
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"sha": "refreshed", "parents": parents})
+					author := testHiveAppBotLogin
+					if mode == "non-app" {
+						author = "external-author"
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"sha": "refreshed", "parents": parents,
+						"author": map[string]string{"login": author}})
 				case strings.Contains(r.URL.Path, "/compare/"):
+					if !strings.Contains(r.URL.Path, "/compare/main...") {
+						t.Errorf("refresh proof used stale recorded base instead of destination: %s", r.URL.Path)
+					}
+					if mode == "released-during-proof" {
+						if err := store.change(key, func(st *basePreparation) error {
+							st.Owner = preparationCandidate{}
+							return nil
+						}); err != nil {
+							t.Error(err)
+						}
+					}
 					patch := "+unchanged PR content"
-					if mode == "amended-merge" && strings.HasSuffix(r.URL.Path, "...refreshed") {
+					blob := "pr-blob"
+					if (mode == "amended-merge" || mode == "advanced-base-amended") && strings.HasSuffix(r.URL.Path, "...refreshed") {
 						patch = "+author changed content in amended merge"
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]string{{
-						"filename": "widget.go", "status": "modified", "patch": patch,
-					}}})
+					if mode == "blob-changed-same-patch" && strings.HasSuffix(r.URL.Path, "...refreshed") {
+						blob = "changed-pr-blob"
+					}
+					mergedBase := "base1"
+					if strings.HasPrefix(mode, "advanced-base") {
+						mergedBase = "base2"
+					}
+					if mode == "advanced-base-wrong-branch" {
+						mergedBase = "destination-ancestor"
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"merge_base_commit": map[string]string{"sha": mergedBase},
+						"files":             []map[string]string{{"filename": "widget.go", "status": "modified", "patch": patch, "sha": blob}},
+					})
 				default:
 					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
@@ -104,12 +147,20 @@ func TestActiveBasePreparationCurrentHeadLifecycleAndReadOnlyRestart(t *testing.
 			if (err != nil) != (mode == "unreadable") {
 				t.Fatalf("error=%v", err)
 			}
-			want := mode == "admitted" || mode == "refreshed"
+			want := mode == "admitted" || mode == "refreshed" || mode == "advanced-base"
 			if active != want {
 				t.Fatalf("active=%v want=%v observation=%+v", active, want, observation)
 			}
 			if active && (observation.Number != 7 || observation.HeadSHA != pr.GetHead().GetSHA() || observation.Waiting != 1 || observation.Reason != basePreparationReady) {
 				t.Fatalf("observation=%+v", observation)
+			}
+			if mode == "advanced-base" {
+				restarted := preparationEngine(srv.URL, NewBasePreparationStore(dir))
+				restarted.now = func() time.Time { return now }
+				got, active, err := restarted.ActiveBasePreparation(context.Background(), "acme", "widget", "main")
+				if err != nil || !active || got.HeadSHA != "refreshed" {
+					t.Fatalf("fresh engine lost advanced-base owner: observation=%+v active=%v error=%v", got, active, err)
+				}
 			}
 			if (mode == "released" || mode == "expired" || mode == "policy-off" || mode == "unreadable") && reads != 0 {
 				t.Fatalf("inactive owner made %d remote reads", reads)
@@ -118,7 +169,7 @@ func TestActiveBasePreparationCurrentHeadLifecycleAndReadOnlyRestart(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode != "released-during-read" && string(before) != string(after) {
+			if mode != "released-during-read" && mode != "released-during-proof" && string(before) != string(after) {
 				t.Fatal("read-only observation rewrote durable state")
 			}
 		})
