@@ -270,7 +270,7 @@
       if (!p || p.state !== 'pushed') return '';
       const sha = stageTrackerPushSha(p);
       const age = stageTrackerPushAge(p, nowMs);
-      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (age ? ' · ' + age : '');
+      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (p.next === 're-review' ? ' · re-review pending' : '') + (age ? ' · ' + age : '');
     }
     // Pure: whether the row's lineage chip (adopted / rebased copy) carries
     // the push instead of a pill of its own.
@@ -485,4 +485,3 @@
       else if (who.author && st === 72) text = 'Returned to @' + who.author + stageTrackerToolingSuffix(who.kind);
       return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
     }
-

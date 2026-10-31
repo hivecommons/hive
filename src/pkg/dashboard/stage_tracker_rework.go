@@ -125,7 +125,7 @@ func stageTrackerReworkFor(it StageTrackerItem, login string, stage stagelabels.
 	}
 	// Pushed: the head the request named is gone. The stage engine routes
 	// the row back to 050 on its next sweep; until then the row says so.
-	if rec.NudgeHead != "" && it.Head != "" && it.Head != rec.NudgeHead {
+	if stageTrackerAuthorPushSatisfied(it, stage, rec) {
 		out.State, out.Evidence, out.Head = reworkStatePushed, reworkEvidenceCommit, it.Head
 		if it.UpdatedAt != nil && it.UpdatedAt.After(requested) {
 			u := *it.UpdatedAt

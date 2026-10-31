@@ -279,6 +279,7 @@ assert.strictEqual(stageTrackerPushChipText(pushed, NOW), '@zoe pushed abc1234 �
 const pchip = stageTrackerPushChipHtml(pushed, NOW);
 assert.match(pchip, /^<a class="ham-badge ham-badge-waiting ham-badge-push" title="@zoe pushed abc1234 2m ago \([^)]*\) · CI running" aria-label="@zoe pushed abc1234 2m ago \([^)]*\) · CI running" href="https:\/\/github\.com\/hivecommons\/hive\/commit\/abc1234def" target="_blank" rel="noopener">@zoe pushed abc1234 · 2m<\/a>$/);
 assert.match(stageTrackerPushTip(rereview, NOW), / · re-review queued$/);
+assert.match(stageTrackerPushChipText(rereview, NOW), / · re-review pending · 2m$/);
 assert.strictEqual(stageTrackerPushWaitHtml(pushed, NOW), '');
 // No URL: a span, same words.
 assert.strictEqual(stageTrackerPushChipHtml(w({ state: 'pushed', since: iso(NOW - 2 * MIN), sha: 'abc1234' }), NOW).replace(/ title="[^"]*" aria-label="[^"]*"/, ''), '<span class="ham-badge ham-badge-waiting ham-badge-push">pushed abc1234 · 2m</span>');
@@ -319,6 +320,15 @@ assert.ok(pushed.includes('Push: @zoe pushed abc1234 2m ago'), 'hover line');
 // 072 the same.
 const back = row({ stage: 72, caption: 'Returned to contributor', push: { state: 'pushed', login: 'zoe', since: new Date(now - 120000).toISOString(), sha: 'abc1234', next: 're-review' } });
 assert.ok(/^CI \/ Review\b/.test(litWord(back)), litWord(back));
+assert.ok(back.includes('pushed abc1234 · re-review pending · 2m'), back);
+// The nudge names the old head, but no webhook booked a push time.
+// The canonical backend projection still releases the author wait.
+const reconciled = row({ stage_actor: { kind: 'hive', why: '@zoe pushed abc1234 — the re-review is queued for the new head' },
+  head: 'abc1234', caption: 'new head observed → re-review pending',
+  presence: null, rework: null, push: { state: 'pushed', login: 'zoe', sha: 'abc1234', next: 're-review' } });
+assert.ok(/^CI \/ Review\b/.test(litWord(reconciled)), litWord(reconciled));
+assert.ok(reconciled.includes('pushed abc1234 · re-review pending'), reconciled);
+assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(reconciled), reconciled);
 console.log('push chevron ok');
 `)
 }

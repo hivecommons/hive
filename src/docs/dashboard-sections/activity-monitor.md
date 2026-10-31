@@ -25,6 +25,11 @@ changes requested remain the visible blocker and keep the author/rework stage.
 The tracker records the approval separately rather than claiming that the merge
 queue will take the PR. Approval on an earlier head is historical, not permission
 or current review proof for a new head.
+When the PR's new head satisfies a recorded old-head author-push request, the
+backend reconciles push/rework observations before building the row: its pill,
+actor and caption return to pending CI/re-review instead of still asking for a
+push. An independently evaluated author action on the new head remains visible.
+If the head is known but its push time is not, no push age is invented.
 
 ### First use: find the next action
 

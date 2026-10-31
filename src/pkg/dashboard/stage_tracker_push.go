@@ -72,6 +72,17 @@ func stageTrackerPushFor(it StageTrackerItem, stage stagelabels.Stage, rec stage
 			Next:  stageTrackerPushNext(stage, rec.Reason),
 		}
 	}
+	if stageTrackerAuthorPushSatisfied(it, stage, rec) {
+		// The nudge names the old head even when the webhook push ledger
+		// has not caught up. A PR update time is not a known push time.
+		return &StageTrackerPush{
+			State: pushStatePushed,
+			Login: login,
+			Sha:   it.Head,
+			URL:   stageTrackerCommitURL(it, it.Head),
+			Next:  stageTrackerPushNext(stage, rec.Reason),
+		}
+	}
 	if !stage.WaitsOnPush() || rec.WaitingPushSince.IsZero() {
 		return nil
 	}
@@ -135,8 +146,14 @@ func stageTrackerCommitURL(it StageTrackerItem, sha string) string {
 // stageTrackerPushCaption is the hive line for a pushed row: "push seen 2m
 // ago → CI/re-review queued". "" when the row carries no push.
 func stageTrackerPushCaption(p *StageTrackerPush, now time.Time) string {
-	if p == nil || p.State != pushStatePushed || p.Since == nil {
+	if p == nil || p.State != pushStatePushed {
 		return ""
+	}
+	if p.Since == nil {
+		if p.Next == pushNextReReview {
+			return "new head observed → re-review pending"
+		}
+		return "new head observed → CI pending"
 	}
 	ago := shortDuration(now.Sub(*p.Since))
 	if ago == "0s" {
@@ -176,4 +193,17 @@ func (s *Server) stageTrackerWaitingPushStale() time.Duration {
 // the author pushed over.
 func stageTrackerPushOnHead(it StageTrackerItem, rec stagelabels.Record) bool {
 	return it.Head == "" || strings.EqualFold(it.Head, rec.LastPushSha) || strings.EqualFold(it.Head, rec.ActivityHead)
+}
+
+// A nudge's old-head request is satisfied before a push webhook or a stage
+// relabel necessarily lands. A newly evaluated author hold starts its own wait;
+// that current-head request must not be released by an older nudge.
+func stageTrackerAuthorPushSatisfied(it StageTrackerItem, stage stagelabels.Stage, rec stagelabels.Record) bool {
+	if it.Kind != "pr" || !stage.WaitsOnPush() || it.Head == "" || rec.NudgeHead == "" || strings.EqualFold(it.Head, rec.NudgeHead) {
+		return false
+	}
+	if strings.EqualFold(rec.ActivityHead, it.Head) && !rec.WaitingOnHive && rec.WaitingPushSince.After(rec.NudgeStart()) {
+		return false
+	}
+	return true
 }

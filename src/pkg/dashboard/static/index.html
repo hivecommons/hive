@@ -16463,7 +16463,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!p || p.state !== 'pushed') return '';
       const sha = stageTrackerPushSha(p);
       const age = stageTrackerPushAge(p, nowMs);
-      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (age ? ' · ' + age : '');
+      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (p.next === 're-review' ? ' · re-review pending' : '') + (age ? ' · ' + age : '');
     }
     // Pure: whether the row's lineage chip (adopted / rebased copy) carries
     // the push instead of a pill of its own.
@@ -16678,7 +16678,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else if (who.author && st === 72) text = 'Returned to @' + who.author + stageTrackerToolingSuffix(who.kind);
       return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
     }
-
     // Which strip segment a stage lights: main stages light themselves,
     // 040 shares the PR in progress column with 030, 060 shares CI / Review
     // with 050, 095 and 100 share the Merge gate column with 080, detours
