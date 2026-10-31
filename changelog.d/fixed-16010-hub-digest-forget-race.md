@@ -1,0 +1,1 @@
+- A heartbeat racing a hive delete can no longer re-insert an activity digest after the hive was forgotten; the digest is now recorded and purged under the same registry lock ([#16010](https://github.com/hivecommons/hive/issues/16010)).

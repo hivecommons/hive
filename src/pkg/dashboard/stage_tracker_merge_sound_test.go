@@ -246,7 +246,7 @@ stageTrackerNoteMerges({ items: [P(31, 60)], recently_merged: [{ repo: 'a/b', nu
 stageTrackerNoteMerges({ items: [P(31, 60)] });
 assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 1, 1, 1], 'no replay once the entry ages out');
 assert.deepStrictEqual(stageTrackerCarryOpen(null, { x: true }), { x: true });
-assert.deepStrictEqual(stageTrackerCarryOpen({ a: false, b: true, c: false }, { c: true }), { a: false, c: true }, 'merged keys are not carried, open ones are');
+assert.deepStrictEqual(stageTrackerCarryOpen({ a: false, b: true, c: false }, { c: true }), { a: false, b: true, c: true }, 'verified merged facts are irreversible; dropped open observations remain comparable');
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

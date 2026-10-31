@@ -97,10 +97,16 @@ type Digest struct {
 	Items       []Item    `json:"items,omitempty"`
 	// Truncated is how many eligible items the cap left out.
 	Truncated int `json:"truncated,omitempty"`
+	// Events are the stage hops, opens and merges since the hub last
+	// acknowledged (#15964), oldest first and at most MaxEvents.
+	// EventsDropped discloses how many the cap dropped since then. Neither
+	// is part of the content etag, and an unchanged marker may carry them.
+	Events        []Event `json:"events,omitempty"`
+	EventsDropped int     `json:"events_dropped,omitempty"`
 }
 
 // IsUnchangedMarker reports whether d only re-asserts a previously sent
-// etag.
+// etag. Events do not count: a marker may carry them.
 func (d Digest) IsUnchangedMarker() bool {
 	return d.ETag != "" && d.Totals == nil && len(d.Items) == 0 && d.Truncated == 0
 }

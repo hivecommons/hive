@@ -1617,6 +1617,7 @@
        reads "Sentinel alert · needs human". Danger-tinted from the
        status token the sentinel pill on the repo card already uses. */
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
+    .ham-badge-sentinel.ham-sentinel-notice { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 55%, transparent); }
     .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
@@ -7889,6 +7890,7 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
     <div class="oc-topbar-right">
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="submit" title="Report a bug or request a feature" aria-label="Report a bug or request a feature"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
       <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
+      <a class="nav-chip nav-chip--action" id="oc-matrix-tab" href="?kiosk=1&amp;view=matrix" title="Matrix display — opt-in code rain" aria-label="Matrix display" hidden><span class="nav-chip__label">Matrix</span></a>
       <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
@@ -16172,6 +16174,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // under the issue (merged, closed, filtered) has nothing left to say
     // and is not drawn.
     function stageTrackerLinkedSupersededGone(lp, issue) {
+      if (lp && lp.terminal_merge === true && Number(lp.stage) === STAGE_TRACKER_TERMINAL) return false;
       return !!lp && String(lp.state || '') === 'closed' && !stageTrackerLinkedSuperseder(lp, issue);
     }
     function stageTrackerCoveringPR(item) {
@@ -16996,12 +16999,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!item || !item.sentinel_alert) return '';
       const head = String(item.head || '').slice(0, STAGE_TRACKER_SHORT_SHA);
       const reason = String(item.sentinel_reason || '').trim();
-      return STAGE_TRACKER_SENTINEL_TIP + (head ? ' at ' + head : '') + ': ' + (reason || STAGE_TRACKER_SENTINEL_TIP_FALLBACK);
+      const lead = item.sentinel_notice ? 'Informational security notice (not a merge gate)' : STAGE_TRACKER_SENTINEL_TIP;
+      const fallback = item.sentinel_notice ? 'informational findings; no blocking sentinel label' : STAGE_TRACKER_SENTINEL_TIP_FALLBACK;
+      return lead + (head ? ' at ' + head : '') + ': ' + (reason || fallback);
     }
     // Whether the item's lit chevron word carries the alert itself (a PR
     // parked at 085, or an issue riding one): the chip then adds nothing.
     function stageTrackerSentinelInLane(item) {
-      return !!(item && item.sentinel_alert) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
     }
     // A returned PR (071/072) keeps its routing word — the human already
     // acted, nothing is owed by the maintainer — and carries the alert as
@@ -17009,7 +17014,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // then adds nothing.
     function stageTrackerSentinelAsSuffix(item) {
       const st = Number(item && item.stage) || 0;
-      return !!(item && item.sentinel_alert) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
     }
     // Pure: whose PR a 071/072 row waits on — the row's own author, or, for
     // an issue row drawn through its one covering PR (via_pr), that PR's
@@ -17273,12 +17278,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const r = String((sa && sa.human_reason) || stageTrackerHumanWhy(item, kind) || STAGE_TRACKER_HUMAN_REASON_FALLBACK).replace(/\s+/g, ' ').trim();
       return r.length > STAGE_TRACKER_HUMAN_REASON_MAX ? r.slice(0, STAGE_TRACKER_HUMAN_REASON_MAX - 1).replace(/\s+\S*$/, '') + '…' : r;
     }
+    function stageTrackerExternalPRWork(item) {
+      if (!item || (item.kind !== 'pr' && !item.via_pr)) return null;
+      let source = item;
+      if (item.via_pr) {
+        const linked = (item.linked_prs || []).filter(lp => lp && stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item));
+        source = linked.length === 1 ? linked[0] : {};
+      }
+      const who = stageTrackerReturnedAuthor(source);
+      const holder = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      if (holder && (!who.author || holder.source !== 'author')) return Object.assign({}, who, { owner: stageTrackerClaimantShort(holder) });
+      return who.kind === 'hive' || who.kind === 'bot' ? null : who;
+    }
     function stageTrackerActorTip(item) {
       // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
       const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';
       const sa = stageTrackerStageActor(item);
       if (!sa) { const k = stageTrackerActorKind(item); const w = humanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
-      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) {
+        const external = typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+        if (external) {
+          if (external.owner) return ' · Recorded PR owner ' + external.owner + ' — current work activity is unknown';
+          return external.author ? ' · Author-owned PR @' + external.author + ' — current work activity is unknown' : ' · PR ownership and current work activity are unknown';
+        }
+        return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      }
       const why = sa.why || humanWhy(item, sa.kind);
       return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
@@ -17327,6 +17351,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sa = stageTrackerStageActor(item);
       if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const external = sa.kind === STAGE_TRACKER_ACTOR_NONE && typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'CI failing') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
       const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
       return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }
@@ -17537,8 +17563,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
       const actor = active.cap ? '' : stageTrackerActorTip(item);
+      const by = active.cap && item.terminal_merge && typeof stageTrackerMergedByText === 'function' ? stageTrackerMergedByText(item.merged_by) : '';
       const regressed = stageTrackerRegressionText(item, Date.now());
-      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
+      const text = active.short + (by ? ' ' + by : '') + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
       return `<p class="ham-current-stage">${esc(text)}</p>`;
     }
 
@@ -17690,7 +17717,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerSentinelChipHtml(item) {
       if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item) || stageTrackerSentinelAsSuffix(item) || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
-      return `<span class="ham-badge ham-badge-sentinel" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc('Sentinel alert — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
+      const label = item.sentinel_notice ? 'Informational security notice' : 'Sentinel alert';
+      return `<span class="ham-badge ham-badge-sentinel${item.sentinel_notice ? ' ham-sentinel-notice' : ''}" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc(label + ' — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
     }
 
     // Pure: the hold pill text from the row's `hold` provenance ('' when the
@@ -18146,8 +18174,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x, issue)) : [];
       const canonical = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/.exec(String(lp.url || ''));
       return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+        state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
@@ -18573,7 +18602,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
+            terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -18972,7 +19002,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const auto = ctx && typeof ctx.noteTuck === 'boolean' ? ctx.noteTuck : (typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting());
       const fading = !auto && nowMs - stageTrackerEventShownAt(ev) > STAGE_TRACKER_EVENT_MS * 2 / 3;
       const open = !auto || stageTrackerNoteOpen(ev, nowMs, auto);
-      const who = ev.who === 'you' ? 'You' : 'Hive';
+      const who = ev.who === 'you' ? 'You' : ev.who === 'merge' ? 'Merge' : 'Hive';
       const body = `<span class="cue-event-who">${esc(who)}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`;
       if (!auto) return `<p class="cue-event${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}">${body}</p>`;
       const ico = `<button type="button" class="cue-event-ico" aria-label="${STAGE_TRACKER_NOTE_LABEL}" aria-expanded="${open ? 'true' : 'false'}" title="${esc(stageTrackerNoteTitle(ev, nowMs))}" data-action="stageTrackerNoteToggle" data-arg0="${esc(key)}" data-stop="1">${STAGE_TRACKER_NOTE_ICON}</button>`;
@@ -19384,7 +19414,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (_stageTrackerSettleTimer) return;
       _stageTrackerSettleTimer = setTimeout(() => { _stageTrackerSettleTimer = 0; renderStageTracker(); }, STAGE_TRACKER_SETTLE_MS);
     }
-
     // What a PR row's issue slot shows: the issue the PR closes (number,
     // title, url) — an open one first, else the closed one GitHub links
     // it to, with closed: true so the row draws it struck through under a
@@ -20587,7 +20616,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!el) return;
       const nowMs = Date.now();
       // Rows under a "Merging" hold the payload already dropped ride along (#15245).
-      const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
+      const held = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
+      const d = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(held, nowMs) : held;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
         if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
         if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(null, [], nowMs, '');
@@ -20597,6 +20627,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return;
       }
       const f = _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      if (typeof stageTrackerTerminalEvents === 'function') stageTrackerTerminalEvents(nowMs);
       const stages = d.stages || [];
       const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
       const sel = document.getElementById('activity-monitor-repo');
@@ -20697,7 +20728,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : itemRow(pageItems[i], i);
       const trainRows = stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null);
       const inlineRows = typeof stageTrackerPreparationInlineRows === 'function' ? stageTrackerPreparationInlineRows(trainRows, pageItems, stages) : trainRows;
-      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs);
+      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
@@ -21104,7 +21135,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }).join('');
     }
     function stageTrackerItemsForKeys(keys) {
-      return keys.map(k => stageTrackerItemByKey(_stageTracker, k)).filter(Boolean);
+      const data = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(_stageTracker, Date.now()) : _stageTracker;
+      return keys.map(k => stageTrackerItemByKey(data, k)).filter(Boolean);
     }
     // What the signed-in viewer may do on this repo. Hold permission is
     // looked up lazily (the server answers 403 either way); needs-human is
@@ -21331,6 +21363,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
+      if (typeof stageTrackerMergedPRKnown === 'function' && stageTrackerMergedPRKnown(item)) {
+        return [
+          { id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+          { id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+        ];
+      }
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const has = m => mods.indexOf(m) >= 0;
       const write = ctx.canHold !== false;
@@ -22100,6 +22138,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: which endpoint an action hits for one item. `once` marks a
     // hive-wide call made one time per batch.
     function stageTrackerActionRequest(item, id, payload) {
+      if (typeof stageTrackerTerminalView === 'function') {
+        item = stageTrackerTerminalView({ items: [item] }, Date.now()).items[0];
+        if (!item || (typeof stageTrackerMergedPRKnown === 'function' && stageTrackerMergedPRKnown(item))) return null;
+      }
       payload = payload || {};
       const p = repoParts(item.repo);
       const n = Number(item.number) || 0;
@@ -22381,7 +22423,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // flagged PR, so the operator reads the security reason before
     // choosing Approve; '' when nothing in items is flagged.
     function stageTrackerSentinelPreface(items) {
-      return (items || []).filter(it => it && it.sentinel_alert).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
+      return (items || []).filter(it => it && it.sentinel_alert && !it.sentinel_notice).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
     }
     // Every confirm a row action raises can be opted out of per browser,
     // per action id (the dialog's "Don't ask again for this action" box;
@@ -23509,6 +23551,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const repo = String(it.repo || '');
         const slash = repo.lastIndexOf('/');
         if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
+          if (!lp || !Number(lp.number)) continue;
+          const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(it, lp) : Object.assign({ repo: it.repo }, lp);
+          const prRepo = String(pr.repo || ''), at = prRepo.lastIndexOf('/');
+          if (at > 0) { const short = prRepo.slice(at + 1); byShort[short] = (short in byShort && byShort[short] !== prRepo) ? '' : prRepo; }
+          if (lp.state === 'closed' && Number(lp.stage) < STAGE_TRACKER_TERMINAL) continue;
+          out[stageTrackerPRKey(pr.repo, pr.number)] = (Number(pr.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+        }
         if (it.kind !== 'pr') continue;
         out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
       }
@@ -23524,14 +23574,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
 
-    // Pure: next plus every PR prev listed open that next no longer lists at
-    // all, kept as open. A PR the snapshot dropped before the audit log
+    // Pure: merged facts are irreversible; dropped open observations remain
+    // comparable. A PR the snapshot dropped before the audit log
     // recorded its merge stays comparable until recently_merged settles it
     // (or, when it was closed unmerged, for the life of the tab — a few keys).
     function stageTrackerCarryOpen(prev, next) {
       const out = Object.assign({}, next || {});
       if (!prev) return out;
-      for (const k of Object.keys(prev)) if (prev[k] === false && !(k in out)) out[k] = false;
+      for (const k of Object.keys(prev)) {
+        if (prev[k] === true) out[k] = true;
+        else if (prev[k] === false && !(k in out)) out[k] = false;
+      }
       return out;
     }
 
@@ -23596,6 +23649,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerMergeState = next;
       // A merged PR is no longer in this payload, so its last host survives.
       if (typeof stageTrackerPRHosts === 'function') Object.assign(_stageTrackerPRHost, stageTrackerPRHosts(d));
+      if (typeof stageTrackerTerminalObserve === 'function') stageTrackerTerminalObserve(d, fresh, nowMs);
       // With the celebration on, each fresh merge is counted (and the zap
       // plays) when its token lands on the counter; off, both happen now.
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
@@ -24252,6 +24306,159 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!stageTrackerMergedInFlight() && stageTrackerSoundGate()) stageTrackerPlayZap(1);
     }
     var _stageTrackerCelebrating = {};
+    var _stageTrackerTerminalRows = {};
+    var _stageTrackerTerminalFacts = {};
+    // Keep models, not stale HTML, for the existing short terminal/pin window.
+    // No queue/admission observation is required for a verified merged fact.
+    function stageTrackerTerminalObserve(d, fresh, nowMs) {
+      const previous = _stageTrackerTerminalRows, rows = Object.assign({}, previous);
+      const current = new Set();
+      for (const item of (d && Array.isArray(d.items) ? d.items : [])) if (item) {
+        const key = stageTrackerItemKey(item);
+        current.add(key);
+        rows[key] = { item, at: nowMs, visible_prs: (item.linked_prs || []).map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))) };
+      }
+      const el = document.getElementById('activity-monitor-panel');
+      for (const key of fresh) {
+        let rowKey = stageTrackerCelebrateRowKey(key, el) || _stageTrackerPRHost[key] || key;
+        if (!rows[rowKey] && rows[key]) rowKey = key;
+        if (!rows[rowKey]) continue;
+        const prior = _stageTrackerCelebrating[rowKey] || {};
+        _stageTrackerTerminalFacts[key] = Object.assign({}, _stageTrackerTerminalFacts[key], {
+          observed_at: nowMs, until: nowMs + STAGE_TRACKER_CELEBRATE_PIN_MS,
+        });
+        _stageTrackerCelebrating[rowKey] = Object.assign({}, prior, {
+          key, keys: Array.from(new Set((prior.keys || []).concat(key))), kind: 'merged',
+          until: Math.max(Number(prior.until) || 0, nowMs + STAGE_TRACKER_CELEBRATE_PIN_MS),
+        });
+        stageTrackerScheduleRelease(STAGE_TRACKER_CELEBRATE_PIN_MS);
+      }
+      const wanted = new Set();
+      const detached = [];
+      for (const rowKey of Object.keys(rows)) {
+        const pin = _stageTrackerCelebrating[rowKey], active = pin && pin.until > nowMs;
+        const item = rows[rowKey].item, old = previous[rowKey] && previous[rowKey].item;
+        if (item.kind === 'issue' && old && Array.isArray(old.linked_prs)) {
+          const linked = (item.linked_prs || []).slice(), keys = new Set(linked.map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))));
+          let unresolved = 0;
+          for (const lp of old.linked_prs) {
+            const key = stageTrackerItemKey(stageTrackerLinkedPRItem(old, lp));
+            const fact = _stageTrackerTerminalFacts[key];
+            if (keys.has(key)) continue;
+            if (fact && fact.until > nowMs) { linked.push(lp); keys.add(key); }
+            else if (_stageTrackerMergeState[key] === false && unresolved < STAGE_TRACKER_MERGED_LIST_MAX) {
+              linked.push(lp); keys.add(key); unresolved++;
+            }
+          }
+          rows[rowKey] = Object.assign({}, rows[rowKey], { item: Object.assign({}, item, { linked_prs: linked }) });
+        }
+        const source = rows[rowKey].item;
+        const prs = source.kind === 'pr' ? [source] : (source.linked_prs || []).map(lp => stageTrackerLinkedPRItem(source, lp));
+        if (!current.has(rowKey) && !active) {
+          if (!prs.some(pr => _stageTrackerMergeState[stageTrackerItemKey(pr)] === false)) { delete rows[rowKey]; continue; }
+          detached.push(rowKey);
+        }
+      }
+      // Missing-but-unsettled rows are bounded history, not visible holds.
+      // Keep them available when the canonical merge ledger lags eviction.
+      detached.sort((a, b) => rows[b].at - rows[a].at);
+      for (const key of detached.slice(STAGE_TRACKER_MERGED_LIST_MAX)) delete rows[key];
+      for (const row of Object.values(rows)) {
+        if (row.item.kind === 'pr') wanted.add(stageTrackerItemKey(row.item));
+        for (const lp of (row.item.linked_prs || [])) wanted.add(stageTrackerItemKey(stageTrackerLinkedPRItem(row.item, lp)));
+      }
+      _stageTrackerTerminalRows = rows;
+      // Reuse the canonical merge observer's alias resolution, without adding
+      // any item stages to this one-record observation.
+      const teaching = Object.values(rows).map(row => ({ repo: row.item.repo }));
+      const ledger = d && d.merged && Array.isArray(d.merged.recent) ? d.merged.recent : [];
+      for (const m of (d && Array.isArray(d.recently_merged) ? d.recently_merged : []).concat(ledger)) {
+        const facts = stageTrackerMergeState({ items: teaching, recently_merged: [m] }, _stageTrackerMergeState);
+        for (const key of Object.keys(facts)) {
+          if (!wanted.has(key)) continue;
+          const prior = _stageTrackerTerminalFacts[key] || {};
+          _stageTrackerTerminalFacts[key] = Object.assign({}, prior, {
+            merged_by: m.merged_by || prior.merged_by || '',
+          });
+        }
+      }
+      for (const key of Object.keys(_stageTrackerTerminalFacts)) if (!wanted.has(key)) delete _stageTrackerTerminalFacts[key];
+    }
+    function stageTrackerTerminalItem(item, key) {
+      const fact = _stageTrackerTerminalFacts[key] || {};
+      return Object.assign({}, item, {
+        stage: STAGE_TRACKER_TERMINAL, stage_slug: 'merged', state: 'closed', terminal_merge: true,
+        merged_by: fact.merged_by || item.merged_by || '', modifiers: [], deferred_modifiers: [],
+        caption: 'Merged', reason: '', preparation: null, merge_train: null, merge_gate: null,
+        decision_needed: null, human_attention: null, decided: null, hold: null, adoption: null,
+        manual_merge: false, human_merge_reason: '', human_merge_reason_text: '', human_approver: '',
+        superseded: null, superseded_by: 0, adopted_by: 0,
+        push: null, rework: null, presence: null, claimant: null,
+        stage_actor: { kind: 'none', why: 'merged' }, sentinel_alert: false,
+      });
+    }
+    function stageTrackerTerminalView(d, nowMs) {
+      if (!d || !Array.isArray(d.items)) return d;
+      const items = d.items.map(item => {
+        const rowKey = stageTrackerItemKey(item), pin = _stageTrackerCelebrating[rowKey];
+        const active = pin && pin.until > nowMs;
+        if (item.kind === 'pr' && _stageTrackerMergeState[rowKey] === true) {
+          const fact = _stageTrackerTerminalFacts[rowKey];
+          return (fact && fact.until > nowMs) || Number(item.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(item, rowKey) : null;
+        }
+        if (item.kind !== 'issue') return item;
+        const saved = _stageTrackerTerminalRows[rowKey];
+        const source = (item.linked_prs || []).slice();
+        const keys = new Set(source.map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))));
+        if (active && saved) for (const lp of (saved.item.linked_prs || [])) {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(saved.item, lp)), fact = _stageTrackerTerminalFacts[key];
+          if (fact && fact.until > nowMs && !keys.has(key)) { source.push(lp); keys.add(key); }
+        }
+        const linked = source.map(lp => {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp));
+          if (_stageTrackerMergeState[key] !== true) return lp;
+          const fact = _stageTrackerTerminalFacts[key];
+          return (fact && fact.until > nowMs) || Number(lp.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(lp, key) : null;
+        }).filter(Boolean);
+        return Object.assign({}, item, { linked_prs: linked });
+      }).filter(Boolean);
+      return Object.assign({}, d, { items });
+    }
+    function stageTrackerTerminalPinnedItem(rowKey, nowMs) {
+      const saved = _stageTrackerTerminalRows[rowKey];
+      if (!saved) return null;
+      let item = saved.item;
+      if (item.kind === 'issue') {
+        const visible = new Set(saved.visible_prs || []);
+        item = Object.assign({}, item, { linked_prs: (item.linked_prs || []).filter(lp => {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp)), fact = _stageTrackerTerminalFacts[key];
+          return visible.has(key) || (fact && fact.until > nowMs);
+        }) });
+      }
+      return stageTrackerTerminalView({ items: [item] }, nowMs).items[0] || null;
+    }
+    function stageTrackerTerminalEvents(nowMs) {
+      let nextUntil = Infinity;
+      for (const rowKey of Object.keys(_stageTrackerCelebrating)) {
+        const pin = _stageTrackerCelebrating[rowKey];
+        if (pin.kind !== 'merged' || pin.until <= nowMs) continue;
+        for (const key of (pin.keys || [pin.key])) {
+          const fact = _stageTrackerTerminalFacts[key] || {};
+          if (!fact.observed_at || fact.until <= nowMs) continue;
+          nextUntil = Math.min(nextUntil, fact.until);
+          const by = stageTrackerMergedByText(fact.merged_by);
+          const number = Number(key.slice(key.lastIndexOf('/pr#') + 4));
+          const event = { who: 'merge', at: fact.observed_at, text: 'Merged PR #' + number + (by ? ' ' + by : '') };
+          _stageTrackerEvents[key] = Object.assign({}, _stageTrackerEvents[key], event);
+          if (key === pin.key) _stageTrackerEvents[rowKey] = Object.assign({}, _stageTrackerEvents[rowKey], event);
+        }
+      }
+      if (Number.isFinite(nextUntil)) stageTrackerScheduleRelease(nextUntil - nowMs);
+    }
+    function stageTrackerMergedPRKnown(item) {
+      return !!item && item.kind === 'pr' && typeof _stageTrackerMergeState !== 'undefined' &&
+        !!_stageTrackerMergeState && _stageTrackerMergeState[stageTrackerItemKey(item)] === true;
+    }
     var _stageTrackerFlights = 0;
     // Pure: the PR keys a row draws, space-separated — its own key for a
     // PR row, the covering PRs for an issue row (one inline, several as
@@ -24260,7 +24467,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerRowPRKeys(item) {
       if (!item) return '';
       if (item.kind === 'pr') return stageTrackerPRKey(item.repo, item.number);
-      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0).map(lp => stageTrackerPRKey(lp.repo || item.repo, lp.number)).join(' ');
+      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0 && (!Number(lp.drawn_under) || Number(lp.drawn_under) === Number(item.number))).map(lp => {
+        const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : { repo: lp.repo || item.repo, number: lp.number };
+        return stageTrackerPRKey(pr.repo, pr.number);
+      }).join(' ');
     }
     // PR key → the row key it was last drawn on (from the previous payload's
     // nested_under / linked_prs), for a merge whose row left the DOM
@@ -24271,7 +24481,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         if (it.kind === 'pr') out[stageTrackerPRKey(it.repo, it.number)] = Number(it.nested_under) > 0 ? stageTrackerItemKey({ repo: it.repo, kind: 'issue', number: it.nested_under }) : stageTrackerItemKey(it);
-        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) if (lp && Number(lp.number) > 0) out[stageTrackerPRKey(lp.repo || it.repo, lp.number)] = stageTrackerItemKey(it);
+      }
+      for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
+        if (!it || it.kind !== 'issue') continue;
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
+          if (!lp || !Number(lp.number) || (Number(lp.drawn_under) && Number(lp.drawn_under) !== Number(it.number))) continue;
+          const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(it, lp) : { repo: lp.repo || it.repo, number: lp.number };
+          out[stageTrackerPRKey(pr.repo, pr.number)] = stageTrackerItemKey(it);
+        }
       }
       return out;
     }
@@ -24299,12 +24516,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       keys.forEach((key, i) => {
         const rowKey = stageTrackerCelebrateRowKey(key, el);
         const startAt = now + i * STAGE_TRACKER_CELEBRATE_STAGGER_MS;
-        if (rowKey) _stageTrackerCelebrating[rowKey] = { key, kind: 'merged', until: startAt + STAGE_TRACKER_CELEBRATE_PIN_MS };
+        const fact = typeof _stageTrackerTerminalFacts !== 'undefined' ? _stageTrackerTerminalFacts[key] : null;
+        if (fact && fact.observed_at) fact.until = Math.max(fact.until, startAt + STAGE_TRACKER_CELEBRATE_PIN_MS);
+        if (rowKey) _stageTrackerCelebrating[rowKey] = Object.assign({}, _stageTrackerCelebrating[rowKey], {
+          key, kind: 'merged', until: Math.max((_stageTrackerCelebrating[rowKey] || {}).until || 0, startAt + STAGE_TRACKER_CELEBRATE_PIN_MS),
+        });
         const number = Number(key.slice(key.indexOf('/pr#') + 4)) || 0;
         const banner = stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
         setTimeout(() => {
           const row = rowKey && el ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
-          if (row) celebrateRow(row, { kind: 'merged', key, number });
+          if (row) celebrateRow(row, { kind: 'merged', key, number, merged_by: fact && fact.merged_by });
           else celebrateDetached(key, banner);
         }, i * STAGE_TRACKER_CELEBRATE_STAGGER_MS);
       });
@@ -24336,7 +24557,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: the rows a render must keep although the payload dropped them —
     // every celebrating row still inside its pin window, as the node it
     // already has (its HTML is replayed so the reconcile keeps it).
-    function stageTrackerPinnedRows(el, rows, nowMs) {
+    function stageTrackerPinnedRows(el, rows, nowMs, renderItem) {
       const keys = Object.keys(_stageTrackerCelebrating);
       if (!keys.length || !el) return rows;
       const have = {};
@@ -24345,7 +24566,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const k of keys) {
         const c = _stageTrackerCelebrating[k];
         if (c.until <= nowMs) { delete _stageTrackerCelebrating[k]; continue; }
-        if (have[k]) continue;
+        if (have[k]) { stageTrackerScheduleRelease(c.until - nowMs); continue; }
+        const item = c.kind === 'merged' && typeof renderItem === 'function' && typeof stageTrackerTerminalPinnedItem === 'function' ? stageTrackerTerminalPinnedItem(k, nowMs) : null;
+        if (item) {
+          out.push({ key: k, html: renderItem(item), pinned: true });
+          stageTrackerScheduleRelease(c.until - nowMs);
+          continue;
+        }
         const node = el.querySelector(`[data-ham-key="${CSS.escape(k)}"]`);
         if (!node) { delete _stageTrackerCelebrating[k]; continue; }
         out.push({ key: k, html: stageTrackerRowSrcOf(node) || node.outerHTML, pinned: true });
@@ -24386,9 +24613,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       rowEl.classList.add('cue-merged');
       if (preview) setTimeout(() => rowEl.classList.remove('cue-merged'), STAGE_TRACKER_CELEBRATE_PIN_MS);
       else {
-        const text = kind === 'merged' ? `merged${opts.number ? ' #' + opts.number : ''} · by hive` : `closed by merge${opts.number ? ' of #' + opts.number : ''}`;
+        const by = opts.merged_by ? (opts.merged_by === 'hive' ? 'by hive' : 'by @' + opts.merged_by) : '';
+        const text = kind === 'merged' ? `merged${opts.number ? ' #' + opts.number : ''}${by ? ' · ' + by : ''}` : `closed by merge${opts.number ? ' of #' + opts.number : ''}`;
         stageTrackerNoteOwnerEvent(rowEl.dataset.hamKey, text, Date.now());
-        _stageTrackerEvents[rowEl.dataset.hamKey].who = 'hive';
+        _stageTrackerEvents[rowEl.dataset.hamKey].who = kind === 'merged' ? 'merge' : 'hive';
         stageTrackerEventLineInject(rowEl, rowEl.dataset.hamKey, text);
       }
       if (kind !== 'merged') return { flew: false };
@@ -43991,6 +44219,10 @@ function burnAreaChart() {
         }
         if (data.statusSeq < _statusSeqFloor || data.statusSeq < _lastStatusSeq) return;
         _lastStatusSeq = data.statusSeq;
+      }
+      if (typeof data.matrixEnabled === 'boolean') {
+        const matrixTab = document.getElementById('oc-matrix-tab');
+        if (matrixTab) matrixTab.hidden = !data.matrixEnabled;
       }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
       const scrollAnchor = captureScrollAnchor();

@@ -181,9 +181,26 @@ func TestBootHeartbeatWith_PublishesIdentityBeforeTheLoopAndWiresEveryCallback(t
 	heartbeatCallback[spoke.ClusterIDCallback](t, f)
 	heartbeatCallback[spoke.FreshStatusCollector](t, f)
 	heartbeatCallback[spoke.UpgradeAnnounceCallback](t, f)
-	if len(f.callbacks) != 15 {
-		t.Fatalf("registered %d callbacks, want 15 (one of each)", len(f.callbacks))
+	activity := heartbeatCallback[spoke.ActivitySource](t, f)
+	if len(f.callbacks) != 16 {
+		t.Fatalf("registered %d callbacks, want 16 (one of each)", len(f.callbacks))
 	}
+	// hub.activity is self-hosted opt-in: this config is not hosted, so the
+	// digest stays off until the operator enables it, and the options are
+	// read per build so a reload applies without restarting the loop.
+	if opts := activity.Options(); opts.Enabled {
+		t.Fatalf("self-hosted activity options = %+v, want disabled by default", opts)
+	}
+	on := true
+	cfg.Hub.Activity = config.HubActivityConfig{Enabled: &on, MaxItems: 40, SharePrivate: true}
+	if opts := activity.Options(); !opts.Enabled || opts.MaxItems != 40 || !opts.SharePrivate {
+		t.Fatalf("opted-in activity options = %+v, want enabled with the configured cap and share_private", opts)
+	}
+	if items, ok := activity.Items(context.Background()); ok || items != nil {
+		t.Fatalf("activity items before any status = %v, %v; want none", items, ok)
+	}
+	activity.Subscribe(func() {})
+	activity.Subscribe(nil)
 
 	// The collector honours a runtime hub.enabled=false without being torn
 	// down: it returns nil so StartHeartbeat skips the beat.
