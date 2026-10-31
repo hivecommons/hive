@@ -331,7 +331,8 @@
     }
     // Pure: the link Copy display link puts on the clipboard. Only view
     // parameters ride along — display=1, am.* (or, given a parsed playlist,
-    // one am.view per accepted view plus interval) and theme — so no token,
+    // one am.view per accepted view plus interval), theme and the rendering-only
+    // density=tv / shift=1 flags — so no token,
     // cookie or other query param can leak. Playlist views are re-serialised
     // from the parsed { filter, group }, never echoed from the current URL.
     function stageTrackerDisplayLinkUrl(href, filter, group, playlist) {
@@ -349,6 +350,8 @@
       }
       const theme = src.searchParams.get('theme');
       if (theme !== null) out.searchParams.set('theme', theme);
+      if (src.searchParams.get('density') === 'tv') out.searchParams.set('density', 'tv');
+      if (src.searchParams.get('shift') === '1') out.searchParams.set('shift', '1');
       out.hash = STAGE_TRACKER_POPOUT_HASH;
       return out.toString();
     }
