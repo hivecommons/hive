@@ -1790,6 +1790,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.registerOAuth()
 	s.registerSaaSRoutes()
 	s.registerOpenRouterRoutes()
+	// Fleet activity page (#16063): signed-in, read-only board over
+	// GET /api/hub/activity.
+	s.registerActivityPageRoutes()
 	go s.saveLoop()
 	go s.refreshActiveMyHivesSnapshotsLoop()
 
