@@ -18,8 +18,9 @@ import (
 // hives the viewer is authorized for, exactly like digests, and they are
 // part of the response body, so its ETag changes when new events arrive.
 
-// activityEventRingSize bounds the fleet-wide ring; the oldest event is
-// dropped first.
+// activityEventRingSize bounds the fleet-wide ring. When it is full, the
+// oldest event of the hive holding the most events is dropped first, so a
+// single hive cannot evict the other hives' events.
 const activityEventRingSize = 1000
 
 // activityEvent is one stored event tagged with its hive.
@@ -98,9 +99,45 @@ func (r *activityEventRing) ingest(hiveID string, events []hubactivity.Event, dr
 	}
 	h.disclosed = claimed
 	h.dropped = hubactivity.ClampCount(h.dropped + add)
-	if over := len(r.entries) - activityEventRingSize; over > 0 {
-		r.entries = slices.Delete(r.entries, 0, over)
+	r.evictOver()
+}
+
+// evictOver trims the ring to activityEventRingSize. Each eviction removes
+// the oldest event of the hive holding the most events (the hive holding
+// the oldest event among ties), so one spoke flooding the ring can only
+// evict its own events once it is the largest holder, never the events of
+// hives with a smaller share. Evictions count as drops for the victim hive.
+func (r *activityEventRing) evictOver() {
+	over := len(r.entries) - activityEventRingSize
+	if over <= 0 {
+		return
 	}
+	held := make(map[string]int, len(r.byHive))
+	for _, e := range r.entries {
+		held[e.hiveID]++
+	}
+	evict := make(map[int]bool, over)
+	for ; over > 0; over-- {
+		most := 0
+		for _, n := range held {
+			most = max(most, n)
+		}
+		for i, e := range r.entries {
+			if held[e.hiveID] == most && !evict[i] {
+				evict[i] = true
+				held[e.hiveID]--
+				if h := r.byHive[e.hiveID]; h != nil {
+					h.dropped = hubactivity.ClampCount(h.dropped + 1)
+				}
+				break
+			}
+		}
+	}
+	i := -1
+	r.entries = slices.DeleteFunc(r.entries, func(activityEvent) bool {
+		i++
+		return evict[i]
+	})
 }
 
 // ack is the highest sequence number held for the hive (0 = none).
