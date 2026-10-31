@@ -28,6 +28,7 @@ type mergeFailureAlert struct {
 type mergeAlertEntry struct {
 	key    string
 	number int
+	head   string
 }
 
 // mergeAlertRevalidateInterval bounds how often the merge-request watcher
@@ -43,56 +44,51 @@ func (c *Client) SetMergeFailureAlertSink(sink MergeFailureAlertSink) {
 	defer c.mergeAlertMu.Unlock()
 	c.mergeAlertSink = sink
 	if c.mergeAlertIDsByRepo == nil {
-		c.mergeAlertIDsByRepo = make(map[string]map[string]mergeAlertEntry)
+		c.mergeAlertIDsByRepo = make(map[string]map[string]*mergeAlertEntry)
 	}
 }
 
-func (c *Client) raiseMergeFailureAlert(repo string, number int, errMsg string) {
+func (c *Client) raiseMergeFailureAlert(repo string, number int, errMsg string, head ...string) {
 	alert, ok := classifyMergeFailureForOperator(repo, errMsg)
 	if !ok || c == nil {
 		return
 	}
 	c.mergeAlertMu.Lock()
+	defer c.mergeAlertMu.Unlock()
 	sink := c.mergeAlertSink
 	if sink == nil {
-		c.mergeAlertMu.Unlock()
 		return
 	}
 	id := mergeFailureAlertID(repo, alert.key)
 	if c.mergeAlertIDsByRepo == nil {
-		c.mergeAlertIDsByRepo = make(map[string]map[string]mergeAlertEntry)
+		c.mergeAlertIDsByRepo = make(map[string]map[string]*mergeAlertEntry)
 	}
 	repoKey := strings.ToLower(strings.TrimSpace(repo))
 	if c.mergeAlertIDsByRepo[repoKey] == nil {
-		c.mergeAlertIDsByRepo[repoKey] = make(map[string]mergeAlertEntry)
+		c.mergeAlertIDsByRepo[repoKey] = make(map[string]*mergeAlertEntry)
 	}
-	c.mergeAlertIDsByRepo[repoKey][id] = mergeAlertEntry{key: alert.key, number: number}
-	c.mergeAlertMu.Unlock()
+	entry := &mergeAlertEntry{key: alert.key, number: number}
+	if len(head) > 0 {
+		entry.head = head[0]
+	}
+	c.mergeAlertIDsByRepo[repoKey][fmt.Sprintf("%s/%d", id, number)] = entry
 
+	// Serialize sink updates with bookkeeping so an older observation cannot
+	// clear a newly raised alert between deleting its entry and updating the sink.
 	sink.AddSystemAlert(id, "error", alert.message)
 }
 
-func (c *Client) clearMergeFailureAlertsForRepo(repo string) {
+func (c *Client) clearMergeFailureAlertsForPR(repo string, number int) {
 	if c == nil {
 		return
 	}
 	repoKey := strings.ToLower(strings.TrimSpace(repo))
 	c.mergeAlertMu.Lock()
-	sink := c.mergeAlertSink
-	ids := c.mergeAlertIDsByRepo[repoKey]
-	if len(ids) == 0 || sink == nil {
-		c.mergeAlertMu.Unlock()
-		return
-	}
-	delete(c.mergeAlertIDsByRepo, repoKey)
-	clearIDs := make([]string, 0, len(ids))
-	for id := range ids {
-		clearIDs = append(clearIDs, id)
-	}
-	c.mergeAlertMu.Unlock()
-
-	for _, id := range clearIDs {
-		sink.ClearSystemAlert(id)
+	defer c.mergeAlertMu.Unlock()
+	for member, entry := range c.mergeAlertIDsByRepo[repoKey] {
+		if entry.number == number {
+			c.clearMergeFailureAlertEntryLocked(repoKey, member, entry)
+		}
 	}
 }
 
@@ -100,7 +96,9 @@ func (c *Client) clearMergeFailureAlertsForRepo(repo string) {
 // gone away without an App merge in that repo: the blocked PR is no longer
 // open, (fork-run-approval) its head no longer has workflow runs awaiting
 // maintainer approval — the operator approved them or relaxed the repo/org
-// setting — or (app-permission) a check-runs read on its head succeeds again. Errors leave the alert in place; only positive evidence clears it.
+// setting — or (app-permission) a check-runs read on its head succeeds again.
+// Missing-check alerts require successful exact-current-head evidence.
+// Errors leave the alert in place; only positive evidence clears it.
 func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() time.Time) {
 	if c == nil || c.client == nil {
 		return
@@ -118,7 +116,7 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 	c.mergeAlertLastRevalidate = nowFn()
 	type pending struct {
 		repo, id string
-		entry    mergeAlertEntry
+		entry    *mergeAlertEntry
 	}
 	var work []pending
 	for repo, ids := range c.mergeAlertIDsByRepo {
@@ -140,7 +138,14 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 		if err != nil || pr == nil {
 			continue
 		}
-		resolved := pr.GetState() != "open"
+		resolved := pr.GetState() == "closed"
+		if pr.GetState() != "open" && !resolved {
+			continue
+		}
+		if !resolved && strings.HasPrefix(w.entry.key, "missing-checks:") {
+			resolved = c.missingMergeChecksResolved(ctx, owner, name, pr,
+				splitCheckNames(strings.TrimPrefix(w.entry.key, "missing-checks:")))
+		}
 		if !resolved && w.entry.key == "app-permission" {
 			// Positive evidence the App can act on the repo again: its
 			// check-runs read on the blocked head succeeds. A real merge
@@ -161,25 +166,38 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 		if !resolved {
 			continue
 		}
-		c.clearMergeFailureAlertID(w.repo, w.id)
-		c.logger.Info("merge alert cleared: blocking condition resolved",
-			slog.String("repo", w.repo), slog.Int("number", w.entry.number), slog.String("key", w.entry.key))
+		c.mergeAlertMu.Lock()
+		cleared := c.clearMergeFailureAlertEntryLocked(w.repo, w.id, w.entry)
+		c.mergeAlertMu.Unlock()
+		if cleared {
+			c.logger.Info("merge alert cleared: blocking condition resolved",
+				slog.String("repo", w.repo), slog.Int("number", w.entry.number),
+				slog.String("key", w.entry.key), slog.String("origin_head", w.entry.head),
+				slog.String("current_head", pr.GetHead().GetSHA()))
+		}
 	}
 }
 
-func (c *Client) clearMergeFailureAlertID(repoKey, id string) {
-	c.mergeAlertMu.Lock()
-	sink := c.mergeAlertSink
-	if ids := c.mergeAlertIDsByRepo[repoKey]; ids != nil {
-		delete(ids, id)
-		if len(ids) == 0 {
-			delete(c.mergeAlertIDsByRepo, repoKey)
+// The pointer is an observation token: a refusal raised during network reads
+// replaces it and must survive the old observation.
+func (c *Client) clearMergeFailureAlertEntryLocked(repoKey, member string, entry *mergeAlertEntry) bool {
+	entries := c.mergeAlertIDsByRepo[repoKey]
+	if entries[member] != entry {
+		return false
+	}
+	delete(entries, member)
+	for _, other := range entries {
+		if other.key == entry.key {
+			return true
 		}
 	}
-	c.mergeAlertMu.Unlock()
-	if sink != nil {
-		sink.ClearSystemAlert(id)
+	if len(entries) == 0 {
+		delete(c.mergeAlertIDsByRepo, repoKey)
 	}
+	if c.mergeAlertSink != nil {
+		c.mergeAlertSink.ClearSystemAlert(mergeFailureAlertID(repoKey, entry.key))
+	}
+	return true
 }
 
 func mergeFailureAlertID(repo, key string) string {

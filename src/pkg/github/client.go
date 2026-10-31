@@ -154,7 +154,7 @@ type Client struct {
 	autoMergeMinHeadAge       time.Duration
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
-	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
+	mergeAlertIDsByRepo       map[string]map[string]*mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
 	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
@@ -4696,9 +4696,8 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	// Every merge path ends here, so this is where the merged head's evidence
 	// bundle gains its merge event and the PR gets its evidence pointer.
 	c.recordReviewEvidenceMerge(repo, number, method, sha, path, credit.Logins())
-	// A successful App merge on any path proves the repo is mergeable, so
-	// retire its "merge blocked" alerts (#11924).
-	c.clearMergeFailureAlertsForRepo(repo)
+	// A merge resolves this PR's blockers, not another PR's required checks.
+	c.clearMergeFailureAlertsForPR(repo, number)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one

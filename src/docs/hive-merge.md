@@ -174,8 +174,20 @@ not one per PR or retry tick. The alert text names the fix: install/grant the
 App Contents and Pull requests write permissions, adjust review/ruleset bypass
 or approve the PR, make a missing required check report, or enable/use an
 allowed merge method. Conflicts re-engage the fix loop instead of alerting, and
-rate limits are treated as transient. A later successful merge in that repo
-clears its merge-failure alerts automatically.
+rate limits are treated as transient. Each aggregate banner retains every
+originating PR; a successful merge or confirmed PR closure resolves only that
+PR's blocker, not another PR's alert with the same reason.
+
+The existing five-minute alert revalidation also retires a missing-required-check
+banner when every named check succeeds on the PR's exact current head. Check-run
+success, neutral and skipped conclusions follow the existing CI policy; commit
+statuses must succeed. Readable protection metadata binds checks to the required
+App when specified. The observer completes bounded pagination, rejects older-head
+evidence and re-reads the PR head/base before retiring the originating blocker.
+API errors, incomplete evidence, unknown protection metadata and pending/failed
+checks retain the alert. Concurrent refusals replace the observation token and
+cannot be cleared by an older observation. This changes only alert freshness:
+all CI, review, protection and merge gates remain authoritative and unchanged.
 
 ```yaml
 auto_merge:
