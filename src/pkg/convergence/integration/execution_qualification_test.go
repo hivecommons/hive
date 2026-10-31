@@ -3,6 +3,7 @@ package integration
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,23 @@ func TestExecutionQualificationRequiresActualPromotionAndSignedProofLineage(t *t
 	promotion := ExecutionPromotion{Repo: "o/r", Base: proof.Subject.Base, SubjectID: proof.Subject.ID, ProviderAcknowledged: true,
 		ExpectedSHA: proof.Subject.BaseSHA, TestedSHA: last.Commit, AuthorityCommit: qualification.AuthorityCommit,
 		MutationKey: qualification.MutationKey, State: "applied", PR: 1, Head: proof.Subject.Members[0].Head, Attempt: 1, ObservedAt: in.Now}
+	unacknowledged, err := OpenExecution(executionFixturePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciled := promotion
+	reconciled.ProviderAcknowledged = false
+	for _, observed := range []ExecutionEvent{
+		{Version: ExecutionSchemaVersion, Proof: &proof},
+		{Version: ExecutionSchemaVersion, Promotion: &reconciled},
+	} {
+		if err := unacknowledged.AppendExecution(fmt.Sprintf("unacknowledged-%t", observed.Proof != nil), in.Now, observed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := unacknowledged.AppendExecution("reconciliation-is-not-qualification", in.Now, event); err == nil {
+		t.Fatal("an observed destination without successful provider RPC qualified an unproven actor")
+	}
 	if err := store.AppendExecution("actual-promotion", in.Now, ExecutionEvent{Version: ExecutionSchemaVersion, Promotion: &promotion}); err != nil {
 		t.Fatal(err)
 	}

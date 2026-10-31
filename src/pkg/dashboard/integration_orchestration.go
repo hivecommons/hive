@@ -46,6 +46,7 @@ type integrationRuntime struct {
 	executionTrackerConfig        config.IntegrationExecutionConfig
 	executionCostObservations     map[string]executionCostObservation
 	executionScopeOffset          int
+	executionEligibilityOffsets   map[string]int
 	executionIdentity             integration.ExecutionIdentity
 	executionEvaluator            automerge.IntegrationEligibilityGate
 	executionPreparationEvaluator automerge.IntegrationEligibilityGate

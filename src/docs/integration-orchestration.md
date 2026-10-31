@@ -5,14 +5,15 @@ and GitHub's native queue. It is not a merge engine and does not activate either
 authority. Every existing CI, review, trust, DCO, coverage, soak, hold and
 current-base guard remains authoritative. Nothing deploys automatically.
 
-## Experimental execution: protocol foundation, not an activated engine
+## Exact protected-promotion protocol
 
-The existing authoring layer above remains distinct from future Hive-owned
-candidate execution. Neither `mode: enforce` nor upgrading Hive authorizes a
-new destination writer. There is currently **no installed Hive candidate
-producer, execution controller, execution opt-in, or tracker execution region**.
-The low-level promotion protocol described here does not claim those pieces
-exist. OFF and ADVISORY do not call it; no existing merge lane calls it.
+The authoring layer remains distinct from separately opted-in Hive-owned
+candidate execution. Neither the parent `mode: enforce` nor upgrading Hive
+authorizes a new destination writer. The source includes the trusted producer,
+execution controller, independent configuration and inline tracker captions
+described below. Source availability is not a deployed or qualified executor.
+Execution OFF and ADVISORY never dispatch or promote; existing merge lanes
+retain their normal gates and route enrolled execution subjects explicitly.
 
 The first protocol is `integration-first-parent-v1`, intentionally limited to
 preserving-history merge commits on GitHub. For a tested step `S`, its ordered
@@ -24,9 +25,10 @@ destinations without a compatible producer are unsupported, not bypassed.
 
 GitHub documents an actual compare-and-swap:
 [`updateRefs` with `RefUpdate.beforeOid`, `afterOid`, and `force:false`](https://docs.github.com/en/graphql/reference/git#updaterefs).
-All listed updates are atomic. The initial adapter updates one destination
-while conditionally keeping the same-repository author ref at its exact old
-head. If the author pushes before that transaction, neither ref update applies.
+All listed updates are atomic. The controller updates one destination while
+conditionally keeping the same-repository author ref and registered authority
+epoch at their exact old commits. If the author pushes or authority is revoked
+before that transaction, none of the ref updates applies.
 This no-op comparison is not an author-branch rewrite or persistent lock.
 The provider must accept the conditional no-op under its actual rules; refusal
 blocks promotion and never removes the head fence. Fork heads cannot participate
@@ -35,17 +37,18 @@ promotion protocol, not silently trusted from a prior REST read.
 It does not use REST `UpdateRef(force:true)`, a read followed by a write, or the
 PR merge API's author-head fence as a destination fence. Its stable mutation
 claim binds protocol, repository/base, expected destination, tested commit/tree,
-author head/repository/ref, subject, policy and generation through the existing
+author head/repository/ref, authority epoch, subject, policy and generation through the existing
 effects boundary.
 `clientMutationId` binds acknowledgement; it is **not** provider idempotency.
 The resolved repository identity must also match the enrolled name: a redirect
 after a repository rename/transfer is not authority to write a different scope.
 
 A durable boundary and non-nil live eligibility guard are mandatory. The
-transport refuses a no-op boundary. The future controller must supply exclusive
+transport refuses a no-op boundary. The opt-in controller supplies exclusive
 destination authority, exact complete trusted CI, review, trust, DCO, coverage,
-soak, release and hold checks. This callback is not yet a production wiring of
-those gates. Provider branch rules remain authoritative and rejection does not
+soak, release and hold checks through the original full boot-policy evaluator.
+Its read-only probes isolate tracker/preparation state and disable planner
+writes. Provider branch rules remain authoritative and rejection does not
 permit a fallback, force update or privilege expansion. Destination CAS does
 not atomically snapshot GitHub's independently mutable PR/review/hold fields
 other than the separately fenced same-repository source ref:
@@ -69,10 +72,11 @@ lineage reconciliation; the transport does not guess that it was promoted.
 
 ### Execution feasibility gates
 
-Before any future execution opt-in can pass server validation:
+Before production execution may be enabled and qualified:
 
-1. A versioned trusted CI producer must be installed and verified on the trusted
-   base. Existing `v2-ci.yml` has no dispatch trigger; existing `v2-tests.yml`
+1. The source producer must be installed and verified on the trusted
+   base with its exact reviewed workflow/action closure. Ordinary `v2-ci.yml`
+   dispatch is not a candidate producer; ordinary `v2-tests.yml`
    manual runs are not candidate attestations and include scheduled/manual
    soft-failure behavior. Merely dispatching either does not supply combined
    validation. The current direct-path artifact consumer is single-PR/event
@@ -95,7 +99,7 @@ Before any future execution opt-in can pass server validation:
 5. Native-config-selected repositories are reserved to the native authority
    unless a narrower **landed** selection contract proves otherwise. Native
    detection errors are unknown, not permission for a Hive writer. Existing
-   default-branch preparation and its tracker reference rail are unchanged.
+   default-branch preparation and its inline tracker rails are unchanged.
 6. Accounting must cover the entire candidate attempt cohort. The current
    ledger size and bounded historical pagination limits remain real scale
    blockers; missing history is neither zero cost nor growth permission.
@@ -121,7 +125,7 @@ feasibility; durable candidate identities and parallel bounded dispatch;
 live-gated exact promotion and recovery; opt-in cached execution diagnostics;
 and comparative benchmarks. Existing authoring admission and preparation are
 reused, not replaced. This sequence is an engineering decomposition, not a
-claim that the strategy is optimal or already implemented.
+claim that the strategy is optimal or empirically qualified.
 
 The evidence behind these choices is deliberately qualified:
 
@@ -350,11 +354,12 @@ Their distinct concurrency groups do not cancel another reusable technical
 workflow in the same caller run. Candidate code never runs in issue/release
 writers; no repository secrets may be inherited by a candidate caller.
 
-These call seams and the producer verifier are source support, not an installed
-producer, execution controller, runtime opt-in, protection migration or
-execution-readiness claim. Existing authoring enforce mode does not activate
-them. The current eleven-context destination contract still needs genuine
-candidate-aware producers; author-head green statuses must not be copied.
+These call seams and the producer verifier are used by the separately opted-in
+controller below. Their source availability is not runtime activation,
+protection migration or execution-readiness proof. Existing authoring enforce
+mode does not activate execution. Every actual required destination context
+still needs a genuine compatible candidate-aware producer; author-head green
+statuses must not be copied.
 
 The producer identity protocol uses
 [GitHub OIDC claims](https://docs.github.com/en/actions/reference/security/oidc)
@@ -373,8 +378,9 @@ reviewed workflow/action closure, real successful finalizer and required
 technical jobs, immutable artifact identity/digest and complete observations.
 Signed issuance must fall within the independently observed finalizer interval;
 a historical attestation is not a currently valid bearer login or live
-promotion authorization. Rotation/durable verification history and the actual
-isolated provider execution remain required lifecycle work.
+promotion authorization. Verified historical signatures and pinned key material
+are archived privately for durable replay; an actual isolated provider execution
+remains an operator qualification requirement.
 
 Executing untrusted candidate code from a default-ref dispatch can expose that
 ref's Actions-cache namespace even with a read-only GitHub token. The intended
@@ -417,8 +423,8 @@ bounded work-in-progress, anti-starvation and invalidation/failed-execution cost
 not skipping validation. The bounded authoring/admission layer supplies neither ML prioritization,
 custom batching, batch bisection nor another merge authority. Native group
 observations only describe groups GitHub created. The separately opt-in
-candidate producer source described below constructs exact speculative prefixes;
-it is not an installed promotion controller.
+candidate producer constructs exact speculative prefixes; only the separately
+enrolled and qualified controller below can promote them.
 
 There is no automatic live pilot, adaptive concurrency growth, runner
 procurement or claim of 5,000 merged PRs/day. That is an empirical capacity
@@ -511,9 +517,9 @@ commit/tree/workflow closure. Their source tests include changed attempts,
 partial publication and mismatched producers/subjects; they do not prove an
 installed provider execution. Actual job observations include materialization
 and finalizer overhead, not just local recorder time. Durable verification/key
-history, controller wiring and shared promotion authority handover are still
-required. Existing
-eleven protected-branch contexts do not automatically become satisfied by
+history and controller wiring are implemented in source; deployment, shared
+authority enrollment/handover and real qualification remain operator steps.
+Existing protected-branch contexts do not automatically become satisfied by
 prefixed reusable jobs. No copied DCO/review greens, branch-rule bypass,
 signature/linear-history downgrade or unproved conditional no-op is permitted.
 Protection-compatible exact-commit promotion must be verified using the actual
@@ -539,7 +545,7 @@ deployed runtime, desired mode and effective writer are distinct facts.
 | Preserve documented promoted prefixes; invalidate changed dependent subjects | [Zuul speculative execution](https://zuul-ci.org/docs/zuul/latest/gating.html) and GitHub merge-group semantics; provider behavior is not Hive parity | Prefix identity stable across observer/lease generations; never recast A+B proof as B-only |
 | Fixed bounded admission before adaptation | Little's-law capacity accounting describes average WIP, not tail latency or fairness | Assigned-job wall minutes, shared-job dedup, unknown completeness, aging/fairness and explicit limits |
 | Trusted control, isolated technical jobs/finalizers | GitHub trigger/cache/OIDC contracts; provider receipts and protections still need isolated verification | No candidate checkout in privileged/finalizer jobs; exact job-bound identities, no skipped writer permissions, ambiguous claims never retried blindly |
-# Opt-in candidate execution controller
+## Opt-in candidate execution controller
 
 The separate `integration_orchestration.execution` configuration defaults to
 **off**. Source delivery is not deployment, published-image verification,

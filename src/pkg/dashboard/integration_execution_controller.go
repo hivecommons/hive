@@ -249,10 +249,7 @@ func (s *Server) refreshExecutionEligibility(ctx context.Context, store *integra
 	}
 	// Older canonical work retains its scheduling age across observations.
 	sort.SliceStable(prs, func(i, j int) bool { return prs[i].GetCreatedAt().Before(prs[j].GetCreatedAt().Time) })
-	for index, candidate := range prs {
-		if index >= integrationExecutionPreparationMembers {
-			break
-		}
+	for _, candidate := range s.executionEligibilityTurn(scope, prs) {
 		pr, _, err := gate(ctx, scope.Repo, scope.Base, candidate.GetNumber(), candidate.GetHead().GetSHA())
 		if err != nil {
 			return err
@@ -265,6 +262,30 @@ func (s *Server) refreshExecutionEligibility(ctx context.Context, store *integra
 		}
 	}
 	return nil
+}
+
+func (s *Server) executionEligibilityTurn(scope config.IntegrationExecutionScope, prs []*gh.PullRequest) []*gh.PullRequest {
+	if len(prs) == 0 {
+		return nil
+	}
+	key := strings.ToLower(scope.Repo) + "#" + scope.Base
+	s.integration.mu.Lock()
+	if s.integration.executionEligibilityOffsets == nil {
+		s.integration.executionEligibilityOffsets = map[string]int{}
+	}
+	if _, known := s.integration.executionEligibilityOffsets[key]; !known &&
+		len(s.integration.executionEligibilityOffsets) >= config.MaxIntegrationScopes {
+		s.integration.executionEligibilityOffsets = map[string]int{}
+	}
+	offset := s.integration.executionEligibilityOffsets[key] % len(prs)
+	count := min(len(prs), integrationExecutionPreparationMembers)
+	s.integration.executionEligibilityOffsets[key] = (offset + count) % len(prs)
+	s.integration.mu.Unlock()
+	out := make([]*gh.PullRequest, 0, count)
+	for index := range count {
+		out = append(out, prs[(offset+index)%len(prs)])
+	}
+	return out
 }
 
 func (s *Server) recordExecutionEligibility(store *integration.Store, scope config.IntegrationExecutionScope, pr *gh.PullRequest, source string, now time.Time) error {
