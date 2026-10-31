@@ -502,3 +502,75 @@ func TestRunRFCNotifySweepRFCPRs(t *testing.T) {
 		t.Fatalf("merge: %+v posted=%q", res, posted)
 	}
 }
+
+func TestRFCNotifyIssues_MapsBody(t *testing.T) {
+	snaps := []github.IssueSnapshot{
+		{
+			Repo:   "o/r",
+			Number: 42,
+			Title:  "RFC: Test",
+			Body:   "| Target | v5 |\n\n## Summary\nHello",
+		},
+	}
+	issues := rfcNotifyIssues(snaps)
+	if len(issues) != 1 {
+		t.Fatalf("len(issues) = %d, want 1", len(issues))
+	}
+	if issues[0].Body != snaps[0].Body {
+		t.Errorf("Body = %q, want %q", issues[0].Body, snaps[0].Body)
+	}
+}
+
+type testCardPublisher struct {
+	posted []string
+	cards  []rfcnotify.Embed
+}
+
+func (p *testCardPublisher) Post(content string) error {
+	p.posted = append(p.posted, content)
+	return nil
+}
+
+func (p *testCardPublisher) PostCard(content string, embed rfcnotify.Embed) (string, error) {
+	p.cards = append(p.cards, embed)
+	return "msg-id-1", nil
+}
+
+func TestRFCNotifyWire_CardFormatPostsEmbed(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Discord: &config.DiscordConfig{
+				BotToken:     "tok",
+				RFCChannelID: "chan",
+				RFCFormat:    "card",
+				RFCAnnouncer: true,
+			},
+		},
+	}
+	pub := &testCardPublisher{}
+	state := &rfcNotifyState{
+		newPublisher: func(token, channel string) rfcnotify.Publisher {
+			return pub
+		},
+	}
+	src := &rfcNotifyFakeSource{
+		open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "Existing RFC", State: "open", Labels: []string{"rfc"}}},
+	}
+	ctx := context.Background()
+	runRFCNotifySweep(ctx, src, 1, cfg, nil, state, logger)
+
+	body := "| Field | Value |\n| --- | --- |\n| Target | v5 |\n| Status | Proposal |\n\n## Summary\nTest summary\n\n## Decisions for maintainers\n1. Question\n"
+	src.updated = []rfcnotify.Issue{
+		{Repo: "o/r", Number: 2, Title: "RFC: Rich Card", URL: "https://x/2", State: "open", CreatedAt: time.Now().Add(time.Hour), Body: body},
+	}
+	forcePoll(state)
+	runRFCNotifySweep(ctx, src, 1, cfg, nil, state, logger)
+
+	if len(pub.cards) != 1 {
+		t.Fatalf("cards = %d, want 1", len(pub.cards))
+	}
+	if pub.cards[0].Title != "#2 RFC: Rich Card" {
+		t.Errorf("card.Title = %q", pub.cards[0].Title)
+	}
+}

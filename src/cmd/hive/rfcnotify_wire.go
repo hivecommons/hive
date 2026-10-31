@@ -34,6 +34,7 @@ const rfcNotPRCacheMax = 512
 // poster, built once from the config that enabled them.
 type rfcNotifyState struct {
 	sweeper *rfcnotify.Sweeper
+	pub     rfcnotify.Publisher
 	post    rfcnotify.Poster
 	// channel the poster was built for; a config change rebuilds it.
 	channel string
@@ -56,6 +57,8 @@ type rfcNotifyState struct {
 	// newPoster builds the Discord poster; nil means discordRFCPoster.
 	// Tests inject a recorder.
 	newPoster func(token, channel string) rfcnotify.Poster
+	// newPublisher builds the Discord publisher; nil adapts newPoster or builds botPublisher.
+	newPublisher func(token, channel string) rfcnotify.Publisher
 }
 
 // rfcNotifyState lazily builds the boot's notice state.
@@ -125,11 +128,36 @@ func (s *rfcNotifyState) ensure(cfg *config.Config, repos int, logger *slog.Logg
 		})
 		s.gates = gates
 	}
-	if s.post == nil || s.channel != channel {
-		s.post = newPoster(token, channel)
+	if s.pub == nil || s.channel != channel {
+		if s.newPublisher != nil {
+			s.pub = s.newPublisher(token, channel)
+			s.post = func(content string) error { return s.pub.Post(content) }
+		} else if s.newPoster != nil {
+			p := s.newPoster(token, channel)
+			s.post = p
+			s.pub = p
+		} else {
+			bot := discord.NewBot(discord.Config{Token: token}, logger)
+			s.pub = botPublisher{bot: bot, channel: channel}
+			s.post = func(content string) error { return bot.SendMessageTo(channel, content) }
+		}
 		s.channel = channel
 	}
 	return true
+}
+
+// botPublisher adapts discord.Bot to rfcnotify.Publisher.
+type botPublisher struct {
+	bot     *discord.Bot
+	channel string
+}
+
+func (p botPublisher) Post(content string) error {
+	return p.bot.SendMessageTo(p.channel, content)
+}
+
+func (p botPublisher) PostCard(content string, embed rfcnotify.Embed) (string, error) {
+	return p.bot.SendEmbedTo(p.channel, content, embed)
 }
 
 // discordRFCPoster posts through the bot token to the RFC channel without
@@ -352,6 +380,7 @@ func rfcNotifyIssues(snaps []github.IssueSnapshot) []rfcnotify.Issue {
 		out = append(out, rfcnotify.Issue{
 			Repo: s.Repo, Number: s.Number, Title: s.Title, URL: s.URL, Author: s.Author,
 			State: s.State, StateReason: s.StateReason, Labels: s.Labels, CreatedAt: s.CreatedAt,
+			Body: s.Body,
 		})
 	}
 	return out
@@ -368,7 +397,7 @@ func runRFCNotifySweep(ctx context.Context, src rfcnotify.Source, repos int, cfg
 	if src == nil || state == nil || !state.ensure(cfg, repos, logger) {
 		return rfcnotify.Result{}
 	}
-	res, err := state.sweeper.Run(ctx, src, state.post)
+	res, err := state.sweeper.Run(ctx, src, state.pub)
 	if err != nil {
 		logger.Warn("rfc notify sweep failed", "error", err)
 		return res
