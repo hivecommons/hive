@@ -216,7 +216,11 @@ func (c *Client) nativeObservationRequired(ctx context.Context, owner, repo, bas
 		}
 		if classic.Checks != nil {
 			for _, check := range *classic.Checks {
-				required[check.GetContext()] = check.GetAppID()
+				if check == nil || strings.TrimSpace(check.Context) == "" {
+					known = false
+					continue
+				}
+				required[check.Context] = check.GetAppID()
 			}
 		}
 	}
