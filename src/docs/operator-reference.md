@@ -1787,8 +1787,12 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   check-run/review entries for the affected PR and mark it dirty. Check and
   status events are matched by PR number and head SHA (fork PRs arrive
   without a PR list); `push` invalidates every open PR whose base or head
-  branch is the pushed branch. `issues` `labeled`/`unlabeled`/`reopened`
-  mark the issue for the next un-park sweep.
+  branch is the pushed branch. `issues` `opened`/`labeled`/`unlabeled`
+  mark the issue dirty and wake evaluation; `reopened` wakes evaluation too.
+  To select the scanner for newly seen actionable issues, configure a
+  top-level [CEL trigger](cel-triggers.md#run-the-scanner-for-newly-seen-github-issues)
+  matching `event.kind == "issue.opened"`. Agent Channels is not a webhook
+  installer and only supports the governor `kick` runtime.
 - `pull_request` `opened`/`synchronize`/`reopened` also hands the PR to the
   [sentinel](#suspicious-activity-alerts-sentinel), which evaluates it now
   instead of waiting for its reconcile cadence

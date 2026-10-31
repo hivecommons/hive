@@ -151,8 +151,9 @@
     const STAGE_TRACKER_TRAIN_ICON_PATH = '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>';
     const STAGE_TRACKER_TRAIN_ICON_TITLE = 'Merge queue';
     // Pure: the inline-SVG train with its "Merge queue" hover.
-    function stageTrackerTrainIconHtml(cls) {
-      return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}"><title>${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
+    function stageTrackerTrainIconHtml(cls, title) {
+      const label = title || STAGE_TRACKER_TRAIN_ICON_TITLE;
+      return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
     }
     // Pure: ordinal place words — "1st", "2nd", "3rd", "4th", "11th",
     // "21st" (the owner's wording for the queue: "Merge queued · 1st").

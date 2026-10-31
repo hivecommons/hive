@@ -612,10 +612,11 @@
     // --- Channels tab ---
 
     const CHANNEL_COLORS = {kick:'var(--blue)',webhook:'var(--green)',discord:'#7c3aed',schedule:'var(--orange)',bead:'#0891b2'};
-    const CHANNEL_TYPES = ['kick','webhook','discord','schedule','bead'];
+    const CHANNEL_TYPES = ['kick'];
 
     function renderAgentChannels(channels) {
-      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px"><b>What this is.</b> The trigger channels that can wake this agent: governor timer kick, webhook, discord, schedule (cron), or bead. <b>Why use it.</b> They let an agent respond to real events (a pushed commit, a Discord message, a cron tick) instead of only the governor timer. <b>Where it shows up.</b> Each active channel is listed here; with no channels defined the agent falls back to governor timer kicks. <b>How to configure.</b> Add a channel by type and fill its fields (a schedule channel needs a cron expression, a webhook needs events); toggle to enable or disable.</div>';
+      const disabled = _configState.savingChannels ? ' disabled' : '';
+      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px"><b>What this is.</b> Governor kick channels. Only <code>kick</code> has a supported channel runtime; webhook, discord, schedule, and bead channels are not supported. <b>How to configure.</b> Add a kick channel or toggle an existing channel; with no explicit channels the agent uses governor kicks by default. <b>GitHub issue triggers.</b> To select an agent for a newly seen actionable issue, configure a top-level <code>triggers:</code> CEL rule using <code>event.kind == "issue.opened"</code> and the agent name. Signed GitHub webhooks wake evaluation through the existing GitHub App/hub relay or <code>/api/webhook/github</code> receiver. Saving a channel does not register a GitHub webhook. See <code>docs/cel-triggers.md</code> and <code>docs/operator-reference.md</code> for setup and restart semantics.</div>';
       if (!channels || channels.length === 0) {
         html += '<div style="font-size:0.8rem;color:var(--muted);padding:var(--sp-6) var(--sp-0);text-align:center;border:1px dashed var(--border);border-radius:8px">No explicit channels — this agent uses governor timer kicks by default.</div>';
       } else {
@@ -632,8 +633,8 @@
           if (ch.match) html += 'match: '+Object.entries(ch.match).map(([k,v]) => '<code>'+esc(k)+'='+esc(v)+'</code>').join(', ');
           if (ch.repos && ch.repos.length) html += ' (repos: '+ch.repos.join(', ')+')';
           html += '</div>';
-          html += '<label style="font-size:0.7rem;display:flex;align-items:center;gap:var(--sp-2);cursor:pointer"><input type="checkbox" '+(enabled?'checked':'')+' data-change-action="toggleChannel" data-arg0="+i+" data-arg-types="s,c"> on</label>';
-          html += '<button class="hv-btn btn-danger" data-action="removeChannel" data-arg0="+i+">✕</button>';
+          html += '<label style="font-size:0.7rem;display:flex;align-items:center;gap:var(--sp-2);cursor:pointer"><input type="checkbox" '+(enabled?'checked':'')+disabled+' data-change-action="toggleChannel" data-arg0="'+i+'" data-arg-types="s,c"> on</label>';
+          html += '<button class="hv-btn btn-danger" data-action="removeChannel" data-arg0="'+i+'"'+disabled+'>✕</button>';
           html += '</div>';
         }
       }
@@ -642,68 +643,68 @@
       html += '<div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:end">';
       html += '<div><label style="font-size:0.7rem;color:var(--muted)">Type</label><select id="ch-add-type" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg)" data-change-action="channelTypeChanged">'+CHANNEL_TYPES.map(t => '<option value="'+t+'">'+t+'</option>').join('')+'</select></div>';
       html += '<div id="ch-add-fields" style="display:flex;gap:var(--sp-3);flex:1;flex-wrap:wrap"></div>';
-      html += '<button class="hv-btn btn-primary btn-sm" data-action="addChannel">Add</button>';
+      html += '<button class="hv-btn btn-primary btn-sm" data-action="addChannel"'+disabled+'>Add</button>';
       html += '</div></div>';
       setTimeout(channelTypeChanged, 0);
       return html;
     }
 
     function channelTypeChanged() {
-      const type = (document.getElementById('ch-add-type') || {}).value;
       const el = document.getElementById('ch-add-fields');
       if (!el) return;
-      let h = '';
-      if (type === 'webhook') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Events (comma-sep)</label><input id="ch-add-events" type="text" placeholder="issues.opened, push" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:200px"></div><div><label style="font-size:0.7rem;color:var(--muted)">Repos (optional)</label><input id="ch-add-repos" type="text" placeholder="repo1, repo2" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:120px"></div>';
-      else if (type === 'discord') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Patterns</label><input id="ch-add-patterns" type="text" placeholder="!deploy*" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:200px"></div>';
-      else if (type === 'schedule') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Cron expression</label><input id="ch-add-schedule" type="text" placeholder="0 */6 * * *" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:160px"></div>';
-      else if (type === 'bead') h = '<div><label style="font-size:0.7rem;color:var(--muted)">Match key=value</label><input id="ch-add-match" type="text" placeholder="nudge_target=scanner" style="display:block;padding:var(--sp-3) var(--sp-4);border:1px solid var(--border);border-radius:var(--r-sm);font-size:0.78rem;background:var(--bg);color:var(--fg);min-width:200px"></div>';
-      el.innerHTML = h;
+      el.textContent = 'Governor kick — no additional fields.';
     }
 
     function addChannel() {
       const type = (document.getElementById('ch-add-type') || {}).value;
-      const ch = {type: type};
-      if (type === 'webhook') {
-        const evts = (document.getElementById('ch-add-events') || {}).value || '';
-        ch.events = evts.split(',').map(s => s.trim()).filter(Boolean);
-        const repos = (document.getElementById('ch-add-repos') || {}).value || '';
-        if (repos.trim()) ch.repos = repos.split(',').map(s => s.trim()).filter(Boolean);
-      } else if (type === 'discord') {
-        const pats = (document.getElementById('ch-add-patterns') || {}).value || '';
-        ch.patterns = pats.split(',').map(s => s.trim()).filter(Boolean);
-      } else if (type === 'schedule') {
-        ch.schedule = (document.getElementById('ch-add-schedule') || {}).value || '';
-      } else if (type === 'bead') {
-        const matchStr = (document.getElementById('ch-add-match') || {}).value || '';
-        ch.match = {};
-        matchStr.split(',').forEach(pair => { const [k,v] = pair.split('='); if (k && v) ch.match[k.trim()] = v.trim(); });
+      if (!CHANNEL_TYPES.includes(type)) {
+        showToast('Only kick channels are supported. Use triggers: for GitHub issue routing.', 'error');
+        return;
       }
       const channels = (_configState.data.channels || []).slice();
-      channels.push(ch);
-      _configState.data.channels = channels;
-      saveChannels(channels);
+      channels.push({type: type});
+      return saveChannels(channels);
     }
 
     function removeChannel(idx) {
       const channels = (_configState.data.channels || []).slice();
       channels.splice(idx, 1);
-      _configState.data.channels = channels;
-      saveChannels(channels);
+      return saveChannels(channels);
     }
 
     function toggleChannel(idx, enabled) {
       const channels = (_configState.data.channels || []).slice();
-      if (channels[idx]) channels[idx].enabled = enabled;
-      _configState.data.channels = channels;
-      saveChannels(channels);
+      if (channels[idx]) channels[idx] = {...channels[idx], enabled: enabled};
+      return saveChannels(channels);
     }
 
     function saveChannels(channels) {
-      const name = _configState.agent;
-      fetch('/api/config/agent/' + name + '/channels', {method:'PUT', headers:_inceptionAuthHeaders(), body:JSON.stringify({channels:channels})})
-        .then(r => { if (!r.ok) throw new Error('save failed'); return r.json(); })
-        .then(() => { showToast('Channels saved', 'success'); renderConfigTab('Channels'); })
-        .catch(e => showToast('Save error: ' + e.message, 'error'));
+      const state = _configState;
+      if (state.savingChannels) return Promise.resolve();
+      const name = state.agent;
+      state.savingChannels = true;
+      if (state.tab === 'Channels') renderConfigTab('Channels');
+      return fetch('/api/config/agent/' + encodeURIComponent(name) + '/channels', {method:'PUT', headers:_inceptionAuthHeaders(), body:JSON.stringify({channels:channels})})
+        .then(async r => {
+          let data;
+          try {
+            data = await r.json();
+          } catch (_) {
+            if (r.ok) throw new Error('Invalid server response (HTTP ' + r.status + ')');
+            throw new Error('HTTP ' + r.status);
+          }
+          if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+          return data;
+        })
+        .then(() => {
+          state.data.channels = channels;
+          if (_configState === state) showToast('Channels saved', 'success');
+        })
+        .catch(e => { if (_configState === state) showToast('Save error: ' + e.message, 'error'); })
+        .finally(() => {
+          state.savingChannels = false;
+          if (_configState === state && state.tab === 'Channels') renderConfigTab('Channels');
+        });
     }
 
     // --- Tools tab ---
@@ -1447,4 +1448,3 @@
       else note = 'No hive default set, so agents that leave Explain Mode unset do not explain.';
       return 'In force now: <strong class="text-default">' + esc(effective) + '</strong>. ' + esc(note) + ' Applies from the next kick &mdash; no restart needed.';
     }
-

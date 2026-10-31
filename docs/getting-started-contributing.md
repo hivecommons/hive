@@ -8,9 +8,17 @@ build/test commands, see [`docs/development.md`](development.md).
 
 ## 1. Find something to work on
 
-- Browse the [issue tracker](https://github.com/hivecommons/hive/issues). Issues
-  labeled `documentation` and `help wanted` are good entry points; many
-  `[guide]` doc-gap issues are small and self-contained.
+- Start with open issues labeled
+  [`good first issue`](https://github.com/hivecommons/hive/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+  or [`help wanted`](https://github.com/hivecommons/hive/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+  Hive applies these labels to small, well-specified issues and leaves a
+  welcome comment with a link to claim the issue through the
+  [contributor relay](../src/docs/contributor-relay.md). The label is not a
+  reservation: claim before you start, or hive may pick the issue up itself.
+  See [Hive-curated good first issues](../src/docs/good-first-issue.md).
+- Skip issues that are already taken: an assignee, a `claimed`,
+  `hive/in-progress`, `hive/claimed-by-*` or `stage/040-covered-by-pr` label
+  (an open PR already covers it), or a live `hive:claim` comment.
 - Docs-only fixes (a wrong path, a dead link, a missing README) are the fastest
   way to land a first PR and learn the review flow.
 - Comment on the issue before starting anything non-trivial so work isn't
@@ -72,11 +80,17 @@ contribution:
 
 - Open your PR against the **`v5`** branch (the active development branch;
   `v4` is feature-frozen and takes security/critical fixes only).
-- CI runs build, tests, a coverage check, and container image builds. Some
-  checks (Playwright, `tide`) are non-blocking. The **required** checks are the
-  build/test/coverage/docker ones.
-- Coverage occasionally flakes; a maintainer will re-run it. A red `PR Verifier`
-  status is a known repo-wide quirk, not your change.
+- CI runs build, tests, a coverage check, lint and security scans, and
+  container image builds. The **required** checks are `gate`,
+  `build-and-test`, `test`, `coverage`, `golangci-lint`,
+  `gosec (insecure patterns)`, `govulncheck (known vulnerabilities)`, `DCO`,
+  `Sign-off survives the squash`, `changelog-fragment-guard` and
+  `verify PR contents` (the PR Verifier). If one of them is red, read its
+  log; it is reporting on your change.
+- User-visible code changes need a changelog fragment under
+  [`changelog.d/`](../changelog.d/README.md). Docs outside `src/`, `src/docs/`
+  and test files are exempt.
+- Coverage occasionally flakes; a maintainer will re-run it.
 - A maintainer reviews and merges once CI is green. Timelines vary; ping the
   issue or PR thread if it's been quiet for a few days.
 
