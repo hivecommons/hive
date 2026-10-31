@@ -32369,6 +32369,79 @@
         }
       }
     },
+    "/api/config/triggers": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Get Event triggers editor configuration",
+        "description": "Verified owner only. Returns ordered rules, an opaque quoted version/ETag, existing agent names, and managed repositories with configured event.repo values and qualified display labels. apply_mode is next_evaluation and requires_restart is false. No sources or webhooks are installed.",
+        "responses": {
+          "200": {"description": "rules, version, agents, repositories, apply_mode and requires_restart"},
+          "403": {"description": "Owner access required"},
+          "503": {"description": "Configuration unavailable"}
+        }
+      },
+      "put": {
+        "tags": ["System"],
+        "summary": "Validate and persist Event triggers",
+        "description": "Verified owner only. Compare-and-save the full ordered trigger list without changing unrelated config. Compiles every CEL expression to bool before persistence; new or edited rules require a name and existing agent. Optional preset replaces only its indexed expression with a scoped first-seen event expression. Successful persistence is published for next evaluation without resetting first-seen history. No enabled field is supported; remove a rule from the list to stop its routing.",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "description": "Exact opaque version/ETag from GET; stale revisions are rejected, never retried automatically.",
+            "schema": {"type": "string"}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["rules"],
+                "properties": {
+                  "rules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["name", "agent", "expr"],
+                      "properties": {
+                        "name": {"type": "string"},
+                        "agent": {"type": "string"},
+                        "expr": {"type": "string"},
+                        "priority": {"type": "integer", "format": "int64", "default": 0}
+                      }
+                    }
+                  },
+                  "preset": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["index", "kind", "repo"],
+                    "properties": {
+                      "index": {"type": "integer", "minimum": 0},
+                      "kind": {"type": "string", "enum": ["issue.opened", "pr.opened"]},
+                      "repo": {"type": "string", "description": "One exact configured managed repository value; not its qualified display label or a wildcard."}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Updated rules and editor metadata, with current version/ETag"},
+          "400": {"description": "Invalid schema, target, preset scope, or non-boolean/malformed CEL"},
+          "403": {"description": "Owner access required"},
+          "412": {"description": "Trigger revision changed; reload before saving"},
+          "428": {"description": "Missing If-Match revision"},
+          "500": {"description": "Persistence failed; live rules unchanged"},
+          "503": {"description": "Configuration unavailable"}
+        }
+      }
+    },
     "/api/config/dashboard/theme": {
       "get": {
         "tags": [

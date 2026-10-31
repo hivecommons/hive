@@ -45,6 +45,8 @@ type NativeMergeQueuePolicy struct {
 	// Repos is the lower-cased owner/repo allow-list; empty means every
 	// watched repository once Enabled.
 	Repos map[string]bool
+	// Bases is an optional exact repo#base allow-list, preserving branch case.
+	Bases map[string]bool
 	// SkipCurrentBaseGate lets a queue-enabled base bypass the
 	// require_current_base gate and the behind update-branch. Off keeps
 	// both gates in force exactly as on any other base.
@@ -69,6 +71,10 @@ func (p NativeMergeQueuePolicy) probeTTL() time.Duration {
 		return DefaultNativeMergeQueueProbeTTL
 	}
 	return p.ProbeTTL
+}
+
+func (p NativeMergeQueuePolicy) baseAllowed(repo, base string) bool {
+	return p.repoAllowed(repo) && (p.Bases == nil || p.Bases[strings.ToLower(strings.TrimSpace(repo))+"#"+base])
 }
 
 // nativeQueueProbe is one cached isMergeQueueEnabled answer for a base.
@@ -164,7 +170,7 @@ func nativeQueueWithdrawReason(reason string) bool {
 // behaviour.
 func (c *Engine) nativeQueueEnabled(ctx context.Context, repo string, pr *gh.PullRequest) bool {
 	t := c.nativeQueue(repo)
-	if t == nil || pr.GetNodeID() == "" {
+	if t == nil || pr.GetNodeID() == "" || !c.nativeQueuePolicy().baseAllowed(repo, pr.GetBase().GetRef()) {
 		return false
 	}
 	key := nativeQueueProbeKey(repo, pr)
@@ -223,7 +229,7 @@ func (c *Engine) nativeQueue(repo string) nativeQueueTransport {
 // queued PR is not a merged PR: no merged audit, issue closure or merge event.
 func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (string, error) {
 	t := c.nativeQueue(claim.Repo)
-	if t == nil || pr.GetNodeID() == "" {
+	if t == nil || pr.GetNodeID() == "" || !c.nativeQueuePolicy().baseAllowed(claim.Repo, pr.GetBase().GetRef()) {
 		return "", nil
 	}
 	key := nativeQueueProbeKey(claim.Repo, pr)

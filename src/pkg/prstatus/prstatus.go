@@ -133,4 +133,21 @@ const (
 	// when the head already carries the hive review it may have, so the
 	// findings are kept without a second review submission.
 	KeyReviewFindingsPrefix = "review-findings:"
+	// KeyEvidence is the post-merge pointer at the PR's evidence bundle
+	// (<!-- hive-review-evidence -->).
+	KeyEvidence = "evidence"
+	// KeyUnblocked is the note on a blocked issue that its blocking PR
+	// settled (<!-- hive:unblocked -->).
+	KeyUnblocked = "unblocked"
+	// KeyReviewBacklog lists the non-blocking review findings filed as
+	// backlog issues (<!-- hive:review-backlog-summary v1 -->).
+	KeyReviewBacklog = "review-backlog"
+	// KeyClaim holds a contributor's `<!-- hive:claim … -->` marker; claim
+	// readers scan every hive comment body for it, so a section carries it
+	// as well as a comment of its own did.
+	KeyClaim = "claim"
+	// KeyAgentNotePrefix + kind holds an agent's relayed status note (the
+	// `hive/awaiting-ci:` deferral, a stage/045 parking note, an
+	// "Already fixed" verdict) that used to be its own comment.
+	KeyAgentNotePrefix = "agent-note:"
 )

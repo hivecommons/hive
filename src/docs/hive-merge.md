@@ -443,6 +443,42 @@ cannot stop external writers and does not relax strict current-base checks.
 Deploying the changed hive binary activates the policy; no agent, memory,
 review, CI, hold or authorization setting needs changing.
 
+### CI reporting reconciliation
+
+An unfinished required check is not green merely because its Actions workflow
+ended. PR CI evaluation now reports `ci-reporting-stalled` only after two fresh,
+consistent observations separated by a propagation grace. It verifies the exact
+current PR head, Actions App/check/suite provenance, owning workflow execution,
+latest attempt's job-to-check URL, and a final head/base/attempt consistency read.
+A newer execution, changed head, unsupported provider or unavailable API cannot
+be used to declare a stall. Ordinary queued/running workflows remain ordinary
+pending CI, regardless of elapsed time. Workflow success does not fabricate a
+successful check; workflow failure and pending job/check reporting remain
+separately visible.
+
+The structured `CIReportingObservation` and existing reason tooltip identify
+the check, run, latest attempt, job, conclusion and observation time. API refusal
+is `ci-reporting-unverified`, not green. The stage remains CI-pending-compatible,
+and all current-head review, authorization, hold and merge gates remain intact.
+Commit-only/base observations retain their existing behavior. No rendering API
+polling is added: evaluation uses an identity/PR/head/check-set-scoped, bounded
+single-flight cache. `HIVE_CI_REPORTING_RECHECK` and `HIVE_CI_REPORTING_GRACE`
+default to five minutes; verified check/workflow events request a refresh bounded
+to once per minute. Duplicate deliveries cannot shorten grace; cold restart
+requires fresh consistency observations again.
+
+**Automatic recovery is not implemented or enabled.** A confirmed stall exposes
+owner action: inspect the exact workflow's current attempt and logs before one
+affected-workflow rerun. Do not rerun all CI or rebase to hide reporting failure.
+The existing filesystem mutation ledger only serializes users sharing that
+filesystem; shared-CI post-effect comment markers are not atomic cross-hive
+claims. Future recovery must prove a pre-mutation episode claim and enforced
+designated executor (other hives observe only), with durable ambiguous intent
+blocking blind retries. Actions rerun RPCs accept no fencing/idempotency token:
+designated routing or a forge CAS alone is not failover fencing or exactly-once
+execution, and ambiguous intent must not be automatically stolen after a TTL.
+App permission changes, live configuration and experimental integration
+activation are not prerequisites for detection and are not made by this change.
 ### Merge train: ready PRs lead
 
 Every lane groups its candidates on one base whose changed files overlap

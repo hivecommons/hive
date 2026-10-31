@@ -11,12 +11,13 @@ import "github.com/hivecommons/hive/pkg/config"
 // fleet crashing later. An empty triggers list returns a valid Engine that
 // never matches — preserving existing label/governor behavior.
 func CompileFromConfig(cfg *config.Config) (*Engine, error) {
-	if cfg == nil || len(cfg.Triggers) == 0 {
+	if cfg == nil {
 		// Empty rule set: a valid, never-matching engine.
 		return Compile(nil)
 	}
-	rules := make([]Rule, 0, len(cfg.Triggers))
-	for _, t := range cfg.Triggers {
+	triggers := cfg.TriggerRulesSnapshot()
+	rules := make([]Rule, 0, len(triggers))
+	for _, t := range triggers {
 		rules = append(rules, Rule{
 			Name:     t.Name,
 			Expr:     t.Expr,

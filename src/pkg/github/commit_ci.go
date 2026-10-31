@@ -74,6 +74,8 @@ func (c *requiredChecksForbiddenCache) put(key string) {
 // this package (the transport, the ignore lists) and the watcher lives here;
 // a core both can call has to sit below both.
 type CommitCIState struct {
+	// Reporting is a read-only consistency observation, not CI success.
+	Reporting []CIReportingObservation
 	// Green is true when every gating status/check run has succeeded (or is
 	// ignorable). Reason names the first blocker when false: "status-pending",
 	// "check-pending", "status-<state>" or "check-<conclusion>". Zero statuses
@@ -126,6 +128,9 @@ type CommitCIState struct {
 // CommitCIOptions carries policy facts that are known to callers before the
 // commit-status/check-run walk starts.
 type CommitCIOptions struct {
+	// PRNumber enables bounded, exact-current-head reporting reconciliation.
+	// Commit-only/base observations retain their existing behavior.
+	PRNumber                int
 	Required                map[string]bool
 	RequiredKnown           bool
 	RequiredKnownFromConfig bool
@@ -654,6 +659,18 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 	}
 	st.Green = st.Reason == ""
+	if !st.Green && strings.HasPrefix(st.Reason, "required-check-pending:") && opts.PRNumber > 0 {
+		var pending []*gh.CheckRun
+		for _, check := range latestCheckRunsByNameAndApp(allCheckRuns) {
+			if required[check.GetName()] && check.GetStatus() != "completed" {
+				pending = append(pending, check)
+			}
+		}
+		st.Reporting = sharedCIReportingCache.observe(ctx, client, owner, repo, sha, opts, pending)
+		if reason := ciReportingReason(st.Reporting); reason != "" {
+			st.Reason = reason
+		}
+	}
 	return st, nil
 }
 

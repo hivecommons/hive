@@ -1,0 +1,1 @@
+- Show the Activity Monitor's running fleet cost and its rotating period on a separate, wrapping line below the running count so narrow tiles and zoom no longer truncate the amount or period.

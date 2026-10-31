@@ -106,13 +106,13 @@ wrap pkg/github/pr_duplicate_guard.go 1
 wrap pkg/github/pr_level_hold.go 1
 wrap pkg/github/pr_reporter_trust_release.go 1
 wrap pkg/github/pr_request_watcher.go 3
+wrap pkg/github/pr_status_comment.go 1
 wrap pkg/github/pr_supersession_autoclose.go 1
 wrap pkg/github/pr_supersession_decision.go 1
 wrap pkg/github/pr_supersession_resolve.go 6
 wrap pkg/github/prclaims.go 3
 wrap pkg/github/prior_art_gate_resume.go 5
 wrap pkg/github/reporter_trust_wait.go 4
-wrap pkg/github/review_backlog.go 1
 wrap pkg/github/review_backlog_routing.go 1
 wrap pkg/github/review_backlog_selfcheck.go 1
 wrap pkg/github/review_request_watcher.go 2

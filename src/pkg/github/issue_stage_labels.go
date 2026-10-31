@@ -653,6 +653,11 @@ const mergedPRPartialStageMarker = "<!-- hive:issue-stage-merged-partial"
 // comment landed is retried without a second comment.
 const mergedPRClosedStageMarker = "<!-- hive:closed-by-merged-pr"
 
+// mergedPRClosedStageMarkerFor is the full marker for pr.
+func mergedPRClosedStageMarkerFor(pr int) string {
+	return fmt.Sprintf("%s pr=%d -->", mergedPRClosedStageMarker, pr)
+}
+
 func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStageInput, logger *slog.Logger) (closed, commented bool) {
 	if client == nil || client.client == nil || in.Claim == nil || !in.Claim.MergedPR || in.Claim.PRNumber <= 0 {
 		return false, false
@@ -686,12 +691,17 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 	if !in.Claim.Closing {
 		return false, false
 	}
-	marker := fmt.Sprintf("%s pr=%d -->", mergedPRClosedStageMarker, in.Claim.PRNumber)
-	alreadyCommented, err := client.IssueCommentsContain(ctx, in.Repo, in.Number, marker)
+	marker := mergedPRClosedStageMarkerFor(in.Claim.PRNumber)
+	// Close-on-merge's own "Fixed by #N" (CloseOnMergeMarker) counts as the
+	// closing comment too: one per issue, never both (hivecommons/hive#15727
+	// vs #15843).
+	alreadyCommented, err := client.issueCommentsContainAny(ctx, in.Repo, in.Number, marker, CloseOnMergeMarker)
 	if err != nil && logger != nil {
 		logger.Warn("issue stage labels: could not check merged full-fix PR close comment; posting a fresh note", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 	}
-	if !alreadyCommented {
+	if alreadyCommented {
+		client.noteCommentSuppressed()
+	} else {
 		body := fmt.Sprintf("%s\nFixed by #%d (merged). Closing because Hive's PR claim metadata says this PR was the full fix.", marker, in.Claim.PRNumber)
 		if strings.TrimSpace(in.Claim.PRURL) != "" {
 			body = fmt.Sprintf("%s\nFixed by #%d (%s, merged). Closing because Hive's PR claim metadata says this PR was the full fix.", marker, in.Claim.PRNumber, in.Claim.PRURL)

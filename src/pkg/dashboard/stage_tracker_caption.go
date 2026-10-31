@@ -306,6 +306,12 @@ func humanizeStageReason(reason string) string {
 	if r == "" {
 		return ""
 	}
+	if rest, ok := strings.CutPrefix(r, "ci-reporting-stalled:"); ok {
+		return "CI reporting stalled — " + rest
+	}
+	if rest, ok := strings.CutPrefix(r, "ci-reporting-unverified:"); ok {
+		return "CI reporting unverified — " + rest
+	}
 	if base, approver := stagelabels.HumanApprovedReason(r); approver != "" {
 		clause := humanizeStageReason(base)
 		if clause == "" {
