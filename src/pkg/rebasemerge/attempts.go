@@ -22,13 +22,23 @@ var AttemptsPath = "/data/rebase-attempts.json"
 
 // Attempt is one PR's conflict episode: the dirty heads seen, oldest
 // first. The first dirty head is attempt 1 (the fixer's first task); a
-// pushed head that is still dirty is the next attempt; past
-// MaxRebaseAttempts dirty heads the episode is exhausted. A PR that stops
-// conflicting ends its episode (Clear) so a later conflict starts fresh.
+// pushed head that is still dirty is the next attempt, and so is an
+// attempt the fixer never pushed for within the per-attempt deadline
+// (Expire; hivecommons/hive#16023). Past MaxRebaseAttempts the episode is
+// exhausted. A PR that stops conflicting ends its episode (Clear) so a
+// later conflict starts fresh.
 type Attempt struct {
 	Repo   string   `json:"repo"`
 	Number int      `json:"number"`
 	Heads  []string `json:"heads"`
+	// Stalled counts attempts that timed out with no push from the fixer;
+	// each one is a failed attempt.
+	Stalled int `json:"stalled,omitempty"`
+	// DispatchedAttempt is the attempt the router last handed to Fixer,
+	// at DispatchedAt; the router announces an attempt once.
+	DispatchedAttempt int       `json:"dispatched_attempt,omitempty"`
+	DispatchedAt      time.Time `json:"dispatched_at,omitempty"`
+	Fixer             string    `json:"fixer,omitempty"`
 	// RequestedBy is the operator whose approval (or merge-now) asked for
 	// the rebase from the dashboard, so the fixer router lists the PR even
 	// when neither the hive nor a trusted author opened it.
@@ -37,11 +47,26 @@ type Attempt struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// Count is the attempt number the current head represents (1-based).
-func (a Attempt) Count() int { return len(a.Heads) }
+// Count is the current attempt number (1-based): dirty heads seen plus
+// attempts that timed out waiting for the fixer.
+func (a Attempt) Count() int { return len(a.Heads) + a.Stalled }
 
-// Exhausted: more dirty heads than the cap allows rebases.
-func (a Attempt) Exhausted() bool { return len(a.Heads) > MaxRebaseAttempts }
+// Exhausted: more attempts than the cap allows rebases.
+func (a Attempt) Exhausted() bool { return a.Count() > MaxRebaseAttempts }
+
+// Dispatched reports whether the current attempt was handed to a fixer.
+func (a Attempt) Dispatched() bool {
+	return a.DispatchedAttempt > 0 && a.DispatchedAttempt == a.Count() && !a.DispatchedAt.IsZero()
+}
+
+// Waiting is how long the current attempt has waited for the fixer's
+// push since it was dispatched; 0 when it was not dispatched.
+func (a Attempt) Waiting(now time.Time) time.Duration {
+	if !a.Dispatched() || now.Before(a.DispatchedAt) {
+		return 0
+	}
+	return now.Sub(a.DispatchedAt)
+}
 
 // Head is the newest dirty head seen.
 func (a Attempt) Head() string {
@@ -157,6 +182,48 @@ func (s *Attempts) Request(repo string, number int, head, actor string, now time
 	return a
 }
 
+// Dispatch records that the current attempt of repo#number's open episode
+// was routed to fixer. first is true only the first time an attempt is
+// dispatched, so the router announces each attempt once and later sweeps
+// keep the original dispatch time.
+func (s *Attempts) Dispatch(repo string, number int, fixer string, now time.Time) (a Attempt, first bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	key := Key(repo, number)
+	a, ok := s.items[key]
+	if !ok || a.Exhausted() || a.Dispatched() {
+		return a, false
+	}
+	a.DispatchedAttempt = a.Count()
+	a.DispatchedAt = now
+	a.Fixer = strings.TrimSpace(fixer)
+	a.UpdatedAt = now
+	s.items[key] = a
+	s.persist()
+	return a, true
+}
+
+// Expire counts the dispatched attempt of repo#number as failed once it
+// has waited timeout with no push from the fixer (a push is a new head,
+// which Observe already counts as the next attempt). advanced is true when
+// the episode moved to its next attempt; a timeout <= 0 never expires.
+func (s *Attempts) Expire(repo string, number int, timeout time.Duration, now time.Time) (a Attempt, advanced bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	key := Key(repo, number)
+	a, ok := s.items[key]
+	if !ok || timeout <= 0 || a.Exhausted() || !a.Dispatched() || now.Sub(a.DispatchedAt) < timeout {
+		return a, false
+	}
+	a.Stalled++
+	a.UpdatedAt = now
+	s.items[key] = a
+	s.persist()
+	return a, true
+}
+
 // Get returns the episode for repo#number, if one is open.
 func (s *Attempts) Get(repo string, number int) (Attempt, bool) {
 	s.mu.Lock()
@@ -191,4 +258,26 @@ func AttemptText(a Attempt) string {
 		n = 1
 	}
 	return "Rebasing · attempt " + strconv.Itoa(n) + "/" + strconv.Itoa(MaxRebaseAttempts)
+}
+
+// AttemptTextAt is AttemptText with the wait on a dispatched attempt:
+// "Rebasing · attempt 1/2 · waiting for scanner 12m".
+func AttemptTextAt(a Attempt, now time.Time) string {
+	text := AttemptText(a)
+	if a.Exhausted() || !a.Dispatched() {
+		return text
+	}
+	fixer := a.Fixer
+	if fixer == "" {
+		fixer = "the fixer"
+	}
+	return text + " · waiting for " + fixer + " " + waitingText(a.Waiting(now))
+}
+
+func waitingText(d time.Duration) string {
+	m := int(d / time.Minute)
+	if m < 1 {
+		return "<1m"
+	}
+	return strconv.Itoa(m) + "m"
 }

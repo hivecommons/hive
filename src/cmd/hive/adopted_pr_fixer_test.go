@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -228,4 +231,83 @@ func TestWriteMergeEligible_UntrustedConflictIsNotHiveRebaseWork(t *testing.T) {
 	if len(failing) != 0 {
 		t.Fatalf("ci_failing = %+v, want nothing when the trusted-author tier is off", failing)
 	}
+}
+
+// sweepRebaseLogged runs one writeMergeEligible sweep at now and returns the
+// ci-failing rows and the number of "routed to fixer for rebase" lines.
+func sweepRebaseLogged(t *testing.T, prs []github.PullRequest, now time.Time) ([]failingEntry, int) {
+	t.Helper()
+	dir := t.TempDir()
+	origMerge, origFail, origNow := mergeEligiblePath, ciFailingPath, rebaseAttemptNow
+	mergeEligiblePath = filepath.Join(dir, "merge-eligible.json")
+	ciFailingPath = filepath.Join(dir, "ci-failing.json")
+	rebaseAttemptNow = func() time.Time { return now }
+	defer func() { mergeEligiblePath, ciFailingPath, rebaseAttemptNow = origMerge, origFail, origNow }()
+	var logs bytes.Buffer
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: prs}}
+	writeMergeEligible(actionable, github.HoldResult{}, "hivecommons", nil, false, nil, false, nil, nil, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+	var payload struct {
+		CIFailing []failingEntry `json:"ci_failing"`
+	}
+	readJSON(t, ciFailingPath, &payload)
+	return payload.CIFailing, strings.Count(logs.String(), "PR routed to fixer for rebase")
+}
+
+// hivecommons/hive#16023: an adopted conflicting PR whose fixer never
+// pushes must not sit on attempt 1 forever. The attempt is routed (and
+// logged) once; past the per-attempt deadline it counts as failed and
+// attempt 2 is routed with one line; past the cap the row leaves the fixer
+// list so the adoption lane can re-home it.
+func TestWriteMergeEligible_AdoptedRebaseAttemptTimesOutWithoutPush(t *testing.T) {
+	store := useMemoryRebaseAttempts(t)
+	const repo = "hivecommons/hive"
+	adoptInPlace(t, repo, 15998, "f00dfac")
+	pr := github.PullRequest{Number: 15998, Repo: "hive", Author: "clanker-bot", HeadSHA: "f00dfac",
+		HeadRef: "feat/x", HeadRepo: "hivecommons/hive", BaseRef: "v5",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "pending",
+		Labels: []string{"needs-rebase", "stage/074-adopted-by-hive", "author/clanker"}}
+	t0 := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	timeout := config.DefaultAdoptRebaseAttemptTimeout
+
+	failing, routed := sweepRebaseLogged(t, []github.PullRequest{pr}, t0)
+	if len(failing) != 1 || failing[0].RebaseAttempt != 1 || routed != 1 {
+		t.Fatalf("first sweep: rows=%+v routed=%d, want attempt 1 routed once", failing, routed)
+	}
+	// Later sweeps inside the deadline keep the row listed, not re-routed.
+	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, t0.Add(5*time.Minute))
+	if len(failing) != 1 || failing[0].RebaseAttempt != 1 || routed != 0 {
+		t.Fatalf("second sweep: rows=%+v routed=%d, want attempt 1 listed but not re-routed", failing, routed)
+	}
+	if a, _ := store.Get(repo, 15998); !a.DispatchedAt.Equal(t0) || a.Fixer != "scanner" {
+		t.Fatalf("dispatch = %+v, want the first sweep's dispatch to scanner kept", a)
+	}
+	if got := rebasemerge.AttemptTextAt(mustAttempt(t, store, repo, 15998), t0.Add(12*time.Minute)); got != "Rebasing · attempt 1/2 · waiting for scanner 12m" {
+		t.Fatalf("caption = %q", got)
+	}
+	// No push by the deadline: attempt 1 failed, attempt 2 routed once.
+	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, t0.Add(timeout))
+	if len(failing) != 1 || failing[0].RebaseAttempt != 2 || routed != 1 {
+		t.Fatalf("deadline sweep: rows=%+v routed=%d, want attempt 2 routed once", failing, routed)
+	}
+	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, t0.Add(timeout+time.Minute))
+	if len(failing) != 1 || failing[0].RebaseAttempt != 2 || routed != 0 {
+		t.Fatalf("attempt 2 re-sweep: rows=%+v routed=%d", failing, routed)
+	}
+	// Attempt 2 also times out: exhausted, off the fixer list.
+	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, t0.Add(2*timeout))
+	if len(failing) != 0 || routed != 0 {
+		t.Fatalf("exhausted sweep: rows=%+v routed=%d, want nothing", failing, routed)
+	}
+	if a := mustAttempt(t, store, repo, 15998); !a.Exhausted() || a.Stalled != 2 {
+		t.Fatalf("episode = %+v, want exhausted by two timed-out attempts", a)
+	}
+}
+
+func mustAttempt(t *testing.T, store *rebasemerge.Attempts, repo string, number int) rebasemerge.Attempt {
+	t.Helper()
+	a, ok := store.Get(repo, number)
+	if !ok {
+		t.Fatalf("no rebase episode for %s#%d", repo, number)
+	}
+	return a
 }
