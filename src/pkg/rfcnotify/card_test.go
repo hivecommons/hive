@@ -521,3 +521,17 @@ func TestParseRFCDecisionsSubHeadingsAndLinks(t *testing.T) {
 		t.Fatalf("summary keeps masked link: %q", m.Summary)
 	}
 }
+
+func TestCard_BotAuthorOmitsIconURL(t *testing.T) {
+	ev := Event{Kind: KindOpened, Issue: Issue{
+		Repo: "hivecommons/hive", Number: 1, Title: "t", Author: "hivecommons-hive[bot]",
+		Body: rfc15869Body,
+	}}
+	card := Card(ev, ParseRFC(rfc15869Body), false)
+	if card.Author == nil || card.Author.Name != "hivecommons-hive[bot]" {
+		t.Fatalf("Author = %+v", card.Author)
+	}
+	if card.Author.IconURL != "" {
+		t.Errorf("IconURL = %q, want empty for [bot] login", card.Author.IconURL)
+	}
+}

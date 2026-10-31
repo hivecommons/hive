@@ -295,9 +295,10 @@ func Card(e Event, meta RFCMeta, includeRepo bool) Embed {
 
 	var author *discord.EmbedAuthor
 	if a := strings.TrimSpace(e.Issue.Author); a != "" {
-		author = &discord.EmbedAuthor{
-			Name:    truncateRunes(a, MaxAuthorNameRunes),
-			IconURL: fmt.Sprintf("https://github.com/%s.png", a),
+		author = &discord.EmbedAuthor{Name: truncateRunes(a, MaxAuthorNameRunes)}
+		// App logins like "foo[bot]" make an invalid avatar URL that Discord rejects.
+		if plainLoginRe.MatchString(a) {
+			author.IconURL = fmt.Sprintf("https://github.com/%s.png", a)
 		}
 	}
 
@@ -340,3 +341,5 @@ func Card(e Event, meta RFCMeta, includeRepo bool) Embed {
 		Fields:      fields,
 	}
 }
+
+var plainLoginRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
