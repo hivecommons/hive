@@ -27,6 +27,13 @@
     .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
     .contrib-status-dot.online { background: var(--status-ok); }
     .contrib-abandoned { color: var(--status-error); font-weight: 600; }
+    /* Contributor leaderboard table cells (renderLeaderboard in contributors.js). */
+    .contrib-lb-table th, .contrib-lb-table td { padding: var(--sp-4) var(--sp-5); text-align: left; }
+    .contrib-lb-table th { color: var(--muted); font-weight: 600; }
+    .contrib-lb-table .contrib-lb-rank { font-weight: 600; color: var(--muted); }
+    .contrib-lb-table .contrib-lb-num { text-align: right; }
+    .contrib-lb-table .contrib-lb-failed { color: var(--muted); }
+    .contrib-lb-table .contrib-lb-failed.has-failures { color: var(--red); }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;

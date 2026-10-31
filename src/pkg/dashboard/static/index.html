@@ -3305,6 +3305,13 @@
     .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
     .contrib-status-dot.online { background: var(--status-ok); }
     .contrib-abandoned { color: var(--status-error); font-weight: 600; }
+    /* Contributor leaderboard table cells (renderLeaderboard in contributors.js). */
+    .contrib-lb-table th, .contrib-lb-table td { padding: var(--sp-4) var(--sp-5); text-align: left; }
+    .contrib-lb-table th { color: var(--muted); font-weight: 600; }
+    .contrib-lb-table .contrib-lb-rank { font-weight: 600; color: var(--muted); }
+    .contrib-lb-table .contrib-lb-num { text-align: right; }
+    .contrib-lb-table .contrib-lb-failed { color: var(--muted); }
+    .contrib-lb-table .contrib-lb-failed.has-failures { color: var(--red); }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;
@@ -41440,23 +41447,25 @@ function burnAreaChart() {
           ? linkedAvatar(e.github_username, CONTRIBUTOR_AVATAR_PX, `@${e.github_username}`, e.avatar_url)
           : `<span style="display:inline-block;width:${CONTRIBUTOR_AVATAR_PX}px;height:${CONTRIBUTOR_AVATAR_PX}px;border-radius:50%;background:var(--border)"></span>`;
         return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:var(--sp-4) var(--sp-5);font-weight:600;color:var(--muted)">${e.rank}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${avatarHtml}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">@${esc(e.github_username)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${trustTierBadge(e.trust_tier)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right">${e.tasks_completed || 0}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right;color:${(e.tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--muted)'}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-rank">${e.rank}</td>
+          <td>${avatarHtml}</td>
+          <td>@${esc(e.github_username)}</td>
+          <td>${trustTierBadge(e.trust_tier)}</td>
+          <td class="contrib-lb-num">${e.tasks_completed || 0}</td>
+          <td class="contrib-lb-num contrib-lb-failed${(e.tasks_failed || 0) > 0 ? ' has-failures' : ''}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-num">${e.abandoned || 0}</td>
         </tr>`;
       }).join('');
       setIfChanged(panel, `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+        <table class="contrib-lb-table" style="width:100%;border-collapse:collapse;font-size:0.8rem">
           <thead><tr style="background:var(--bg);border-bottom:1px solid var(--border)">
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">#</th>
-            <th style="padding:var(--sp-4) var(--sp-5)"></th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">User</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">Tier</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Completed</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Failed</th>
+            <th>#</th>
+            <th></th>
+            <th>User</th>
+            <th>Tier</th>
+            <th class="contrib-lb-num">Completed</th>
+            <th class="contrib-lb-num">Failed</th>
+            <th class="contrib-lb-num">Abandoned</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -57462,12 +57471,13 @@ function burnAreaChart() {
       const classifierBackend = String(sec.ioscanClassifierBackend || '').trim();
       const classifierControls = Object.prototype.hasOwnProperty.call(sec, 'ioscanClassifierBackend')
         ? `<div class="config-field" data-setting-key="ioscan.classifier.backend">
-          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude and copilot run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
+          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude, copilot and omp run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
           <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierBackend" data-arg-types="s,s,v">
             <option value="" ${classifierBackend === '' ? 'selected' : ''}>model endpoint (HTTP)</option>
             <option value="claude" ${classifierBackend === 'claude' ? 'selected' : ''}>claude — tool-less CLI</option>
             <option value="copilot" ${classifierBackend === 'copilot' ? 'selected' : ''}>copilot — tool-less CLI</option>
-            ${classifierBackend !== '' && classifierBackend !== 'claude' && classifierBackend !== 'copilot' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
+            <option value="omp" ${classifierBackend === 'omp' ? 'selected' : ''}>omp — tool-less CLI</option>
+            ${classifierBackend !== '' && classifierBackend !== 'claude' && classifierBackend !== 'copilot' && classifierBackend !== 'omp' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
           </select>
         </div>
         <div class="config-field-row">

@@ -66,6 +66,7 @@ func buildLeaderboardWithInputs(inputs achievement2Inputs) []LeaderboardEntry {
 			TrustTier:      p.TrustTier,
 			TasksCompleted: p.TasksCompleted,
 			TasksFailed:    p.TasksFailed,
+			Abandoned:      p.Abandoned,
 			RegisteredAt:   p.RegisteredAt,
 			Team:           team,
 			EquippedTitle:  p.EquippedTitle,

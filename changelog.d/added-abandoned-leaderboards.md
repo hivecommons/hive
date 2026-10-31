@@ -1,0 +1,1 @@
+- Show abandoned PR counts in the dashboard and contribute landing leaderboards without changing contributor rankings ([#15796](https://github.com/hivecommons/hive/issues/15796)).

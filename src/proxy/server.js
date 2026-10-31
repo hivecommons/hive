@@ -991,6 +991,10 @@ app.use(async (req, res, next) => {
 });
 
 const PUBLIC_POST_PATHS = ['/api/contribute/register', '/api/contribute/reissue-token'];
+// Device-flow sign-in runs before the visitor holds any credential. Matched
+// EXACTLY (query string aside), never by prefix, so a sibling route is not
+// opened by accident. /poll only completes a flow for the holder of its flow_id.
+const PUBLIC_EXACT_POST_PATHS = ['/api/gh-user-auth/start', '/api/gh-user-auth/poll'];
 app.use((req, res, next) => {
   // SECURITY (CWE-306): decide ONCE, for every method, whether this request
   // actually presented the shared dashboard token. apiProxy injects the
@@ -1004,6 +1008,11 @@ app.use((req, res, next) => {
   req.hiveTokenVerified = bearerTokenMatches(req.headers.authorization);
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     if (PUBLIC_POST_PATHS.some(p => req.url.startsWith(p))) return next();
+    if (PUBLIC_EXACT_POST_PATHS.includes(req.url.split('?')[0])) return next();
+    // A hive_session request is authenticated by the Go API itself (it resolves
+    // the session and re-checks the role). It never gets X-Hive-Internal:
+    // hiveTokenVerified stays false. The cookie is SameSite=Lax.
+    if (parseCookies(req.headers.cookie)['hive_session']) return next();
     return requireAuth(req, res, next);
   }
   next();

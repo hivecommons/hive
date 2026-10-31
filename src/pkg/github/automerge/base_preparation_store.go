@@ -143,6 +143,16 @@ func (s *BasePreparationStore) change(key string, fn func(*basePreparation) erro
 	if err := os.MkdirAll(s.dir, directoryMode); err != nil {
 		return err
 	}
+	// MkdirAll applies the mode only on creation; tighten a directory left wider by earlier code.
+	if info, err := os.Stat(s.dir); err == nil {
+		if perm := info.Mode().Perm(); perm&^directoryMode != 0 {
+			if err := os.Chmod(s.dir, perm&directoryMode); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	path := s.statePath(key)
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, fileMode)
 	if err != nil {
