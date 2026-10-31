@@ -185,3 +185,29 @@ func TestSentinelPatchObserverSlowIsBounded(t *testing.T) {
 		t.Fatalf("sweep blocked on slow observer for %v", d)
 	}
 }
+
+func TestSentinelPatchObserverMissingBaseRepoUsesRepoRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		private bool
+		status  int
+		want    bool
+	}{
+		{"private repo", true, 0, true},
+		{"public repo", false, 0, false},
+		{"lookup fails closed", false, 500, true},
+	} {
+		f := observerFixture("alice", false)
+		delete(f.prs[0], "base")
+		f.repoPrivate, f.repoStatus = tc.private, tc.status
+		srv := newSentinelServer(t, f)
+		c := newTestClient(t, srv, "o", []string{"o/r"})
+		var obs observations
+		opts := defaultSentinelOpts(nil)
+		opts.PatchObserver = obs.add
+		if _, err := c.SweepSentinel(context.Background(), opts); err != nil || len(obs.got) != 1 || obs.got[0].Private != tc.want {
+			t.Fatalf("%s: err=%v obs=%+v", tc.name, err, obs.got)
+		}
+		srv.Close()
+	}
+}
