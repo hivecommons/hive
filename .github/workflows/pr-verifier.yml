@@ -16,7 +16,6 @@ permissions:
 jobs:
   verify:
     name: verify PR contents
-    if: github.actor != 'dependabot[bot]'
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
     # Fork PRs still fall back to GitHub-hosted for pull_request_target safety.

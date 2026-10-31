@@ -1,0 +1,1 @@
+- Add native merge-group CI and an owned PR-evidence gate, opt-in external freshness-writer suppression, default-off scoped owner Settings controls, and a distinct Activity Tracker rail backed by bounded provider-neutral observations of actual GitHub queue entries, exact candidate CI, proven-or-unknown members and lifecycle receipts.

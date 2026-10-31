@@ -939,6 +939,13 @@ func runEvalCycle(
 	// policy, dashboard status, PR/review dispatch, escalation, and every path
 	// not explicitly enrolled.
 	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
+	if cfg.AutoMerge.NativeMergeQueue.Enabled {
+		go func() {
+			if err := dashSrv.ReconcileNativeQueues(ctx); err != nil {
+				logger.Warn("native queue observations incomplete", "error", err)
+			}
+		}()
+	}
 	if err := dashSrv.ReconcileIntegration(ctx); err != nil {
 		logger.Warn("integration observations incomplete", "error", err)
 	}

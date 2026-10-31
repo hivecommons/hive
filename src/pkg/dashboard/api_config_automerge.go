@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -141,12 +143,13 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		SelfAuthored         *bool    `json:"self_authored"`
-		MaxMerges            *int     `json:"max_merges"`
-		MinHeadAge           *string  `json:"min_head_age"`
-		RequiredChecks       []string `json:"required_checks"`
-		AllowUnprotectedBase []string `json:"allow_unprotected_base"`
-		NoCIOK               []string `json:"no_ci_ok"`
+		NativeMergeQueue     *nativeQueueSettingsPatch `json:"native_merge_queue"`
+		SelfAuthored         *bool                     `json:"self_authored"`
+		MaxMerges            *int                      `json:"max_merges"`
+		MinHeadAge           *string                   `json:"min_head_age"`
+		RequiredChecks       []string                  `json:"required_checks"`
+		AllowUnprotectedBase []string                  `json:"allow_unprotected_base"`
+		NoCIOK               []string                  `json:"no_ci_ok"`
 		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
 		// disables the trusted-bot lane, absent leaves it untouched.
 		TrustedBotAuthors []string `json:"trusted_bot_authors"`
@@ -183,6 +186,11 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- validate before mutating anything ---
+	nativeQueue, err := updateNativeQueueSettings(s.deps.Config.AutoMerge.NativeMergeQueue, body.NativeMergeQueue)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if body.MaxMerges != nil && *body.MaxMerges < 0 {
 		jsonError(w, "max_merges must be 0 (default) or greater", http.StatusBadRequest)
 		return
@@ -261,6 +269,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 
 	// --- apply ---
 	cfg := s.deps.Config
+	previousAutoMerge := cfg.AutoMerge
+	if body.NativeMergeQueue != nil {
+		cfg.AutoMerge.NativeMergeQueue = nativeQueue
+	}
 	if body.SelfAuthored != nil {
 		v := *body.SelfAuthored
 		cfg.AutoMerge.SelfAuthored = &v
@@ -357,6 +369,12 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after auto-merge update", "error", err)
+		if body.NativeMergeQueue != nil {
+			cfg.AutoMerge = previousAutoMerge
+			syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
+			jsonError(w, "failed to persist native queue settings", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	s.auditFromRequest(r, "config_auto_merge", auditDetail("section", "auto_merge"), "")
@@ -422,6 +440,13 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
 		"require_current_base":         emptyIfNilStrings(am.RequireCurrentBase),
 		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
+		"native_merge_queue": map[string]interface{}{
+			"enabled":                am.NativeMergeQueue.Enabled,
+			"repos":                  emptyIfNilStrings(am.NativeMergeQueue.Repos),
+			"bases":                  emptyIfNilStrings(am.NativeMergeQueue.Bases),
+			"skip_current_base_gate": am.NativeMergeQueue.SkipCurrentBaseGate,
+			"probe_ttl":              am.NativeMergeQueue.EffectiveProbeTTL().String(),
+		},
 		"trusted_authors": map[string]interface{}{
 			"enabled":                   ta.Enabled,
 			"repos":                     trustedAuthorRepos,
@@ -445,6 +470,80 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"owner_approval_releases_workflow_fence": cl.EffectiveOwnerApprovalReleasesWorkflowFence(),
 		},
 	}
+}
+
+type nativeQueueSettingsPatch struct {
+	Enabled             *bool    `json:"enabled"`
+	Repos               []string `json:"repos"`
+	Bases               []string `json:"bases"`
+	SkipCurrentBaseGate *bool    `json:"skip_current_base_gate"`
+	ProbeTTL            *string  `json:"probe_ttl"`
+}
+
+var nativeQueueRepoPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*/[a-zA-Z0-9_.-]+$`)
+var nativeQueueBasePattern = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_./-]*$`)
+
+func updateNativeQueueSettings(current config.NativeMergeQueueAutoMergeConfig, patch *nativeQueueSettingsPatch) (config.NativeMergeQueueAutoMergeConfig, error) {
+	if patch == nil {
+		return current, nil
+	}
+	next := current
+	if patch.Enabled != nil {
+		next.Enabled = *patch.Enabled
+	}
+	if patch.SkipCurrentBaseGate != nil {
+		next.SkipCurrentBaseGate = *patch.SkipCurrentBaseGate
+	}
+	if patch.ProbeTTL != nil {
+		ttl, err := time.ParseDuration(strings.TrimSpace(*patch.ProbeTTL))
+		if err != nil || ttl < 0 {
+			return current, fmt.Errorf("native_merge_queue.probe_ttl must be a non-negative duration (0 uses 30m)")
+		}
+		next.ProbeTTL = ttl
+	}
+	if patch.Repos != nil {
+		for _, repo := range patch.Repos {
+			repo = strings.TrimSpace(repo)
+			if !nativeQueueRepoPattern.MatchString(repo) || strings.HasSuffix(repo, "/.") || strings.HasSuffix(repo, "/..") {
+				return current, fmt.Errorf("native_merge_queue.repos must contain exact owner/repo names")
+			}
+		}
+		next.Repos = normalizeAutoMergeRepoList(patch.Repos)
+	}
+	if patch.Bases != nil {
+		next.Bases = make([]string, 0, len(patch.Bases))
+		seen := map[string]bool{}
+		for _, scope := range patch.Bases {
+			repo, base, ok := strings.Cut(strings.TrimSpace(scope), "#")
+			if !ok || !nativeQueueRepoPattern.MatchString(repo) || !nativeQueueBasePattern.MatchString(base) ||
+				strings.Contains(base, "..") || strings.Contains(base, "//") || strings.HasSuffix(base, "/") || strings.HasSuffix(base, ".") {
+				return current, fmt.Errorf("native_merge_queue.bases must contain exact owner/repo#base pairs (no wildcards)")
+			}
+			for _, part := range strings.Split(base, "/") {
+				if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+					return current, fmt.Errorf("native_merge_queue.bases contains an invalid branch name")
+				}
+			}
+			key := strings.ToLower(repo) + "#" + base
+			if !seen[key] {
+				next.Bases = append(next.Bases, key)
+				seen[key] = true
+			}
+		}
+	}
+	// Disabling always remains possible, including legacy unscoped YAML.
+	if next.Enabled {
+		if len(next.Repos) == 0 || len(next.Bases) == 0 {
+			return current, fmt.Errorf("enabling native merge queue in Settings requires explicit repositories and owner/repo#base pairs")
+		}
+		for _, scope := range next.Bases {
+			repo, _, _ := strings.Cut(scope, "#")
+			if !next.RepoSet()[strings.ToLower(repo)] {
+				return current, fmt.Errorf("native_merge_queue.bases repository must also appear in repos")
+			}
+		}
+	}
+	return next, nil
 }
 
 func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *ghpkg.Client) {

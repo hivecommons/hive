@@ -1,0 +1,1 @@
+- The agent channels list now escapes repository names before rendering them, matching the other channel fields ([#15907](https://github.com/hivecommons/hive/issues/15907)).

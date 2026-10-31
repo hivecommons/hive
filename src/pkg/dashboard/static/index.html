@@ -2180,6 +2180,14 @@
     .sts-sample { padding: var(--sp-3) var(--sp-2) 0; }
     .sts-sample .ham-row { padding: var(--sp-2); }
     .sts-sample .ham-cols { padding-top: 0; }
+    .nq-rail { margin: var(--sp-5) 0; padding: var(--sp-5); border: 1px solid var(--border-color); border-radius: var(--r); overflow-wrap: anywhere; }
+    .nq-rail h3, .nq-rail h4, .nq-rail h5 { margin: var(--sp-4) 0; }
+    .nq-muted { color: var(--text-secondary); font-size: var(--fs-sm); }
+    .nq-scope { margin-top: var(--sp-5); border-top: 1px solid var(--border-color); }
+    .nq-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--sp-5); }
+    .nq-candidate { padding: var(--sp-5); border: 1px solid var(--border-color); border-radius: var(--r-sm); min-width: 0; }
+    .nq-entries, .nq-candidate ul { padding-left: var(--sp-8); }
+    .nq-rail li { margin: var(--sp-3) 0; }
     .agent-blockers { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-2); color: var(--muted); }
     .agent-blockers .ab-key { opacity: 0.65; margin-right: 3px; }
     .agent-blockers .ab-seg { white-space: nowrap; }
@@ -2282,17 +2290,14 @@
        the "N Issues" / on-hold indicators. */
     .gov-stat .val.planning-alert { color: var(--yellow); }
     /* RUNNING tile cost rotor (#15614): the four window phrases share one
-       grid cell, so the tile is always as wide as its widest phrase and the
-       amount + window crossfades in place while the agent count stays put.
-       The host is a flex row — count fixed, rotor shrinks — so the host
-       itself never overflows: a text-overflow ellipsis on the host would be
-       painted at the rotor's left edge, showing up as a stray dot between
-       "$" and the digits ("$.1,010"). Only the phrase ellipsizes. */
-    .fleet-run-stat .val, .fleet-run-stat .gm-val { display: flex; align-items: baseline; white-space: nowrap; overflow: hidden; min-width: 0; }
-    /* pre keeps the trailing space of "N · " that flex would otherwise trim. */
-    .fleet-run-count { flex: none; white-space: pre; color: var(--text); }
-    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text); }
-    .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
+       grid cell to reserve the tallest wrapped phrase while the amount +
+       window crossfades. Cost lives below the count and may wrap at narrow
+       widths or zoom levels; neither the amount nor its period is clipped. */
+    .fleet-run-stat { min-width: 0; }
+    .fleet-run-stat .val, .fleet-run-stat .gm-val { display: flex; flex-direction: column; align-items: stretch; gap: var(--sp-1); white-space: normal; overflow: visible; min-width: 0; }
+    .fleet-run-count { flex: none; overflow-wrap: anywhere; color: var(--text); }
+    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; grid-template-columns: minmax(0, 1fr); min-width: 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.4; }
+    .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: normal; overflow-wrap: anywhere; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
     .fleet-cost-rotor .fcr-phrase.is-cur { opacity: 1; transform: translateY(0); }
     .fleet-cost-rotor .fcr-phrase.is-out { opacity: 0; transform: translateY(-0.5em); }
     .fleet-cost-rotor .fcr-window { color: var(--amber); font-weight: 600; }
@@ -2399,7 +2404,6 @@
         display: none;
       }
     }
-
     /* ── ACMM level-up recommendation (advisory) + lifecycle timeline ── */
     .reco-badge {
       display: inline-block; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.06em;
@@ -3302,6 +3306,13 @@
     .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
     .contrib-status-dot.online { background: var(--status-ok); }
     .contrib-abandoned { color: var(--status-error); font-weight: 600; }
+    /* Contributor leaderboard table cells (renderLeaderboard in contributors.js). */
+    .contrib-lb-table th, .contrib-lb-table td { padding: var(--sp-4) var(--sp-5); text-align: left; }
+    .contrib-lb-table th { color: var(--muted); font-weight: 600; }
+    .contrib-lb-table .contrib-lb-rank { font-weight: 600; color: var(--muted); }
+    .contrib-lb-table .contrib-lb-num { text-align: right; }
+    .contrib-lb-table .contrib-lb-failed { color: var(--muted); }
+    .contrib-lb-table .contrib-lb-failed.has-failures { color: var(--red); }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;
@@ -4220,6 +4231,8 @@
     /* .config-save / .config-cancel — primary/ghost buttons (system recipe) */
 
     .config-field { margin-bottom: 14px; }
+    .event-trigger-expression { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .event-trigger-form { margin-top: var(--sp-4); }
     .am-trusted-bots { margin-top: 12px; }
     .am-bot-row { margin-top: 6px; }
     .am-bot-source { color: var(--muted); font-weight: 400; }
@@ -4553,7 +4566,6 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
-
     /* Hive Chat Panel */
     .hive-chat-fab {
       position: fixed; bottom: 24px; right: 24px; z-index: 9000;
@@ -7820,6 +7832,7 @@
         <button type="button" class="ham-chip ham-queue-chip" id="activity-monitor-queue" data-action="hamQueueToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-queue-pop" title="Merge queue: empty" hidden>⛓ Merge queue <span class="ham-queue-n">0</span></button>
         <div class="ham-merged-pop ham-queue-pop" id="activity-monitor-queue-pop" role="dialog" aria-label="Merge queue" hidden></div>
       </div>
+      <div id="activity-monitor-native-queue" class="nq-rail" role="region" aria-label="Forge-owned merge queues" hidden></div>
       <div id="activity-monitor-preparation" class="ham-preparation" role="region" aria-label="Preparation queues" hidden></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
@@ -14364,8 +14377,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The RUNNING tile rotates its cost window — this hour → today → this
     // week → this month — one phrase at a time (#15614). The agent count
     // stays put; only the amount + window phrase crossfades. All four
-    // phrases are rendered into the same grid cell so the tile is always as
-    // wide as its widest phrase and never shifts or wraps. The rotation
+    // phrases share a grid cell below the count, reserving room for the
+    // tallest wrapped phrase without shifting on rotation. The rotation
     // index is module state so a status repaint keeps the current phrase.
     // The hour window keeps cents (it is small and moves fast); the longer
     // windows round to whole dollars (fmtUSDWhole) so the figure stays short.
@@ -14447,13 +14460,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
       fleetCostRotorStart();
-      return `<div class="gov-stat fleet-run-stat" data-fleet-cost-host title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price; $– when a running agent's model is unpriced).&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</div></div>`;
+      return `<div class="gov-stat fleet-run-stat" data-fleet-cost-host title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price; $– when a running agent's model is unpriced).&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run"><span class="fleet-run-count">${f.running || 0}</span>${fleetCostRotorHtml(f)}</div></div>`;
     }
     function fleetRunStripHtml() {
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
       fleetCostRotorStart();
-      return `<div class="gov-metric fleet-run-stat" data-fleet-cost-host title="Agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price)&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run"><span class="fleet-run-count">${f.running || 0} · </span>${fleetCostRotorHtml(f)}</span></div>`;
+      return `<div class="gov-metric fleet-run-stat" data-fleet-cost-host title="Agents mid-kick right now · estimated spend accrued by the whole fleet (token × list price)&#10;&#10;${esc(fleetCostTooltipLines(f))}&#10;&#10;${FLEET_COST_WINDOWS_HELP}"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run"><span class="fleet-run-count">${f.running || 0}</span>${fleetCostRotorHtml(f)}</span></div>`;
     }
 
     // Repaints every "Now:" line in place so "ago" keeps counting up (and
@@ -19498,6 +19511,87 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const shown = _stageTrackerPreparationShown.get(stageTrackerPreparationKey(item.repo, p.number));
       return !!(shown && item.head === shown.head && p.head_sha === shown.head && (!p.current_head || p.current_head === shown.head) && (!item.base_ref || item.base_ref === shown.base));
     }
+    // Forge-owned queues are observations, not seats in Hive's preparation
+    // train and not pipeline rows. This module never moves or mutates items.
+    const NATIVE_QUEUE_SECOND_MS = 1000;
+    const NATIVE_QUEUE_MINUTE_S = 60;
+    function stageTrackerNativeAge(value, nowMs) {
+      const at = Date.parse(value || '');
+      if (!Number.isFinite(at) || at > nowMs) return 'age unknown';
+      return Math.floor((nowMs - at) / (NATIVE_QUEUE_SECOND_MS * NATIVE_QUEUE_MINUTE_S)) + 'm';
+    }
+
+    function stageTrackerNativeLink(url, label) {
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol === 'https:') return `<a href="${esc(parsed.href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
+      } catch (_) {}
+      return esc(label);
+    }
+
+    function stageTrackerNativeIdentities(items) {
+      const result = [];
+      (items || []).forEach(item => {
+        if (!item) return;
+        if (item.kind === 'pr') result.push(item);
+        (item.linked_prs || []).forEach(pr => result.push(Object.assign({ repo: item.repo }, pr)));
+      });
+      return result;
+    }
+
+    function stageTrackerNativeMember(member, observation, all, page) {
+      const same = item => String(item.repo || '').toLowerCase() === String(observation.repo || '').toLowerCase()
+        && Number(item.number) === Number(member.pr) && item.head === member.head && item.base_ref === observation.base;
+      const where = page.some(same) ? 'on this page' : all.some(same) ? 'outside current page/filters' : 'outside tracker snapshot or head changed';
+      const repo = String(observation.repo || '');
+      const url = /^[-\w.]+\/[-\w.]+$/.test(repo) ? `https://github.com/${repo}/pull/${member.pr}` : '';
+      return `${stageTrackerNativeLink(url, '#' + member.pr)} <code title="${esc(member.head || '')}">${esc(String(member.head || '').slice(0, 12) || 'head unknown')}</code> <span class="nq-muted">${esc(where)}</span>`;
+    }
+
+    function stageTrackerNativeQueueHtml(observations, items, pageItems, nowMs, repoFilter) {
+      const all = stageTrackerNativeIdentities(items), page = stageTrackerNativeIdentities(pageItems);
+      const queues = (observations || []).filter(q => !repoFilter || !q.repo || q.repo.toLowerCase() === repoFilter.toLowerCase());
+      if (!queues.length) return '';
+      return '<h3>Forge-owned merge queues</h3><p class="nq-muted">Hive admits and repairs; the forge validates and merges. Separate from preparation/readiness and the actual pipeline rows. No ETA is inferred.</p>'
+        + queues.map(q => {
+          const observed = Date.parse(q.observed_at || '');
+          const stale = q.stale || !Number.isFinite(observed) || !q.fresh_for_s || nowMs - observed > q.fresh_for_s * NATIVE_QUEUE_SECOND_MS;
+          const entries = Array.isArray(q.entries) ? q.entries : [];
+          const candidates = Array.isArray(q.candidates) ? q.candidates : [];
+          const outcomes = Array.isArray(q.outcomes) ? q.outcomes : [];
+          const label = q.provider === 'github-native' ? 'GitHub merge queue' : String(q.provider || 'Unknown provider');
+          return `<section class="nq-scope"><h4>${esc(label)} · ${esc(q.repo || 'scope unknown')} ${esc(q.base || '')}</h4>
+            <p class="nq-muted">${esc(q.state || 'unknown')} · ${stale ? '<strong>STALE / unavailable as current evidence</strong>' : 'observed ' + esc(stageTrackerNativeAge(q.observed_at, nowMs)) + ' ago'} · ${q.complete ? 'bounded snapshot complete' : 'coverage incomplete / unknown'}.
+            ${esc(q.reason || '')} Queue references remain visible across row filters; repo filter applies here.</p>
+            <ol class="nq-entries">${entries.map(entry => `<li value="${Number(entry.position) || 1}">${stageTrackerNativeMember(entry, q, all, page)} · ${esc(entry.state || 'state unknown')} · queued ${esc(stageTrackerNativeAge(entry.enqueued_at, nowMs))}</li>`).join('')}</ol>
+            ${!entries.length ? '<p class="nq-muted">' + (q.complete && !stale ? 'No entries observed in this snapshot.' : 'Entry order unavailable; this does not prove an empty queue.') + '</p>' : ''}
+            <div class="nq-candidates">${candidates.map(candidate => {
+              const proven = candidate.membership === 'proven' && Array.isArray(candidate.members) && candidate.members.length > 0;
+              return `<article class="nq-candidate"><h5>Validation candidate <code title="${esc(candidate.sha || '')}">${esc(String(candidate.sha || '').slice(0, 12) || 'SHA unknown')}</code></h5>
+                <p class="nq-muted">${esc(candidate.ref || 'ref unknown')}<br>Base <code>${esc(candidate.base_sha || 'unknown')}</code> · tree <code>${esc(candidate.tree || 'unknown')}</code></p>
+                <p>${proven ? 'Exact member heads proven at snapshot time by event base, live chain and ancestry' : '<strong>Member mapping unknown — never inferred from FIFO</strong>'}</p>
+                ${proven ? '<ul>' + candidate.members.map(member => '<li>' + stageTrackerNativeMember(member, q, all, page) + '</li>').join('') + '</ul>' : ''}
+                <p class="nq-muted">${esc(candidate.reason || '')}</p>
+                <details><summary>Candidate required CI: ${esc(candidate.ci || 'unknown')}${candidate.checks_known ? '' : ' (required policy unavailable)'}</summary>
+                  <p class="nq-muted">Checks belong to synthetic SHA <code>${esc(candidate.sha || 'unknown')}</code>, never copied from PR heads. Passing checks alone is not a merged receipt.</p>
+                  <ul>${(candidate.checks || []).map(check => `<li>${stageTrackerNativeLink(check.url, check.name)} · ${esc(check.status || 'unknown')} ${esc(check.conclusion || '')}${check.app_id ? ' · App ' + Number(check.app_id) : ''}</li>`).join('')}</ul>
+                  ${!(candidate.checks || []).length ? '<p class="nq-muted">No required check evidence available.</p>' : ''}
+                </details></article>`;
+            }).join('')}</div>
+            ${!candidates.length ? '<p class="nq-muted">No validation candidate observed. Enqueue is not testing or merge completion.</p>' : ''}
+            ${outcomes.length ? '<details><summary>Observed lifecycle receipts</summary><ul>' + outcomes.map(outcome => `<li>${esc(outcome.kind)} ${outcome.pr ? '#' + Number(outcome.pr) : ''} <code>${esc(outcome.candidate_sha || outcome.merge_sha || outcome.head || '')}</code> · ${esc(stageTrackerNativeAge(outcome.observed_at, nowMs))} ago · ${esc(outcome.source)}</li>`).join('') + '</ul><p class="nq-muted">Removal/destroyed is not proof of failure, rebuild reason or merge. Only an observed merged receipt means merged. History is bounded and may have gaps after restart.</p></details>' : ''}
+          </section>`;
+        }).join('');
+    }
+
+    function stageTrackerNativeQueueSync(data, pageRows, nowMs, repoFilter) {
+      const root = document.getElementById('activity-monitor-native-queue');
+      if (!root) return;
+      const rows = (pageRows || []).map(row => row.item || row).filter(Boolean);
+      const html = stageTrackerNativeQueueHtml((data || {}).integration_queues || [], (data || {}).items || [], rows, nowMs, repoFilter);
+      root.hidden = !html;
+      setIfChanged(root, html);
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -19563,6 +19657,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
         if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
+        if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(null, [], nowMs, '');
         stageTrackerSidebarCountsUnknown();
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
@@ -19592,6 +19687,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : stageTrackerPage(ordered, f);
       if (page.page !== f.page) f.page = page.page;
       if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(d, ordered, page.rows, stages, nowMs);
+      if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(d, page.rows, nowMs, f.repo);
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
@@ -41367,23 +41463,25 @@ function burnAreaChart() {
           ? linkedAvatar(e.github_username, CONTRIBUTOR_AVATAR_PX, `@${e.github_username}`, e.avatar_url)
           : `<span style="display:inline-block;width:${CONTRIBUTOR_AVATAR_PX}px;height:${CONTRIBUTOR_AVATAR_PX}px;border-radius:50%;background:var(--border)"></span>`;
         return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:var(--sp-4) var(--sp-5);font-weight:600;color:var(--muted)">${e.rank}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${avatarHtml}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">@${esc(e.github_username)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${trustTierBadge(e.trust_tier)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right">${e.tasks_completed || 0}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right;color:${(e.tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--muted)'}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-rank">${e.rank}</td>
+          <td>${avatarHtml}</td>
+          <td>@${esc(e.github_username)}</td>
+          <td>${trustTierBadge(e.trust_tier)}</td>
+          <td class="contrib-lb-num">${e.tasks_completed || 0}</td>
+          <td class="contrib-lb-num contrib-lb-failed${(e.tasks_failed || 0) > 0 ? ' has-failures' : ''}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-num">${e.abandoned || 0}</td>
         </tr>`;
       }).join('');
       setIfChanged(panel, `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+        <table class="contrib-lb-table" style="width:100%;border-collapse:collapse;font-size:0.8rem">
           <thead><tr style="background:var(--bg);border-bottom:1px solid var(--border)">
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">#</th>
-            <th style="padding:var(--sp-4) var(--sp-5)"></th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">User</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">Tier</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Completed</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Failed</th>
+            <th>#</th>
+            <th></th>
+            <th>User</th>
+            <th>Tier</th>
+            <th class="contrib-lb-num">Completed</th>
+            <th class="contrib-lb-num">Failed</th>
+            <th class="contrib-lb-num">Abandoned</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -53937,7 +54035,7 @@ function burnAreaChart() {
           if (ch.patterns && ch.patterns.length) html += 'patterns: '+ch.patterns.map(p => '<code>'+esc(p)+'</code>').join(', ');
           if (ch.schedule) html += 'schedule: <code>'+esc(ch.schedule)+'</code>';
           if (ch.match) html += 'match: '+Object.entries(ch.match).map(([k,v]) => '<code>'+esc(k)+'='+esc(v)+'</code>').join(', ');
-          if (ch.repos && ch.repos.length) html += ' (repos: '+ch.repos.join(', ')+')';
+          if (ch.repos && ch.repos.length) html += ' (repos: '+ch.repos.map(esc).join(', ')+')';
           html += '</div>';
           html += '<label style="font-size:0.7rem;display:flex;align-items:center;gap:var(--sp-2);cursor:pointer"><input type="checkbox" '+(enabled?'checked':'')+disabled+' data-change-action="toggleChannel" data-arg0="'+i+'" data-arg-types="s,c"> on</label>';
           html += '<button class="hv-btn btn-danger" data-action="removeChannel" data-arg0="'+i+'"'+disabled+'>✕</button>';
@@ -57390,12 +57488,13 @@ function burnAreaChart() {
       const classifierBackend = String(sec.ioscanClassifierBackend || '').trim();
       const classifierControls = Object.prototype.hasOwnProperty.call(sec, 'ioscanClassifierBackend')
         ? `<div class="config-field" data-setting-key="ioscan.classifier.backend">
-          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude and copilot run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
+          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude, copilot and omp run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
           <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierBackend" data-arg-types="s,s,v">
             <option value="" ${classifierBackend === '' ? 'selected' : ''}>model endpoint (HTTP)</option>
             <option value="claude" ${classifierBackend === 'claude' ? 'selected' : ''}>claude — tool-less CLI</option>
             <option value="copilot" ${classifierBackend === 'copilot' ? 'selected' : ''}>copilot — tool-less CLI</option>
-            ${classifierBackend !== '' && classifierBackend !== 'claude' && classifierBackend !== 'copilot' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
+            <option value="omp" ${classifierBackend === 'omp' ? 'selected' : ''}>omp — tool-less CLI</option>
+            ${classifierBackend !== '' && classifierBackend !== 'claude' && classifierBackend !== 'copilot' && classifierBackend !== 'omp' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
           </select>
         </div>
         <div class="config-field-row">
@@ -58345,6 +58444,33 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${am.require_current_base_default ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="require_current_base_default"></div>
             <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
           </div>
+          <div class="config-field">
+            <label>Native GitHub merge queue ${yamlHint('auto_merge.native_merge_queue')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native GitHub merge queue', `Default off. Hive controls admission and repair; GitHub tests and merges the synthetic group. Settings requires explicit repositories and exact repo#base pairs. Existing CI, trust, review, hold and attribution gates stay in force.`)}</label>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="enabled" data-prevent="1" data-section="native-queue" data-key="enabled" role="switch" tabindex="0" aria-label="Enable native GitHub merge queue" aria-checked="${am.native_merge_queue && am.native_merge_queue.enabled ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Enable native GitHub merge queue (default OFF) ${settingHelpMark('native-merge-queue', 'pilot-rollout', 'Enable native GitHub merge queue', `Operator opt-in only after the GitHub prerequisites below. Save applies the Hive hand-off policy; it does not create queues or change branch protection. Off preserves conventional direct merge on branches without a required queue; a queue-required branch remains parked, never bypassed.`)}</span>
+            </div>
+            <label>Native queue repositories ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue repositories', `Comma-separated owner/repo allow-list. Settings refuses enabled queues with an empty list. Start with hivecommons/hive only; other repositories retain direct mode.`)}</label>
+            <input type="text" value="${esc(((am.native_merge_queue || {}).repos || []).join(', '))}" placeholder="hivecommons/hive" data-change-action="markDirtyNativeQueue" data-arg0="repos" data-arg-types="s,w">
+            <label>Native queue bases ${yamlHint('auto_merge.native_merge_queue.bases[]')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue bases', `Comma-separated exact owner/repo#base pairs. Repository names ignore case; branch names preserve case. No wildcards. Start with hivecommons/hive#v5. Every pair must belong to a listed repository.`)}</label>
+            <input type="text" value="${esc(((am.native_merge_queue || {}).bases || []).join(', '))}" placeholder="hivecommons/hive#v5" data-change-action="markDirtyNativeQueue" data-arg0="bases" data-arg-types="s,w">
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="skip_current_base_gate" data-prevent="1" data-section="native-queue" data-key="skip_current_base_gate" role="switch" tabindex="0" aria-label="Native queue owns freshness" aria-checked="${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Queue owns freshness (default OFF) ${settingHelpMark('native-merge-queue', 'current-base-gate', 'Queue owns freshness', `Explicitly bypasses current-base and behind refresh only for opted-in repo/base pairs with an actual GitHub queue. Leave off until merge-group CI is proven and HIVE_NATIVE_QUEUE_FRESHNESS suppresses the external branch updater for the same pairs. Other branches retain coordinated refresh.`)}</span>
+            </div>
+            <label>Native queue probe TTL ${settingHelpMark('native-merge-queue', 'api-cost', 'Native queue probe TTL', `How long GitHub queue detection is cached per repo/base. Default 30m; 0 uses that default. Enter a non-negative Go duration, for example 30m.`)}</label>
+            <input type="text" value="${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}" data-change-action="markDirtyNativeQueue" data-arg0="probe_ttl" data-arg-types="s,w">
+            <p class="config-help">Configured: <strong>${am.native_merge_queue && am.native_merge_queue.enabled ? 'enabled' : 'disabled (default)'}</strong>.
+              Repositories: ${esc(((am.native_merge_queue || {}).repos || []).join(', ') || 'all watched repositories once enabled')}.
+              Bases: ${esc(((am.native_merge_queue || {}).bases || []).join(', ') || 'all queue bases (legacy YAML only)')}.
+              Queue owns freshness: ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'explicitly opted in' : 'no (default)'}.
+              Probe TTL: ${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}.</p>
+            <p class="config-help">Owner-only: stage these controls and click Save only after the
+              <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/native-merge-queue.md#pilot-rollout" target="_blank" rel="noopener noreferrer">checks and branch-rule rollout</a>.
+              Prerequisites: App installation authentication, withdrawal guards, trusted-base policy proof, equivalent required-check migration, MERGE method and a bounded pilot group.
+              Enabled here does not mean deployed or enabled in GitHub. Turning it off does not disable GitHub's queue or withdraw existing entries; drain those before rollback. Direct merge with coordinated refresh remains available; this is not Hive's visual train.
+              Integration-aware multi-agent orchestration is planned, not a selectable implementation.</p>
+          </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
             <span class="config-toggle-label">Post review comments ${yamlHint('review.post_comments')} ${settingHelpMark('review-swarm', 'configuration', 'Post review comments', `OFF by default. Reviewers publish their verdict as a PR comment through the hive-review relay, in addition to returning it to the merge queue. Off, the verdict stays internal, which on a hive without auto-merge means nobody reads it. Turn this on so a review reaches the human who has to decide.`)}</span>
@@ -59099,7 +59225,7 @@ function burnAreaChart() {
       if (model.notice) html += `<div class="config-help" role="status">${esc(model.notice)}</div>`;
       html += model.rules.length ? model.rules.map((r, i) => `<div class="config-field">
         <strong>${esc(r.name || '(unnamed rule)')}</strong> → <code>${esc(r.agent)}</code> · priority ${esc(String(r.priority || 0))}
-        <pre class="config-help" style="white-space:pre-wrap">${esc(r.expr)}</pre>
+        <pre class="config-help event-trigger-expression">${esc(r.expr)}</pre>
         <button class="hv-btn btn-secondary btn-sm" data-action="editEventTrigger" data-arg0="${i}" data-arg-types="j"${listDis}>Edit</button>
         <button class="hv-btn btn-danger btn-sm" data-action="removeEventTrigger" data-arg0="${i}" data-arg-types="j"${listDis}>Remove</button>
       </div>`).join('') : '<p class="config-help">No Event triggers configured. Default governor behavior is unchanged.</p>';
@@ -59107,7 +59233,7 @@ function burnAreaChart() {
         <button class="hv-btn btn-secondary btn-sm" data-action="loadEventTriggers" data-arg0="true" data-arg-types="j"${dis}>Reload (discard draft)</button>`;
       if (!d) return html;
       const preset = d.preset !== 'advanced';
-      html += `<div class="config-section" style="margin-top:var(--sp-4)">
+      html += `<div class="config-section event-trigger-form">
         <h4>${model.editIndex === null ? 'Add Event trigger' : 'Edit Event trigger'}</h4>
         <p class="config-help">Use Save Event trigger below; the dialog's Save &amp; close does not save this separate editor. Save or cancel this edit before editing another rule.</p>
         <div class="config-field"><label for="event-trigger-preset">Event / preset</label>
@@ -60698,8 +60824,19 @@ function burnAreaChart() {
     function toggleConfigSwitch(el, section, key) {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
+      if (section === 'native-queue') {
+        el.setAttribute('aria-checked', String(isOn));
+        markDirtyNativeQueue(key, isOn);
+        return;
+      }
       markDirty(section, key, isOn);
       if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();
+    }
+
+    function markDirtyNativeQueue(key, value) {
+      if (key === 'repos' || key === 'bases') value = String(value).split(',').map(s => s.trim()).filter(Boolean);
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).native_merge_queue || {};
+      markDirty('auto-merge', 'native_merge_queue', Object.assign({}, staged, { [key]: value }));
     }
 
     // Review label gate (Settings → Features → Review Gate → "Only review
@@ -62151,6 +62288,7 @@ function burnAreaChart() {
               body: JSON.stringify(values)
             });
             if (!amRes.ok) throw new Error(await saveErrorMessage(amRes));
+            _configState.data.auto_merge = await amRes.json().catch(() => _configState.data.auto_merge);
           } else if (_configState.type === 'governor' && section === 'sla') {
             // sla is a TOP-LEVEL config block (Delivery SLA targets); it
             // saves through its own owner-only /api/config/sla endpoint.

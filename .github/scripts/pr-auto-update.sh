@@ -28,6 +28,35 @@ need jq
 api() { gh api "$@"; }
 summary_rows=''
 
+native_queue_owns_freshness() {
+  local pr=$1 entry configured=false base enabled
+  for entry in ${HIVE_NATIVE_QUEUE_FRESHNESS:-}; do
+    [[ "$entry" != "${REPO}#"* ]] || configured=true
+  done
+  if [[ "$configured" != true ]]; then printf 'false\n'; return; fi
+  # Capture the result, rather than a process substitution: a failed queue
+  # read must stop writes, not look like a non-queue branch.
+  local result
+  result=$(api graphql -f query='query($owner:String!,$repo:String!,$number:Int!){
+    repository(owner:$owner,name:$repo){pullRequest(number:$number){
+      baseRefName isMergeQueueEnabled
+    }}
+  }' -f owner="${REPO%/*}" -f repo="${REPO#*/}" -F number="$pr" \
+    --jq '.data.repository.pullRequest | [.baseRefName, .isMergeQueueEnabled] | @tsv') || return 1
+  IFS=$'\t' read -r base enabled <<<"$result"
+  [[ -n "$base" && ( "$enabled" == true || "$enabled" == false ) ]] || {
+    echo "queue detection unavailable for #${pr}; refusing branch update" >&2
+    return 1
+  }
+  for entry in ${HIVE_NATIVE_QUEUE_FRESHNESS:-}; do
+    if [[ "$entry" == "${REPO}#${base}" && "$enabled" == true ]]; then
+      printf 'true\n'
+      return
+    fi
+  done
+  printf 'false\n'
+}
+
 push_files=()
 if [[ -z "$INCIDENT" ]]; then
   if [[ -z "$BEFORE" || "$BEFORE" == "$ZERO_SHA" ]]; then
@@ -81,6 +110,11 @@ if [[ -z "$INCIDENT" ]]; then pulls_endpoint+="&base=${BASE_BRANCH}"; fi
 prs=$(api "$pulls_endpoint" --paginate --slurp)
 while IFS=$'\t' read -r number title _head_repo; do
   [[ -n "${number:-}" ]] || continue
+  queue_owned=$(native_queue_owns_freshness "$number")
+  if [[ "$queue_owned" == true ]]; then
+    add_row "$number" "$title" 'skipped' 'native queue owns freshness'
+    continue
+  fi
   if [[ -n "$INCIDENT" ]]; then
     body=$(jq -r --argjson number "$number" '.[][] | select(.number == $number) | .body // ""' <<<"$prs")
     if [[ "$body" != *"$MARKER"* ]]; then

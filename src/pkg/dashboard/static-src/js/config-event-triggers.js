@@ -26,7 +26,7 @@
       if (model.notice) html += `<div class="config-help" role="status">${esc(model.notice)}</div>`;
       html += model.rules.length ? model.rules.map((r, i) => `<div class="config-field">
         <strong>${esc(r.name || '(unnamed rule)')}</strong> → <code>${esc(r.agent)}</code> · priority ${esc(String(r.priority || 0))}
-        <pre class="config-help" style="white-space:pre-wrap">${esc(r.expr)}</pre>
+        <pre class="config-help event-trigger-expression">${esc(r.expr)}</pre>
         <button class="hv-btn btn-secondary btn-sm" data-action="editEventTrigger" data-arg0="${i}" data-arg-types="j"${listDis}>Edit</button>
         <button class="hv-btn btn-danger btn-sm" data-action="removeEventTrigger" data-arg0="${i}" data-arg-types="j"${listDis}>Remove</button>
       </div>`).join('') : '<p class="config-help">No Event triggers configured. Default governor behavior is unchanged.</p>';
@@ -34,7 +34,7 @@
         <button class="hv-btn btn-secondary btn-sm" data-action="loadEventTriggers" data-arg0="true" data-arg-types="j"${dis}>Reload (discard draft)</button>`;
       if (!d) return html;
       const preset = d.preset !== 'advanced';
-      html += `<div class="config-section" style="margin-top:var(--sp-4)">
+      html += `<div class="config-section event-trigger-form">
         <h4>${model.editIndex === null ? 'Add Event trigger' : 'Edit Event trigger'}</h4>
         <p class="config-help">Use Save Event trigger below; the dialog's Save &amp; close does not save this separate editor. Save or cancel this edit before editing another rule.</p>
         <div class="config-field"><label for="event-trigger-preset">Event / preset</label>

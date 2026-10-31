@@ -105,6 +105,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]any{"status": "ignored", "reason": "unknown repository", "event": event})
 		return
 	}
+	s.observeNativeQueueEvent(event, body, receivedAt)
 	if err := s.observeIntegrationWebhook(event, r.Header.Get("X-GitHub-Delivery"), body, receivedAt); err != nil {
 		s.webhookLogger().Error("integration observation not durable", "event", event, "error", err)
 	}

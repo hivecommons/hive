@@ -492,6 +492,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
+	resp.IntegrationQueues = s.stageTrackerNativeQueues(now)
 	preparationState := s.stageTrackerPRStateResolver(nil, resp.Merged24h)
 	resp.BasePreparation = s.stageTrackerPreparation(resp.Items, now, func(repo string, number int) string {
 		for _, merged := range resp.Merged24h {

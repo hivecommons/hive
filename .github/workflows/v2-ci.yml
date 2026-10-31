@@ -1,6 +1,8 @@
 name: v2 CI
 
 on:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [v4, v5, v6]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the

@@ -11,15 +11,29 @@ import (
 )
 
 // loopClock is a fake clock the test advances from its own goroutine while
-// the loop reads it through deps.now.
+// the loop reads it through deps.now. It counts reads so a test can wait
+// for the loop to reach a known point (the loop-top reconcileOverdue
+// check reads the clock once after every persist, then the loop parks in
+// select) before advancing time.
 type loopClock struct {
-	mu sync.Mutex
-	t  time.Time
+	mu    sync.Mutex
+	t     time.Time
+	reads int
+	read  chan struct{}
+}
+
+func newLoopClock() *loopClock {
+	return &loopClock{t: time.Now(), read: make(chan struct{}, 64)}
 }
 
 func (c *loopClock) now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.reads++
+	select {
+	case c.read <- struct{}{}:
+	default:
+	}
 	return c.t
 }
 
@@ -27,6 +41,26 @@ func (c *loopClock) advance(d time.Duration) {
 	c.mu.Lock()
 	c.t = c.t.Add(d)
 	c.mu.Unlock()
+}
+
+// waitReads blocks until the loop has read the clock at least n times in
+// total.
+func (c *loopClock) waitReads(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	for {
+		c.mu.Lock()
+		got := c.reads
+		c.mu.Unlock()
+		if got >= n {
+			return
+		}
+		select {
+		case <-c.read:
+		case <-deadline:
+			t.Fatalf("clock reads = %d, want >= %d", got, n)
+		}
+	}
 }
 
 // Wake-driven cached cycles arriving more often than the eval interval
@@ -37,21 +71,38 @@ func TestRunLoopWakeEnumeratesWhenSnapshotOlderThanInterval(t *testing.T) {
 	b, log, cancel := newLoopBoot(t, 900, 0)
 	defer cancel()
 	b.reviewWake = make(chan struct{}, 1)
-	clock := &loopClock{t: time.Now()}
+	clock := newLoopClock()
 	gov := newFakeTicker()
 	h := &loopHarness{startupOK: true, pending: []*fakeTicker{gov}, persisted: make(chan struct{}, 16)}
 	deps := h.deps()
 	deps.now = clock.now
 	done := runLoopAsync(b, deps)
 	<-h.persisted // initial reconcile pass
+	// The initial pass stamps lastEnumerateAt, then the loop top checks
+	// reconcileOverdue once before parking in select.
+	reads := 2
+	clock.waitReads(t, reads)
 
 	// Four wakes 5 minutes apart against a 900s interval: the first two
 	// plan from the cache, the third lands 15m after the last reconcile
 	// and must enumerate; the fourth is cached again.
+	//
+	// Advance the clock only once the loop is parked in select: if the
+	// loop-top reconcileOverdue check ran against the already-advanced
+	// clock it would enumerate there instead, and the pending wake would
+	// then run as an extra cached cycle.
 	for i := 0; i < 4; i++ {
 		clock.advance(5 * time.Minute)
 		b.reviewWake <- struct{}{}
 		<-h.persisted
+		// tick reads the clock for its overdue check (plus once more to
+		// stamp lastEnumerateAt when it upgrades), then the loop top reads
+		// it again before the next select.
+		reads += 2
+		if i == 2 {
+			reads++
+		}
+		clock.waitReads(t, reads)
 	}
 	cancel()
 	waitDone(t, done)
@@ -79,7 +130,7 @@ func TestRunLoopTopRunsOverdueReconcileWithoutTickerTick(t *testing.T) {
 	b.cfg.Governor.Modes = map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"alpha": "continuous"}}}
 	b.gov = governor.New(b.cfg.Governor, b.cfg.EnabledAgents(), b.logger)
 	b.gov.Evaluate(0, 0, 0, 0)
-	clock := &loopClock{t: time.Now()}
+	clock := newLoopClock()
 	b.gov.SeedContinuousNextKickForTest("alpha", clock.now().Add(24*time.Hour))
 	gov := newFakeTicker()
 	wake := newFakeTicker()

@@ -546,7 +546,7 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .effective-link{color:var(--cc-accent);text-decoration:none}
 .effective-link:hover{text-decoration:underline}
 .effective-section-title{padding:var(--sp-5) var(--sp-7) var(--sp-3);color:var(--text-muted);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.08em;font-weight:700}
-.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px 72px;align-items:center;gap:var(--sp-4);padding:10px 20px;border-bottom:1px solid var(--line-subtle);font-size:.85rem}
+.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px 72px 90px;align-items:center;gap:var(--sp-4);padding:10px 20px;border-bottom:1px solid var(--line-subtle);font-size:.85rem}
 .lb-row:last-child{border-bottom:none}
 /* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
    accent border, professional not loud. Readability preserved. */
@@ -1540,10 +1540,10 @@ select.admin-act{min-width:0;max-width:100%%}
   /* Slightly tighter card-internal gutters on the densest rows. */
   .clanker-row,.lb-row,.cc-q-item,.cc-tg-item,.cc-tg-head{padding-left:14px;padding-right:14px}
 
-  /* Leaderboard: 56px/1fr/120px/70px/70px/80px/72px cannot fit, so the seven cells reflow
+  /* Leaderboard: the eight desktop cells reflow
      onto three lines — rank + contributor, then tier + the three counts, then
-     the sparkline — instead of scrolling sideways. Placement is by child
-     position because .lb-head and the body rows emit the same seven children in
+     the sparkline + abandoned count — instead of scrolling sideways. Placement is by child
+     position because .lb-head and the body rows emit the same eight children in
      the same order, so the header keeps sitting over the column it labels. The
      stat tracks stay fixed rem widths for exactly that reason: auto would size
      per row and the header would drift out of alignment with the numbers. */
@@ -1554,7 +1554,8 @@ select.admin-act{min-width:0;max-width:100%%}
   .lb-row>:nth-child(4){grid-column:3;grid-row:2}
   .lb-row>:nth-child(5){grid-column:4;grid-row:2}
   .lb-row>:nth-child(6){grid-column:5;grid-row:2}
-  .lb-row>:nth-child(7){grid-column:1/-1;grid-row:3;text-align:left}
+  .lb-row>:nth-child(7){grid-column:1/3;grid-row:3;text-align:left}
+  .lb-row>:nth-child(8){grid-column:3/-1;grid-row:3}
   /* The uppercase, letter-spaced header labels are the widest thing in the stat
      tracks; drop them a notch so "Findings" fits 3.4rem. */
   .lb-head .lb-stat,.lb-head .lb-rank{font-size:var(--fs-2xs)}
@@ -3317,6 +3318,7 @@ function lbRow(e,rank){
   var tier=tierBadge(e.trust_tier,'tier-lb');
   var done=(e.tasks_completed||0);
   var failed=(e.tasks_failed||0);
+  var abandoned=(e.abandoned||0);
   var findings=(e.findings||0);
   // Subtle self-highlight: the viewer's OWN row (username match, case-insensitive,
   // humans only — never an agent) gets .lb-row--me + a small "you" chip. Anonymous
@@ -3352,6 +3354,7 @@ function lbRow(e,rank){
     // per_user_done, matched on github_username via data-user. Empty until metrics
     // load (renders a flat baseline), never fabricated.
     +'<div class="lb-spark" data-user="'+esc(uname)+'"></div>'
+    +'<div class="lb-stat">'+abandoned+'</div>'
     +'</div>';
 }
 function opsLeaderboardTrendValue(username){
@@ -3385,7 +3388,8 @@ function renderLeaderboard(contribs){
     {key:'done',type:'number',value:function(r){return r.entry.tasks_completed;}},
     {key:'failed',type:'number',value:function(r){return r.entry.tasks_failed;}},
     {key:'findings',type:'number',value:function(r){return r.entry.findings;}},
-    {key:'trend',type:'number',value:function(r){return opsLeaderboardTrendValue(r.entry.github_username);}}
+    {key:'trend',type:'number',value:function(r){return opsLeaderboardTrendValue(r.entry.github_username);}},
+    {key:'abandoned',type:'number',value:function(r){return r.entry.abandoned||0;}}
   ];
   var rankedRows=contribs.map(function(e,i){return{entry:e,rank:Number(e.rank||0)||i+1};});
   var sortable=opsSortableTable('leaderboard',{rows:rankedRows,columns:lbColumns});
@@ -3396,7 +3400,8 @@ function renderLeaderboard(contribs){
     '<div class="lb-stat lb-primary" aria-sort="'+sortable.ariaSort('done')+'">'+sortable.header('done','Done')+'</div>'+
     '<div class="lb-stat" aria-sort="'+sortable.ariaSort('failed')+'">'+sortable.header('failed','Failed')+'</div>'+
     '<div class="lb-stat" aria-sort="'+sortable.ariaSort('findings')+'">'+sortable.header('findings','Findings')+'</div>'+
-    '<div class="lb-stat" aria-sort="'+sortable.ariaSort('trend')+'">'+sortable.header('trend','Trend')+'</div></div>';
+    '<div class="lb-stat" aria-sort="'+sortable.ariaSort('trend')+'">'+sortable.header('trend','Trend')+'</div>'+
+    '<div class="lb-stat" aria-sort="'+sortable.ariaSort('abandoned')+'">'+sortable.header('abandoned','Abandoned')+'</div></div>';
   var i;
   for(i=0;i<sortable.rows.length;i++){html+=lbRow(sortable.rows[i].entry,sortable.rows[i].rank);}
   el.innerHTML=html;

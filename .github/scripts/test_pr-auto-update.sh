@@ -3,7 +3,8 @@
 set -euo pipefail
 unset GITHUB_STEP_SUMMARY  # Capture summaries on stdout, including on GitHub runners.
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-TMP=$(mktemp -d)
+TMP="$ROOT/.pr-auto-update-test-$$"
+mkdir "$TMP"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin"
 export FIXTURE="$TMP" GITHUB_REPOSITORY=example/repo
@@ -15,6 +16,15 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FIXTURE/calls"
 [[ "$1" == api ]] || exit 90
 shift
+if [[ "$1" == graphql ]]; then
+  [[ "${LOOKUP_FAIL:-}" != queue ]] || exit 1
+  number=''
+  for arg in "$@"; do [[ "$arg" != number=* ]] || number=${arg#number=}; done
+  enabled=false
+  for pr in ${QUEUED_PRS:-}; do [[ "$pr" != "$number" ]] || enabled=true; done
+  printf '%s\t%s\n' "${QUEUE_BASE:-v5}" "$enabled"
+  exit 0
+fi
 if [[ "$1" == -X ]]; then
   number=${3%/update-branch}; number=${number##*/}
   [[ "$number" != "${FAIL_PR:-}" ]] || { echo "HTTP ${FAIL_CODE:-500}" >&2; exit 1; }
@@ -128,6 +138,33 @@ reject 'pulls/1/update-branch' "$TMP/calls"
 require 'pulls/2/update-branch' "$TMP/calls"
 reject '/comments?' "$TMP/calls"
 require 'no changed-file intersection' "$TMP/output"
+
+# Explicitly opted-in, detected queue bases own freshness on both entry points.
+export HIVE_NATIVE_QUEUE_FRESHNESS='example/repo#v5' QUEUED_PRS='1 2'
+run
+reject 'update-branch' "$TMP/calls"
+require 'native queue owns freshness' "$TMP/output"
+export SHARED_CI_INCIDENT=42
+run
+reject 'update-branch' "$TMP/calls"
+require 'native queue owns freshness' "$TMP/output"
+# Same repo but a non-queue base or a base outside the allow-list keeps direct mode.
+unset QUEUED_PRS
+run
+require 'pulls/1/update-branch' "$TMP/calls"
+export QUEUED_PRS='1 2' QUEUE_BASE=v6
+run
+require 'pulls/1/update-branch' "$TMP/calls"
+unset QUEUE_BASE
+export HIVE_NATIVE_QUEUE_FRESHNESS='another/repo#v5'
+run
+require 'pulls/1/update-branch' "$TMP/calls"
+reject 'graphql' "$TMP/calls"
+export HIVE_NATIVE_QUEUE_FRESHNESS='example/repo#v5' LOOKUP_FAIL=queue
+if run; then echo 'queue read failure was swallowed' >&2; exit 1; fi
+reject 'update-branch' "$TMP/calls"
+unset HIVE_NATIVE_QUEUE_FRESHNESS LOOKUP_FAIL QUEUED_PRS SHARED_CI_INCIDENT
+
 export GITHUB_EVENT_BEFORE=0000000000000000000000000000000000000000
 run
 reject 'api ' "$TMP/calls"

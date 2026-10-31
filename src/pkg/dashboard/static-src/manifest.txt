@@ -7,6 +7,7 @@ css/agent-cards.css
 css/auth.css
 css/agent-state.css
 css/tracker.css
+css/tracker-native-queue.css
 css/agent-fields.css
 css/governor.css
 css/advisory-lifecycle.css
@@ -77,6 +78,7 @@ js/tracker-filter.js
 js/tracker-filter-state.js
 js/nav-count-delta.js
 js/tracker-preparation.js
+js/tracker-native-queue.js
 js/tracker-filter-render.js
 js/tracker-filter-fetch.js
 js/tracker-actions.js

@@ -453,23 +453,25 @@
           ? linkedAvatar(e.github_username, CONTRIBUTOR_AVATAR_PX, `@${e.github_username}`, e.avatar_url)
           : `<span style="display:inline-block;width:${CONTRIBUTOR_AVATAR_PX}px;height:${CONTRIBUTOR_AVATAR_PX}px;border-radius:50%;background:var(--border)"></span>`;
         return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:var(--sp-4) var(--sp-5);font-weight:600;color:var(--muted)">${e.rank}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${avatarHtml}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">@${esc(e.github_username)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${trustTierBadge(e.trust_tier)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right">${e.tasks_completed || 0}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right;color:${(e.tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--muted)'}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-rank">${e.rank}</td>
+          <td>${avatarHtml}</td>
+          <td>@${esc(e.github_username)}</td>
+          <td>${trustTierBadge(e.trust_tier)}</td>
+          <td class="contrib-lb-num">${e.tasks_completed || 0}</td>
+          <td class="contrib-lb-num contrib-lb-failed${(e.tasks_failed || 0) > 0 ? ' has-failures' : ''}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-num">${e.abandoned || 0}</td>
         </tr>`;
       }).join('');
       setIfChanged(panel, `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+        <table class="contrib-lb-table" style="width:100%;border-collapse:collapse;font-size:0.8rem">
           <thead><tr style="background:var(--bg);border-bottom:1px solid var(--border)">
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">#</th>
-            <th style="padding:var(--sp-4) var(--sp-5)"></th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">User</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">Tier</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Completed</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Failed</th>
+            <th>#</th>
+            <th></th>
+            <th>User</th>
+            <th>Tier</th>
+            <th class="contrib-lb-num">Completed</th>
+            <th class="contrib-lb-num">Failed</th>
+            <th class="contrib-lb-num">Abandoned</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>

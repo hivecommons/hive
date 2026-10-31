@@ -121,6 +121,9 @@ pinned:
   pr-overlap.yml: [v6, -v4]
   pr-auto-update.yml: [v6, -v4]
   pr-auto-update-test.yml: [v6, -v4]
+  # Native queue admission is available on the active feature lines only.
+  # This is CI coverage, not an opt-in or a queue rule for either branch.
+  native-queue-policy.yml: [v6, -v4]
   testutil-guard.yml: [v5, v6]
   v2-ci.yml: [v5, v6]
   v2-tests.yml: [v5, v6]
