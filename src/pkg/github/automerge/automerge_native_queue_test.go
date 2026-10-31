@@ -546,6 +546,7 @@ func TestNativeQueueIsOptInPerRepo(t *testing.T) {
 			case "listed-repo":
 				enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, Repos: map[string]bool{"acme/widget": true}})
 			}
+
 			reason, err := c.tryNativeQueue(context.Background(), pr, claim)
 			c.reconcileNativeQueueGate(context.Background(), stageLaneSelf, "acme", "widget", pr, "held")
 			enabled := c.nativeQueueEnabled(context.Background(), "acme/widget", pr)
@@ -557,6 +558,28 @@ func TestNativeQueueIsOptInPerRepo(t *testing.T) {
 			}
 			if reason != "" || err != nil || f.enqueues != 0 || f.dequeues != 0 || enabled || counter.reads != 0 {
 				t.Fatalf("%s: reason=%q error=%v enqueues=%d dequeues=%d enabled=%v reads=%d, want no queue traffic", mode, reason, err, f.enqueues, f.dequeues, enabled, counter.reads)
+			}
+		})
+	}
+}
+
+func TestNativeQueueBaseScopeControlsEnqueueAndFreshness(t *testing.T) {
+	for _, base := range []string{"v5", "v6", "V5"} {
+		t.Run(base, func(t *testing.T) {
+			c, f, pr, claim := nativeQueueEngine()
+			pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr(base)}
+			enableNativeQueue(c, NativeMergeQueuePolicy{
+				Enabled: true, Repos: map[string]bool{"acme/widget": true},
+				Bases: map[string]bool{"acme/widget#v5": true}, SkipCurrentBaseGate: true,
+			})
+			reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+			freshness := c.nativeQueueSkipsCurrentBase(context.Background(), claim.Repo, pr)
+			if base == "v5" {
+				if err != nil || reason == "" || f.enqueues != 1 || !freshness {
+					t.Fatalf("pilot base not admitted: %q %v enqueues=%d freshness=%v", reason, err, f.enqueues, freshness)
+				}
+			} else if err != nil || reason != "" || f.enqueues != 0 || freshness {
+				t.Fatalf("unlisted base admitted: %q %v enqueues=%d freshness=%v", reason, err, f.enqueues, freshness)
 			}
 		})
 	}

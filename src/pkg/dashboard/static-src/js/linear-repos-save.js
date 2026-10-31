@@ -757,6 +757,7 @@
               body: JSON.stringify(values)
             });
             if (!amRes.ok) throw new Error(await saveErrorMessage(amRes));
+            _configState.data.auto_merge = await amRes.json().catch(() => _configState.data.auto_merge);
           } else if (_configState.type === 'governor' && section === 'sla') {
             // sla is a TOP-LEVEL config block (Delivery SLA targets); it
             // saves through its own owner-only /api/config/sla endpoint.

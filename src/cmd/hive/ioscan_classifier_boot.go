@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -72,14 +73,29 @@ func installIoscanClassifier(sched ioscanClassifierSink, alerts ioscanClassifier
 	}
 
 	if backend != "" {
-		// NewCLIClassifier refuses exactly the backends SupportsToolless rejects.
-		classifier, cerr := ioscan.NewCLIClassifier(backend, cl.Model, cl.CLIDailyQuotaOrDefault(), now)
+		// A backend with no default model of its own (omp in its isolated
+		// profile) takes the model the hive's agents on that backend run
+		// with when ioscan.classifier.model is empty.
+		cliModel, modelFromAgents := cl.Model, false
+		if cliModel == "" && ioscan.RequiresModel(backend) {
+			cliModel = ioscanClassifierAgentModel(cfg, backend)
+			modelFromAgents = cliModel != ""
+		}
+		// NewCLIClassifier refuses exactly the backends SupportsToolless
+		// rejects, and a model-less launch of a backend that needs one.
+		classifier, cerr := ioscan.NewCLIClassifier(backend, cliModel, cl.CLIDailyQuotaOrDefault(), now)
 		if cerr != nil {
 			if classifierFailClosed {
 				sched.SetClassifier(ioscan.UnavailableClassifier{Err: cerr}, ioscan.Thresholds{})
 				raiseIoscanClassifierAlert(alerts, acmmLevel, cerr)
 			} else {
 				clearIoscanClassifierAlert(alerts)
+			}
+			if errors.Is(cerr, ioscan.ErrCLIModelRequired) {
+				logger.Error("ioscan classifier backend refused: it has no default model in the classifier's isolated profile and none is configured",
+					"backend", backend, "backend_from_agents", fallback, "fail_closed", classifierFailClosed, "acmm_level", acmmLevel,
+					"fix", "set ioscan.classifier.model (Settings → Security → Input Defense), or give the hive's "+backend+" agents a model in agents.*.model")
+				return
 			}
 			logger.Error("ioscan classifier backend refused: it cannot run with no tools, no MCP, no GitHub token and an empty working directory",
 				"backend", backend, "accepted", accepted, "fail_closed", classifierFailClosed, "acmm_level", acmmLevel,
@@ -89,7 +105,7 @@ func installIoscanClassifier(sched ioscanClassifierSink, alerts ioscanClassifier
 		sched.SetClassifier(ioscan.NewCachedClassifier(classifier, ioscan.DefaultClassifierCacheEntries), thresholds)
 		sched.SetClassifierBudgetPerEval(cl.CLIBudgetPerEvalOrDefault())
 		clearIoscanClassifierAlert(alerts)
-		logger.Info("ioscan semantic classifier enabled", "backend", backend, "backend_from_agents", fallback, "model", cl.Model,
+		logger.Info("ioscan semantic classifier enabled", "backend", backend, "backend_from_agents", fallback, "model", cliModel, "model_from_agents", modelFromAgents,
 			"budget_per_eval", cl.CLIBudgetPerEvalOrDefault(), "daily_quota", cl.CLIDailyQuotaOrDefault(), "fail_closed", classifierFailClosed)
 		return
 	}
@@ -151,6 +167,37 @@ func ioscanClassifierFallbackBackend(cfg *config.Config) string {
 		return backends[i] < backends[j]
 	})
 	return backends[0]
+}
+
+// ioscanClassifierAgentModel is the model the classifier uses for a CLI
+// backend that has no default of its own when ioscan.classifier.model is
+// empty: the model most of the hive's agents on that backend run with, ties
+// broken by name so the choice is stable across boots. Empty when no agent
+// on that backend names a model.
+func ioscanClassifierAgentModel(cfg *config.Config, backend string) string {
+	counts := map[string]int{}
+	for _, agent := range cfg.Agents {
+		if !strings.EqualFold(strings.TrimSpace(agent.Backend), backend) {
+			continue
+		}
+		if m := strings.TrimSpace(agent.Model); m != "" {
+			counts[m]++
+		}
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	models := make([]string, 0, len(counts))
+	for m := range counts {
+		models = append(models, m)
+	}
+	sort.Slice(models, func(i, j int) bool {
+		if counts[models[i]] != counts[models[j]] {
+			return counts[models[i]] > counts[models[j]]
+		}
+		return models[i] < models[j]
+	})
+	return models[0]
 }
 
 // ioscanClassifierBlockedAlertMessage is the dashboard text for a required

@@ -48,6 +48,7 @@
     function stageTrackerPreparationChipHtml(item) {
       const p = item && item.preparation;
       if (!p || p.state === 'inactive') return '';
+      if (p.state === 'current' && typeof stageTrackerPreparationRepresented === 'function' && stageTrackerPreparationRepresented(item)) return '';
       const word = stageTrackerPreparationWord(p);
       const label = p.state === 'current' ? word : 'Preparation owner · unverified';
       return `<span class="ham-badge" title="${esc(word + ' · ticket head ' + p.head_sha + ' · ' + stageTrackerPreparationAge(p, Date.now()) + '. Preparation is not CI, review approval, or a ready merge-train seat.')}">${esc(label)}</span>`;
@@ -96,10 +97,12 @@
     var _stageTrackerQueueItems = [];
     var _stageTrackerPreparationQueues = [];
     function stageTrackerQueueChip() { return document.getElementById('activity-monitor-queue'); }
-    // Hide only when neither trains nor preparation observations exist.
+    // The visible preparation rail owns preparation context. Keep this
+    // popover only for actual ready trains, with the old fallback off-rail.
     function stageTrackerQueueSync(items, nowMs, preparation) {
       _stageTrackerQueueItems = Array.isArray(items) ? items : [];
-      _stageTrackerPreparationQueues = Array.isArray(preparation) ? preparation : [];
+      const preparationRail = typeof stageTrackerPreparationVisualSync === 'function' && document.getElementById('activity-monitor-preparation');
+      _stageTrackerPreparationQueues = !preparationRail && Array.isArray(preparation) ? preparation : [];
       const chip = stageTrackerQueueChip();
       if (!chip) return;
       const trains = stageTrackerQueueTrains(_stageTrackerQueueItems);
@@ -111,6 +114,7 @@
       const prepSummary = prepOwners + ' owner · ' + prepWaiting + ' waiting' + (prepUnverified ? ' · ' + prepUnverified + ' unverified tickets' : '');
       const prepUnknown = _stageTrackerPreparationQueues.some(q => q.state !== 'observed');
       chip.hidden = !trains.length && !_stageTrackerPreparationQueues.length;
+      if (chip.hidden && typeof hamQueueToggle === 'function') hamQueueToggle(false);
       const nEl = chip.querySelector('.ham-queue-n');
       const count = _stageTrackerPreparationQueues.length ? n + ' train PRs · ' + (prepUnknown ? 'prep unknown' : prepSummary) : String(n);
       if (nEl && nEl.textContent !== count) nEl.textContent = count;

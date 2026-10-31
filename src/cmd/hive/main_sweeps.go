@@ -855,7 +855,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 		opts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
 			q := cfg.AutoMerge.NativeMergeQueue
-			return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
+			return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), Bases: q.BaseSet(), SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
 		}
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {

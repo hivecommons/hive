@@ -631,7 +631,7 @@
           if (ch.patterns && ch.patterns.length) html += 'patterns: '+ch.patterns.map(p => '<code>'+esc(p)+'</code>').join(', ');
           if (ch.schedule) html += 'schedule: <code>'+esc(ch.schedule)+'</code>';
           if (ch.match) html += 'match: '+Object.entries(ch.match).map(([k,v]) => '<code>'+esc(k)+'='+esc(v)+'</code>').join(', ');
-          if (ch.repos && ch.repos.length) html += ' (repos: '+ch.repos.join(', ')+')';
+          if (ch.repos && ch.repos.length) html += ' (repos: '+ch.repos.map(esc).join(', ')+')';
           html += '</div>';
           html += '<label style="font-size:0.7rem;display:flex;align-items:center;gap:var(--sp-2);cursor:pointer"><input type="checkbox" '+(enabled?'checked':'')+disabled+' data-change-action="toggleChannel" data-arg0="'+i+'" data-arg-types="s,c"> on</label>';
           html += '<button class="hv-btn btn-danger" data-action="removeChannel" data-arg0="'+i+'"'+disabled+'>✕</button>';
