@@ -468,16 +468,19 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	name := s.Runtime.ResolveAgent(r.PathValue("name"))
 	q := r.URL.Query()
 	lines := api.DefaultLogLines
+	// replay is how many buffered lines a follow sends before streaming:
+	// n when the client gave one, else the whole follow window.
+	replay := followWindow
 	if v := q.Get(api.QueryLines); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
 			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, api.QueryLines+" must be a non-negative integer")
 			return
 		}
-		lines = n
+		lines, replay = n, n
 	}
 	if isTrue(q.Get(api.QueryFollow)) {
-		s.followLogs(w, r, name)
+		s.followLogs(w, r, name, replay)
 		return
 	}
 	source := q.Get(api.QuerySource)
@@ -505,23 +508,26 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, out)
 }
 
-// followLogs streams new ring-buffer lines as api.EventLog records until the
-// client goes away or the runtime stops answering.
-func (s *Server) followLogs(w http.ResponseWriter, r *http.Request, name string) {
+// followLogs sends the last replay ring-buffer lines, then streams new ones
+// as api.EventLog records until the client goes away or the runtime stops
+// answering.
+func (s *Server) followLogs(w http.ResponseWriter, r *http.Request, name string, replay int) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, "streaming is not supported on this connection")
 		return
 	}
-	prev, err := s.Runtime.GetBufferOutput(name, followWindow)
+	// prev stays the whole first read so the first poll diffs against all
+	// of it, not only the replayed tail.
+	prev, err := s.Runtime.GetBufferOutput(name, max(followWindow, replay))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, fmt.Sprintf("logs %s: %v", name, err))
 		return
 	}
 	s.startStream(w)
 	flusher.Flush()
-	if len(prev) > 0 {
-		if api.WriteEvent(w, api.EventLog, api.LogChunk{Agent: name, Lines: prev}) != nil {
+	if initial := lastLines(prev, replay); len(initial) > 0 {
+		if api.WriteEvent(w, api.EventLog, api.LogChunk{Agent: name, Lines: initial}) != nil {
 			return
 		}
 		flusher.Flush()
@@ -801,6 +807,14 @@ func isTrue(v string) bool {
 		return true
 	}
 	return false
+}
+
+// lastLines is the last n of lines (all of them when there are fewer).
+func lastLines(lines []string, n int) []string {
+	if len(lines) <= n {
+		return lines
+	}
+	return lines[len(lines)-n:]
 }
 
 // newTail returns the lines of cur that were not already seen in prev,

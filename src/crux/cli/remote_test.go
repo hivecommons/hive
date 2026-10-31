@@ -319,6 +319,17 @@ func TestRemoteRunFollowsAndStops(t *testing.T) {
 	if code := h.run("--server", socket, "logs", "-f", "lost"); code != ExitError || h.stdout.String() != "boot\nready\n" {
 		t.Fatalf("logs -f: %d %q %q", code, h.stdout, h.stderr)
 	}
+
+	// An explicit -n bounds the follow's replay; without -n (above) the
+	// server keeps its own replay window, so n is not sent.
+	h = newHarness(t)
+	if code := h.run("--server", socket, "logs", "-n", "5", "-f", "lost"); code != ExitError || h.stdout.String() != "boot\nready\n" {
+		t.Fatalf("logs -n 5 -f: %d %q %q", code, h.stdout, h.stderr)
+	}
+	seen := f.seen()
+	if !strings.Contains(seen, "GET /v1/agents/lost/logs?follow=1&n=5") || strings.Count(seen, "/lost/logs?follow=1&n=") != 1 {
+		t.Fatalf("requests:\n%s", seen)
+	}
 }
 
 func TestRemoteErrors(t *testing.T) {
