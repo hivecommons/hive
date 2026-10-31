@@ -1222,8 +1222,9 @@ type CreateIssueRequest struct {
 	// SkipSharedPathFold suppresses the file-set, same-component and
 	// canonical-subject folds (#16065) for a request that declares DAG
 	// placement (--parent or --blocked-by): sibling children routinely share
-	// a path and a title stem. The exact-title and rejected-twin gates still
-	// apply.
+	// a path and a title stem. The create's idempotency claim keys on the
+	// exact title rather than the canonical stem for the same reason. The
+	// exact-title and rejected-twin gates still apply.
 	SkipSharedPathFold bool
 	// FoldMatch, when set, narrows ConsolidateOpen: a file-set or
 	// same-component twin is folded into only when FoldMatch accepts its
@@ -1531,7 +1532,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		ghReq.Labels = &usable
 	}
 	var issue *gh.Issue
-	claim := issueCreateClaim(owner+"/"+repoName, title, body, issueCreateNow())
+	claim := issueCreateClaimFor(owner+"/"+repoName, title, body, issueCreateNow(), req.SkipSharedPathFold)
 	res, found := c.priorBucketIssueCreate(ctx, claim)
 	if !found {
 		create := func(ctx context.Context) (effects.Result, error) {
@@ -1554,7 +1555,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		var err error
 		res, err = effects.Execute(ctx, boundary, claim, create)
 		if errors.Is(err, effects.ErrNeedsReconciliation) {
-			res, err = c.reconcileIssueCreate(ctx, boundary, claim, owner, repoName, title, body, create, err)
+			res, err = c.reconcileIssueCreate(ctx, boundary, claim, owner, repoName, title, body, req.SkipSharedPathFold, create, err)
 		}
 		if err != nil {
 			return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: %w", owner, repoName, err)
@@ -1563,7 +1564,8 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	if issue == nil {
 		// The mutation boundary replayed this create as already applied
 		// (#11579): another filing of the same finding — same canonical
-		// subject and file set, however the title was reworded — landed
+		// subject and file set, however the title was reworded (or, for a
+		// declared DAG node, the same exact title, #16065) — landed
 		// inside the idempotency window (this bucket or the previous one),
 		// so the effect never ran and there is no API response. Hand back
 		// the journaled issue rather than a zero number with a nil error; an
@@ -1604,7 +1606,12 @@ const issueCreateUnknownTTL = time.Hour
 // needs-reconciliation refusal (still wrapping effects.ErrNeedsReconciliation
 // so the watcher counts the attempt and gives up after
 // issueReconcileMaxAttempts).
-func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repoName, title, body string, create func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
+//
+// exactTitle mirrors CreateIssueRequest.SkipSharedPathFold (#16065): a
+// declared DAG node counts only an exact-title twin as evidence that the
+// earlier attempt applied, since a canonical-stem sibling is a different
+// node, not this create.
+func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repoName, title, body string, exactTitle bool, create func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
 	found, lookupErr := c.scanOpenIssues(WithRESTCaller(ctx, "hive:reconcile_issue_create"), owner, repoName, title, body, nil, "")
 	if lookupErr != nil {
 		expired, expErr := effects.ExpireUnresolved(ctx, boundary, claim, issueCreateUnknownTTL)
@@ -1619,7 +1626,7 @@ func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boun
 		return effects.Execute(ctx, boundary, claim, create)
 	}
 	state := effects.ExternalState{}
-	if existing := found.subject; existing != nil {
+	if existing := found.subject; existing != nil && (!exactTitle || issueshape.SameTitle(existing.GetTitle(), title)) {
 		state = effects.ExternalState{Applied: true, Provenance: existing.GetHTMLURL()}
 	}
 	if recErr := effects.Reconcile(ctx, boundary, claim, state); recErr != nil {
@@ -1670,7 +1677,25 @@ const scanOpenIssuesMaxPages = 3
 // trustworthy canonical subject (see canonicalIssueSubject) and no file
 // references falls back to the exact title, which is the pre-#11579 key.
 func issueCreateClaim(repo, title, body string, now time.Time) effects.Claim {
-	subject := canonicalIssueSubject(title)
+	return issueCreateClaimFor(repo, title, body, now, false)
+}
+
+// issueCreateClaimFor is issueCreateClaim with the key selectable. With
+// exactTitle set — a request that declares DAG placement
+// (CreateIssueRequest.SkipSharedPathFold, #16065) — the subject is the exact
+// title minus its `[<agent>]` tag, the same key the scan's exact-title gate
+// compares on, rather than the canonical stem: sibling children "<RFC>:
+// child A" and "<RFC>: child B" canonicalise alike and routinely cite the
+// same file, so the canonical key would replay the second child's create as
+// the first and hand back its sibling's number. The file set stays in the
+// key so a retried create of one child is still a replay of itself.
+func issueCreateClaimFor(repo, title, body string, now time.Time, exactTitle bool) effects.Claim {
+	var subject string
+	if exactTitle {
+		subject = issueshape.StripAgentPrefix(title)
+	} else {
+		subject = canonicalIssueSubject(title)
+	}
 	if subject == "" {
 		subject = strings.TrimSpace(title)
 	}

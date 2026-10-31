@@ -650,7 +650,12 @@ above the third child of an RFC was routinely folded into an older sibling —
 the one place it must never land — and the agent only learned of it from the
 result's `number`. Such a request therefore skips the exact file-set twin,
 the same-component fold and the canonical-subject reuse and files its own
-issue. The **exact-title** match (ignoring the `[<agent>]` tag) and the
+issue. The create's idempotency replay (the 24-hour journal key that makes a
+reworded re-filing of one finding a replay of the first) is keyed on the
+exact title for such a request too, so two siblings that share a stem and
+cite the same file within the window each get their own issue rather than
+the second being handed the first's `number` as `already_existed`. The
+**exact-title** match (ignoring the `[<agent>]` tag) and the
 rejected-twin gate are unchanged, so a retried create still reuses the issue
 it filed. When the request did create a new issue, the result carries
 `consolidation_skipped_reason: "parent"` (or `"blocked_by"` when only
