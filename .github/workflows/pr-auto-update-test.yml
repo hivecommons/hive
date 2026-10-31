@@ -6,12 +6,32 @@ on:
       - '.github/scripts/pr-auto-update.sh'
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
+      - '.github/scripts/native-queue-*.cjs'
+      - 'src/pkg/dashboard/static-src/js/config-helpers.js'
+      - 'src/pkg/dashboard/static-src/js/config-features.js'
+      - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
+      - '.github/scripts/test-native-queue-workflows.py'
+      - '.github/workflows/native-queue-policy.yml'
+      - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/v2-tests.yml'
+      - '.github/workflows/go-security-analysis.yml'
+      - '.github/workflows/pr-verifier.yml'
   push:
     branches: [v5, v6]
     paths:
       - '.github/scripts/pr-auto-update.sh'
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
+      - '.github/scripts/native-queue-*.cjs'
+      - 'src/pkg/dashboard/static-src/js/config-helpers.js'
+      - 'src/pkg/dashboard/static-src/js/config-features.js'
+      - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
+      - '.github/scripts/test-native-queue-workflows.py'
+      - '.github/workflows/native-queue-policy.yml'
+      - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/v2-tests.yml'
+      - '.github/workflows/go-security-analysis.yml'
+      - '.github/workflows/pr-verifier.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -28,3 +48,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Exercise push and shared-CI incident recovery with mocked APIs
         run: bash .github/scripts/test_pr-auto-update.sh
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Exercise native queue policy with mocked APIs
+        run: node --test .github/scripts/native-queue-policy.test.cjs .github/scripts/native-queue-settings.test.cjs .github/scripts/native-queue-tracker.test.cjs
+      - name: Ensure YAML parser for workflow contracts
+        run: |
+          python3 -c 'import yaml' 2>/dev/null && exit 0
+          # Match v2-ci's lean-runner setup; these images need not carry pip.
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq python3-yaml
+      - name: Check native queue workflow contracts
+        run: python3 .github/scripts/test-native-queue-workflows.py

@@ -62,7 +62,7 @@ split.
 
 CSS (`css/`): `base` (tokens, reset, shared primitives), `sidebar`, `topbar`,
 `agent-detail`, `agent-cards`, `auth`, `agent-state`, `tracker` (Hive activity
-monitor), `agent-fields`, `governor`, `advisory-lifecycle`, `evidence`,
+monitor), `tracker-native-queue`, `agent-fields`, `governor`, `advisory-lifecycle`, `evidence`,
 `throughput`, `repos`, `label-filter`, `overview`, `sparklines-indicators`,
 `governor-matrix`, `cost`, `alerts-toasts`, `feedback-faq`, `config-dialog`,
 `chat`, `nous`, `knowledge`, `sections-collapse`, `design-system`,
@@ -78,7 +78,8 @@ JS (`js/`): `boot`, `core`, `feedback`, `sections`, `layout`, `agent-detail`,
 `tracker-words-core`, `tracker-words-stage`, `tracker-words-gate`,
 `tracker-words`, `tracker-row`, `tracker-row-strip`, `tracker-row-acted`,
 `tracker-row-layout`, `tracker-motion`, `tracker-filter`,
-`tracker-filter-state`, `nav-count-delta`, `tracker-filter-render`,
+`tracker-filter-state`, `nav-count-delta`, `tracker-preparation`,
+`tracker-native-queue`, `tracker-filter-render`,
 `tracker-filter-fetch`, `tracker-actions`, `tracker-merged`, `tracker-queue`,
 `tracker-sound`, `tracker-waiting`, `tracker-popout`, `agent-cards`, `banners`,
 `governor-view`, `repos`, `overview`, `label-filter`, `pinned-filters`,

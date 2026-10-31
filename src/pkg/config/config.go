@@ -8355,6 +8355,10 @@ type NativeMergeQueueAutoMergeConfig struct {
 	// Repos restricts the hand-off to these repositories (owner/repo,
 	// case-insensitive). Empty means every watched repository once Enabled.
 	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// Bases further restricts hand-off to exact owner/repo#base pairs.
+	// Repository names are case-insensitive; branch names are case-sensitive.
+	// Empty preserves the original all-queue-bases behaviour for YAML users.
+	Bases []string `yaml:"bases,omitempty" json:"bases,omitempty"`
 	// SkipCurrentBaseGate lets a queue-enabled base bypass the
 	// auto_merge.require_current_base gate and the behind update-branch,
 	// because the merge group re-tests the merged result and a new head
@@ -8375,6 +8379,21 @@ const DefaultNativeMergeQueueProbeTTL = 30 * time.Minute
 // map; nil means the allow-list is empty (every repo once Enabled).
 func (n NativeMergeQueueAutoMergeConfig) RepoSet() map[string]bool {
 	return repoListSet(n.Repos)
+}
+
+// BaseSet preserves branch case while normalizing repository identity.
+func (n NativeMergeQueueAutoMergeConfig) BaseSet() map[string]bool {
+	if len(n.Bases) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(n.Bases))
+	for _, scope := range n.Bases {
+		repo, base, ok := strings.Cut(strings.TrimSpace(scope), "#")
+		if ok && repo != "" && base != "" {
+			set[strings.ToLower(repo)+"#"+base] = true
+		}
+	}
+	return set
 }
 
 // EnabledFor reports whether repo (owner/repo, matched case-insensitively)

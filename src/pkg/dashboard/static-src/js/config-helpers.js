@@ -7,8 +7,19 @@
     function toggleConfigSwitch(el, section, key) {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
+      if (section === 'native-queue') {
+        el.setAttribute('aria-checked', String(isOn));
+        markDirtyNativeQueue(key, isOn);
+        return;
+      }
       markDirty(section, key, isOn);
       if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();
+    }
+
+    function markDirtyNativeQueue(key, value) {
+      if (key === 'repos' || key === 'bases') value = String(value).split(',').map(s => s.trim()).filter(Boolean);
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).native_merge_queue || {};
+      markDirty('auto-merge', 'native_merge_queue', Object.assign({}, staged, { [key]: value }));
     }
 
     // Review label gate (Settings → Features → Review Gate → "Only review

@@ -1,0 +1,1 @@
+- Add owner-only Event triggers settings with scoped scanner first-seen issue presets, advanced CEL editing, validation, durable conflict-protected saves, and a direct link from agent Channels.

@@ -69,7 +69,8 @@ func celEngineFor(cfg *config.Config, logger *slog.Logger) *celtrigger.Engine {
 	if cfg == nil {
 		return nil
 	}
-	sig := triggersSignature(cfg.Triggers)
+	triggers := cfg.TriggerRulesSnapshot()
+	sig := triggersSignature(triggers)
 
 	globalCELEngine.mu.Lock()
 	defer globalCELEngine.mu.Unlock()
@@ -82,12 +83,12 @@ func celEngineFor(cfg *config.Config, logger *slog.Logger) *celtrigger.Engine {
 	globalCELEngine.sig = sig
 	globalCELEngine.built = true
 
-	if len(cfg.Triggers) == 0 {
+	if len(triggers) == 0 {
 		globalCELEngine.engine = nil
 		return nil
 	}
 
-	engine, err := celtrigger.CompileFromConfig(cfg)
+	engine, err := celtrigger.CompileFromConfig(&config.Config{Triggers: triggers})
 	if err != nil {
 		// Fail-closed: a malformed rule must never crash the fleet or silently
 		// change routing. Log once (per triggers change) and run with no CEL
