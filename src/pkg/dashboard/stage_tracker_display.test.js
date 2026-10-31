@@ -490,6 +490,14 @@ test('Copy display link falls back to a selectable field when the clipboard is m
   // With no parsed playlist the current view is used, whatever am.view said.
   assert.deepStrictEqual(new URL(pl.api.stageTrackerDisplayLinkUrl(plHref, pl.api.filter(), 'none', null)).searchParams.getAll('am.view'), []);
   assert.strictEqual(pl.api.stageTrackerDisplayLinkUrl('nope', {}, 'none', null), '');
+  // density=tv and shift=1 are rendering-only flags and ride along; any other value does not.
+  const flags = new URL(pl.api.stageTrackerDisplayLinkUrl('https://hive.example/?display=1&density=tv&shift=1&token=x', pl.api.filter(), 'none', null));
+  assert.strictEqual(flags.searchParams.get('density'), 'tv');
+  assert.strictEqual(flags.searchParams.get('shift'), '1');
+  assert.strictEqual(flags.searchParams.get('token'), null);
+  const badFlags = new URL(pl.api.stageTrackerDisplayLinkUrl('https://hive.example/?display=1&density=foo&shift=0', pl.api.filter(), 'none', null));
+  assert.strictEqual(badFlags.searchParams.get('density'), null);
+  assert.strictEqual(badFlags.searchParams.get('shift'), null);
 });
 
 test('Exit display drops display=1 like Esc and releases a held wake lock', async () => {

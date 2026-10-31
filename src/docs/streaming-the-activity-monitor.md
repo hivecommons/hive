@@ -200,7 +200,7 @@ and acts only when clicked:
 | Control | What it does |
 |---|---|
 | **✕ Exit display** | Leaves display mode, the same as **Esc**. |
-| **🔗 Copy link** | Copies a link to this display: `display=1`, the current `am.*` view (or the playlist's `am.view` + `interval`) and `theme`, and nothing else — never a token or cookie. If the clipboard is unavailable or refused, the link is shown in a selectable field instead. |
+| **🔗 Copy link** | Copies a link to this display: `display=1`, the current `am.*` view (or the playlist's `am.view` + `interval`), `theme`, and the `density=tv` / `shift=1` display options when set, and nothing else — never a token or cookie. If the clipboard is unavailable or refused, the link is shown in a selectable field instead. |
 | **⛶ Full screen** | The same full screen as the header's ⛶ button. Disabled with a "not supported" tooltip where the browser has no Fullscreen API. |
 | **☀ Keep awake** | Asks the browser to keep the screen awake (Screen Wake Lock). Shows *on*, *off*, *denied* (with the browser's reason; it is not retried automatically) or is disabled where unsupported. While on, it is re-requested when the tab becomes visible again; it is released on exit and is not remembered after a reload. |
 
