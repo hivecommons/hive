@@ -115,7 +115,63 @@ var (
 	// fork bomb likewise needs no word boundary.
 	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?(/+\.?|/*\*|(\$HOME|\$\{HOME\}|~)(/\*?)?)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
+	// shellSeparatorRe splits a command line into the simple commands that
+	// isDestructiveRm inspects one at a time.
+	shellSeparatorRe = regexp.MustCompile(`[;&|\n]+`)
+	// rmRootTargetRe is the set of paths whose recursive removal wipes the
+	// filesystem root or the home directory: /, //, /., *, /*, $HOME, ${HOME}
+	// and ~, the last three optionally followed by / or /*.
+	rmRootTargetRe = regexp.MustCompile(`^(/+\.?|/*\*|(\$HOME|\$\{HOME\}|~)(/\*?)?)$`)
 )
+
+// isDestructiveRm reports whether cmd contains a recursive rm whose target is
+// the filesystem root or the home directory. Unlike destructiveCmdRe it reads
+// the argv the way rm does, so the option tokens may come in any order and
+// any spelling: -r/-R or --recursive mark the removal recursive, -- ends the
+// options, and every other option (--force, --no-preserve-root, -v, ...) is
+// skipped. GNU rm refuses "rm -rf /" by default; "rm -rf --no-preserve-root /"
+// is the spelling that actually removes it, and it must not pass clean.
+func isDestructiveRm(cmd string) bool {
+	for _, simple := range shellSeparatorRe.Split(cmd, -1) {
+		fields := strings.Fields(simple)
+		for i, f := range fields {
+			if !strings.EqualFold(f, "rm") {
+				continue
+			}
+			if rmRemovesRoot(fields[i+1:]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var shellQuoteReplacer = strings.NewReplacer(`"`, "", `'`, "")
+
+func rmRemovesRoot(args []string) bool {
+	recursive, rootTarget, endOfOptions := false, false, false
+	for _, arg := range args {
+		if !endOfOptions && len(arg) > 1 && strings.HasPrefix(arg, "-") {
+			switch {
+			case arg == "--":
+				endOfOptions = true
+			case strings.HasPrefix(arg, "--"):
+				if arg == "--recursive" {
+					recursive = true
+				}
+			default:
+				if strings.ContainsAny(arg[1:], "rR") {
+					recursive = true
+				}
+			}
+			continue
+		}
+		if rmRootTargetRe.MatchString(shellQuoteReplacer.Replace(arg)) {
+			rootTarget = true
+		}
+	}
+	return recursive && rootTarget
+}
 
 // Scan analyzes the tool request for security violations.
 func (s *DefaultSecurityScanner) Scan(ctx context.Context, req ToolRequest) (ScanResult, error) {
@@ -162,7 +218,7 @@ func (s *DefaultSecurityScanner) Scan(ctx context.Context, req ToolRequest) (Sca
 	if IsBash(req.Tool) || req.GetCommand() != "" {
 		cmd := req.GetCommand()
 		if cmd != "" {
-			if destructiveCmdRe.MatchString(cmd) {
+			if destructiveCmdRe.MatchString(cmd) || isDestructiveRm(cmd) {
 				violations = append(violations, fmt.Sprintf("destructive shell command detected: %q", cmd))
 			}
 			if credentialExfilRe.MatchString(cmd) {
