@@ -15,9 +15,13 @@
      script: the page's CSP allows script files from 'self' only. -->
 <script src="/activity/assets/tracker-row-anchor.js" defer></script>
 <script src="/activity/assets/tracker-row-title.js" defer></script>
+<!-- The spoke's am.* URL view and display-playlist helpers (pkg/webassets/trackerview). -->
+<script src="/activity/assets/tracker-view.js" defer></script>
 <script src="/static/activity.js" defer></script>
 </head>
 <body>
+<!-- Display-mode playlist bar (?display=1 with two or more am.view entries). -->
+<div id="activity-playlist" class="activity-playlist" aria-hidden="true" hidden><div class="activity-playlist-track"><span class="activity-playlist-bar"></span></div><span class="activity-playlist-next"></span></div>
 <header class="activity-header">
   <a href="/" class="activity-brand">🐝 Hive</a>
   <nav class="activity-nav" aria-label="Hub">

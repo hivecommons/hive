@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/webassets/trackerrow"
+	"github.com/hivecommons/hive/pkg/webassets/trackerview"
 )
 
 // Fleet activity page (#16063, part of #15965 / RFC #15861 by @hanthor).
@@ -66,18 +67,32 @@ func (s *HubServer) serveActivityShell(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(page)
 }
 
-// handleActivityAsset serves one file of the shared tracker row asset,
-// byte-identical to pkg/webassets/trackerrow, with the static no-cache +
-// content ETag headers. Only names listed in trackerrow.Files are served.
-// The files are pure presentation code the spoke dashboard also ships, so
-// they need no session.
+// activityAssetFS is the shared asset package that lists name: the tracker
+// row asset (pkg/webassets/trackerrow) or the am.* URL view and display
+// playlist helpers (pkg/webassets/trackerview, #16064). Anything else is nil.
+func activityAssetFS(name string) fs.FS {
+	switch {
+	case slices.Contains(trackerrow.Files, name):
+		return trackerrow.FS
+	case slices.Contains(trackerview.Files, name):
+		return trackerview.FS
+	}
+	return nil
+}
+
+// handleActivityAsset serves one file of a shared tracker asset,
+// byte-identical to its pkg/webassets package, with the static no-cache +
+// content ETag headers. Only names listed in trackerrow.Files or
+// trackerview.Files are served. The files are pure code the spoke dashboard
+// also ships, so they need no session.
 func (s *HubServer) handleActivityAsset(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !slices.Contains(trackerrow.Files, name) {
+	fsys := activityAssetFS(name)
+	if fsys == nil {
 		s.writeHubErrorPage(w, http.StatusNotFound)
 		return
 	}
-	body, err := fs.ReadFile(trackerrow.FS, name)
+	body, err := fs.ReadFile(fsys, name)
 	if err != nil {
 		s.writeHubErrorPage(w, http.StatusNotFound)
 		return
