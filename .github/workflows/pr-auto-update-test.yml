@@ -6,7 +6,9 @@ on:
       - '.github/scripts/pr-auto-update.sh'
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
-      - '.github/scripts/native-queue-policy*.cjs'
+      - '.github/scripts/native-queue-*.cjs'
+      - 'src/pkg/dashboard/static-src/js/config-helpers.js'
+      - 'src/pkg/dashboard/static-src/js/config-features.js'
       - '.github/scripts/test-native-queue-workflows.py'
       - '.github/workflows/native-queue-policy.yml'
       - '.github/workflows/v2-ci.yml'
@@ -19,7 +21,9 @@ on:
       - '.github/scripts/pr-auto-update.sh'
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
-      - '.github/scripts/native-queue-policy*.cjs'
+      - '.github/scripts/native-queue-*.cjs'
+      - 'src/pkg/dashboard/static-src/js/config-helpers.js'
+      - 'src/pkg/dashboard/static-src/js/config-features.js'
       - '.github/scripts/test-native-queue-workflows.py'
       - '.github/workflows/native-queue-policy.yml'
       - '.github/workflows/v2-ci.yml'
@@ -46,7 +50,7 @@ jobs:
         with:
           node-version: '22'
       - name: Exercise native queue policy with mocked APIs
-        run: node --test .github/scripts/native-queue-policy.test.cjs
+        run: node --test .github/scripts/native-queue-policy.test.cjs .github/scripts/native-queue-settings.test.cjs
       - name: Ensure YAML parser for workflow contracts
         run: |
           python3 -c 'import yaml' 2>/dev/null && exit 0

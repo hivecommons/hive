@@ -17,6 +17,7 @@ func TestAutoMergeResponseNativeQueueConfiguration(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("auto-merge PUT: %d: %s", rec.Code, rec.Body.String())
 		}
+
 		var body struct {
 			Queue struct {
 				Enabled   bool     `json:"enabled"`

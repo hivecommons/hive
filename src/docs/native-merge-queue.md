@@ -34,6 +34,7 @@ auto_merge:
   native_merge_queue:
     enabled: true                 # default false
     repos: [hivecommons/hive]     # owner/repo allow-list; empty = every watched repo
+    bases: [hivecommons/hive#v5]  # exact repo#base pairs; branch case is significant
     skip_current_base_gate: false # default false — see "Current-base gate" below
     probe_ttl: 30m                # default 30m — see "API cost" below
 ```
@@ -42,8 +43,26 @@ auto_merge:
 | --- | --- | --- |
 | `auto_merge.native_merge_queue.enabled` | `false` | Turns the native-queue hand-off on. |
 | `auto_merge.native_merge_queue.repos` | unset (every watched repo once enabled) | `owner/repo` allow-list, matched case-insensitively. Repos outside it keep the pre-queue behaviour. |
+| `auto_merge.native_merge_queue.bases` | unset (all queue bases in opted-in repos) | Additional exact `owner/repo#base` allow-list. Branch names are case-sensitive. Unlisted bases never enqueue or bypass current-base refresh. |
 | `auto_merge.native_merge_queue.skip_current_base_gate` | `false` | Lets a queue-enabled base bypass the `auto_merge.require_current_base` gate and the `behind` update-branch. Off keeps both gates in force on queue bases. |
 | `auto_merge.native_merge_queue.probe_ttl` | `30m` | How long one base branch's `isMergeQueueEnabled` answer is reused before it is re-read. |
+
+Owners can configure the same policy at **Settings → Features → Auto-Merge →
+Native GitHub merge queue**, then click **Save**. The enable switch and
+“Queue owns freshness” switch are both **OFF by default**. Repositories,
+exact repository/base pairs, and the queue-detection TTL are editable there.
+Settings refuses enabling without both explicit scope lists, rejects malformed
+or wildcard scopes, mismatched repositories and negative/invalid durations,
+and preserves omitted fields on partial updates. `0` TTL uses the 30-minute
+default. Existing YAML configurations retain their original unscoped semantics
+when the optional lists are absent; the Settings enable path deliberately
+requires explicit scope.
+
+Saving changes the Hive policy only: it does **not** create a GitHub queue,
+change branch protection, set the external freshness variable, deploy code or
+attest that prerequisites are satisfied. Follow the pilot rollout below first.
+Disabling does not drain existing GitHub queue entries: drain or withdraw them
+before rollback. Trust/review/hold/CI/soak and attribution gates remain intact.
 
 ## How it works
 
@@ -254,14 +273,15 @@ enablement is performed by this code. An owner must do the following, in order:
      native_merge_queue:
        enabled: true
        repos: [hivecommons/hive]
+       bases: [hivecommons/hive#v5]
        skip_current_base_gate: true
        probe_ttl: 30m
    ```
 
    Hive probes actual queues per base; only v5 has a queue in this pilot.
-   Other bases keep direct merge and coordinated refresh. The absence of a
-   base allow-list in Hive means the operator must **not** enable a v6
-   queue until its separate rollout is ready. Allow for probe-cache expiry
+   Other bases keep direct merge and coordinated refresh because they are
+   outside the explicit base allow-list. Do **not** enable a v6 queue until
+   its separate rollout is ready. Allow for probe-cache expiry
    (or a controlled owner restart) before diagnosing stale queue detection.
 7. Enqueue one signed, reviewed PR through the App. Record its expected head,
    enqueuer, synthetic SHA, all seven group checks, merge method, resulting
