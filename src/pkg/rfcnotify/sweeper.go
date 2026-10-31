@@ -27,6 +27,15 @@ type Source interface {
 // Poster sends one message to the configured channel.
 type Poster func(content string) error
 
+// Values for Options.Format.
+const (
+	FormatLine = "line"
+	FormatCard = "card"
+)
+
+// Rich reports whether a rich mode (card format or threads) is configured.
+func (o Options) Rich() bool { return o.Format == FormatCard || o.Threads }
+
 // Options tune one Sweeper.
 type Options struct {
 	// StatePath persists the detector between restarts. Empty keeps the
@@ -38,7 +47,20 @@ type Options struct {
 	Slack time.Duration
 	// IncludeRepo prefixes issue numbers with their repo.
 	IncludeRepo bool
-	Logger      *slog.Logger
+	// Format is FormatLine (or empty, the default) or FormatCard. Card
+	// rendering is not implemented yet; FormatCard only turns on rich mode.
+	Format string
+	// Threads opts into one thread per RFC (rich mode).
+	Threads bool
+	// Announcer marks this hive as the designated announcer for the
+	// channel. Rich mode posts nothing without it; line mode ignores it.
+	Announcer bool
+	// Backlink opts into a GitHub comment linking the RFC thread; carried
+	// for a later change and unused today.
+	Backlink bool
+	// IncludePrivate authorizes posting issues whose Private is true.
+	IncludePrivate bool
+	Logger         *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -57,6 +79,13 @@ type Result struct {
 	// are retried on the next poll because the state is not advanced for
 	// them.
 	Errors int
+	// Withheld counts events not posted by a gate (private repository, or
+	// rich mode without the announcer). Their state still advances, so
+	// they are never replayed later.
+	Withheld int
+	// Unresolved counts events whose repository visibility could not be
+	// determined; they stay unannounced and are retried on the next poll.
+	Unresolved int
 }
 
 // Sweeper owns the detector and its cadence.
@@ -64,6 +93,8 @@ type Sweeper struct {
 	opts    Options
 	det     *Detector
 	lastRun time.Time
+	// warnedAnnouncer makes the rich-mode announcer warning log once.
+	warnedAnnouncer bool
 }
 
 // NewSweeper loads the state at opts.StatePath (an unreadable file logs
@@ -110,6 +141,10 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 		return res, nil
 	}
 	s.lastRun = now
+	if s.opts.Rich() && !s.opts.Announcer && !s.warnedAnnouncer {
+		s.opts.Logger.Warn("rfc notify: rich mode requires rfc_announcer; not posting")
+		s.warnedAnnouncer = true
+	}
 
 	if !s.det.Seeded() {
 		open, err := src.ListOpen(ctx)
@@ -130,7 +165,24 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 	// the event will be seen again next poll.
 	before := s.det.clone()
 	events := s.det.Observe(issues, now)
+	if s.opts.Rich() && !s.opts.Announcer {
+		// Not the designated announcer: record the transitions so turning
+		// the announcer on later does not backfill them, but post nothing.
+		res.Withheld = len(events)
+		return res, s.save()
+	}
 	for i, ev := range events {
+		if ev.Issue.VisibilityUnknown && !s.opts.IncludePrivate {
+			res.Unresolved++
+			s.opts.Logger.Debug("rfc notify: repository visibility unknown; retrying next poll", "issue", ev.Issue.Key(), "kind", ev.Kind)
+			s.det.rollback(before, events[i:i+1])
+			continue
+		}
+		if ev.Issue.Private && !s.opts.IncludePrivate {
+			res.Withheld++
+			s.opts.Logger.Debug("rfc notify: private repository; not posting", "issue", ev.Issue.Key(), "kind", ev.Kind)
+			continue
+		}
 		msg := Format(ev, s.opts.IncludeRepo)
 		if err := post(msg); err != nil {
 			res.Errors++

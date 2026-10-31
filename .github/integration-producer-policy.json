@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "enabled": false,
+  "authority": "forge-single-attempt-v1",
+  "actorIDs": [],
+  "scopes": [],
+  "maxMembers": 1,
+  "protectedPaths": [
+    ".github",
+    "src/.golangci.yml",
+    "src/scripts",
+    "bin"
+  ],
+  "committer": {
+    "name": "github-actions[bot]",
+    "email": "41898282+github-actions[bot]@users.noreply.github.com"
+  }
+}

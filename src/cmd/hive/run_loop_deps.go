@@ -111,7 +111,7 @@ func defaultRunLoopDeps() runLoopDeps {
 			runGoodFirstIssueSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.gfiState(), b.lastActionable.Load(), &b.lastGFISweep, b.logger)
 			runFirstTimerWelcome(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.firstTimerState(), b.firstTimerKnownContributor, b.lastActionable.Load(), b.logger)
 			runRFCExistingCheck(b.ctx, newRFCCoverageForge(b.ghClient), b.cfg, b.dashSrv, b.rfcCoverageState(), b.lastActionable.Load(), b.logger)
-			runRFCNotifySweep(b.ctx, newRFCNotifySource(b.ghClient), len(b.cfg.Project.Repos), b.cfg, b.dashSrv, b.rfcNotifyState(), b.logger)
+			runRFCNotifySweep(b.ctx, newRFCNotifySource(b.ghClient, b.rfcNotifyState()), len(b.cfg.Project.Repos), b.cfg, b.dashSrv, b.rfcNotifyState(), b.logger)
 		},
 		persist: func(b *boot) {
 			persistState(b.agentMgr, b.gov, b.cfg, spokeStatePath, b.logger, b.dashSrv, b.wd)

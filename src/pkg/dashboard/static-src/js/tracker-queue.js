@@ -48,7 +48,7 @@
     function stageTrackerPreparationChipHtml(item) {
       const p = item && item.preparation;
       if (!p || p.state === 'inactive') return '';
-      if (p.state === 'current' && typeof stageTrackerPreparationRepresented === 'function' && stageTrackerPreparationRepresented(item)) return '';
+      if (typeof stageTrackerPreparationRepresented === 'function' && stageTrackerPreparationRepresented(item)) return '';
       const word = stageTrackerPreparationWord(p);
       const label = p.state === 'current' ? word : 'Preparation owner · unverified';
       return `<span class="ham-badge" title="${esc(word + ' · ticket head ' + p.head_sha + ' · ' + stageTrackerPreparationAge(p, Date.now()) + '. Preparation is not CI, review approval, or a ready merge-train seat.')}">${esc(label)}</span>`;
@@ -101,7 +101,7 @@
     // popover only for actual ready trains, with the old fallback off-rail.
     function stageTrackerQueueSync(items, nowMs, preparation) {
       _stageTrackerQueueItems = Array.isArray(items) ? items : [];
-      const preparationRail = typeof stageTrackerPreparationVisualSync === 'function' && document.getElementById('activity-monitor-preparation');
+      const preparationRail = typeof stageTrackerPreparationInlineRows === 'function';
       _stageTrackerPreparationQueues = !preparationRail && Array.isArray(preparation) ? preparation : [];
       const chip = stageTrackerQueueChip();
       if (!chip) return;
