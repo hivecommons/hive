@@ -203,6 +203,7 @@
           "AfterOffline": "",
           "AfterUnregistered": "",
           "OfflineGrace": "",
+          "RebaseAttemptTimeout": "",
           "InPlace": null,
           "StrictAttribution": null,
           "AutoMerge": null,

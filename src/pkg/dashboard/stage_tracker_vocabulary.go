@@ -77,6 +77,10 @@ func stageTrackerItemColumn(it *StageTrackerItem) int {
 		return trackerColumnReview
 	}
 	if it.Stage > trackerColumnPR {
+		if mg := it.MergeGate; mg != nil && mg.State == MergeGateStateMergeFailed && mg.MergeFailedKind == MergeRefusalChecksPending &&
+			(st == stagelabels.ReviewPending || st == stagelabels.Reviewed) {
+			return trackerColumnReview
+		}
 		if mg := it.MergeGate; mg != nil && (mg.State == MergeGateStateMerging || mg.State == MergeGateStateMergeFailed) {
 			return trackerColumnMergeGate
 		}

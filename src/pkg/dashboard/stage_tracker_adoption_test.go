@@ -102,7 +102,7 @@ func TestStageTrackerAdoptionNeverSaysSo(t *testing.T) {
 	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyNever, offlinePresence(time.Time{}))
 	store.NoteAdoptionBlocked(stagelabels.Key("hivecommons/hive", 14524), "feed", stagelabels.AdoptBlockedAuthorMaintainer, now.Add(-25*time.Hour))
 	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
-	if a := it.Adoption; a == nil || a.Action != "" || a.Text != "waiting on @hanthor (maintainer, offline 26h) — not adopted: maintainer_policy is never" {
+	if a := it.Adoption; a == nil || a.Action != "" || a.Text != "waiting on @hanthor (maintainer, offline 26h) — maintainer-owned: automatic adoption is disabled by maintainer_policy=never" {
 		t.Fatalf("adoption = %+v", a)
 	}
 	if it.DecisionNeeded != nil {
@@ -443,10 +443,10 @@ func TestStageTrackerAdoptionPersonAuthoredSaysNotAdopted(t *testing.T) {
 	if a == nil || !a.Due || a.BlockedBy != stagelabels.AdoptBlockedAuthorPerson || a.Action != "" {
 		t.Fatalf("adoption = %+v", a)
 	}
-	if a.Text != "@clubanderson pushed this PR themselves — not adopted: the hive asks them, not adopts" {
+	if a.Text != "author-owned — @clubanderson remains the owner; human availability is unknown" {
 		t.Fatalf("text = %q", a.Text)
 	}
-	if !strings.Contains(it.Caption, "not adopted") {
+	if !strings.Contains(it.Caption, "author-owned") {
 		t.Fatalf("caption = %q", it.Caption)
 	}
 	if d := it.DecisionNeeded; d != nil {

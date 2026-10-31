@@ -179,7 +179,7 @@ func TestStageTrackerNoHumanMarkerWithoutReason(t *testing.T) {
 	issue.StageActor = &StageTrackerActor{Kind: StageActorHive, Why: "an agent has a PR under way; not yet opened"}
 	items := []StageTrackerItem{pr, issue}
 	stageTrackerResolveActors(items)
-	if a := items[1].StageActor; a.Kind != StageActorHuman || a.HumanReason != "#15759 needs a decision" || a.Why != pr.StageActor.Why {
+	if a := items[1].StageActor; a.Kind != StageActorHuman || a.HumanReason != stageTrackerClipReason("#15759 "+pr.StageActor.HumanReason) || a.Why != pr.StageActor.Why {
 		t.Errorf("riding issue actor = %+v", a)
 	}
 	check("riding issue", items[1].StageActor)

@@ -72,7 +72,14 @@
       // Guarded: the test harnesses load helpers by name.
       if (typeof stageTrackerAdoptionQueued === 'function' && stageTrackerAdoptionQueued(item)) return STAGE_TRACKER_ADOPTION_QUEUED_CHIP;
       if (stageTrackerAdoptOffered(item)) return 'adopt?';
-      if (a.blocked_by) return 'not adopted';
+      if (a.blocked_by) {
+        switch (a.blocked_by) {
+          case 'author-is-person': return 'author-owned';
+          case 'author-is-maintainer': return 'maintainer-owned';
+          case 'operator-admission': return 'contributor-managed';
+          default: return 'adoption blocked';
+        }
+      }
       // Guarded: the test harnesses load helpers by name.
       const text = 'waiting on ' + (a.author ? '@' + a.author : 'author');
       return typeof stageTrackerReworkSuffix === 'function' ? stageTrackerReworkSuffix(text, item) : text;
@@ -104,8 +111,11 @@
     function stageTrackerPresenceOf(item) {
       const p = item && item.presence;
       if (!p || typeof p !== 'object' || !p.login) return null;
-      const state = STAGE_TRACKER_PRESENCE_STATES.indexOf(p.state) >= 0 ? p.state : 'unknown';
-      return { login: String(p.login), state, kind: p.kind === 'clanker' ? 'clanker' : 'human', since: p.since || '', last_seen: p.last_seen || '', next: p.next === 'adopt' ? 'adopt' : 'wait', adopt_at: p.adopt_at || '' };
+      const humanAuthor = (item.author_kind === 'human' || item.adoption && item.adoption.blocked_by === 'author-is-person')
+        && String(item.author || '').toLowerCase() === String(p.login).toLowerCase();
+      const kind = !humanAuthor && p.kind === 'clanker' ? 'clanker' : 'human';
+      const state = kind === 'human' ? 'unknown' : STAGE_TRACKER_PRESENCE_STATES.indexOf(p.state) >= 0 ? p.state : 'unknown';
+      return { login: String(p.login), state, kind, since: p.since || '', last_seen: kind === 'clanker' ? p.last_seen || '' : '', next: kind === 'clanker' && p.next === 'adopt' ? 'adopt' : 'wait', adopt_at: kind === 'clanker' ? p.adopt_at || '' : '' };
     }
     // "26h" / "40m" / "3d": how long the clanker has been gone, counted from
     // its last heartbeat or the start of the wait, whichever is later.
@@ -147,7 +157,7 @@
         next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
       } else if (p.kind === 'human') {
         head = 'Waiting on @' + p.login + ' (human)';
-        next = 'waiting for a human reply' + (adopt ? '; adoption ' + adopt : '');
+        next = 'human availability is unknown; waiting for a human reply';
       } else {
         head = hive + 'not registered here)';
         next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
@@ -238,14 +248,14 @@
     //             the hive.
     const STAGE_TRACKER_PUSH_NEXT = { ci: 'CI running', 're-review': 're-review queued' };
     function stageTrackerPushOf(item) {
-      const p = item && item.kind === 'pr' ? item.push : null;
-      if (!p || (p.state !== 'waiting' && p.state !== 'pushed')) return null;
+      const p = item && (item.kind === 'pr' || item.via_pr) ? item.push : null;
+      if (!p || (p.state !== 'waiting' && p.state !== 'pushed' && p.state !== 'checking')) return null;
       return p;
     }
-    // Pure: whether the author's push has landed — the row is the hive's again.
+    // Whether the row is the hive's again: a push, or observed same-head CI.
     function stageTrackerPushedBack(item) {
       const p = stageTrackerPushOf(item);
-      return !!(p && p.state === 'pushed');
+      return !!(p && (p.state === 'pushed' || p.state === 'checking'));
     }
     // Pure: the short age of the state ("38m", "2h"); '' without a time.
     function stageTrackerPushAge(p, nowMs) {
@@ -267,10 +277,11 @@
     // Pure: "@zoe pushed abc1234 · 2m"; '' unless the push landed.
     function stageTrackerPushChipText(item, nowMs) {
       const p = stageTrackerPushOf(item);
+      if (p && p.state === 'checking') return 'checks pending · no new push requested';
       if (!p || p.state !== 'pushed') return '';
       const sha = stageTrackerPushSha(p);
       const age = stageTrackerPushAge(p, nowMs);
-      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (age ? ' · ' + age : '');
+      return (p.login ? '@' + p.login + ' ' : '') + 'pushed' + (sha ? ' ' + sha : '') + (p.next === 're-review' ? ' · re-review pending' : '') + (age ? ' · ' + age : '');
     }
     // Pure: whether the row's lineage chip (adopted / rebased copy) carries
     // the push instead of a pill of its own.
@@ -290,6 +301,7 @@
     function stageTrackerPushTip(item, nowMs) {
       const p = stageTrackerPushOf(item);
       if (!p) return '';
+      if (p.state === 'checking') return 'checks pending again on the current head — no new push requested';
       const at = Date.parse(p.since || '');
       const when = at > 0 ? stageTrackerAgoText(at, nowMs) + ' (' + agentNowClockTime(at, nowMs) + ')' : '';
       const who = p.login ? '@' + p.login : 'the author';
@@ -485,4 +497,3 @@
       else if (who.author && st === 72) text = 'Returned to @' + who.author + stageTrackerToolingSuffix(who.kind);
       return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
     }
-
