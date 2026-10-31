@@ -93,6 +93,11 @@
         ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
         : stageTrackerPage(ordered, f);
       if (page.page !== f.page) f.page = page.page;
+      // The rows this render draws (this page, group headers aside), for
+      // stageTrackerPRListedOwnRow: a covered issue defers to its PR's row
+      // only when that row is actually on screen. Kept beside the payload,
+      // not on it — the payload object stays the server's.
+      _stageTrackerRows = page.rows.map(e => grouping ? e.item : e).filter(Boolean);
       if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(d, ordered, page.rows, stages, nowMs);
       if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(d, page.rows, nowMs, f.repo);
       if (typeof stageTrackerExecutionSync === 'function') stageTrackerExecutionSync(d, nowMs);

@@ -764,3 +764,25 @@ func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
 		t.Fatalf("unrelated inference failures = %+v", *seen)
 	}
 }
+
+// #15986: a watchdog stall caused by a provider inference block (429
+// budget_exceeded) is upstream backpressure, not an unclassified defect.
+func TestInferenceBlockedStallLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 10; i++ {
+		logger.Warn("watchdog: agent not producing", "agent", "dedupe",
+			"detail", `blocked: inference (rate_limit): API Error: Request rejected (429) {"error":{"type":"budget_exceeded"}}`)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Errorf("wrapped handler saw %d records, want 10", n)
+	}
+
+	logger, seen, _ = newFeed(t)
+	logger.Warn("watchdog: agent not producing", "agent", "dedupe", "detail", "no production evidence for 2h0m0s")
+	if len(*seen) != 1 {
+		t.Fatalf("other stalls must remain reportable: %+v", *seen)
+	}
+}

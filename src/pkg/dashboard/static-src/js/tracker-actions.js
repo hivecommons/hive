@@ -490,8 +490,43 @@
     // button — "Let hive decide" showed twice per item (hive#15320 →
     // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    // Pure: is the covering PR also a row of its own among rows, the rows
+    // the render draws (a top-level row, not a sub-row)? Then only that row
+    // carries the button. rows is ctx.rows at the call site — the drawn
+    // page (tracker-filter-render.js _stageTrackerRows), not the payload's
+    // items: a PR nested_under a listed issue is in items but is never its
+    // own row outside the Pull requests view (tracker-filter.js
+    // stageTrackerVisible), and a filter or the page may hide the PR while
+    // it shows the issue. With no rows given nothing is drawn, so nothing
+    // is "listed" and the chip is not shown.
+    function stageTrackerPRListedOwnRow(issue, t, rows) {
+      if (!Array.isArray(rows)) return false;
+      const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'pr', number: t.number });
+      return rows.some(it => it && stageTrackerItemKey(it) === key);
+    }
+    // Pure: the number of the other listed issue whose row draws the
+    // covering PR, or 0. The server nests a PR that closes several issues
+    // under the lowest one (stage_tracker_links.go NestedUnder → each
+    // issue's linked_prs[].drawn_under); the PR is then never a row of its
+    // own and the secondary issue draws no sub-row either (hivecommons/hive
+    // #15503 under #15502), so the decision button belongs to the row that
+    // draws the PR and this issue chips to it.
+    function stageTrackerPRDrawnUnderOther(issue, t, rows) {
+      if (!Array.isArray(rows) || !issue || !Array.isArray(issue.linked_prs)) return 0;
+      const lp = issue.linked_prs.find(x => x && Number(x.number) === Number(t.number) && (!x.repo || !t.repo || x.repo === t.repo));
+      const under = Number(lp && lp.drawn_under) || 0;
+      if (!under || under === (Number(issue.number) || 0)) return 0;
+      const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'issue', number: under });
+      return rows.some(it => it && stageTrackerItemKey(it) === key) ? under : 0;
+    }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
+      if (a && a.target && item.kind === 'issue' && a.target.kind === 'pr') {
+        const rows = ctx && ctx.rows;
+        if (stageTrackerPRListedOwnRow(item, a.target, rows)) return Object.assign({}, a, { passive: a.target.number });
+        const under = stageTrackerPRDrawnUnderOther(item, a.target, rows);
+        if (under) return Object.assign({}, a, { passive: a.target.number, passiveUnder: under });
+      }
       if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
@@ -507,6 +542,14 @@
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
+      // The covering PR has its own row (or is drawn under another listed
+      // issue): the decision — whatever its lead (Let hive decide, Merge
+      // now, Adopt…) — is taken there, so this row shows a passive chip
+      // that names that lead rather than a second button.
+      if (a.passive) {
+        const where = a.passiveUnder ? 'the row of #' + Number(a.passiveUnder) + ', which draws the PR' : 'its row';
+        return `<span class="ham-badge" title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on ' + where)}">decision pending on #${Number(a.passive) || 0}</span>`;
+      }
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
@@ -1574,8 +1617,16 @@
     // or null when cancelled or when the operator took the merge
     // alternative (which runs as its own row action with the chosen button
     // recorded on the ledger).
-    async function stageTrackerDelegatePreview(items) {
-      const plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan));
+    async function stageTrackerDelegatePreview(items, rows) {
+      // The plan gathers the PR live (seconds): the row caption and its Let
+      // hive decide button both read the preview's own caption ("Asking the
+      // hive…", one phrase from STAGE_TRACKER_ACTING_CAPTIONS, distinct from
+      // the confirmed action's "Hive deciding…") from the click until the
+      // preview can open. The pend is tagged with the button it busies: a
+      // confirmed action's pend (or any other ⋯ action on the row) leaves it alone.
+      const pend = stageTrackerSetPending([].concat(...items.map(it => stageTrackerPendingKeys(it, rows))).filter((k, i, a) => a.indexOf(k) === i), stageTrackerActingCaption('decide:delegate:preview'), undefined, 'decide:delegate');
+      let plans;
+      try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { stageTrackerClearPending(pend); }
       const failed = plans.filter(pl => pl.error);
       if (failed.length) { showToast('Could not preview ' + failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', '), 'error'); return null; }
       const picked = await stageTrackerDelegatePlanDialog(plans, stageTrackerSentinelPreface(items));
@@ -1586,7 +1637,7 @@
       }
       return { chosen: picked.chosen };
     }
-    async function stageTrackerActionPayload(items, id) {
+    async function stageTrackerActionPayload(items, id, rows) {
       const refs = items.map(stageTrackerRefOf).join(', ');
       const who = window._hiveUser || 'you';
       const prs = items.length > 0 && items.every(it => it.kind === 'pr');
@@ -1596,7 +1647,7 @@
         case 'decide:delegate':
           // Preview first (hivecommons/hive#15126): nothing is written
           // until the operator picks a button.
-          return stageTrackerDelegatePreview(items);
+          return stageTrackerDelegatePreview(items, rows);
         case 'decide:delegate-all': {
           // Confirms as Let hive decide (same opt-out key), naming each PR.
           const prs = [].concat(...items.map(stageTrackerNestedOpenPRs));
@@ -1755,7 +1806,7 @@
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
-      'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
+      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
@@ -1971,8 +2022,10 @@
       pend.caption = stageTrackerDecidedActing(result, item);
       stageTrackerPendingSync(document.getElementById('activity-monitor-panel'));
     }
-    function stageTrackerSetPending(keys, caption, now) {
-      const pend = { keys: keys.slice(), caption, key: '', state: null, decided: false, at: typeof now === 'number' ? now : Date.now() };
+    // busy: the data-ham-act of the row's lead button that reads busy while
+    // this entry is pending ('' — the default — busies no button).
+    function stageTrackerSetPending(keys, caption, now, busy) {
+      const pend = { keys: keys.slice(), caption, key: '', state: null, decided: false, at: typeof now === 'number' ? now : Date.now(), busy: busy || '' };
       _stageTrackerPending.push(pend);
       stageTrackerPendingSync(document.getElementById('activity-monitor-panel'));
       return pend;
@@ -1998,16 +2051,43 @@
       });
     }
     function stageTrackerPendingExpire(d, now) { _stageTrackerPending = stageTrackerPendingLive(_stageTrackerPending, d, typeof now === 'number' ? now : Date.now()); }
+    // The row's lead button while a tagged pend (busyAct, its data-ham-act)
+    // waits: busy, spinner, the pend's own caption (the same phrase the row
+    // caption shows), not clickable again. The button's own aria-disabled /
+    // title are kept and put back when the pend clears, so a lead the row
+    // rendered disabled stays disabled.
+    function stageTrackerLeadBusySync(lead, busyAct, caption) {
+      if (!lead) return;
+      const on = !!busyAct && lead.getAttribute('data-ham-act') === busyAct;
+      const isBusy = lead.getAttribute('aria-busy') === 'true';
+      if (on && !isBusy) {
+        lead.setAttribute('data-ham-label', lead.textContent);
+        lead.setAttribute('data-ham-was-disabled', lead.getAttribute('aria-disabled') === 'true' ? 'true' : '');
+        lead.setAttribute('data-ham-title', lead.getAttribute('title') || '');
+        lead.setAttribute('aria-busy', 'true'); lead.setAttribute('aria-disabled', 'true'); lead.removeAttribute('title');
+        lead.textContent = '';
+        const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; lead.appendChild(sp);
+        lead.appendChild(document.createTextNode(' ' + String(caption || 'acting…')));
+      } else if (!on && isBusy) {
+        lead.removeAttribute('aria-busy');
+        if (lead.getAttribute('data-ham-was-disabled') === 'true') lead.setAttribute('aria-disabled', 'true'); else lead.removeAttribute('aria-disabled');
+        const title = lead.getAttribute('data-ham-title');
+        if (title) lead.setAttribute('title', title); else lead.removeAttribute('title');
+        lead.textContent = lead.getAttribute('data-ham-label') || '';
+        lead.removeAttribute('data-ham-label'); lead.removeAttribute('data-ham-was-disabled'); lead.removeAttribute('data-ham-title');
+      }
+    }
     // Mark rows / sub-rows acting; captions are real nodes so a kept row
     // keeps its caption and a re-rendered one gets it back.
     function stageTrackerPendingSync(el) {
       if (!el || typeof el.querySelectorAll !== 'function') return;
-      const want = {};
-      for (const p of _stageTrackerPending) for (const k of p.keys) want[k] = p.caption;
+      const want = {}, busy = {};
+      for (const p of _stageTrackerPending) for (const k of p.keys) { want[k] = p.caption; if (p.busy) busy[k] = p; }
       const nodes = Array.from(el.querySelectorAll('[data-ham-key], [data-ham-sub-key]'));
       for (const n of nodes) {
         const key = n.getAttribute('data-ham-sub-key') || n.getAttribute('data-ham-key');
         const cap = want[key];
+        stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] ? busy[key].busy : '', busy[key] ? busy[key].caption : '');
         const strip = n.querySelector(':scope > .ham-strip-row');
         // The caption lives inside the lit chevron (the pill), never as a
         // separate element beside the ✓ badge (#15126); a row without a
@@ -2101,7 +2181,7 @@
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
-      const payload = await stageTrackerActionPayload(items, id);
+      const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
       const results = await stageTrackerRunActions(items, id, payload, rows);
       return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };

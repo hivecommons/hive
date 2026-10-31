@@ -201,7 +201,9 @@ func stageTrackerStageActor(it StageTrackerItem, workers map[string]stageTracker
 		if step, _ := stageTrackerUnauthorized(it.Reason); step != "" {
 			return set(StageActorHuman, "", "the hive is not permitted to "+step+"; a person must")
 		}
-		return set(StageActorHuman, "", "a human decision is owed")
+		// The why says what is owed, not only that it is (hivecommons/hive#15773):
+		// the lane's reason in plain words, else the decision's own question.
+		return set(StageActorHuman, "", joinClause("a human decision is owed", stageTrackerDecisionWhy(it)))
 	case stagelabels.ReadyForHumanMerge:
 		// The chevron and the popover already carry HumanMergeReasonText;
 		// the next-move line says only who moves (hivecommons/hive#15394).
@@ -212,6 +214,18 @@ func stageTrackerStageActor(it StageTrackerItem, workers map[string]stageTracker
 		return set(StageActorHive, "", "in the merge queue — tide or the merge window takes it")
 	}
 	return set(StageActorNone, "", "no stage recorded yet")
+}
+
+// stageTrackerDecisionWhy: the clause after "a human decision is owed" —
+// the lane reason humanized ("workflow path"), else the asker's question.
+func stageTrackerDecisionWhy(it StageTrackerItem) string {
+	if clause := humanizeStageReason(it.Reason); clause != "" {
+		return clause
+	}
+	if it.DecisionNeeded != nil {
+		return strings.TrimSpace(it.DecisionNeeded.Question)
+	}
+	return ""
 }
 
 // stageTrackerAuthorStageActor: 070 / 071 / 072 park the PR on its
