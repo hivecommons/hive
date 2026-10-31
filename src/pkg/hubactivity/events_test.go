@@ -15,8 +15,8 @@ func TestNormalizeEvent_BoundsAndValidates(t *testing.T) {
 		Number:  42,
 		Kind:    "PR",
 		Title:   "hello\u2028world",
-		From:    "Needs Review!",
-		Stage:   "Actionable",
+		From:    " needs-review ",
+		Stage:   "actionable\n",
 		At:      t0.In(loc),
 		Private: true,
 	}
@@ -30,7 +30,7 @@ func TestNormalizeEvent_BoundsAndValidates(t *testing.T) {
 	if got.Title == in.Title || got.Title == "" {
 		t.Errorf("title not cleaned: %q", got.Title)
 	}
-	if got.From != slug(in.From) || got.Stage != slug(in.Stage) || got.From == "" || got.Stage == "" {
+	if got.From != "needs-review" || got.Stage != "actionable" {
 		t.Errorf("from/stage not slugged: %q %q", got.From, got.Stage)
 	}
 	if got.At.Location() != time.UTC || !got.At.Equal(t0) {
@@ -38,6 +38,16 @@ func TestNormalizeEvent_BoundsAndValidates(t *testing.T) {
 	}
 	if !got.Private || got.Seq != 7 || got.Number != 42 {
 		t.Errorf("fields not carried: %+v", got)
+	}
+
+	bad := in
+	bad.From, bad.Stage = "Needs Review!", "Actionable"
+	got, ok = NormalizeEvent(bad)
+	if !ok {
+		t.Fatal("invalid slugs must blank the field, not drop the event")
+	}
+	if got.From != "" || got.Stage != "" {
+		t.Errorf("invalid from/stage not blanked: %q %q", got.From, got.Stage)
 	}
 }
 
