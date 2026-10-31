@@ -76,8 +76,9 @@ Body HTML (`html/`): `auth`, `root-notices`, `chat`, `dialogs`, `sidebar`,
 JS (`js/`): `boot`, `core`, `feedback`, `sections`, `layout`, `agent-detail`,
 `sidebar`, `history-sparklines`, `cost-trend`, `stats`, `agent-now`,
 `tracker-words-core`, `tracker-words-stage`, `tracker-words-gate`,
-`tracker-words`, `tracker-row`, `tracker-row-strip`, `tracker-row-acted`,
-`tracker-row-layout`, `tracker-motion`, `tracker-filter`,
+`tracker-words`, `tracker-row-anchor`, `tracker-row`, `tracker-row-strip`,
+`tracker-row-acted`, `tracker-row-layout`, `tracker-row-title`,
+`tracker-row-render`, `tracker-motion`, `tracker-filter`,
 `tracker-filter-state`, `nav-count-delta`, `tracker-preparation`,
 `tracker-native-queue`, `tracker-filter-render`,
 `tracker-filter-fetch`, `tracker-actions`, `tracker-merged`, `tracker-queue`,
@@ -97,6 +98,18 @@ blank line before a top-level function, never inside one. When a function
 clearly belongs to another area than the file it sits in, move it — the
 generator does not care about order inside a region as long as the manifest
 order still yields a document where every definition precedes its first use.
+
+### Shared with the hub
+
+`js/tracker-row-anchor.js` (which strip column a stage lights) and
+`js/tracker-row-title.js` (the escaped, text-only row title) are also embedded
+by `src/pkg/webassets/trackerrow`, so the hub can draw rows with the same
+code without importing `pkg/dashboard`. The generator only reads
+`static-src/`, so the two copies are kept byte-identical by hand:
+`TestTrackerRowSharedAssetCompat` fails when they drift or when
+`index.html` stops carrying them verbatim, and
+`TestTrackerRowSharedAssetRendersSpokeFixtures` renders the same fixtures
+through both. Edit both copies in the same PR.
 
 ## Working with it
 
