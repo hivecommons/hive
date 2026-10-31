@@ -152,7 +152,115 @@
       toggleStageTrackerFullscreen();
     });
     document.addEventListener('fullscreenchange', stageTrackerRenderFullscreenButton);
+
+    /* ---- Display mode (hivecommons/hive#15925) ----------------------------
+       📺 navigates to the current URL with `display=1`; boot.js sets
+       body.display-mode before first paint and css/popout.css gives it the
+       pop-out layout minus every row action. It keeps all other query
+       params (am.* views, theme…). Esc (outside browser full screen) or `d`
+       leaves by dropping the flag. Entering never requests full screen or a
+       wake lock, and nothing is persisted: the mode lives in the URL. */
+    const STAGE_TRACKER_DISPLAY_PARAM = 'display';
+    const STAGE_TRACKER_DISPLAY_KEY = 'd';
+    const STAGE_TRACKER_DISPLAY_LABELS = {
+      enter: { text: '📺', title: 'Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)' },
+      exit: { text: '📺 Exit display', title: 'Leave display mode (Esc or d)' },
+    };
+    function stageTrackerDisplayMode() {
+      return !!(window.hiveDisplayMode && window.hiveDisplayMode());
+    }
+    // Pure: href with display mode switched on or off. Entering drops kiosk
+    // (it would win) and the one-shot filter, and lands on the tracker.
+    function stageTrackerDisplayUrl(href, on) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      if (on) {
+        url.searchParams.set(STAGE_TRACKER_DISPLAY_PARAM, '1');
+        url.searchParams.delete('kiosk');
+        url.searchParams.delete('filter');
+        url.hash = STAGE_TRACKER_POPOUT_HASH;
+      } else {
+        url.searchParams.delete(STAGE_TRACKER_DISPLAY_PARAM);
+      }
+      return url.toString();
+    }
+    // Pure: should this keydown toggle display mode? A bare `d` with focus in
+    // the tracker (anywhere while displaying — the page is the tracker), or
+    // Esc while displaying and not in browser full screen, which consumes
+    // Esc itself. Never while typing.
+    function stageTrackerDisplayHotkey(ev, inTracker, typing, display, fullscreen) {
+      if (!ev || typing) return false;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return false;
+      if (ev.key === 'Escape') return !!display && !fullscreen;
+      if (ev.key !== STAGE_TRACKER_DISPLAY_KEY) return false;
+      return !!(inTracker || display);
+    }
+    // Pure: is a popover or dialog open that Esc should close instead of
+    // leaving display mode? Leaving reloads the page and drops session-only
+    // am.* edits, so any open overlay wins — the tracker's own settings,
+    // labels, merged and queue popovers, and every hive dialog — whatever
+    // order their Esc handlers run in.
+    const STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR = '#activity-monitor-settings-overlay, #activity-monitor-labels-overlay, #activity-monitor-merged-pop, #activity-monitor-queue-pop, .hive-dialog-overlay';
+    function stageTrackerDisplayOverlayOpen(doc) {
+      if (!doc || typeof doc.querySelectorAll !== 'function') return false;
+      const els = doc.querySelectorAll(STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR);
+      for (let i = 0; i < els.length; i++) {
+        const el = els[i];
+        if (el.hidden) continue;
+        if (el.classList && el.classList.contains('hidden')) continue;
+        if (el.style && el.style.display === 'none') continue;
+        return true;
+      }
+      return false;
+    }
+    function toggleStageTrackerDisplay() {
+      const url = stageTrackerDisplayUrl(window.location.href, !stageTrackerDisplayMode());
+      if (url) window.location.assign(url);
+      return url;
+    }
+    function stageTrackerRenderDisplayButton() {
+      const btn = document.getElementById('activity-monitor-display');
+      if (!btn) return;
+      const on = stageTrackerDisplayMode();
+      const label = on ? STAGE_TRACKER_DISPLAY_LABELS.exit : STAGE_TRACKER_DISPLAY_LABELS.enter;
+      btn.textContent = label.text;
+      btn.title = label.title;
+      btn.setAttribute('aria-label', label.title);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    // Pure: in display mode, must this event be kept from the row action
+    // handlers — the context menu, Shift+F10 / ContextMenu key, and Space or
+    // modifier-click selection? Presentation only; the server still
+    // authorizes every action.
+    function stageTrackerDisplayBlocksRowAction(ev, display) {
+      if (!display || !ev) return false;
+      if (ev.type === 'contextmenu') return true;
+      if (ev.type === 'keydown') return ev.key === 'ContextMenu' || ev.key === ' ' || (!!ev.shiftKey && ev.key === 'F10');
+      if (ev.type === 'click') return !!(ev.metaKey || ev.ctrlKey || ev.shiftKey);
+      return false;
+    }
+    ['contextmenu', 'keydown', 'click'].forEach(function(type) {
+      document.addEventListener(type, function(e) {
+        if (!stageTrackerDisplayBlocksRowAction(e, stageTrackerDisplayMode())) return;
+        const t = e.target;
+        if (!(t && t.closest && t.closest('#activity-monitor-section .ham-row, #activity-monitor-section [data-ham-sub-key]'))) return;
+        e.stopPropagation();
+      }, true);
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.defaultPrevented) return;
+      const t = e.target;
+      const tag = ((t && t.tagName) || '').toLowerCase();
+      const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || !!(t && t.isContentEditable);
+      const section = document.getElementById('activity-monitor-section');
+      const inTracker = !!(section && t && t.nodeType === 1 && section.contains(t));
+      if (!stageTrackerDisplayHotkey(e, inTracker, typing, stageTrackerDisplayMode(), !!document.fullscreenElement)) return;
+      if (stageTrackerDisplayOverlayOpen(document)) return;
+      e.preventDefault();
+      toggleStageTrackerDisplay();
+    });
     document.addEventListener('DOMContentLoaded', function() {
       stageTrackerRenderFullscreenButton();
+      stageTrackerRenderDisplayButton();
       stageTrackerPopoutSyncTitle();
     });

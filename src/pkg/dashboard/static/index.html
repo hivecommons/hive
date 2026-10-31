@@ -6818,40 +6818,55 @@
    body.ham-fullscreen, which shares every rule below — the document rather
    than the section so the body-level toasts (waiting on you, merges) stay
    visible while full screen. */
-    body.popout-mode, body.ham-fullscreen { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
+    body.popout-mode, body.ham-fullscreen,
+    body.display-mode { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
     body.popout-mode .oc-sidebar, body.popout-mode .oc-sidebar-resize, body.popout-mode .oc-topbar,
     body.popout-mode #dash-notices, body.popout-mode #oc-agent-detail, body.popout-mode .hive-chat-fab,
     body.popout-mode .hive-chat-panel, body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
     body.ham-fullscreen .oc-sidebar, body.ham-fullscreen .oc-sidebar-resize, body.ham-fullscreen .oc-topbar,
     body.ham-fullscreen #dash-notices, body.ham-fullscreen #oc-agent-detail, body.ham-fullscreen .hive-chat-fab,
-    body.ham-fullscreen .hive-chat-panel { display: none !important; }
+    body.ham-fullscreen .hive-chat-panel,
+    body.display-mode .oc-sidebar, body.display-mode .oc-sidebar-resize, body.display-mode .oc-topbar,
+    body.display-mode #dash-notices, body.display-mode #oc-agent-detail, body.display-mode .hive-chat-fab,
+    body.display-mode .hive-chat-panel, body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }
     /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
        display:grid!important with id specificity; beat it with (1,2,2). */
     html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
+    html body.display-mode #oc-topbar[id] { display: none !important; }
     body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
     body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.display-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
     body.popout-mode #activity-monitor-section .dashboard-grip, body.popout-mode #activity-monitor-section .section-chevron,
-    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron { display: none !important; }
+    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron,
+    body.display-mode #activity-monitor-section .dashboard-grip, body.display-mode #activity-monitor-section .section-chevron { display: none !important; }
     /* The header cannot collapse the only section on the page, but its
        gear, full-screen and return buttons must still take clicks. */
     body.popout-mode #activity-monitor-section .section-header-toggle,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle { pointer-events: none; }
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle,
+    body.display-mode #activity-monitor-section .section-header-toggle { pointer-events: none; }
     body.popout-mode #activity-monitor-section .section-header-toggle button,
     body.popout-mode #activity-monitor-section .section-header-toggle .config-info,
     body.ham-fullscreen #activity-monitor-section .section-header-toggle button,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info,
+    body.display-mode #activity-monitor-section .section-header-toggle button,
+    body.display-mode #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
     /* A collapsed state saved from the main window would leave an empty
        page with a header that cannot be clicked: always show the body. */
     body.popout-mode #activity-monitor-section .section-body.collapsed,
-    body.ham-fullscreen #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
+    body.ham-fullscreen #activity-monitor-section .section-body.collapsed,
+    body.display-mode #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
     body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions,
+    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
     body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
-    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky { top: 0; }
-    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols { top: var(--ham-sticky-bar-h); }
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary,
+    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
+    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky,
+    body.display-mode .ham-sticky { top: 0; }
+    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols,
+    body.display-mode .ham-cols { top: var(--ham-sticky-bar-h); }
 
-    /* Header tools: ⧉ pop out and ⛶ full screen sit beside the gear and
+    /* Header tools: ⧉ pop out, ⛶ full screen and 📺 display sit beside the gear and
        share its chip styling; the return link is a pop-out-only text pill. */
     .ham-header-tool { width: auto; min-width: 15px; padding: 0 var(--sp-1); font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; }
     .ham-header-tool[aria-pressed="true"] { color: var(--blue); border-color: var(--blue); }
@@ -6862,6 +6877,12 @@
        kiosk has no one to click. */
     body.popout-mode .ham-popout-btn, body.ham-fullscreen .ham-popout-btn,
     body.kiosk-mode .ham-header-tool, body.kiosk-mode .ham-popout-return { display: none !important; }
+    /* Display mode (#15925) is an attended wall view (?display=1, the 📺
+       button): same layout, but a wall offers no actions, so the row ⋯ and
+       select tools, the selection bar and the decision actions are hidden.
+       Presentation only — server authorization is unchanged. */
+    body.display-mode #activity-monitor-section .ham-row-tools, body.display-mode #activity-monitor-selbar,
+    body.display-mode .ham-decision-acts { display: none !important; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6901,14 +6922,21 @@
 // cursor stays, the settings gear works, preferences persist as usual, and a
 // "Return to dashboard" link focuses the opener. Reloading keeps the layout
 // because the flag lives in the URL.
+// Display mode (#15925): `?display=1` is the same chrome-less layout for an
+// attended wall screen, entered from the 📺 header button. It is
+// presentation only: the cursor stays, sound keeps the user's setting, it
+// never writes layout or theme to localStorage, and it hides the row action
+// affordances. Kiosk wins when both flags are present.
 (function(){
-  var kiosk=false, popout=false, sound=true;
-  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, display=false, sound=true;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
+  window.HIVE_DISPLAY=display&&!kiosk;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
   window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
+  window.hiveDisplayMode=function(){ return !!window.HIVE_DISPLAY; };
   window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };
   if(kiosk){
     document.body.classList.add('kiosk-mode');
@@ -6916,6 +6944,10 @@
     document.body.classList.add('popout-mode');
   }
   if(kiosk||window.HIVE_POPOUT){
+    if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
+  }
+  if(window.HIVE_DISPLAY){
+    document.body.classList.add('display-mode');
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();
@@ -8994,6 +9026,7 @@
     // css/popout.css decides which of the three show in which mode.
     const STAGE_TRACKER_HEADER_TOOLS_HTML = '<button type="button" class="config-info section-settings-gear ham-header-tool ham-popout-btn" id="activity-monitor-popout" data-action="openStageTrackerPopout" data-stop="1" title="Pop out — open the activity monitor in its own window, for another monitor" aria-label="Pop out the Hive activity monitor into its own window">⧉</button>'
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
+      + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-display-btn" id="activity-monitor-display" data-action="toggleStageTrackerDisplay" data-stop="1" aria-pressed="false" title="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)" aria-label="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)">📺</button>'
       + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
@@ -10531,7 +10564,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardMarkAppliedLayout(kind,name,id,state){var applied={kind:kind||'custom',name:name||'',id:id||'',state:dashboardNormalizeSnapshot(state||dashboardLayoutSnapshot())};try{localStorage.setItem(DASHBOARD_LAYOUT_APPLIED_KEY,JSON.stringify(applied));}catch(e){}dashboardUpdateLayoutMenuState();}
     function dashboardUpdateLayoutMenuState(){var status=document.getElementById('oc-gh-menu-layout-status'),wrap=document.getElementById('oc-gh-avatar-wrap');var current=dashboardLayoutSnapshot(),applied=dashboardReadAppliedLayout(),base=applied&&applied.state?applied:{kind:'default',name:'',state:dashboardLayoutDefaultSnapshot()};var same=dashboardSnapshotEquals(current,base.state);var label='Layout: ';if(base.kind==='default')label+=same?'default':'custom (unsaved)';else label+=(base.name||'custom')+(same?'':' (modified)');if(status)status.textContent=label;if(wrap)wrap.classList.toggle('layout-unsaved',!same);dashboardRenderLayoutPresets();}
     function dashboardUpdateResetButton(){dashboardUpdateLayoutMenuState();}
-    function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
+    function dashboardLayoutWrite(){if(window.hiveDisplayMode&&window.hiveDisplayMode())return;try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
     function dashboardApplySnapshotState(state){state=dashboardNormalizeSnapshot(state);try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(state.layout));dashboardLayoutAllIds().forEach(function(id){writeSectionCollapsedKey(id,!!state.collapsed[id]);});dashboardHiddenSectionsWrite(Object.keys(state.hidden||{}));var keep=state.extras||{};dashboardLayoutExtraKeys().forEach(function(k){if(!Object.prototype.hasOwnProperty.call(keep,k))localStorage.removeItem(k);});Object.keys(keep).forEach(function(k){localStorage.setItem(k,keep[k]);});}catch(e){}dashboardApplyLayout(state.layout);dashboardLayoutAllIds().forEach(applySectionCollapse);dashboardApplyHiddenSections();if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardUpdateLayoutMenuState();}
     function dashboardRenderLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list');if(!list)return;var presets=dashboardReadLayoutPresets();if(!presets.length){list.innerHTML='<div class="avatar-menu-layout-empty">No saved layouts yet.</div>';return;}list.innerHTML=presets.map(function(p){return '<div class="avatar-menu-layout-snapshot"><span class="avatar-menu-layout-name" title="'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'">'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'</span><button type="button" class="avatar-menu-layout-action" data-action="applyDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Apply</button><button type="button" class="avatar-menu-layout-action" data-action="renameDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Rename</button><button type="button" class="avatar-menu-layout-action" data-action="deleteDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Delete</button></div>';}).join('');}
     function toggleDashboardLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list'),btn=document.getElementById('oc-gh-menu-layout-saved');if(!list)return;list.hidden=!list.hidden;if(btn){btn.setAttribute('aria-expanded',String(!list.hidden));btn.textContent=list.hidden?'Saved layouts ▸':'Saved layouts ▾';}dashboardRenderLayoutPresets();}
@@ -10705,7 +10738,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (stored === 'classic') { stored = 'dark'; setLayout(stored); }
       return LAYOUT_MODES.includes(stored) ? stored : 'light';
     }
-    function setLayout(mode) { localStorage.setItem(LAYOUT_KEY, mode); }
+    // Display mode (#15925) is a shared wall screen: a theme flip there
+    // applies to the page only and never becomes the profile's preference.
+    function setLayout(mode) { if (window.hiveDisplayMode && window.hiveDisplayMode()) return; localStorage.setItem(LAYOUT_KEY, mode); }
     function applyLayout(mode) {
       document.body.classList.toggle('light-mode', mode === 'light');
       const customStyleRoot = document.getElementById('hive-dashboard-root');
@@ -19132,11 +19167,76 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { issues: items.filter(it => it && it.kind !== 'pr').length, prs: items.filter(it => it && it.kind === 'pr').length };
     }
 
+    // URL views (hivecommons/hive#15924): `am.*` query parameters describe a
+    // filter and group so a display link reproduces the view in a fresh
+    // browser profile. waitingOnYou is per-user and stays on the one-shot
+    // `?filter=waiting-on-you`; it is never an `am.*` key.
+    // tracker url view helpers begin
+    const STAGE_TRACKER_URL_PREFIX = 'am.';
+    const STAGE_TRACKER_URL_KEYS = ['kind', 'repo', 'q', 'age', 'author', 'acted', 'sort', 'dir', 'labels', 'needsHuman', 'onHold', 'attention'];
+    const STAGE_TRACKER_URL_BOOLS = ['needsHuman', 'onHold', 'attention'];
+    const STAGE_TRACKER_URL_CREDENTIAL_PARAMS = ['token', 'access_token'];
+    // Pure: the { filter, group } an `am.*` URL describes, or null when it
+    // carries no `am.*` parameter. Values go through
+    // stageTrackerNormalizeFilter, so an unknown one falls back to its default.
+    function stageTrackerFilterFromUrl(href) {
+      let url;
+      try { url = new URL(href); } catch { return null; }
+      const p = url.searchParams;
+      if (!Array.from(p.keys()).some(k => k.indexOf(STAGE_TRACKER_URL_PREFIX) === 0)) return null;
+      const raw = {};
+      for (const k of STAGE_TRACKER_URL_KEYS) {
+        const v = p.get(STAGE_TRACKER_URL_PREFIX + k);
+        if (v === null) continue;
+        if (k === 'labels') raw.labels = v.split(',').map(l => l.trim()).filter(Boolean);
+        else if (STAGE_TRACKER_URL_BOOLS.indexOf(k) >= 0) raw[k] = v === '1' || v === 'true';
+        else raw[k] = v;
+      }
+      const g = p.get(STAGE_TRACKER_URL_PREFIX + 'group');
+      return { filter: stageTrackerNormalizeFilter(raw), group: STAGE_TRACKER_GROUPS.indexOf(g) >= 0 ? g : STAGE_TRACKER_GROUP_DEFAULT };
+    }
+    // Pure: href with `am.*` set to describe filter + group. Defaults are
+    // omitted; other query params and the hash are kept; credentials never
+    // ride along.
+    function stageTrackerViewUrl(href, filter, group) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      for (const k of Array.from(url.searchParams.keys())) {
+        if (k.indexOf(STAGE_TRACKER_URL_PREFIX) === 0 || STAGE_TRACKER_URL_CREDENTIAL_PARAMS.indexOf(k) >= 0) url.searchParams.delete(k);
+      }
+      url.username = '';
+      url.password = '';
+      const f = stageTrackerNormalizeFilter(filter);
+      const d = stageTrackerDefaultFilter();
+      for (const k of STAGE_TRACKER_URL_KEYS) {
+        if (k === 'labels') { if (f.labels.length) url.searchParams.set(STAGE_TRACKER_URL_PREFIX + k, f.labels.join(',')); continue; }
+        if (f[k] === d[k]) continue;
+        url.searchParams.set(STAGE_TRACKER_URL_PREFIX + k, STAGE_TRACKER_URL_BOOLS.indexOf(k) >= 0 ? '1' : String(f[k]));
+      }
+      if (STAGE_TRACKER_GROUPS.indexOf(group) >= 0 && group !== STAGE_TRACKER_GROUP_DEFAULT) url.searchParams.set(STAGE_TRACKER_URL_PREFIX + 'group', group);
+      return url.toString();
+    }
+    // tracker url view helpers end
+    // The tab's URL view, read once. While it is set the filter and group
+    // are session-only: saves stay in this object and never reach
+    // localStorage, so two screens on one profile cannot clobber each other.
+    var _stageTrackerUrlView;
+    function stageTrackerUrlView() {
+      if (_stageTrackerUrlView === undefined) {
+        _stageTrackerUrlView = null;
+        try { _stageTrackerUrlView = stageTrackerFilterFromUrl(window.location.href); } catch {}
+      }
+      return _stageTrackerUrlView;
+    }
     function stageTrackerLoadFilter() {
-      try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
+      const view = stageTrackerUrlView();
+      if (view) _stageTrackerFilter = stageTrackerNormalizeFilter(view.filter);
+      else try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
       _stageTrackerFilter.page = 1;
     }
     function stageTrackerSaveFilter() {
+      const view = stageTrackerUrlView();
+      if (view) { view.filter = Object.assign({}, _stageTrackerFilter); return; }
       try { const f = Object.assign({}, _stageTrackerFilter); delete f.page; localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f)); } catch {}
     }
     // Repo chip / group settings and the per-repo collapsed set (localStorage).
@@ -19151,12 +19251,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return v;
     }
     function stageTrackerGroupSetting() {
+      const view = stageTrackerUrlView();
+      if (view) return view.group;
       let v = '';
       try { v = localStorage.getItem(STAGE_TRACKER_GROUP_KEY) || ''; } catch { v = ''; }
       return STAGE_TRACKER_GROUPS.indexOf(v) >= 0 ? v : STAGE_TRACKER_GROUP_DEFAULT;
     }
     function stageTrackerSetGroup(id) {
       const v = STAGE_TRACKER_GROUPS.indexOf(id) >= 0 ? id : STAGE_TRACKER_GROUP_DEFAULT;
+      const view = stageTrackerUrlView();
+      if (view) { view.group = v; return v; }
       try { localStorage.setItem(STAGE_TRACKER_GROUP_KEY, v); } catch {}
       return v;
     }
@@ -23080,7 +23184,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
       const pop = document.getElementById('activity-monitor-merged-pop');
-      if (pop && !pop.hidden) { hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
+      if (pop && !pop.hidden) { e.preventDefault(); hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
     });
     // The glyph has landed (or left the screen, or faded): count the PR,
     // pop the chip, zap — once the last glyph is down; a landing while
@@ -23506,7 +23610,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
       const pop = document.getElementById('activity-monitor-queue-pop');
-      if (pop && !pop.hidden) { hamQueueToggle(false); const chip = stageTrackerQueueChip(); if (chip && chip.focus) chip.focus(); }
+      if (pop && !pop.hidden) { e.preventDefault(); hamQueueToggle(false); const chip = stageTrackerQueueChip(); if (chip && chip.focus) chip.focus(); }
     });
     // Pure: the master toggle and a visible tab gate every automatic play.
     function stageTrackerSoundGate() { return !!_stageTrackerSoundOn && !document.hidden; }
@@ -24557,8 +24661,116 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       toggleStageTrackerFullscreen();
     });
     document.addEventListener('fullscreenchange', stageTrackerRenderFullscreenButton);
+
+    /* ---- Display mode (hivecommons/hive#15925) ----------------------------
+       📺 navigates to the current URL with `display=1`; boot.js sets
+       body.display-mode before first paint and css/popout.css gives it the
+       pop-out layout minus every row action. It keeps all other query
+       params (am.* views, theme…). Esc (outside browser full screen) or `d`
+       leaves by dropping the flag. Entering never requests full screen or a
+       wake lock, and nothing is persisted: the mode lives in the URL. */
+    const STAGE_TRACKER_DISPLAY_PARAM = 'display';
+    const STAGE_TRACKER_DISPLAY_KEY = 'd';
+    const STAGE_TRACKER_DISPLAY_LABELS = {
+      enter: { text: '📺', title: 'Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)' },
+      exit: { text: '📺 Exit display', title: 'Leave display mode (Esc or d)' },
+    };
+    function stageTrackerDisplayMode() {
+      return !!(window.hiveDisplayMode && window.hiveDisplayMode());
+    }
+    // Pure: href with display mode switched on or off. Entering drops kiosk
+    // (it would win) and the one-shot filter, and lands on the tracker.
+    function stageTrackerDisplayUrl(href, on) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      if (on) {
+        url.searchParams.set(STAGE_TRACKER_DISPLAY_PARAM, '1');
+        url.searchParams.delete('kiosk');
+        url.searchParams.delete('filter');
+        url.hash = STAGE_TRACKER_POPOUT_HASH;
+      } else {
+        url.searchParams.delete(STAGE_TRACKER_DISPLAY_PARAM);
+      }
+      return url.toString();
+    }
+    // Pure: should this keydown toggle display mode? A bare `d` with focus in
+    // the tracker (anywhere while displaying — the page is the tracker), or
+    // Esc while displaying and not in browser full screen, which consumes
+    // Esc itself. Never while typing.
+    function stageTrackerDisplayHotkey(ev, inTracker, typing, display, fullscreen) {
+      if (!ev || typing) return false;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return false;
+      if (ev.key === 'Escape') return !!display && !fullscreen;
+      if (ev.key !== STAGE_TRACKER_DISPLAY_KEY) return false;
+      return !!(inTracker || display);
+    }
+    // Pure: is a popover or dialog open that Esc should close instead of
+    // leaving display mode? Leaving reloads the page and drops session-only
+    // am.* edits, so any open overlay wins — the tracker's own settings,
+    // labels, merged and queue popovers, and every hive dialog — whatever
+    // order their Esc handlers run in.
+    const STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR = '#activity-monitor-settings-overlay, #activity-monitor-labels-overlay, #activity-monitor-merged-pop, #activity-monitor-queue-pop, .hive-dialog-overlay';
+    function stageTrackerDisplayOverlayOpen(doc) {
+      if (!doc || typeof doc.querySelectorAll !== 'function') return false;
+      const els = doc.querySelectorAll(STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR);
+      for (let i = 0; i < els.length; i++) {
+        const el = els[i];
+        if (el.hidden) continue;
+        if (el.classList && el.classList.contains('hidden')) continue;
+        if (el.style && el.style.display === 'none') continue;
+        return true;
+      }
+      return false;
+    }
+    function toggleStageTrackerDisplay() {
+      const url = stageTrackerDisplayUrl(window.location.href, !stageTrackerDisplayMode());
+      if (url) window.location.assign(url);
+      return url;
+    }
+    function stageTrackerRenderDisplayButton() {
+      const btn = document.getElementById('activity-monitor-display');
+      if (!btn) return;
+      const on = stageTrackerDisplayMode();
+      const label = on ? STAGE_TRACKER_DISPLAY_LABELS.exit : STAGE_TRACKER_DISPLAY_LABELS.enter;
+      btn.textContent = label.text;
+      btn.title = label.title;
+      btn.setAttribute('aria-label', label.title);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    // Pure: in display mode, must this event be kept from the row action
+    // handlers — the context menu, Shift+F10 / ContextMenu key, and Space or
+    // modifier-click selection? Presentation only; the server still
+    // authorizes every action.
+    function stageTrackerDisplayBlocksRowAction(ev, display) {
+      if (!display || !ev) return false;
+      if (ev.type === 'contextmenu') return true;
+      if (ev.type === 'keydown') return ev.key === 'ContextMenu' || ev.key === ' ' || (!!ev.shiftKey && ev.key === 'F10');
+      if (ev.type === 'click') return !!(ev.metaKey || ev.ctrlKey || ev.shiftKey);
+      return false;
+    }
+    ['contextmenu', 'keydown', 'click'].forEach(function(type) {
+      document.addEventListener(type, function(e) {
+        if (!stageTrackerDisplayBlocksRowAction(e, stageTrackerDisplayMode())) return;
+        const t = e.target;
+        if (!(t && t.closest && t.closest('#activity-monitor-section .ham-row, #activity-monitor-section [data-ham-sub-key]'))) return;
+        e.stopPropagation();
+      }, true);
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.defaultPrevented) return;
+      const t = e.target;
+      const tag = ((t && t.tagName) || '').toLowerCase();
+      const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || !!(t && t.isContentEditable);
+      const section = document.getElementById('activity-monitor-section');
+      const inTracker = !!(section && t && t.nodeType === 1 && section.contains(t));
+      if (!stageTrackerDisplayHotkey(e, inTracker, typing, stageTrackerDisplayMode(), !!document.fullscreenElement)) return;
+      if (stageTrackerDisplayOverlayOpen(document)) return;
+      e.preventDefault();
+      toggleStageTrackerDisplay();
+    });
     document.addEventListener('DOMContentLoaded', function() {
       stageTrackerRenderFullscreenButton();
+      stageTrackerRenderDisplayButton();
       stageTrackerPopoutSyncTitle();
     });
     function parseCadenceMinutes(cadence) {

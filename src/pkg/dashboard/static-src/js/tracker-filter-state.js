@@ -1,8 +1,73 @@
+    // URL views (hivecommons/hive#15924): `am.*` query parameters describe a
+    // filter and group so a display link reproduces the view in a fresh
+    // browser profile. waitingOnYou is per-user and stays on the one-shot
+    // `?filter=waiting-on-you`; it is never an `am.*` key.
+    // tracker url view helpers begin
+    const STAGE_TRACKER_URL_PREFIX = 'am.';
+    const STAGE_TRACKER_URL_KEYS = ['kind', 'repo', 'q', 'age', 'author', 'acted', 'sort', 'dir', 'labels', 'needsHuman', 'onHold', 'attention'];
+    const STAGE_TRACKER_URL_BOOLS = ['needsHuman', 'onHold', 'attention'];
+    const STAGE_TRACKER_URL_CREDENTIAL_PARAMS = ['token', 'access_token'];
+    // Pure: the { filter, group } an `am.*` URL describes, or null when it
+    // carries no `am.*` parameter. Values go through
+    // stageTrackerNormalizeFilter, so an unknown one falls back to its default.
+    function stageTrackerFilterFromUrl(href) {
+      let url;
+      try { url = new URL(href); } catch { return null; }
+      const p = url.searchParams;
+      if (!Array.from(p.keys()).some(k => k.indexOf(STAGE_TRACKER_URL_PREFIX) === 0)) return null;
+      const raw = {};
+      for (const k of STAGE_TRACKER_URL_KEYS) {
+        const v = p.get(STAGE_TRACKER_URL_PREFIX + k);
+        if (v === null) continue;
+        if (k === 'labels') raw.labels = v.split(',').map(l => l.trim()).filter(Boolean);
+        else if (STAGE_TRACKER_URL_BOOLS.indexOf(k) >= 0) raw[k] = v === '1' || v === 'true';
+        else raw[k] = v;
+      }
+      const g = p.get(STAGE_TRACKER_URL_PREFIX + 'group');
+      return { filter: stageTrackerNormalizeFilter(raw), group: STAGE_TRACKER_GROUPS.indexOf(g) >= 0 ? g : STAGE_TRACKER_GROUP_DEFAULT };
+    }
+    // Pure: href with `am.*` set to describe filter + group. Defaults are
+    // omitted; other query params and the hash are kept; credentials never
+    // ride along.
+    function stageTrackerViewUrl(href, filter, group) {
+      let url;
+      try { url = new URL(href); } catch { return ''; }
+      for (const k of Array.from(url.searchParams.keys())) {
+        if (k.indexOf(STAGE_TRACKER_URL_PREFIX) === 0 || STAGE_TRACKER_URL_CREDENTIAL_PARAMS.indexOf(k) >= 0) url.searchParams.delete(k);
+      }
+      url.username = '';
+      url.password = '';
+      const f = stageTrackerNormalizeFilter(filter);
+      const d = stageTrackerDefaultFilter();
+      for (const k of STAGE_TRACKER_URL_KEYS) {
+        if (k === 'labels') { if (f.labels.length) url.searchParams.set(STAGE_TRACKER_URL_PREFIX + k, f.labels.join(',')); continue; }
+        if (f[k] === d[k]) continue;
+        url.searchParams.set(STAGE_TRACKER_URL_PREFIX + k, STAGE_TRACKER_URL_BOOLS.indexOf(k) >= 0 ? '1' : String(f[k]));
+      }
+      if (STAGE_TRACKER_GROUPS.indexOf(group) >= 0 && group !== STAGE_TRACKER_GROUP_DEFAULT) url.searchParams.set(STAGE_TRACKER_URL_PREFIX + 'group', group);
+      return url.toString();
+    }
+    // tracker url view helpers end
+    // The tab's URL view, read once. While it is set the filter and group
+    // are session-only: saves stay in this object and never reach
+    // localStorage, so two screens on one profile cannot clobber each other.
+    var _stageTrackerUrlView;
+    function stageTrackerUrlView() {
+      if (_stageTrackerUrlView === undefined) {
+        _stageTrackerUrlView = null;
+        try { _stageTrackerUrlView = stageTrackerFilterFromUrl(window.location.href); } catch {}
+      }
+      return _stageTrackerUrlView;
+    }
     function stageTrackerLoadFilter() {
-      try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
+      const view = stageTrackerUrlView();
+      if (view) _stageTrackerFilter = stageTrackerNormalizeFilter(view.filter);
+      else try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
       _stageTrackerFilter.page = 1;
     }
     function stageTrackerSaveFilter() {
+      const view = stageTrackerUrlView();
+      if (view) { view.filter = Object.assign({}, _stageTrackerFilter); return; }
       try { const f = Object.assign({}, _stageTrackerFilter); delete f.page; localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f)); } catch {}
     }
     // Repo chip / group settings and the per-repo collapsed set (localStorage).
@@ -17,12 +82,16 @@
       return v;
     }
     function stageTrackerGroupSetting() {
+      const view = stageTrackerUrlView();
+      if (view) return view.group;
       let v = '';
       try { v = localStorage.getItem(STAGE_TRACKER_GROUP_KEY) || ''; } catch { v = ''; }
       return STAGE_TRACKER_GROUPS.indexOf(v) >= 0 ? v : STAGE_TRACKER_GROUP_DEFAULT;
     }
     function stageTrackerSetGroup(id) {
       const v = STAGE_TRACKER_GROUPS.indexOf(id) >= 0 ? id : STAGE_TRACKER_GROUP_DEFAULT;
+      const view = stageTrackerUrlView();
+      if (view) { view.group = v; return v; }
       try { localStorage.setItem(STAGE_TRACKER_GROUP_KEY, v); } catch {}
       return v;
     }
