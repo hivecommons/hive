@@ -73,7 +73,9 @@ func TestIntegrationProducerAuthenticatesExactHistoricalFinalizer(t *testing.T) 
 		claims["check_run_id"] = checkID
 		identity, err := verifier.Verify(context.Background(), signProducerToken(t, key, claims), []byte(producerIdentityPayload), binding)
 		if err != nil || identity.FinalizerCheckRunID != binding.FinalizerCheckRunID ||
-			identity.PayloadSHA256 != binding.PayloadSHA256 || identity.KeyID != "github-key" {
+			identity.PayloadSHA256 != binding.PayloadSHA256 || identity.KeyID != "github-key" ||
+			len(identity.SigningKeySPKI) == 0 || !integrationProducerDigest(identity.SigningKeySHA256) ||
+			identity.VerifiedAt != binding.ObservedAt {
 			t.Fatalf("exact historical producer: %+v %v", identity, err)
 		}
 	}

@@ -350,9 +350,15 @@ and only isolated finalizers have OIDC permission.
 
 ### Remaining readiness gates
 
-Source contract tests are not isolated provider execution proof. The actual
-artifact/run/job consumer, durable verification/key history, execution
-controller and shared promotion authority handover are still required. Existing
+Source contract tests are not isolated provider execution proof. Read-only
+candidate and materializer observers now bind authoritative run/attempt/job/check
+metadata, immutable artifact digest, exact signed bytes and enrolled ordered
+commit/tree/workflow closure. Their source tests include changed attempts,
+partial publication and mismatched producers/subjects; they do not prove an
+installed provider execution. Actual job observations include materialization
+and finalizer overhead, not just local recorder time. Durable verification/key
+history, controller wiring and shared promotion authority handover are still
+required. Existing
 eleven protected-branch contexts do not automatically become satisfied by
 prefixed reusable jobs. No copied DCO/review greens, branch-rule bypass,
 signature/linear-history downgrade or unproved conditional no-op is permitted.

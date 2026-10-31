@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -55,6 +56,9 @@ type IntegrationProducerIdentity struct {
 	RunAttempt          int64
 	FinalizerCheckRunID int64
 	PayloadSHA256       string
+	SigningKeySPKI      []byte `json:"-"`
+	SigningKeySHA256    string
+	VerifiedAt          time.Time
 }
 
 // IntegrationMaterializerBinding describes the independently observed trusted
@@ -170,13 +174,22 @@ func (v *IntegrationProducerVerifier) verify(ctx context.Context, raw string, pa
 	}
 	claims := new(integrationProducerClaims)
 	keyID := ""
+	var publicKey []byte
 	token, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
 		kid, ok := token.Header["kid"].(string)
 		if !ok || kid == "" || len(kid) > integrationProducerMaxKeyID {
 			return nil, fmt.Errorf("integration producer signing key identity unavailable")
 		}
 		keyID = kid
-		return v.key(ctx, kid)
+		key, err := v.key(ctx, kid)
+		if err != nil {
+			return nil, err
+		}
+		publicKey, err = x509.MarshalPKIXPublicKey(key)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}), jwt.WithoutClaimsValidation())
 	if err != nil {
 		return IntegrationProducerIdentity{}, fmt.Errorf("integration producer signature rejected: %w", err)
@@ -204,10 +217,12 @@ func (v *IntegrationProducerVerifier) verify(ctx context.Context, raw string, pa
 		claims.ExpiresAt.Sub(claims.IssuedAt.Time) > integrationProducerMaxLifetime {
 		return IntegrationProducerIdentity{}, fmt.Errorf("integration producer issuance is outside the authoritative finalizer interval")
 	}
+	keyDigest := sha256.Sum256(publicKey)
 	return IntegrationProducerIdentity{
 		Role:   profile.role,
 		Issuer: claims.Issuer, KeyID: keyID, IssuedAt: claims.IssuedAt.Time,
 		RunID: binding.RunID, RunAttempt: binding.RunAttempt, FinalizerCheckRunID: binding.FinalizerCheckRunID,
-		PayloadSHA256: binding.PayloadSHA256,
+		PayloadSHA256:  binding.PayloadSHA256,
+		SigningKeySPKI: publicKey, SigningKeySHA256: hex.EncodeToString(keyDigest[:]), VerifiedAt: binding.ObservedAt,
 	}, nil
 }

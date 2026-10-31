@@ -185,5 +185,6 @@ jobs:
         with:
           name: integration-producer-receipt-${{ github.run_attempt }}
           path: .integration-producer/receipt.json
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
