@@ -100,16 +100,16 @@ test('offline clanker: filled square, offline span, adopt-at clock with countdow
 });
 
 test('human: the person glyph and the handle only — no dot, no "(human · no clanker)" qualifier', () => {
-  assert.strictEqual(api.tip(human, NOW), 'Waiting on @zoe (human) — waiting for a human reply');
+  assert.strictEqual(api.tip(human, NOW), 'Waiting on @zoe (human) — human availability is unknown; waiting for a human reply');
   const dot = api.dot(human, NOW);
   assert.match(dot, /class="ham-presence ham-presence-unknown ham-presence-human"/);
   assert.ok(dot.includes(api.icons.human), 'draws the chevrons\' person glyph');
   assert.ok(!dot.includes(api.icons.clanker), 'never the robot head');
   assert.ok(!dot.includes('ham-presence-dot'), 'a human carries no state dot');
-  assert.match(dot, /aria-label="@zoe: human — waiting for a human reply"/);
+  assert.match(dot, /aria-label="@zoe: human — human availability is unknown; waiting for a human reply"/);
   assert.strictEqual(api.chipText(human), 'waiting on @zoe to push', "a person's own PR says what the hive waits for");
   const chip = api.chip(human);
-  assert.match(chip, /^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">/);
+  assert.match(chip, /^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — human availability is unknown; waiting for a human reply" aria-label="Waiting on @zoe \(human\) — human availability is unknown; waiting for a human reply">/);
   assert.match(flat(chip), /waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*><\/svg><\/span>@zoe to push<\/span>$/);
   assert.ok(!chip.includes('no clanker'));
   // An unregistered clanker (another hive's PR) is unknown too — robot head + hollow ring — and adoption's clock runs.
@@ -145,6 +145,22 @@ test('rows without presence, or with a malformed one, render as before', () => {
   // The adoption pill without presence is unchanged.
   const bare = { kind: 'pr', adoption: { author: 'hanthor', text: 'waiting on @hanthor (online, 1 nudge)' } };
   assert.strictEqual(api.adoptionChip(bare), '<span class="ham-badge ham-badge-adoption" title="waiting on @hanthor (online, 1 nudge)" aria-label="Adoption — waiting on @hanthor (online, 1 nudge)">waiting on @hanthor</span>');
+});
+
+test('human presence stays unknown even if old payload carries agent heartbeat, offline age or adopt-at', () => {
+  for (const state of ['online', 'offline']) {
+    for (const author_kind of ['human', 'clanker']) {
+      const item = { ...human, author_kind, adoption: author_kind === 'clanker' ? { blocked_by: 'author-is-person' } : null,
+        presence: { ...human.presence, state, kind: 'clanker',
+          last_seen: iso(NOW - HOUR), next: 'adopt', adopt_at: iso(NOW + MIN) } };
+      const p = api.of(item);
+      assert.deepStrictEqual([p.state, p.kind, p.last_seen, p.next, p.adopt_at], ['unknown', 'human', '', 'wait', '']);
+      assert.ok(p.since, 'known wait timestamp is action history, not availability');
+      assert.match(api.tip(item, NOW), /human availability is unknown/);
+      assert.doesNotMatch(api.tip(item, NOW), /online|offline|last seen|adopt/);
+      assert.doesNotMatch(api.dot(item, NOW), /ham-presence-online|ham-presence-offline|ham-presence-dot/);
+    }
+  }
 });
 
 test('style ratchet: the indicator uses classes and tokens, no inline styles; reduced motion stills the breathe', () => {

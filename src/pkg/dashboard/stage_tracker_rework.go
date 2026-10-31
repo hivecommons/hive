@@ -114,7 +114,7 @@ func stageTrackerReworkFor(it StageTrackerItem, login string, stage stagelabels.
 	// A re-ask on the head the author pushed restarts the nudge clock and
 	// the stage entry; the ask the operator cares about is the original
 	// one (hivecommons/hive#16021).
-	pushedHead, pushedAt, pushed := stageTrackerReworkPushed(it, rec)
+	pushedHead, pushedAt, pushed := stageTrackerReworkPushed(it, stage, rec)
 	if pushed && !rec.ReworkAskedAt.IsZero() && rec.ReworkAskedAt.Before(requested) {
 		requested = rec.ReworkAskedAt
 	}
@@ -141,9 +141,6 @@ func stageTrackerReworkFor(it StageTrackerItem, login string, stage stagelabels.
 				pushedAt = now
 			}
 			out.Since = &pushedAt
-		} else if it.UpdatedAt != nil && it.UpdatedAt.After(requested) {
-			u := *it.UpdatedAt
-			out.Since = &u
 		}
 		return out
 	}
@@ -206,8 +203,8 @@ func stageTrackerReworkFor(it StageTrackerItem, login string, stage stagelabels.
 // (hivecommons/hive#16021) — unless the re-ask is a review verdict on it,
 // which means the re-review the push queued has happened and the new ask
 // stands on its own.
-func stageTrackerReworkPushed(it StageTrackerItem, rec stagelabels.Record) (head string, at time.Time, ok bool) {
-	if rec.NudgeHead != "" && it.Head != "" && it.Head != rec.NudgeHead {
+func stageTrackerReworkPushed(it StageTrackerItem, stage stagelabels.Stage, rec stagelabels.Record) (head string, at time.Time, ok bool) {
+	if stageTrackerAuthorPushSatisfied(it, stage, rec) {
 		if strings.EqualFold(rec.LastPushSha, it.Head) {
 			at = rec.LastPushAt
 		}

@@ -22,7 +22,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 | Nous / strategy lab | [`api-reference/nous.md`](api-reference/nous.md) | 25 |
 | Inception | [`api-reference/inception.md`](api-reference/inception.md) | 14 |
 | Beads | [`api-reference/beads.md`](api-reference/beads.md) | 5 |
-| Dashboard miscellaneous | [`api-reference/dashboard-misc.md`](api-reference/dashboard-misc.md) | 55 |
+| Dashboard miscellaneous | [`api-reference/dashboard-misc.md`](api-reference/dashboard-misc.md) | 56 |
 | Hub SaaS | [`api-reference/hub-saas.md`](api-reference/hub-saas.md) | 102 |
 | Hub server | [`api-reference/hub-server.md`](api-reference/hub-server.md) | 46 |
 
@@ -76,7 +76,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 
 ## Dashboard miscellaneous
 
-55 routes — see [api-reference/dashboard-misc.md](api-reference/dashboard-misc.md).
+56 routes — see [api-reference/dashboard-misc.md](api-reference/dashboard-misc.md).
 
 ## Hub SaaS
 

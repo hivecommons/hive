@@ -263,6 +263,12 @@ func (s *Server) executionPromotionGuard(ctx context.Context, store *integration
 	if err := s.executionLiveAuthority(ctx, cfg, scope, protection); err != nil {
 		return err
 	}
+	if refreshed.Archive == nil {
+		return fmt.Errorf("private signed candidate receipt unavailable")
+	}
+	if err := s.deps.GHClient.VerifyIntegrationCandidateGovernance(ctx, proof.Subject, refreshed.Archive.Payload); err != nil {
+		return err
+	}
 	// Review/hold/head observations invalidate eligibility, not the immutable
 	// technical payload. Restore only after this complete live evaluation.
 	revision := refreshed.EligibilityRevision

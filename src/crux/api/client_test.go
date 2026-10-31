@@ -302,6 +302,34 @@ func TestClientErrors(t *testing.T) {
 	}
 }
 
+func TestClientFollowLogsLinesSendsN(t *testing.T) {
+	f := &fakeServer{}
+	c := startUnix(t, f, "")
+	ctx := context.Background()
+	noop := func(LogChunk) error { return nil }
+
+	// A non-negative count is sent as n, including 0 (follow only new
+	// lines); a negative count leaves the server's replay window.
+	for _, lines := range []int{5, 0, -1} {
+		if err := c.FollowLogsLines(ctx, "fixer", lines, noop); err != nil {
+			t.Fatalf("lines %d: %v", lines, err)
+		}
+	}
+	if err := c.FollowLogs(ctx, "fixer", noop); err != nil {
+		t.Fatal(err)
+	}
+	logs := LogsPath("fixer")
+	want := []string{
+		"GET " + logs + "?" + QueryFollow + "=1&" + QueryLines + "=5",
+		"GET " + logs + "?" + QueryFollow + "=1&" + QueryLines + "=0",
+		"GET " + logs + "?" + QueryFollow + "=1",
+		"GET " + logs + "?" + QueryFollow + "=1",
+	}
+	if got := strings.Join(f.seen(), "\n"); got != strings.Join(want, "\n") {
+		t.Fatalf("requests:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+}
+
 func TestClientStreams(t *testing.T) {
 	f := &fakeServer{}
 	c := startUnix(t, f, "")

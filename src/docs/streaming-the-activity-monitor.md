@@ -189,16 +189,40 @@ full-screen Activity Monitor.
 
 ## Matrix mode (separate channel)
 
+When `dashboard.matrix.enabled` is set, the Activity Monitor header also shows a **Matrix** tab that opens `?kiosk=1&view=matrix` in the same window.
+
 Matrix is an experimental, default-off code display for a separate channel,
 [`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).
-It shows pushed added lines only, from positively identified hive identities,
-on public repositories explicitly allowlisted in `dashboard.matrix.repos`.
+It depends on the Matrix display renderer (`/?kiosk=1&view=matrix`,
+[#15936](https://github.com/hivecommons/hive/issues/15936)); without that
+renderer the dashboard ignores `view=matrix` and the kiosk serves the ordinary
+Activity Monitor. When active it shows pushed added lines only, from positively
+identified hive identities, on public repositories explicitly allowlisted in
+`dashboard.matrix.repos`.
 Private patches, unverified authors and excluded paths are never shown. Lines
 touched by scrubbing are dropped entirely rather than displayed with redactions;
 the built-in secret/path filters and `dashboard.matrix.exclude_paths` apply.
 Dashboard authentication alone does not make a code stream safe for public
 Twitch broadcasting: the public allowlist, author restriction and scrub/drop
 rules are required.
+
+The display's look is chosen with `mx.*` URL parameters; each value is also
+remembered in the browser (`hive.matrix.*` in local storage) for later visits.
+Every effect renders only lines already delivered by `/api/matrix/lines`.
+
+| `mx.effect` | Display |
+|---|---|
+| `rain` (default) | Falling columns built from the characters of the latest lines. Unknown values fall back to `rain`. |
+| `cascade` | Whole lines drift down the screen, each with its `repo#PR · path` caption. |
+| `ghost` | Ghost coder: a fake editor with one tab per PR (`repo#PR`), titled with the file path; at most six tabs, the oldest closes first. Lines are typed character by character behind a blinking cursor, with light keyword/string/comment/number colouring by file extension. |
+| `terminal` | An endless `git log -p`-style scroll: each line printed as a green `+ <line>`, with a `repo#PR · path` header whenever the PR or file changes. |
+
+`mx.speed` (0.1–5, default 1) and `mx.fps` (1–60, default 30) set the
+animation and typing speed, `mx.palette` is `green` (default), `amber` or
+`gold`, and `mx.captions=off` hides the `repo#PR · path` captions and headers
+on the canvas. `p` or Space pauses; a hidden tab pauses too. With the
+operating system's *reduce motion* setting on, every effect is replaced by
+static pages of the latest lines with their captions.
 
 [`overlays/hive-hosted-matrix/`](../deploy/stream/overlays/hive-hosted-matrix/kustomization.yaml)
 reuses the streamer image and base as a separate instance. It renders Deployment,
@@ -213,16 +237,19 @@ unaffected.
 channel.** The overlay has `replicas: 0`; applying it starts no streamer.
 Channel availability alone does not authorize activation. The owner must:
 
-1. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
+1. Confirm the deployed dashboard build serves the Matrix display for
+   `view=matrix` (#15936). A build without it broadcasts the ordinary kiosk
+   Activity Monitor on the Matrix channel, not code lines.
+2. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
    and verify the Matrix display and its author restriction and scrub/drop rules
    before any broadcast. An empty allowlist captures nothing.
-2. Provision `hivecommonsmatrix` independently, create namespace
+3. Provision `hivecommonsmatrix` independently, create namespace
    `hive-stream-matrix`, and create the out-of-band
    `twitch-stream-matrix` Secret there with its
    `TWITCH_STREAM_KEY`. Provision a separate `dashboard-token` Secret there
    for the dashboard source. Never reuse the main channel's `twitch-stream`
    Secret, or put key values in source, issues or documentation.
-3. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
+4. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
    zero only after authorization and readiness checks. Applying the overlay,
    creating the Twitch Secret and scaling up are all owner-only actions;
    this configuration does not authorize deployment or activation.

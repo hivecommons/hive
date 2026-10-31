@@ -6,10 +6,48 @@ Part of [Dashboard sections explained](../dashboard-sections.md); see that page 
 
 A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next.
 
+Human requirements have visible **Needs human: …** text inside the corresponding
+row, with the actual PR number, requester and next mover when known. This is
+separate from its pipeline stage: a covered issue can still read **PR in
+progress** while a specific linked PR asks a person to act. Multiple-PR trees
+identify the asking PR rather than placing its siblings on hold; a PR drawn
+under another issue names that host. A missing reason explicitly says **Human
+decision required; reason unavailable** and links to the item.
+
+The person glyph is reserved for an exact-current requirement. Claim ownership
+and ordinary author work instead have explicit **Claimed by** / **Next move**
+context; **Let hive decide** can be an optional delegation action, not a status
+indicator. These lines do not change stages, sorting, reference-versus-closing
+links, preparation train styling, native queues, or live notes' tuck/reopen
+controls. Cleared decisions and mismatching PR heads lose the requirement.
+An operator's recorded approval is not a review verdict: current-head review
+changes requested remain the visible blocker and keep the author/rework stage.
+The tracker records the approval separately rather than claiming that the merge
+queue will take the PR. Approval on an earlier head is historical, not permission
+or current review proof for a new head.
+When the PR's new head satisfies a recorded old-head author-push request, the
+backend reconciles push/rework observations before building the row: its pill,
+actor and caption return to pending CI/re-review instead of still asking for a
+push. An independently evaluated author action on the new head remains visible.
+If the head is known but its push time is not, no push age is invented.
+When the current-head snapshot observes real checks running again without any
+failing checks, an old CI-only push request becomes **checks pending · no new push
+requested**. This is not a push or merge-readiness proof; independent review,
+conflict and sign-off requirements still stand.
+Adoption ownership policy is not a PR rejection: the chip distinguishes
+**author-owned**, **maintainer-owned** and **contributor-managed** from an actual
+**adoption blocked** capability. No adoption observation means no adoption chip.
+Operator admission never promises that outstanding review/CI findings are clear.
+Human availability is unknown: agent heartbeats do not prove that a person is
+online or offline. Observed push/comment and waiting timestamps remain action
+history, not presence evidence or an implied relinquishment of ownership.
+Explicit adoption actions/provenance remain visible; a returning human does not
+silently revoke an adoption.
+
 ### First use: find the next action
 
 1. Find an item by repository, number or title. Every open issue and PR in the watched repositories is represented, including held, draft, filtered, exempt and reporter-triage work. Being visible does not make it actionable.
-2. Read the lit step and its words, then the reason on the item's `#N` link or lit chevron. The word says where the work is; the actor icon says whose move it is.
+2. Read the lit step and the visible human/actor context beneath it. The word says where the work is; **Needs human** names the actual requirement, while **Next move** and **Claimed by** distinguish ordinary actor/claim ownership. Links and chevrons retain further detail.
 3. Use **🙋 Needs human** for work waiting on a person's action. Use **⏸ On hold** separately for work a maintainer deliberately paused. Neither filter grants permission to act.
 4. Open **⋯** (or right-click / Shift+F10) for the actions allowed in that state. Read the confirmation and the result toast; a queued decision is not proof the PR merged.
 
@@ -42,6 +80,10 @@ At 090 the row explains why: `· workflow files`, `· tests removed`, `· manual
 
 ### Pairing, rows and counts
 
+A verified merge from the canonical merge ledger is terminal whether Hive, a maintainer or another bot performed it. The last known root or linked PR model reaches **Merged** during the existing short terminal/pin window, even without an earlier queue observation. The comment names the actual recorded merger; an unknown actor stays unknown. This does not invent an earlier queue/admission state or close a merely related issue. A stale open refresh cannot undo a verified merge, and repeated delivery or later actor enrichment does not replay the merge or restart its window. Terminal visibility does not re-enable closed-PR actions.
+
+A failing external PR without a recorded Hive stage actor remains **CI failing · author-owned** when its PR author is known, **CI failing · owner recorded** for an observed claimant, or **CI failing · owner unknown** otherwise. Its work activity is unknown; missing internal worker evidence is not evidence that nobody is working. Inline and nested rows use the PR author or claimant, not the related issue's filer or holder. Explicit unclaimed Hive/bot routing and real CI failures remain unchanged.
+
 - With no covering PR, an issue has a full strip lit at Open, Actionable or Claimed.
 - With exactly one covering PR, issue and PR share one continuous strip; early issue steps are passed and the PR supplies the current stage, chip, tooltip and age.
 - With several covering PRs, the issue's own strip stops at Claimed, with no current step lit. Indented PR sub-rows begin under *PR in progress*, each with its own stage and age, furthest along first.
@@ -58,6 +100,8 @@ The header reports the filtered row count and how many need attention; paginatio
 **The counter beside the section name.** The left-menu counter and the header lead (`37 rows (33 issues + 4 PRs on their own row) · 3 need attention`) count *rows* of the default view, not items: every open issue is a row; a pull request is its own row only when it is not drawn under a listed issue. The Overview counter (`33/13`) prints the same open set as issues/PRs, so the two differ by exactly the pull requests that share their issue's row (`9 PRs shown on their issue's row` in the tooltip). The header and tooltip also name the PRs sharing issue rows. Filters and the kind tabs narrow the list and the `showing X–Y of N` line, never the counter.
 
 ### How you'll know something is waiting on you
+
+A verified trusted-author security notice without the live blocking sentinel label is informational, not the reason a human must act. Its tooltip says **Informational security notice (not a merge gate)**. An independent reviewer decision retains its quoted question with reviewer provenance. A login mentioned in that question is not an assignment or exclusive authority; neither that suggestion nor the PR author's identity supplies a decision owner. A real blocking sentinel label still names its security gate, even when a reviewer question also exists.
 
 The hive often parks work on a person: a decision asked at **045** / **085**, a PR at **090** ready for a human merge, an approval the hive's GitHub App cannot give (`needs-human`, `unauthorized`), or a contributor who has gone offline past their grace so the operator is the fallback. Those waits used to look like any other row ("PR in progress"); nothing added them up and nothing said so. Three surfaces now read one server block, `/api/stage-tracker` → `waiting_on_human` (`count`, `items[{repo, number, type, kind, since, who}]`), so a human wait is never silent:
 
@@ -276,13 +320,13 @@ A copy that then fails (closed unmerged, or red at two heads) reopens the origin
 
 #### Presence indicator on the waiting-on pill
 
-Every PR row that waits on a named person — `stage/071-needs-author`, `stage/072-returned-to-contributor` (before and after the nudge), `stage/017-possibly-existing` on a PR — carries `presence{login, state: online|offline|unknown, kind: clanker|human, since, last_seen, next: wait|adopt, adopt_at}`, read from the contributor hub's live presence (registered profile + relay heartbeat: the same lookup adoption consults, so the indicator and the adoption text never disagree) and projected through adoption's own clock ([hivecommons/hive#15051](https://github.com/hivecommons/hive/issues/15051)). The pill draws it just before the `@login`: a filled **dot** (`--cue-decision`, a soft breathe; none under `prefers-reduced-motion`) when the person's contributor agent is online, tooltip "@Danathar's clanker: online, last seen 2 min ago — hive is waiting for them"; a filled **square** (`--status-error`) when it is offline, "@hanthor's clanker: offline 26h — hive will adopt at 15:10 (in 38m)" (or "— hive is waiting for them" when `ask`/`never`/adoption-off holds the clock); a **hollow ring** when no contributor agent is registered here, "@zoe: no clanker registered — waiting for a human reply" with the pill reading `waiting on @zoe (human · no clanker)`.
+Every PR row that waits on a named person — `stage/071-needs-author`, `stage/072-returned-to-contributor` (before and after the nudge), `stage/017-possibly-existing` on a PR — carries `presence{login, state: online|offline|unknown, kind: clanker|human, since, last_seen, next: wait|adopt, adopt_at}` ([hivecommons/hive#15051](https://github.com/hivecommons/hive/issues/15051)). For a contributor agent, presence comes from the contributor hub's profile/relay heartbeat and uses the same adoption clock: a filled **dot** (`--cue-decision`, a soft breathe; none under `prefers-reduced-motion`) for an online clanker, a filled **square** (`--status-error`) for an offline clanker, and a **hollow ring** when that clanker is not registered here. These are agent states, never human availability. A human author carries only the person glyph and `unknown`: "Waiting on @zoe (human) — human availability is unknown; waiting for a human reply". No agent heartbeat, elapsed response time or GitHub activity becomes a human online/offline indicator or an implied ownership transfer.
 
 Shape, not colour alone, carries the state; the indicator has its own `aria-label` ("@hanthor: clanker offline — hive will adopt at …"). A row with presence but no adoption line (071, a 072 not yet nudged, a human's PR) gets a muted `waiting on @login` pill carrying the indicator; a nudged 072 row keeps its single amber adoption pill with the indicator inside it. The Needs-human popover shows the same line under the question when the waiting person is named, a per-PR sub-row under an issue mirrors it, and the row tooltip adds a `Presence:` line.
 
 It refreshes with the tracker like every other pill.
 
-**An offline clanker's PR that has not been returned.** A clanker-authored PR the engine has not classified yet (the chevron reads `PR in progress · @odttlnt's clanker`) carries the same `presence` for its author, with `next: wait` and no `adopt_at` — the adoption clock runs only at 072. When the clanker is offline (or not registered here) the chevron's holder gains a muted suffix with the state square: `PR in progress · @odttlnt's clanker · ■ offline 3h`, and the caption states the next automatic step: "@odttlnt's clanker is offline 3h; a green PR is reviewed and merged without its author — hive adopts it only once it is returned (red CI, conflicts or review asks) and nothing is pushed for 15m" (`governor.labels.stage.adoption.after_offline`). A green PR does not need its author online: review and merge admission run on the contributor lane regardless; adoption is the exit for a PR that is red, conflicting or asked to change while its clanker is away, never for a green one, and never for a human's PR.
+**An offline clanker's PR that has not been returned.** A clanker-authored PR the engine has not classified yet (the chevron reads `PR in progress · @odttlnt's clanker`) carries the same agent `presence`, with `next: wait` and no `adopt_at` — the automatic clock runs only at 072. When the clanker is offline (or not registered here) the chevron's holder gains a muted suffix with the state square: `PR in progress · @odttlnt's clanker · ■ offline 3h`, and the caption states the next automatic step: "@odttlnt's clanker is offline 3h; a green PR is reviewed and merged without its author — hive adopts it only once it is returned (red CI, conflicts or review asks) and nothing is pushed for 15m" (`governor.labels.stage.adoption.after_offline`). This automatic clanker projection does not infer a human's availability or an adoption request. Explicit adoption actions and provenance are separate; a returning human's activity does not silently undo an adoption.
 
 A contributor PR whose `stage/*` labels the write-back gate kept off GitHub (no opt-in label, see [What hive writes to GitHub, and when](../operator-reference.md#what-hive-writes-to-github-and-when)) is tracked from the engine's record alone: the record carries `labels_suppressed` and the tracker trusts its stage (085 reads *Needs human decision*, not *PR in progress*) even though the item's labels say nothing. Until this fix the tracker read the missing park label as a lifted park and dropped the record, so a dozen fork PRs parked at 085 for a human's decision sat under "PR in progress · @x's clanker" for hours while their clankers were offline.
 
@@ -511,9 +555,9 @@ Every PR at the gate now carries `merge_gate: {state, reason, sweep_running, las
 | 100 merge queue | **Merging** | — | ⟳ (static) — *Admitted and soaked; hive is merging it now (GitHub merge queue / merge window).* |
 | any stage while hive's merge call is in flight (`merge_gate.merging_since`, `merge_path`) | **Merging** | *merge call in flight*, then *merge landed* while the SPA holds the row | ⟳ (static) — *hive is merging it now (automerge sweep) — the merge call has been in flight since 3s ago.* |
 | any stage after GitHub refused hive's merge call (`merge_gate.state: merge-failed`, `merge_failed`, `merge_failed_kind`, `merge_failed_text`, `merge_failed_at`) | **Merge failed** | the refusal translated to a short phrase — *branch protection*, *needs rebase*, *not allowed*, *review required*, or *retrying* while the sweep is on it; never GitHub's raw text | 🕓 clock — *hive tried to merge this (maintainer merge from the dashboard) 9s ago and GitHub refused — branch protection blocks it. The lane re-evaluates it on its next pass. Details: 405 Pull Request is not mergeable* |
-| any stage after the merge call drew *N of M required status checks are expected* (`merge_failed_kind: checks-pending`, `merge_failed_checks`) | **Waiting for CI** | *4 checks* | ⟳ while the sweep is on it, else 🕓 — *hive tried to merge this (automerge sweep) 1m ago before its required checks had reported — 4 required checks haven't finished. It merges once they pass.* |
+| a queue/gate stage after the merge call drew *N of M required status checks are expected* (`merge_failed_kind: checks-pending`, `merge_failed_checks`) | **Waiting for CI** | *4 checks* | ⟳ while the sweep is on it, else 🕓 — *hive tried to merge this (automerge sweep) 1m ago before its required checks had reported — 4 required checks haven't finished. It merges once they pass.* |
 
-A merge outcome (**Merging**, **Merge failed**, **Waiting for CI**) lights the **Merge queue** column, whatever numeric stage the lane fell back to (hivecommons/docs#512 drew "Merge failed" in CI / Review because the PR sat at 060) — unless the PR is under repair. The chevron column follows the **current** state, never the highest stage the row once reached: a PR at 070 fixing, 071 needs-author, 072 returned-to-contributor, 074 adopted-by-hive or with a red required check lights **CI / Review** even while a stale `merge_gate` (`merge-failed` from the attempt that found the conflict) or a planner-ordered `merge_train` still rides on the record (hive's own #15574 read *Fixing · conflicting* under Merge queue with the caption *fell back to Fixing — … — conflicting*; the maintainer: "why is this in merge queue if it is being fixed?"). The "fell back to …" caption keeps the history; the column follows the fallback. One predicate decides both — `stageTrackerTrainUnderRepair` (Go, `stageTrackerItemColumn`) and `stageTrackerUnderRepair` (SPA, `stageTrackerAnchor`) — so train membership and column can never disagree; the 085 decision park is the one exception that rides no train yet stays at the gate, where the person decides.
+A live merge call or actual queue-stage refusal lights the **Merge queue** column. A premature merge call refused for pending PR-head checks does **not** admit a PR still at 050/060: it remains **CI / Review**, and the earlier refusal is retained as history rather than current CI proof. A preparation ticket does not change that placement; forge-owned queue entries and synthetic candidate validation remain separate observations. The chevron column follows the **current** state, never the highest stage the row once reached: a PR at 070 fixing, 071 needs-author, 072 returned-to-contributor, 074 adopted-by-hive or with a red required check lights **CI / Review** even while a stale `merge_gate` (`merge-failed` from the attempt that found the conflict) or a planner-ordered `merge_train` still rides on the record (hive's own #15574 read *Fixing · conflicting* under Merge queue with the caption *fell back to Fixing — … — conflicting*; the maintainer: "why is this in merge queue if it is being fixed?"). The "fell back to …" caption keeps the history; the column follows the fallback. Go's `stageTrackerItemColumn` and the SPA's `stageTrackerAnchor` apply the same precedence; the 085 decision park is the exception that rides no train yet stays at the gate, where the person decides.
 
 A refusal is scoped to the head it failed on. Once the PR head moves (merge-from-base, a new push) or the record falls back below 080 to wait on CI (`required-check-pending:*`) after the refusal, the chevron reads the live stage word (**CI running · build-and-test**, **Review pending**) and the refusal survives only in the hover — *merge attempt on previous head 92d4cef failed: branch protection* (`merge_gate.prior_head_merge_failed`, `prior_head_merge_failed_kind`, `prior_head_merge_failed_text`, `prior_head_merge_failed_at`, `prior_head_merge_failed_head`). The chevron and the caption never disagree about whether a merge is failing now ([#15611](https://github.com/hivecommons/hive/issues/15611); hive#15574 read "Merge failed · branch protection" over a caption waiting on CI for the new head).
 | 110 | **Merged** (the ✓ cap) | — | — |

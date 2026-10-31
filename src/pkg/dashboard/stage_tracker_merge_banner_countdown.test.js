@@ -54,11 +54,11 @@ function makeDom() {
 
 const BANNER_MS = 30000;
 const src = [
-  'const window = {};',
+  'const window = { _primaryRepo: "hivecommons/hive" };',
+  'const _stageTrackerFilter = { repo: "" };',
   'function esc(s) { return typeof s === "string" ? s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") : ""; }',
   'const _stageTrackerMerged = { server: { recent: [] } };',
   'const _stageTrackerPRTitle = {};',
-  'function stageTrackerMergedIdent(repo, n) { return repo + "#" + n; }',
   'function stageTrackerMergedByText() { return ""; }',
   'function stageTrackerReducedMotion() { return true; }',
   'function stageTrackerAfter(el, ev, ms, fn) { fn(); }',
@@ -67,6 +67,13 @@ const src = [
   pick(/function toastCountdownBar\(el, ms, onExpire\) \{[\s\S]*?\n    \}\n/, 'toastCountdownBar'),
   pick(/function toastCountdownCancel\(el\) \{[\s\S]*?\n    \}\n/, 'toastCountdownCancel'),
   pick(/function stageTrackerMergeBannerNumber\(b\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerNumber'),
+  pick(/function stageTrackerMergeBannerRepo\(b\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerRepo'),
+  pick(/const STAGE_TRACKER_REPO_TINTS = [^\n]*\n/, 'STAGE_TRACKER_REPO_TINTS'),
+  pick(/function stageTrackerRepoTint\(repo\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRepoTint'),
+  pick(/function stageTrackerRepoShort\(repo\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRepoShort'),
+  pick(/function stageTrackerIsPrimary\(repo, primary\) \{[\s\S]*?\n    \}\n/, 'stageTrackerIsPrimary'),
+  pick(/function stageTrackerRepoChipHtml\(repo, ctx\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRepoChipHtml'),
+  pick(/function stageTrackerPrimaryRepo\(\) \{[^\n]*\n/, 'stageTrackerPrimaryRepo'),
   pick(/function stageTrackerMergeBannerText\(b, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerText'),
   pick(/function stageTrackerMergeBanner\(b\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBanner'),
   pick(/function stageTrackerMergeBannerDismiss\(el\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerDismiss'),
@@ -75,7 +82,7 @@ const src = [
 
 function load() {
   const dom = makeDom();
-  const api = new Function('document', 'setTimeout', 'clearTimeout', src + '; return { banner: stageTrackerMergeBanner, dismiss: stageTrackerMergeBannerDismiss, hamBannerDismiss };')(dom.document, dom.setTimeout, dom.clearTimeout);
+  const api = new Function('document', 'setTimeout', 'clearTimeout', src + '; return { banner: stageTrackerMergeBanner, dismiss: stageTrackerMergeBannerDismiss, hamBannerDismiss, merged: _stageTrackerMerged, filter: _stageTrackerFilter, chip: stageTrackerRepoChipHtml };')(dom.document, dom.setTimeout, dom.clearTimeout);
   return Object.assign(dom, api);
 }
 
@@ -126,4 +133,68 @@ test('manual × dismiss clears the pending timer and the bar', () => {
   assert.ok(d.timers[0].cleared, 'auto-dismiss timer cleared so it cannot fire stale');
   assert.strictEqual(el._countdown, null);
   assert.ok(!el.children.some(c => c.className === 'toast-bar'), 'bar removed with the countdown');
+});
+
+test('merge banners reuse tracker chips and preserve repo-scoped actions for colliding PR numbers', () => {
+  const d = load();
+  d.merged.server.recent = [
+    { repo: 'other/hive', number: 528, title: 'other merge', url: 'https://github.com/other/hive/pull/528', lane: 'other lane' },
+    { repo: 'hivecommons/hive', number: 528, title: 'actual merge', url: 'https://github.com/hivecommons/hive/pull/528', lane: 'actual lane' },
+    { repo: 'acme/console', number: 528, title: 'console merge', url: 'https://github.com/acme/console/pull/528' },
+  ];
+  d.filter.repo = 'other/hive';
+  for (const repo of ['hivecommons/hive', 'other/hive', 'acme/console']) {
+    const rowKey = repo + '/issue#42';
+    const el = d.banner({ key: repo + '/pr#528', repo, number: 528, rowKey });
+    const chip = d.chip(repo, { repoChips: { primary: 'hivecommons/hive', active: d.filter.repo } });
+    assert.ok(el.innerHTML.includes(chip + ' <span class="merge-banner-num">#528</span> merged'), 'exact existing chip markup');
+    assert.strictEqual(el.getAttribute('data-ham-row'), rowKey);
+    assert.ok(el.innerHTML.includes(`data-action="hamBannerShowRow" data-arg0="${rowKey}" data-stop="1">Show row`));
+    assert.ok(el.innerHTML.includes(`href="https://github.com/${repo}/pull/528" target="_blank" rel="noopener">Open on GitHub`));
+    assert.ok(el.innerHTML.includes('data-action="hamMergedOpen" data-stop="1">All merges'));
+    const expected = d.merged.server.recent.find(e => e.repo === repo);
+    assert.ok(el.innerHTML.includes(expected.title), 'metadata belongs to actual event repo');
+    for (const other of d.merged.server.recent.filter(e => e.repo !== repo)) {
+      assert.ok(!el.innerHTML.includes(other.url), 'no other repo URL borrowed');
+      assert.ok(!el.innerHTML.includes(other.title), 'no other repo title borrowed');
+    }
+  }
+});
+
+test('banner identity comes from event fields, never the primary repo or current filter', () => {
+  const d = load();
+  d.filter.repo = 'unrelated/selected';
+  const events = [
+    { repo: 'acme/console', number: 528 },
+    { pr: { repo: 'acme/console', number: 528 } },
+    { key: 'acme/console/pr#528' },
+    { repo: 'console', key: 'acme/console/pr#528' },
+    { url: 'https://github.com/acme/console/pull/528' },
+    { pr: { url: 'https://github.com/acme/console/pull/528', number: 528 } },
+  ];
+  for (const event of events) {
+    const el = d.banner(event);
+    assert.ok(el.innerHTML.includes('data-action="hamRepoChip" data-arg0="acme/console"'));
+    assert.ok(el.innerHTML.includes('href="https://github.com/acme/console/pull/528"'));
+    assert.ok(!el.innerHTML.includes('hivecommons/hive'));
+    assert.ok(!el.innerHTML.includes('unrelated/selected'));
+  }
+  const unknown = d.banner({ number: 528 });
+  assert.ok(!unknown.innerHTML.includes('ham-repo-chip'), 'no repository identity means no chip');
+  assert.ok(!unknown.innerHTML.includes('Open on GitHub'), 'no guessed repository link');
+  assert.ok(unknown.innerHTML.includes('All merges'), 'merged list remains available');
+  const short = d.banner({ repo: 'console', number: 528 });
+  assert.ok(short.innerHTML.includes('data-arg0="console"'), 'explicit short audit identity is retained');
+  assert.ok(!short.innerHTML.includes('Open on GitHub'), 'short identity does not invent an owner');
+});
+
+test('merge repo chips use the existing escaping and preview behavior', () => {
+  const d = load();
+  const repo = 'acme/<console"&>';
+  const el = d.banner({ repo, number: 528, preview: true, rowKey: repo + '/pr#528' });
+  assert.ok(el.innerHTML.includes(d.chip(repo, { repoChips: { primary: 'hivecommons/hive', active: '' } })));
+  assert.ok(el.innerHTML.includes('data-arg0="acme/&lt;console&quot;&amp;&gt;"'));
+  assert.ok(!el.innerHTML.includes('<console'));
+  assert.ok(!el.innerHTML.includes('Open on GitHub'), 'preview does not invent a GitHub URL');
+  assert.ok(el.innerHTML.includes('(test)'));
 });

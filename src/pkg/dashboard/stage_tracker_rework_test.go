@@ -88,7 +88,7 @@ func TestStageTrackerReworkFor(t *testing.T) {
 			rec: stagelabels.Record{Stage: stagelabels.ReturnedToContributor, EnteredAt: requested, NudgeHead: "aaa", FirstNudgeAt: requested, LastNudgeAt: requested, NudgeCount: 1, RerouteTo: "kai", RerouteHead: "000"}, hasRec: true, fixWork: rerouted,
 			state: "requested", actor: "zoe", since: requested, reqAtFrom: requested},
 		{name: "new head pushed", it: pr("bbb", tp(-3*time.Minute)), login: "zoe", stage: stagelabels.ReturnedToContributor, rec: nudged, hasRec: true, fixWork: inflight,
-			state: "pushed", evidence: "commit", actor: "zoe", since: now.Add(-3 * time.Minute), head: "bbb", reqAtFrom: requested},
+			state: "pushed", evidence: "commit", actor: "zoe", head: "bbb", reqAtFrom: requested},
 		// hivecommons/hive#16021: the author force-pushed (rebased commits
 		// keep their old dates; the list payload's updated_at predates the
 		// ask), the sweep re-entered 071 for the new red head and re-nudged
@@ -128,7 +128,10 @@ func TestStageTrackerReworkFor(t *testing.T) {
 			if got.RequestedAt == nil || !got.RequestedAt.Equal(tc.reqAtFrom) {
 				t.Fatalf("requested_at = %v, want %v", got.RequestedAt, tc.reqAtFrom)
 			}
-			if got.Since == nil || !got.Since.Equal(tc.since) {
+			if tc.since.IsZero() && got.Since != nil {
+				t.Fatalf("unknown push time became a PR update timestamp: %v", got.Since)
+			}
+			if !tc.since.IsZero() && (got.Since == nil || !got.Since.Equal(tc.since)) {
 				t.Fatalf("since = %v, want %v", got.Since, tc.since)
 			}
 		})
@@ -251,7 +254,7 @@ const adopt = Object.assign({}, working, { stage: 72, adoption: { author: 'Danat
 const achip = stageTrackerAdoptionChipHtml(adopt);
 assert.ok(/@Danathar · working<\/span>$/.test(achip), achip);
 assert.ok(achip.includes("picked up the rework 5 min ago"), achip);
-assert.strictEqual(stageTrackerAdoptionChipText(Object.assign({}, adopt, { adoption: Object.assign({}, adopt.adoption, { blocked_by: 'x' }) })), 'not adopted', 'a blocked adoption keeps its own word');
+assert.strictEqual(stageTrackerAdoptionChipText(Object.assign({}, adopt, { adoption: Object.assign({}, adopt.adoption, { blocked_by: 'x' }) })), 'adoption blocked', 'a blocked adoption keeps its own word');
 // Event line: the stage does not change, the pickup does.
 const states = (items) => stageTrackerStateMap(items);
 const before = states([requested]), after = states([acked]);

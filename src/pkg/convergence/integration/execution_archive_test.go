@@ -69,6 +69,62 @@ func executionSignArchive(t *testing.T, archive *ExecutionArchive, key *rsa.Priv
 	archive.Token = signed
 }
 
+func TestExecutionV2GovernanceArchiveRejectsMissingFalseGreenOrForeignPhysicalChecks(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"passed", "missing", "foreign-check", "foreign-suite", "skipped", "metadata", "protocol", "superseded-false-green"} {
+		t.Run(scenario, func(t *testing.T) {
+			proof := executionProofFixture()
+			proof.State, proof.ObservedState = Passed, Passed
+			proof.Archive = executionSignedArchive(t, proof, key)
+			contexts := map[string]forgestate.IntegrationContextReceipt{}
+			for i, name := range forgestate.IntegrationRequiredContexts() {
+				record := forgestate.IntegrationContextReceipt{JobID: int64(100 + i), CheckID: int64(200 + i),
+					AppID: 15368, SuiteID: proof.Archive.SuiteID, Conclusion: "success"}
+				contexts[name] = record
+				proof.Archive.CheckIDs = append(proof.Archive.CheckIDs, record.CheckID)
+			}
+			metadata, protocol := strings.Repeat("a", 64), "integration-producer-receipt-v2"
+			record := contexts["DCO"]
+			switch scenario {
+			case "missing":
+				delete(contexts, "DCO")
+			case "foreign-check":
+				record.CheckID = 9999
+				contexts["DCO"] = record
+			case "foreign-suite":
+				record.SuiteID++
+				contexts["DCO"] = record
+			case "skipped", "superseded-false-green":
+				record.Conclusion = "skipped"
+				contexts["DCO"] = record
+				if scenario == "superseded-false-green" {
+					proof.State = Superseded
+				}
+			case "metadata":
+				metadata = ""
+			case "protocol":
+				protocol = "unbound"
+			}
+			proof.Archive.Payload, err = json.Marshal(map[string]any{
+				"schema": 2, "protocol": protocol, "subject": proof.Subject,
+				"runID": strconv.FormatInt(proof.RunID, 10), "runAttempt": strconv.Itoa(proof.Attempt),
+				"contexts": contexts, "metadataDigest": metadata,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			executionSignArchive(t, proof.Archive, key, proof.Subject.Repo, proof.RunID, proof.Attempt)
+			err = validateExecutionArchive(proof)
+			if (scenario == "passed") != (err == nil) {
+				t.Fatalf("scenario %s: %v", scenario, err)
+			}
+		})
+	}
+}
+
 func TestExecutionMaterializerPrivateReplayAndPartialPrefix(t *testing.T) {
 	store, cfg, in := executionAdmissionFixture(t)
 	admitted, err := store.PlanExecution(cfg, in)

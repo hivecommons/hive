@@ -44,6 +44,7 @@ github.com/hivecommons/hive/pkg/hivestate
 github.com/hivecommons/hive/pkg/hooks
 github.com/hivecommons/hive/pkg/housestyle
 github.com/hivecommons/hive/pkg/hub
+github.com/hivecommons/hive/pkg/hubactivity
 github.com/hivecommons/hive/pkg/hubbackup
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
