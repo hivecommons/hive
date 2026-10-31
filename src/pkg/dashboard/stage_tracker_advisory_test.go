@@ -293,7 +293,7 @@ const ordinary = { repo: 'o/r', number: 2, kind: 'issue', stage: 0, caption: 'No
 const ids = as => as.map(a => a.id);
 const ctx = { user: true, canHold: true, canHuman: true };
 const as = stageTrackerRowActions(empty, ctx);
-assert.deepStrictEqual(ids(as), ['decide:close-read', 'hold', 'retry', 'needs-human', 'open', 'copy'], ids(as).join(','));
+assert.deepStrictEqual(ids(as), ['decide:close-read', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy'], ids(as).join(','));
 assert.strictEqual(as[0].label, 'Close now');
 assert.ok(as[0].lead && as[0].enabled, JSON.stringify(as[0]));
 assert.ok(as[0].hint.startsWith('nothing found'), as[0].hint);

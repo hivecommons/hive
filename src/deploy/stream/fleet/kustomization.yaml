@@ -1,0 +1,21 @@
+# hivecommonsfleet: the hub-wide monitor's own Twitch broadcast
+# (hivecommons/hive#15966, RFC #15861). Independent of ../k8s and
+# ../overlays/hive-hosted, which keep running twitch.tv/hivecommons unchanged:
+# its own namespace, Deployment, ConfigMap, stream-key Secret name and
+# NetworkPolicy, so neither stream can disturb or reuse the other.
+#
+# DISABLED BY DEFAULT, three times over: replicas 0, STREAM_ENABLED "false",
+# and STREAM_PROFILE=public-safe, whose gate (../public-safe-gate.sh) refuses to
+# start the encoder without the owner's enable, policy acknowledgement, a real
+# public-safe source and an installed stream key. Enabling is an owner action:
+# src/docs/streaming-the-activity-monitor.md#the-hivecommonsfleet-broadcast
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hive-stream-fleet
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - networkpolicy.yaml
+# secret.yaml is deliberately NOT a resource: it documents the one Secret the
+# owner creates with `kubectl create secret` (see the file header).

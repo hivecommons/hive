@@ -4459,6 +4459,9 @@
     /* The author `display: block` above outranks the UA `[hidden] { display: none }`
        rule, so without this the portal stayed on screen after `portal.hidden = true`. */
     .config-tooltip-portal[hidden] { display: none; }
+    .contributor-online-tooltip { max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; overflow-wrap: anywhere; }
+    .contributor-online-ids { display: block; list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
+    .contributor-online-ids li { display: block; }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: none; }
     .section-help-mark { text-decoration: none; }
     .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }
@@ -7432,7 +7435,7 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
+      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count contributor-online-trigger" tabindex="0" role="link" aria-label="Contributors" data-keydown-action="ocNavigate" data-arg0="contributors-section" data-zero hidden>0/0</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Intelligence</div>
@@ -7503,7 +7506,6 @@
        block turns it on. Its id is registered in OVERLAY_SELECTOR so the
        existing installModalScrollLock() observer body-locks scroll for free. -->
   <div id="oc-drawer-backdrop"></div>
-
   <!-- Light top bar (hidden by default) -->
   <header id="oc-topbar" class="oc-topbar">
     <div class="oc-topbar-left">
@@ -17241,6 +17243,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ak = item.author_kind || '';
       // Plain words for author_kind in hover text (hivecommons/hive#15394).
       const akPlain = { human: 'person', clanker: 'agent', hive: 'hive', bot: 'bot' };
+      // How the kind was read: author/<kind> label (said nothing), hive
+      // markers, or the author's contributor-hub profile (hivecommons/hive#16015).
+      const akSource = { inferred: ', inferred', registry: ', registered contributor' }[item.author_kind_source] || '';
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const sinceMs = Date.parse(item.stage_since || '');
       const trail = stageTrackerTrailText(item);
@@ -17248,7 +17253,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const lines = openHeld
         ? [stageTrackerHeadline(item) + (item.caption || item.reason ? ' · ' + (item.caption || item.reason) : '') + (item.repo ? ' · ' + item.repo : '')]
         : [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
-      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (' + (akPlain[ak] || ak) + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
+      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (' + (akPlain[ak] || ak) + akSource + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : ''));
@@ -17402,7 +17407,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        request still on the wire) is a different thing drawn on the chevron;
        this badge appears once the server has recorded the action. */
     const STAGE_TRACKER_ACTED_LABELS = {
-      approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed',
+      approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed', 'close-issue': 'Close issue',
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
       'queue-merge': 'Approve and let hive merge', 'merge-now': 'Merge now as maintainer',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
@@ -17520,7 +17525,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Row-menu action id each ledger action was submitted under, so the
     // option the owner just took is not offered back to them.
-    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'close-read': 'decide:close-read', 'accept-triage': 'accept-triage', hold: 'hold', 'merge-now': 'decide:merge-now', 'queue-merge': 'decide:queue-merge', 're-author': 'decide:re-author', adopt: 'decide:adopt', 'adopt-now': 'decide:adopt-now', reroute: 'decide:reroute' };
+    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'close-read': 'decide:close-read', 'close-issue': 'decide:close-issue', 'accept-triage': 'accept-triage', hold: 'hold', 'merge-now': 'decide:merge-now', 'queue-merge': 'decide:queue-merge', 're-author': 'decide:re-author', adopt: 'decide:adopt', 'adopt-now': 'decide:adopt-now', reroute: 'decide:reroute' };
     // Pure: what the owner can still do when their action changed nothing
     // (no-op) or the item has not moved (stuck): the enabled options from
     // the row's decision_needed payload, minus the one just taken.
@@ -17616,9 +17621,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The since column is an empty spacer here (same width as the strip
     // row's, which carries the time on step): a wrapped title must not float
     // the age away from the chevrons it describes.
-    function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml) {
+    function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml, prTargetKey) {
       const wide = !(prRefs && prRefs.length);
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
+      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr"${prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -17669,7 +17674,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // PRs under it (the superseded-by prompt pre-fills the one sibling).
     function stageTrackerLinkedPRItem(issue, lp) {
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x, issue)) : [];
-      return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+      const canonical = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/.exec(String(lp.url || ''));
+      return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null,
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
@@ -18085,12 +18091,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nowMs = Number(ctx.nowMs) || Date.now();
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
-      let prRefs = [], shown = item, range = null, subs = '', subRows = null;
+      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '';
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
+          const pr = stageTrackerLinkedPRItem(item, lp);
+          prTargetKey = stageTrackerItemKey(pr);
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
@@ -18142,6 +18150,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <span class="ham-title ham-no-issue-t">${esc(li.text)}</span>
           </div>`;
+        if (typeof stageTrackerLinkedIssueToolsHtml === 'function') leadHtml += stageTrackerLinkedIssueToolsHtml(item);
       }
       const prs = typeof stageTrackerRowPRKeys === 'function' ? stageTrackerRowPRKeys(item) : '';
       const trainKey = typeof stageTrackerTrainKey === 'function' ? stageTrackerTrainKey(item) : '';
@@ -18150,7 +18159,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''), prTargetKey)}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
@@ -20478,6 +20487,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:close-read': 'Close now',
+      'decide:close-issue': 'Close issue',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:re-author': 'Re-author as hive PR',
@@ -20494,7 +20504,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGE_ACTIONS = ['decide:queue-merge', 'decide:merge-now'];
     // Generic items every row has; a server-named decision option with one
     // of these ids is not repeated at the top of the menu.
-    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt'];
+    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt', 'decide:close-issue'];
+    const _stageTrackerCloseIssueBusy = new Set();
     // Accept triage shows on an issue the chevron calls "Triage needed":
     // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
     // 045). A needs-triage left on a claimed or covered issue is reported
@@ -20603,12 +20614,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!d || !Array.isArray(d.items)) return null;
       for (const it of d.items) if (stageTrackerItemKey(it) === key) return it;
       for (const it of d.items) {
+        for (const li of (Array.isArray(it.linked_issues) ? it.linked_issues : [])) {
+          const issue = { repo: it.repo, number: li.number, kind: 'issue', title: li.title || '', url: li.url || '', state: li.state || '' };
+          if (stageTrackerItemKey(issue) === key) return issue;
+        }
         for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
           const pr = stageTrackerLinkedPRItem(it, lp);
           if (stageTrackerItemKey(pr) === key) return pr;
         }
       }
       return null;
+    }
+    // Linked issues in a PR-only view still have their own exact target.
+    function stageTrackerLinkedIssueToolsHtml(item) {
+      return (Array.isArray(item.linked_issues) ? item.linked_issues : []).filter(li => li && Number(li.number) > 0 && li.state === 'open').map(li => {
+        const issue = { repo: item.repo, number: li.number, kind: 'issue' };
+        const ref = stageTrackerRefOf(issue);
+        return `<span class="ham-badge" data-ham-sub-key="${esc(stageTrackerItemKey(issue))}">Issue #${Number(li.number)} <button type="button" class="ham-kebab" aria-label="Actions for ${esc(ref)}" aria-haspopup="menu" data-action="hamRowMenu" data-arg-types="e,t" data-stop="1" data-prevent="1">⋯</button></span>`;
+      }).join('');
     }
     function stageTrackerItemsForKeys(keys) {
       return keys.map(k => stageTrackerItemByKey(_stageTracker, k)).filter(Boolean);
@@ -20886,6 +20909,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
+      if (item.kind === 'issue' && String(item.state || '').toLowerCase() !== 'closed') out.push(Object.assign({ id: 'decide:close-issue', label: 'Close issue…', danger: true, hint: 'only this issue · completed' }, stageTrackerActionAllowed('decide:close-issue', ctx)));
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
       return out;
@@ -21220,10 +21244,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The row (or nested PR) an event happened on, as the items a menu acts
     // on: a selected row with company stands for the whole selection.
     function stageTrackerMenuTargets(target) {
-      const sub = target && target.closest ? target.closest('[data-ham-sub-key]') : null;
+      const sub = target && target.closest ? target.closest('[data-ham-sub-key], [data-ham-target-key]') : null;
       const row = target && target.closest ? target.closest('.ham-row[data-ham-key]') : null;
       if (!row && !sub) return null;
-      const key = sub ? sub.dataset.hamSubKey : row.dataset.hamKey;
+      const key = sub ? (sub.dataset.hamTargetKey || sub.dataset.hamSubKey) : row.dataset.hamKey;
       const list = row ? row.parentNode : sub.closest('#activity-monitor-panel');
       const keys = _stageTrackerSel.has(key) && _stageTrackerSel.size > 1 && list ? stageTrackerRowKeys(list).filter(k => _stageTrackerSel.has(k)) : [key];
       return { items: stageTrackerItemsForKeys(keys), restore: sub ? (sub.querySelector('.ham-kebab') || row) : row };
@@ -21620,6 +21644,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
         case 'blocker:recheck': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/recheck', body: {} };
         case 'blocker:close-partial': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/close-partial', body: { comment: payload.comment || '' } };
+        case 'decide:close-issue': return item.kind !== 'issue' || String(item.state || '').toLowerCase() === 'closed' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'close-issue', comment: payload.comment || '', type: 'issue' } };
       }
       if (id === 'decide:delegate' || id === 'decide:delegate:rerun') {
         const body = { type, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' };
@@ -21776,6 +21801,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          if (id === 'decide:close-issue' && data.status !== 'closed' && data.status !== 'refused') throw new Error(data.error || 'The server did not confirm that the issue closed');
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
           if (req.poll && !stageTrackerDelegatedDone(data)) {
             showToast('Hive is deciding ' + stageTrackerRefOf(it) + '…', 'info');
@@ -22321,6 +22347,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         case 'decide:close-read':
           return (await stageTrackerAsk(id, 'confirm', { title: 'Close advisory', message: stageTrackerAdvisoryCloseMessage(items, refs, who), confirmLabel: 'Close' })) ? {} : null;
+        case 'decide:close-issue': {
+          const item = items[0];
+          // This destructive exact-issue action always asks; no confirmation opt-out.
+          const v = await hivePrompt({ title: 'Close issue', label: 'Close ' + refs + ' — ' + (item.title || 'Untitled issue') + ' as completed, as ' + who + '? Only this issue closes; linked pull requests and other issues stay unchanged. An attributed closing note is posted. Additional comment (optional):', placeholder: 'Optional closing comment', confirmLabel: 'Close issue', danger: true });
+          return v == null ? null : { comment: v };
+        }
         case 'decide:merge-now': {
           const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
           if (items.some(stageTrackerNeedsRebase)) {
@@ -22440,7 +22472,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
-      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
+      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
@@ -22460,7 +22492,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // The ledger name of a row action id (the inverse of the badge's
     // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
-    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
     // A failed or refused action is noted on the row at once, so the
     // history badge turns red and its hover's first line names the reason
     // — the server's ledger only sees 5xx and refused answers, and a
@@ -22490,7 +22522,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: the state signature a toast / acting row waits to see change.
     function stageTrackerItemState(it) {
       if (!it) return '';
-      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '') + (it.rebase_merge && it.rebase_merge.state ? '|rm:' + it.rebase_merge.state : '') + (it.rebase && it.rebase.text ? '|rb:' + it.rebase.text : '');
+      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '') + (it.state ? '|state:' + it.state : '') + (it.rebase_merge && it.rebase_merge.state ? '|rm:' + it.rebase_merge.state : '') + (it.rebase && it.rebase.text ? '|rb:' + it.rebase.text : '');
     }
     function stageTrackerTargetKey(target) {
       return target && target.number ? stageTrackerItemKey({ repo: target.repo, kind: target.kind === 'pr' ? 'pr' : 'issue', number: target.number }) : '';
@@ -22750,11 +22782,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
       if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
     }
+    // A copy must identify the selected item, not its parent issue or a
+    // decision target. Keep the canonical URL (including its forge host).
+    function stageTrackerCopyLink(item) {
+      if (!item || (item.kind !== 'issue' && item.kind !== 'pr')) return '';
+      const url = String(item.url || '');
+      const m = /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/(issues|pull)\/(\d+)(?:[?#].*)?$/.exec(url);
+      return m && m[1] === (item.kind === 'pr' ? 'pull' : 'issues') && Number(m[2]) === Number(item.number) && Number(item.number) > 0 ? url : '';
+    }
     async function runRowAction(action, row) {
       let items = Array.isArray(row) ? row.slice() : (row ? [row] : []);
       const id = action;
       const rows = items.slice();
       if (!items.length) return { toasts: [], pending: [] };
+      if (id === 'decide:close-issue') {
+        // Never remap an issue close through its covering PR or fan it out.
+        if (items.length !== 1 || !stageTrackerActionRequest(items[0], id)) {
+          stageTrackerNothingToActOn(id, rows);
+          return { toasts: [], pending: [] };
+        }
+        const key = stageTrackerItemKey(items[0]);
+        if (_stageTrackerCloseIssueBusy.has(key) || _stageTrackerPending.some(p => p.keys.indexOf(key) >= 0)) return { toasts: [], pending: [] };
+        _stageTrackerCloseIssueBusy.add(key);
+        try {
+          const payload = await stageTrackerActionPayload(items, id, rows);
+          if (payload == null) return { toasts: [], pending: [], cancelled: true };
+          const results = await stageTrackerRunActions(items, id, payload, rows);
+          return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };
+        } finally {
+          _stageTrackerCloseIssueBusy.delete(key);
+        }
+      }
       if (id === 'open') {
         for (const it of items) if (it.url) window.open(it.url, '_blank', 'noopener');
         return { toasts: [], pending: [] };
@@ -22770,10 +22828,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return { toasts: [], pending: [] };
       }
       if (id === 'copy') {
-        const text = items.map(it => it.url).filter(Boolean).join('\n');
         try {
+          const links = items.map(stageTrackerCopyLink);
+          if (links.some(url => !url)) throw new Error('No matching GitHub link for the selected item — refresh the tracker and try again');
           if (!navigator.clipboard) throw new Error('clipboard unavailable');
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(links.join('\n'));
           showToast(items.length > 1 ? 'Copied ' + items.length + ' links' : 'Link copied', 'success');
         } catch (e) { showToast('Could not copy: ' + (e && e.message ? e.message : 'clipboard unavailable'), 'error'); }
         return { toasts: [], pending: [] };
@@ -22956,7 +23015,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // kind → { name, bytes (ArrayBuffer), buffer (AudioBuffer|null), failed }
     var _stageTrackerClips = { open: null, merge: null };
     var _stageTrackerSettingsReturnFocus = null;
-
     function stageTrackerPRKey(repo, number) { return (repo || '') + '/pr#' + (Number(number) || 0); }
     function stageTrackerItemKey(it) { return (it.repo || '') + '/' + (it.kind || '') + '#' + (Number(it.number) || 0); }
 
@@ -42907,8 +42965,21 @@ function burnAreaChart() {
       const totalCount = pool.registered;
       const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
       // Same two-part pill as Governor / Overview: "online/total".
-      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
+      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);
       navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
+      if (sidebarBadge) {
+        // Reuse the tooltip node across refreshes so the pill does not grow
+        // one hidden span per poll.
+        let tooltip = sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (!tooltip) {
+          tooltip = document.createElement('span');
+          tooltip.className = 'config-tooltip contributor-online-tooltip';
+          tooltip.hidden = true;
+          sidebarBadge.appendChild(tooltip);
+        }
+        tooltip.innerHTML = contributorsOnlineTooltip(pool);
+        if (_configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
+      }
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
         statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
@@ -42917,7 +42988,19 @@ function burnAreaChart() {
       }
     }
 
-    // contributorsOnlineTitle is the pill tooltip: "3 online · 12 registered
+    function contributorsOnlineTooltip(pool) {
+      const online = Number(pool.online) || 0;
+      const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
+      const ids = pool.online_ids;
+      if (!Array.isArray(ids) || ids.length !== online || ids.some(id => typeof id !== 'string' || !id)) {
+        return summary + '<div>Online ClankeR IDs unavailable</div>';
+      }
+      if (!ids.length) return summary + '<div>No ClankeRs online</div>';
+      return summary + '<div>Online ClankeRs</div><ul class="contributor-online-ids">' +
+        ids.map(id => '<li>' + esc(id) + '</li>').join('') + '</ul>';
+    }
+
+    // contributorsOnlineTitle is the presence summary: "3 online · 12 registered
     // (heartbeat within 15m)". The window is the hub's presence_window, the
     // same one the tracker's "(offline 13m)" caption is judged against.
     function contributorsOnlineTitle(online, total, window) {
@@ -45431,7 +45514,7 @@ function burnAreaChart() {
     }
 
     function configTooltipPointerOver(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { scheduleConfigTooltipOpen(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       // Pointer is over something else: a sibling, a modal overlay that now
@@ -45441,13 +45524,13 @@ function burnAreaChart() {
 
     function configTooltipPointerOut(target, relatedTarget) {
       if (configTooltipOwns(relatedTarget)) return;
-      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info')) return;
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info, .contributor-online-trigger')) return;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info || configTooltipOwns(target)) scheduleConfigTooltipHide();
     }
 
     function configTooltipFocusIn(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { positionConfigTooltip(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       if (configTooltipIsOpen()) hideConfigTooltip();
@@ -45463,7 +45546,7 @@ function burnAreaChart() {
     document.addEventListener('focusin', (e) => configTooltipFocusIn(e.target));
     document.addEventListener('focusout', (e) => configTooltipFocusOut(e.target, e.relatedTarget));
     document.addEventListener('click', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); });
-    window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true);
+    window.addEventListener('scroll', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); }, true);
     window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); });
 
     // ── Event delegation for actions with user-controlled data ──

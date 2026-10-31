@@ -132,7 +132,7 @@
     }
 
     function configTooltipPointerOver(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { scheduleConfigTooltipOpen(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       // Pointer is over something else: a sibling, a modal overlay that now
@@ -142,13 +142,13 @@
 
     function configTooltipPointerOut(target, relatedTarget) {
       if (configTooltipOwns(relatedTarget)) return;
-      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info')) return;
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info, .contributor-online-trigger')) return;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info || configTooltipOwns(target)) scheduleConfigTooltipHide();
     }
 
     function configTooltipFocusIn(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { positionConfigTooltip(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       if (configTooltipIsOpen()) hideConfigTooltip();
@@ -164,7 +164,7 @@
     document.addEventListener('focusin', (e) => configTooltipFocusIn(e.target));
     document.addEventListener('focusout', (e) => configTooltipFocusOut(e.target, e.relatedTarget));
     document.addEventListener('click', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); });
-    window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true);
+    window.addEventListener('scroll', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); }, true);
     window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); });
 
     // ── Event delegation for actions with user-controlled data ──

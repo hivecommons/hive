@@ -456,6 +456,9 @@
     /* The author `display: block` above outranks the UA `[hidden] { display: none }`
        rule, so without this the portal stayed on screen after `portal.hidden = true`. */
     .config-tooltip-portal[hidden] { display: none; }
+    .contributor-online-tooltip { max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; overflow-wrap: anywhere; }
+    .contributor-online-ids { display: block; list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
+    .contributor-online-ids li { display: block; }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: none; }
     .section-help-mark { text-decoration: none; }
     .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }

@@ -21,14 +21,17 @@ function load() {
     const el = { id, attrs, textContent: '', hidden: false, title: '',
       setAttribute(k, v) { attrs[k] = String(v); },
       removeAttribute(k) { delete attrs[k]; },
-      querySelector() { return null; },
+      children: [],
+      querySelector(sel) { return this.children.find(c => sel === '.' + c.className.split(' ').pop()) || null; },
+      appendChild(child) { this.children.push(child); return child; },
       classList: { toggle() {} },
     };
     elements.set(id, el);
     return el;
   }
   IDS.concat(['activity-monitor-panel']).forEach(element);
-  const document = { hidden: false, getElementById: id => elements.get(id) || null };
+  const document = { hidden: false, getElementById: id => elements.get(id) || null,
+    createElement: tag => ({ tag, className: '', hidden: false, innerHTML: '' }) };
   const ctx = vm.createContext({ document, window: {}, console, Number,
     setTimeout(cb, ms) { const id = ++nextTimer; timers.set(id, { cb, at: now + ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
@@ -67,10 +70,13 @@ function load() {
     function stageTrackerWaitingToast() {}
     function stageTrackerActedAgo() { return ''; }
     function setIfChanged(el, text) { el.innerHTML = text; }
+    var _configTooltipTrigger = null;
+    function positionConfigTooltip() {}
+    function esc(s) { return String(s); }
   `, ctx);
   for (const [file, names] of [
     ['knowledge', ['sidebarPairBadgeText', 'setSidebarPairBadge', 'setSidebarCountBadge', 'kbTotalFactsFromStats', 'kbFactsLabel', 'kbSidebarFactCount', 'fetchKnowledgeStats']],
-    ['contributors', ['contributorsOnlineTitle', 'updateContributorBadge']],
+    ['contributors', ['contributorsOnlineTitle', 'contributorsOnlineTooltip', 'updateContributorBadge']],
     ['tracker-waiting', ['stageTrackerWaitingOnYou', 'stageTrackerWaitingTitle', 'stageTrackerWaitKindWords', 'stageTrackerRenderWaiting']],
     ['tracker-words-stage', ['stageTrackerDefaultFilter']],
     ['tracker-filter-render', ['renderStageTracker']],

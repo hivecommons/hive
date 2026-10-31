@@ -304,7 +304,8 @@ type StageTrackerItem struct {
 	BucketReason string `json:"bucket_reason,omitempty"`
 	// AuthorKind is human / clanker / hive ("" = unknown) and
 	// AuthorKindSource says whether it came from an author/<kind> label
-	// ("label") or was inferred from the PR's hive markers ("inferred").
+	// ("label"), was inferred from the PR's hive markers ("inferred") or
+	// from the author's contributor-hub registration ("registry").
 	AuthorKind       string `json:"author_kind,omitempty"`
 	AuthorKindSource string `json:"author_kind_source,omitempty"`
 	// Tier is the author/<tier> admission label without its prefix.
@@ -886,8 +887,28 @@ const (
 	authorKindLabelPfx = "author/"
 	authorKindSrcLabel = "label"
 	authorKindSrcInfer = "inferred"
-	botLoginSuffix     = "[bot]"
+	// authorKindSrcRegistry: the author has a contributor-hub profile on
+	// this hive, so its connected clanker pushed the item (authorkind rule
+	// "registry", the same one the stage engine applies).
+	authorKindSrcRegistry = "registry"
+	botLoginSuffix        = "[bot]"
 )
+
+// stageTrackerRegistryAuthorKind overlays the contributor-hub registry on
+// an inferred author kind, mirroring pkg/authorkind rule 6 (RelayKnown →
+// Clanker) so the tracker row and its claimant agree with the stage
+// engine's own classification (hivecommons/hive#16015). An author/<kind>
+// label and a hive (App-authored) verdict are stronger and stand; a
+// registered contributor's login otherwise reads clanker, source registry.
+func stageTrackerRegistryAuthorKind(kind, source, author string, isClankerOwner func(string) bool) (string, string) {
+	if source == authorKindSrcLabel || kind == authorKindHive || isClankerOwner == nil {
+		return kind, source
+	}
+	if author = strings.TrimSpace(author); author == "" || !isClankerOwner(author) {
+		return kind, source
+	}
+	return authorKindClanker, authorKindSrcRegistry
+}
 
 // stageTrackerBranchFrom says which main segment a detour stage hangs off.
 // The PR strip collapses 050 and 060 into one "CI / Review" chevron (060 is

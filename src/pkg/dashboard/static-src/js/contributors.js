@@ -514,8 +514,21 @@
       const totalCount = pool.registered;
       const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
       // Same two-part pill as Governor / Overview: "online/total".
-      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
+      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);
       navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
+      if (sidebarBadge) {
+        // Reuse the tooltip node across refreshes so the pill does not grow
+        // one hidden span per poll.
+        let tooltip = sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (!tooltip) {
+          tooltip = document.createElement('span');
+          tooltip.className = 'config-tooltip contributor-online-tooltip';
+          tooltip.hidden = true;
+          sidebarBadge.appendChild(tooltip);
+        }
+        tooltip.innerHTML = contributorsOnlineTooltip(pool);
+        if (_configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
+      }
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
         statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
@@ -524,7 +537,19 @@
       }
     }
 
-    // contributorsOnlineTitle is the pill tooltip: "3 online · 12 registered
+    function contributorsOnlineTooltip(pool) {
+      const online = Number(pool.online) || 0;
+      const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
+      const ids = pool.online_ids;
+      if (!Array.isArray(ids) || ids.length !== online || ids.some(id => typeof id !== 'string' || !id)) {
+        return summary + '<div>Online ClankeR IDs unavailable</div>';
+      }
+      if (!ids.length) return summary + '<div>No ClankeRs online</div>';
+      return summary + '<div>Online ClankeRs</div><ul class="contributor-online-ids">' +
+        ids.map(id => '<li>' + esc(id) + '</li>').join('') + '</ul>';
+    }
+
+    // contributorsOnlineTitle is the presence summary: "3 online · 12 registered
     // (heartbeat within 15m)". The window is the hub's presence_window, the
     // same one the tracker's "(offline 13m)" caption is judged against.
     function contributorsOnlineTitle(online, total, window) {

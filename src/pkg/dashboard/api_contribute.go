@@ -94,6 +94,8 @@ type ContributorPoolStatus struct {
 	Active     int `json:"active"`
 	Online     int `json:"online"`
 	Registered int `json:"registered"`
+	// OnlineIDs contains the ClankeR contributor IDs counted by Online.
+	OnlineIDs []string `json:"online_ids"`
 	// PresenceWindow is the window Online was judged against ("15m").
 	PresenceWindow string         `json:"presence_window"`
 	ByRole         map[string]int `json:"by_role,omitempty"`
@@ -105,21 +107,23 @@ type ContributorPoolStatus struct {
 
 func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 	profiles := listContributorProfiles()
-	active, online := 0, 0
+	active := 0
+	onlineIDs := []string{}
 	var byRole map[string]int
 	window := config.DefaultPresenceWindow
 	if s.contributeHub != nil {
 		active = s.contributeHub.ActiveCount()
 		byRole = s.contributeHub.RoleBreakdown()
 		window = s.contributeHub.presenceWindow()
-		online = countOnlineContributors(profiles, s.contributeHub.LastHeartbeats(), window, time.Now())
+		onlineIDs = onlineContributorIDs(profiles, s.contributeHub.LastHeartbeats(), window, time.Now())
 	}
 	abandoned, abandonedByLogin := contributorAbandonedCounts(profiles)
 	return &ContributorPoolStatus{
 		Abandoned:        abandoned,
 		AbandonedByLogin: abandonedByLogin,
 		Active:           active,
-		Online:           online,
+		Online:           len(onlineIDs),
+		OnlineIDs:        onlineIDs,
 		Registered:       len(profiles),
 		PresenceWindow:   stageTrackerShortDuration(window),
 		ByRole:           byRole,
@@ -149,21 +153,26 @@ func contributorAbandonedCounts(profiles []ContributorProfile) (int, map[string]
 // a heartbeat landing exactly at the window edge still counts, as in
 // liveConnectionsFor.
 func countOnlineContributors(profiles []ContributorProfile, lastSeen map[string]time.Time, window time.Duration, now time.Time) int {
+	return len(onlineContributorIDs(profiles, lastSeen, window, now))
+}
+
+func onlineContributorIDs(profiles []ContributorProfile, lastSeen map[string]time.Time, window time.Duration, now time.Time) []string {
+	ids := []string{}
 	if len(profiles) == 0 || len(lastSeen) == 0 {
-		return 0
+		return ids
 	}
 	byUser := make(map[string]time.Time, len(lastSeen))
 	for user, t := range lastSeen {
 		byUser[strings.ToLower(strings.TrimSpace(user))] = t
 	}
-	n := 0
 	for _, p := range profiles {
 		t, ok := byUser[strings.ToLower(strings.TrimSpace(p.GitHubUsername))]
 		if ok && !t.IsZero() && now.Sub(t) <= window {
-			n++
+			ids = append(ids, p.ContributorID)
 		}
 	}
-	return n
+	sort.Strings(ids)
+	return ids
 }
 
 func (s *Server) registerContributeRoutes() {
