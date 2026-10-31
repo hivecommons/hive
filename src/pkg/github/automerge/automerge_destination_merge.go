@@ -3,7 +3,6 @@ package automerge
 import (
 	"context"
 	"errors"
-	"path/filepath"
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
@@ -14,11 +13,7 @@ func (c *Engine) acquireDestinationMerge(ctx context.Context, owner, repo string
 	if err != nil {
 		return ctx, nil, err
 	}
-	dir := ""
-	if stateDir := c.preparationStore().dir; stateDir != "" {
-		dir = filepath.Join(filepath.Dir(stateDir), "destination-merges")
-	}
-	return hgithub.AcquireDestinationMerge(ctx, dir, owner+"/"+repo, pr.GetBase().GetRef())
+	return hgithub.AcquireDestinationMerge(ctx, destinationDirectory(c), owner+"/"+repo, pr.GetBase().GetRef())
 }
 
 func (c *Engine) guardedPR(ctx context.Context, owner, repo string, number int) (*gh.PullRequest, context.Context, func(), error) {
@@ -41,8 +36,9 @@ func (c *Engine) guardedPR(ctx context.Context, owner, repo string, number int) 
 }
 
 func destinationDirectory(c *Engine) string {
-	if dir := c.preparationStore().dir; dir != "" {
-		return filepath.Join(filepath.Dir(dir), "destination-merges")
-	}
-	return ""
+	return hgithub.DestinationMergeDirectoryForPreparation(c.preparationStore().dir)
+}
+
+func DefaultDestinationMergeDirectory() string {
+	return hgithub.DestinationMergeDirectoryForPreparation(sharedBasePreparation.dir)
 }

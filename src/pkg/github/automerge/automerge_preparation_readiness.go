@@ -24,12 +24,16 @@ func (c *Engine) preparationReadiness(ctx context.Context, owner, repo string, p
 	if lane != stageLaneSelf && lane != stageLaneTrusted {
 		return false, false
 	}
-	green, reason, err := c.commitGreenForPR(ctx, owner, repo, pr.GetBase().GetRef(), pr.GetHead().GetSHA(), pr.GetNumber(), time.Time{}, newExpectedCheckCache())
-	if err != nil {
+	st, requirementsKnown, err := c.commitCIForPRSkipping(ctx, owner, repo, pr.GetBase().GetRef(), pr.GetHead().GetSHA(), pr.GetNumber(), time.Time{}, newExpectedCheckCache(), nil)
+	if err != nil || !requirementsKnown {
 		return false, false
 	}
-	if !green {
-		return false, stageengine.ClassifyCIReason(reason) == stageengine.CIReasonPending && strings.HasPrefix(reason, "required-check-pending:")
+	if !st.Green {
+		// Unprotected bases use observed CI evidence rather than required
+		// context names. These are explicit in-flight observations too;
+		// missing/stale evidence and dispatch-age reasons remain unknown.
+		pending := strings.HasPrefix(st.Reason, "required-check-pending:") || st.Reason == "status-pending" || st.Reason == "check-pending"
+		return false, len(st.MissingRequired) == 0 && stageengine.ClassifyCIReason(st.Reason) == stageengine.CIReasonPending && pending
 	}
 	if gate := c.currentReviewGate(); gate != nil && gate.effectiveMode() == ReviewGateModeEnforce {
 		if gate.Verdict == nil {

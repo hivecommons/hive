@@ -328,6 +328,14 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 }
 
 func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, skippedByDesign map[string]bool) (bool, string, error) {
+	st, _, err := c.commitCIForPRSkipping(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, skippedByDesign)
+	if err != nil {
+		return false, st.Reason, err
+	}
+	return st.Green, st.Reason, err
+}
+
+func (c *Engine) commitCIForPRSkipping(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, skippedByDesign map[string]bool) (hgithub.CommitCIState, bool, error) {
 	// The walk itself lives in hgithub.EvaluateCommitCI so the merge-request
 	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
 	// identical rules; only the required-set precedence is engine-specific.
@@ -364,7 +372,7 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 		Now:                                 c.now,
 	})
 	if err != nil {
-		return false, st.Reason, err
+		return st, actualKnown, err
 	}
 	if len(st.Reporting) > 0 {
 		c.info("automerge CI reporting observation", "repo", owner+"/"+repo, "pr", prNumber,
@@ -396,7 +404,8 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 			reason = baseBranchRedReason(checks)
 		}
 	}
-	return st.Green, reason, nil
+	st.Reason = reason
+	return st, actualKnown, nil
 }
 
 func isFreshHeadOrMissingExpectedReason(reason string) bool {

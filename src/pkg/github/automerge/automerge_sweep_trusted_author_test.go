@@ -67,7 +67,7 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 				"mergeable":       state == "clean",
 				"user":            map[string]string{"login": author},
 				"head":            map[string]any{"sha": sha, "repo": map[string]string{"full_name": headRepo}},
-				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
+				"base":            map[string]any{"ref": "main", "sha": "base1", "repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          prLabelObjects(fx.labels),
 			}
 		}
@@ -156,6 +156,9 @@ func newTrustedSweepEngine(apiURL string, policy TrustedAuthorPolicy, opts Optio
 	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, apiURL)
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	opts.TrustedAuthorPolicy = func() TrustedAuthorPolicy { return policy }
+	if opts.BasePreparation == nil {
+		opts.BasePreparation = NewBasePreparationStore("")
+	}
 	opts.TrustedAuthorizer = func(login, requireRole string) TrustedAuthorDecision {
 		return TrustedAuthorDecision{Allowed: login == "alice", Role: requireRole}
 	}

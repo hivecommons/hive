@@ -409,6 +409,20 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		c.handleForgeMergeRequest(ctx, path, req, attempts, merge, nowFn)
 		return
 	}
+	// Human-merge paths (#11039): a PR touching a path listed in
+	// auto_merge.human_merge_paths for its repo is never merged by the App,
+	// whatever agent asks. A match is terminal (the request is refused, the
+	// PR gets `hold` and one marker comment); an unknown changed-file list on
+	// a configured repo fails closed through the bounded retry path. Checked
+	// before the optional branch-update so a refused PR receives no push.
+	if refusal, err := c.mergeRequestHumanMergePathRefusal(ctx, req); err != nil {
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		return
+	} else if refusal != "" {
+		c.denyMergeRequest(path, req, refusal, nowFn)
+		return
+	}
+
 	owner, repoName := c.SplitRepo(req.Repo)
 	destination, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_destination"), owner, repoName, req.Number)
 	if err != nil {
@@ -423,20 +437,6 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 	defer releaseDestination()
-
-	// Human-merge paths (#11039): a PR touching a path listed in
-	// auto_merge.human_merge_paths for its repo is never merged by the App,
-	// whatever agent asks. A match is terminal (the request is refused, the
-	// PR gets `hold` and one marker comment); an unknown changed-file list on
-	// a configured repo fails closed through the bounded retry path. Checked
-	// before the optional branch-update so a refused PR receives no push.
-	if refusal, err := c.mergeRequestHumanMergePathRefusal(ctx, req); err != nil {
-		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
-		return
-	} else if refusal != "" {
-		c.denyMergeRequest(path, req, refusal, nowFn)
-		return
-	}
 
 	// Lane policy: the contributor-lane gates the sweep enforces — tier,
 	// soak, min_head_age, review verdict — apply to a relayed merge too

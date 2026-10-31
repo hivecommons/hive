@@ -1,11 +1,15 @@
 package automerge
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
@@ -21,6 +25,12 @@ func readinessFixture(t *testing.T, durable bool) (*preparationAPI, *Engine, str
 
 	c := preparationEngine(srv.URL, NewBasePreparationStore(dir))
 	c.requiredChecksForRepo = func(string) (map[string]bool, bool) { return map[string]bool{"build": true}, true }
+	c.reviewGate = &ReviewGate{RequireApproval: func() bool { return true }, Verdict: func(_ string, number int, head string) ReviewGateVerdict {
+		api.mu.Lock()
+		defer api.mu.Unlock()
+		exact := api.prs[number].GetHead().GetSHA() == head
+		return ReviewGateVerdict{Loaded: true, Found: exact, Approved: exact}
+	}}
 	if ev, _, _, err := preparationGate(c, 1, "main", "head1"); err != nil || !ev.BranchUpdated {
 		t.Fatalf("initial refresh: %+v %v", ev, err)
 	}
@@ -28,13 +38,19 @@ func readinessFixture(t *testing.T, durable bool) (*preparationAPI, *Engine, str
 	api.pending["refreshed1"] = true
 	api.behind["refreshed1"] = 1
 	api.baseSHA = "base2"
+	api.additionalChecks["head2"] = []string{"unreported"}
 	return api, c, srv.URL
 }
 
 func TestPreparationCompletedOwnerYieldsAndSurvivesRestart(t *testing.T) {
 	api, c, url := readinessFixture(t, true)
+	var logs bytes.Buffer
+	c.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	if ev, reason, _, err := preparationGate(c, 2, "main", "head2"); err != nil || !ev.BranchUpdated {
 		t.Fatalf("ready independent successor: %+v %q %v", ev, reason, err)
+	}
+	if !strings.Contains(logs.String(), "completed owner yielded") || !strings.Contains(logs.String(), "former_owner=1") {
+		t.Fatalf("successful yielding lacks distinct durable observability: %s", logs.String())
 	}
 	st, err := c.preparationStore().ownerSnapshot(preparationKey("acme", "widget", "main"))
 	if err != nil || st.Owner.Number != 2 || len(st.Waiters) != 1 || st.Waiters[0].Number != 1 || !st.Waiters[0].Yielded {
@@ -42,6 +58,7 @@ func TestPreparationCompletedOwnerYieldsAndSurvivesRestart(t *testing.T) {
 	}
 	restarted := preparationEngine(url, NewBasePreparationStore(c.preparationStore().dir))
 	restarted.requiredChecksForRepo = c.requiredChecksForRepo
+	restarted.reviewGate = c.reviewGate
 	for i := 0; i < 3; i++ {
 		if _, reason, _, err := preparationGate(restarted, 1, "main", "refreshed1"); err != nil || reason != preparationQueued(2) {
 			t.Fatalf("unresolved second refresh: %q %v", reason, err)
@@ -66,10 +83,47 @@ func TestPreparationCompletedOwnerYieldsAndSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestPreparationReadinessDistinguishesObservedPendingFromMissing(t *testing.T) {
+	api, c, _ := readinessFixture(t, false)
+	green, reason, err := c.commitGreenForPR(context.Background(), "acme", "widget", "main", "refreshed1", 1, time.Time{}, newExpectedCheckCache())
+	if err != nil || green || reason != "status-pending" {
+		t.Fatalf("unprotected fixture's actual CI blocker: green=%v reason=%q err=%v", green, reason, err)
+	}
+	if ready, known := c.preparationReadiness(context.Background(), "acme", "widget", api.prs[1], stageLaneSelf); ready || !known {
+		t.Fatalf("observed pending was mistaken for absent evidence: ready=%v known=%v", ready, known)
+	}
+	api.missing["refreshed1"] = true
+	if ready, known := c.preparationReadiness(context.Background(), "acme", "widget", api.prs[1], stageLaneSelf); ready || known {
+		t.Fatalf("absent evidence was mistaken for observed pending: ready=%v known=%v", ready, known)
+	}
+	api.missing["refreshed1"] = false
+	api.requirementsError = true
+	if ready, known := c.preparationReadiness(context.Background(), "acme", "widget", api.prs[1], stageLaneSelf); ready || known {
+		t.Fatalf("configuration fallback was mistaken for authoritative requirements: ready=%v known=%v", ready, known)
+	}
+}
+
+func TestPreparationAndBootUseTheSameDestinationDirectory(t *testing.T) {
+	if got := destinationDirectory(New(nil, Options{})); got != DefaultDestinationMergeDirectory() {
+		t.Fatalf("default sweep=%q boot/relay=%q", got, DefaultDestinationMergeDirectory())
+	}
+	for _, dir := range []string{"", filepath.Join(t.TempDir(), "preparation")} {
+		c := New(nil, Options{BasePreparation: NewBasePreparationStore(dir)})
+		if got, want := destinationDirectory(c), hgithub.DestinationMergeDirectoryForPreparation(dir); got != want {
+			t.Fatalf("configured sweep=%q shared derivation=%q", got, want)
+		}
+	}
+}
+
 func TestPreparationCannotYieldOnUnsafeOrMissingEvidence(t *testing.T) {
-	for _, blocker := range []string{"unresolved", "repair", "legacy-attempt", "dependency", "missing-dependency", "unreadable-dependency", "late-dependency", "shared-claim", "reference", "stack", "pagination", "incomplete-count", "rename", "head-moved", "base-moved", "candidate-ci", "candidate-review"} {
+	for _, blocker := range []string{"unresolved", "repair", "legacy-attempt", "dependency", "missing-dependency", "unreadable-dependency", "late-dependency", "shared-claim", "reference", "stack", "pagination", "incomplete-count", "rename", "head-moved", "base-moved", "candidate-ci", "candidate-review", "owner-ci-missing", "candidate-ci-missing", "owner-ci-stale", "required-ci-missing"} {
 		t.Run(blocker, func(t *testing.T) {
 			api, c, _ := readinessFixture(t, false)
+			if !c.preparationMayPass(context.Background(), "acme", "widget", "main", api.prs[2], api.prs[1], stageLaneSelf, stageLaneSelf) {
+				t.Fatal("negative test lacks a working independent-ready positive control")
+			}
+			var logs bytes.Buffer
+			c.logger = slog.New(slog.NewTextHandler(&logs, nil))
 			switch blocker {
 			case "unresolved":
 				api.prs[1].Head.SHA = gh.Ptr("head1")
@@ -98,7 +152,7 @@ func TestPreparationCannotYieldOnUnsafeOrMissingEvidence(t *testing.T) {
 			case "reference":
 				api.prs[2].Body = gh.Ptr("Closes #102\nDepends on #1")
 			case "stack":
-				api.prs[2].Head.SHA = gh.Ptr("refreshed1")
+				api.stacked = true
 			case "pagination":
 				api.truncated = true
 			case "incomplete-count":
@@ -113,14 +167,31 @@ func TestPreparationCannotYieldOnUnsafeOrMissingEvidence(t *testing.T) {
 				}
 
 			case "base-moved":
-				api.onFiles = func(a *preparationAPI, _ int) { a.baseSHA = "base2" }
+				api.onFiles = func(a *preparationAPI, _ int) { a.baseSHA = "base3" }
 			case "candidate-ci":
 				api.pending["head2"] = true
 			case "candidate-review":
-				c.reviewGate = &ReviewGate{RequireApproval: func() bool { return true }, Verdict: func(string, int, string) ReviewGateVerdict { return ReviewGateVerdict{} }}
+				c.reviewGate.Verdict = func(string, int, string) ReviewGateVerdict { return ReviewGateVerdict{} }
+			case "owner-ci-missing":
+				api.missing["refreshed1"] = true
+			case "candidate-ci-missing":
+				api.missing["head2"] = true
+			case "owner-ci-stale":
+				api.stale["refreshed1"] = true
+			case "required-ci-missing":
+				api.requiredContexts = []string{"build", "unreported"}
+				if ready, known := c.preparationReadiness(context.Background(), "acme", "widget", api.prs[2], stageLaneSelf); !ready || !known {
+					t.Fatalf("missing-owner-evidence test blocked the candidate instead: ready=%v known=%v", ready, known)
+				}
+				if ready, known := c.preparationReadiness(context.Background(), "acme", "widget", api.prs[1], stageLaneSelf); ready || known {
+					t.Fatalf("owner's missing required context remained known: ready=%v known=%v", ready, known)
+				}
 			}
 			if ev, _, _, err := preparationGate(c, 2, "main", api.prs[2].GetHead().GetSHA()); err != nil || ev.BranchUpdated || api.updates[2] != 0 {
 				t.Fatalf("unsafe %s advanced: %+v %v %v", blocker, ev, err, api.updates)
+			}
+			if strings.Contains(logs.String(), "completed owner yielded") {
+				t.Fatalf("blocked admission emitted a successful yield: %s", logs.String())
 			}
 		})
 	}

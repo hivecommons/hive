@@ -84,6 +84,15 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 	fetches := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+			json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": false, "commit": map[string]string{"sha": "base1"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/main":
+			json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
 			fetches++
 			if fetches == 1 && fx.firstGetStatus != 0 {

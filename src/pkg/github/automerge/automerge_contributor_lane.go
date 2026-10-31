@@ -56,6 +56,7 @@ package automerge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -1488,6 +1489,13 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {
 	ctx, unlock, err := c.acquireDestinationMerge(ctx, owner, repo, number)
 	if err != nil {
+		if isGitHubStatus(err, http.StatusNotFound) {
+			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		var response *gh.ErrorResponse
+		if errors.As(err, &response) {
+			return AutoMergeSweepEvent{}, "fetch-pr", err
+		}
 		return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
 	}
 	defer unlock()

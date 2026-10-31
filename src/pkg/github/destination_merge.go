@@ -28,6 +28,13 @@ type destinationMergeLeaseKey struct{}
 // directory is an isolated process-local guard for test clients.
 func ConfigureDestinationMerges(dir string) { destinationMergeDirectory.Store(dir) }
 
+func DestinationMergeDirectoryForPreparation(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(dir), "destination-merges")
+}
+
 func DestinationMergeDirectory() string {
 	dir, _ := destinationMergeDirectory.Load().(string)
 	return dir

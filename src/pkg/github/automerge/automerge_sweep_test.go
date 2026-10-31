@@ -2900,7 +2900,14 @@ func newAutoMergeSweepClient(apiURL string) *Engine {
 func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, merged *[]int, extras ...func(http.ResponseWriter, *http.Request)) *httptest.Server {
 	t.Helper()
 	byNumber := make(map[int]sweepPR, len(prs))
-	for _, pr := range prs {
+	for i, pr := range prs {
+		if pr.baseRef == "" {
+			pr.baseRef = "main"
+		}
+		if pr.baseSHA == "" {
+			pr.baseSHA = "base1"
+		}
+		prs[i] = pr
 		byNumber[pr.number] = pr
 	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3030,6 +3037,18 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 		default:
 			for _, extra := range extras {
 				extra(w, r)
+				return
+			}
+			switch r.URL.Path {
+			case "/repos/acme/widget/branches/main":
+				json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": false, "commit": map[string]string{"sha": "base1"}})
+				return
+			case "/repos/acme/widget/branches/main/protection/required_status_checks":
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+				return
+			case "/repos/acme/widget/rules/branches/main":
+				json.NewEncoder(w).Encode([]any{})
 				return
 			}
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())

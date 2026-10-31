@@ -102,6 +102,7 @@ func preparationQueued(front int) string {
 // durable owner is not a ready merge-train seat.
 func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base string, number int, head, lane string, repair bool) (string, error) {
 	reason := ""
+	yieldedOwner := preparationCandidate{}
 	now := c.now()
 	key := preparationKey(owner, repo, base)
 	err := c.preparationStore().change(key, func(st *basePreparation) error {
@@ -184,9 +185,6 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 						index++
 						continue
 					}
-					if yielded.Number != 0 && st.Owner.Number == number {
-						c.info("automerge base preparation completed owner yielded", "repo", owner+"/"+repo, "base", base, "pr", number, "former_owner", yielded.Number, "former_since", yielded.Since)
-					}
 					reason = preparationQueued(next.Number)
 					break
 				}
@@ -204,6 +202,8 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 			// relinquish a completed owner's durable priority for nothing.
 			st.Owner = yielded
 			st.Waiting = slices.DeleteFunc(st.Waiting, func(w preparationCandidate) bool { return w.Number == yielded.Number })
+		} else if yielded.Number != 0 {
+			yieldedOwner = yielded
 		}
 		if st.Owner.Number != number {
 			if reason == "" {
@@ -217,6 +217,9 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 		}
 		return nil
 	})
+	if err == nil && yieldedOwner.Number != 0 {
+		c.info("automerge base preparation completed owner yielded", "repo", owner+"/"+repo, "base", base, "pr", number, "head", head, "former_owner", yieldedOwner.Number, "former_since", yieldedOwner.Since)
+	}
 	return reason, err
 }
 

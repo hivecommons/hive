@@ -6,7 +6,13 @@ refresh, ambiguous mutation outcome, or active repair retains exclusive
 preparation ownership.
 
 A completed refresh can yield while its new head has a known pending CI
-verdict. Completion requires a changed live head containing both the pinned
+verdict.
+Observed `status-pending`/`check-pending` on an explicitly unprotected base
+is a known pending verdict too; missing required contexts, absent evidence,
+stale conclusions and failed API reads cannot establish readiness.
+Configured fallback requirements do not establish the authoritative required
+set for overtaking; ordinary merge-gate fallback behavior is unchanged.
+Completion requires a changed live head containing both the pinned
 pre-refresh head and the authoritative refresh-target base commit. Legacy
 attempts without authoritative base evidence remain exclusive. The former
 owner keeps its ticket, original priority, and head/base attempt deduplication;

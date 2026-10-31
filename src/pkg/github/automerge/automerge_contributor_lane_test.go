@@ -185,7 +185,7 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"mergeable":       state == "clean",
 				"user":            map[string]string{"login": author},
 				"head":            map[string]any{"sha": sha, "repo": map[string]string{"full_name": headRepo}},
-				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
+				"base":            map[string]any{"ref": "main", "sha": "base1", "repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          labels,
 			}
 			if fx.baseRef != "" {
@@ -512,6 +512,9 @@ func newContributorLaneEngineRepos(apiURL string, repos []string, policy Contrib
 	client := hgithub.NewClient("token", "acme", repos, nil, apiURL)
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	opts.ContributorLanePolicy = func() ContributorLanePolicy { return policy }
+	if opts.BasePreparation == nil {
+		opts.BasePreparation = NewBasePreparationStore("")
+	}
 	if opts.ContributorLaneVerdict == nil {
 		opts.ContributorLaneVerdict = approvedVerdict
 	}
