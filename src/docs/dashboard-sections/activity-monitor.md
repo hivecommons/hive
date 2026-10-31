@@ -121,14 +121,19 @@ The monospace **engine enforce · N anomalies** strip describes the [central sta
 
 ### Monitor controls and detailed reference
 
-#### Pop out and full screen (⧉ / ⛶ on the card header)
+#### Pop out, full screen and display (⧉ / ⛶ / 📺 on the card header)
 
-Two buttons sit beside the ⚙ gear on the card header for working with the monitor on its own ([#15829](https://github.com/hivecommons/hive/issues/15829)):
+Three buttons sit beside the ⚙ gear on the card header for working with the monitor on its own ([#15829](https://github.com/hivecommons/hive/issues/15829)):
 
 - **⧉ Pop out** opens the dashboard in a new browser window named `hive-activity-monitor` (1600×900 by default; drag it to another monitor). The window loads `?popout=1#section-activity-monitor-section`: no sidebar, topbar, notices, chat or other sections — just the tracker filling the viewport, with live updates, toasts, sounds, the Merged bee and the ⚙ settings all working. It uses the same saved sign-in as the main window, so there is no second login; its title is `Hive · Activity Monitor · <hive id>`; and reloading it keeps the layout because the flag lives in the URL. The small **⤶ Return to dashboard** pill brings the main window forward and closes the pop-out (a tab you opened by hand on that URL navigates back to the full dashboard instead). If the browser blocks the popup, a toast says so — allow pop-ups for the dashboard's origin and try again.
 - **⛶ Full screen** puts the page into the browser's full-screen mode with the same tracker-only layout; the button reads **⛶ Exit full screen** while active, and **Esc** leaves as usual. With focus inside the monitor (or anywhere in a pop-out) the **f** key toggles it too; it is ignored while typing in a field or with a modifier held.
+- **📺 Display** reloads the page with `?display=1` added (any other query, such as `am.*` or `theme`, is kept): the same tracker-only layout as a wall view for an attended screen ([#15925](https://github.com/hivecommons/hive/issues/15925)). The cursor stays and sound keeps your setting, but the row ⋯ and select tools, the right-click menu, the selection bar and the decision actions are hidden — a wall offers no actions. It is presentation only: it grants nothing, and the server still authorizes every request with your own sign-in. **Esc** (outside browser full screen) or **d** leaves; **d** with focus in the monitor also enters. Esc closes an open popover or dialog first (the merged and queue popovers, the settings and labels dialogs, any confirmation) and leaves only on a bare page, so a session-only `am.*` edit is never dropped by dismissing a popover. Display mode never requests full screen or a wake lock and never writes the theme or layout to local storage. With `?kiosk=1` present, kiosk wins and 📺 is hidden.
 
 Neither mode changes any saved preference. Kiosk mode (`?kiosk=1`, [Streaming the activity monitor](../streaming-the-activity-monitor.md)) is the unattended cousin of pop-out: same layout, no cursor, no controls.
+
+#### URL views (`am.*`)
+
+`am.*` query parameters describe a filter, so a link reproduces the same view in a fresh browser profile ([#15924](https://github.com/hivecommons/hive/issues/15924)): `am.kind` (`pr`/`issue`), `am.repo`, `am.q`, `am.labels` (comma-separated), `am.needsHuman=1`, `am.onHold=1`, `am.attention=1`, `am.age`, `am.author`, `am.acted`, `am.sort`, `am.dir` (`asc`) and `am.group` (`repo`). For example `?am.kind=pr&am.repo=hivecommons/hive&am.group=repo`. Unknown values fall back to the default. When any `am.*` parameter is present it wins over the saved filter, and changes in that tab stay in the tab — nothing is written to local storage, so two screens on one profile cannot overwrite each other. Without `am.*` the saved filter works as before. Waiting on you stays on `?filter=waiting-on-you`. A link describes a view; it does not grant access. Details: [Streaming the activity monitor](../streaming-the-activity-monitor.md#display-mode-and-url-views).
 
 #### Filter chips (Needs human / On hold / labels)
 

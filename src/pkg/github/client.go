@@ -3441,9 +3441,13 @@ func (c *Client) removeLabelObserved(ctx context.Context, repo string, number in
 // the easy case: it is either on the item or it is not, and one Issues.Get
 // says which. Before this the claimed-by label write simply failed with
 // "op:… is Planned" and the claim went un-labelled until the next renewal
-// (hivecommons/hive#13579). Nothing is expired blind: when the read itself
-// fails the needs-reconciliation refusal stands, and the boundary's OnStuck
-// reports the operation only once it has been unresolved past StuckAfter.
+// (hivecommons/hive#13579). When the read itself fails a young operation
+// keeps the needs-reconciliation refusal, but one unresolved for longer than
+// effects.DefaultUnresolvedTTL is expired to not-applied and the mutation
+// replays: adding or removing a label is idempotent, so a replay cannot do
+// harm, whereas a read that keeps failing (item transferred or deleted,
+// persistent API error) would otherwise fence every retry forever
+// (hivecommons/hive#15944).
 func (c *Client) reconcileLabelMutation(ctx context.Context, owner, repoName string, number int, claim effects.Claim,
 	effect func(context.Context) (effects.Result, error), journalErr error, applied func(current []string) bool) (effects.Result, error) {
 	if c == nil || c.client == nil {
@@ -3451,7 +3455,14 @@ func (c *Client) reconcileLabelMutation(ctx context.Context, owner, repoName str
 	}
 	issue, _, lookupErr := c.client.Issues.Get(WithRESTCaller(ctx, "hive:reconcile_label_mutation"), owner, repoName, number)
 	if lookupErr != nil {
-		return effects.Result{}, fmt.Errorf("%w (label read for reconciliation failed: %v)", journalErr, lookupErr)
+		expired, expErr := effects.ExpireUnresolved(ctx, c.mutationBoundary(), claim, effects.DefaultUnresolvedTTL)
+		if expErr != nil {
+			return effects.Result{}, fmt.Errorf("%w (label read for reconciliation failed: %v; expiry failed: %v)", journalErr, lookupErr, expErr)
+		}
+		if !expired {
+			return effects.Result{}, fmt.Errorf("%w (label read for reconciliation failed: %v)", journalErr, lookupErr)
+		}
+		return effects.Execute(ctx, c.mutationBoundary(), claim, effect)
 	}
 	state := effects.ExternalState{Applied: applied(extractLabels(issue.Labels)), Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}
 	if recErr := effects.Reconcile(ctx, c.mutationBoundary(), claim, state); recErr != nil {

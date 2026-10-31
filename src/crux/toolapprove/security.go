@@ -108,12 +108,13 @@ func NewDefaultSecurityScanner() *DefaultSecurityScanner {
 
 var (
 	// Path arguments need shell terminators, not word boundaries: /, * and ~
-	// are non-word characters. $HOME, ${HOME} and ~ may carry a trailing / or
-	// /* and still name the whole home directory. Equivalent spellings of the
-	// same target are accepted too: split flags (-r -f), repeated slashes
-	// (//), a trailing dot (/.) and surrounding single or double quotes. The
-	// fork bomb likewise needs no word boundary.
-	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?(/+\.?|/*\*|(\$HOME|\$\{HOME\}|~)(/\*?)?)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
+	// are non-word characters. The root target is one or more path components
+	// made only of slashes and an optional . or .. (/, //, /., /.., /./,
+	// /../). $HOME, ${HOME} and ~ may carry the same suffix, or /*, and still
+	// name the whole home directory. Split flags (-r -f) and surrounding
+	// single or double quotes are accepted too. Names such as /.cache or
+	// ~/.cache are not matched. The fork bomb likewise needs no word boundary.
+	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?((/+\.{0,2})+\*?|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,2})+\*?)?)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
 )
 

@@ -748,7 +748,7 @@
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
       const pop = document.getElementById('activity-monitor-merged-pop');
-      if (pop && !pop.hidden) { hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
+      if (pop && !pop.hidden) { e.preventDefault(); hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
     });
     // The glyph has landed (or left the screen, or faded): count the PR,
     // pop the chip, zap — once the last glyph is down; a landing while
