@@ -29,7 +29,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		selfHold = it.Hold
 	}
 
-	sentinel := it.SentinelAlert || lower == "sentinel" || lower == stageengineprstage.ContributorLaneReasonSentinelBlocked
+	sentinel := !it.SentinelNotice && (it.SentinelAlert || lower == "sentinel" || lower == stageengineprstage.ContributorLaneReasonSentinelBlocked)
 	changes := decisionChangesRequested(base)
 	laneRule := decisionLaneRule(base)
 	adoptionLane, adoptionStalled := strings.CutPrefix(base, stagelabels.LaneReasonAdoptionStalledPrefix)

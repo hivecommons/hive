@@ -446,12 +446,14 @@
       if (!item || !item.sentinel_alert) return '';
       const head = String(item.head || '').slice(0, STAGE_TRACKER_SHORT_SHA);
       const reason = String(item.sentinel_reason || '').trim();
-      return STAGE_TRACKER_SENTINEL_TIP + (head ? ' at ' + head : '') + ': ' + (reason || STAGE_TRACKER_SENTINEL_TIP_FALLBACK);
+      const lead = item.sentinel_notice ? 'Informational security notice (not a merge gate)' : STAGE_TRACKER_SENTINEL_TIP;
+      const fallback = item.sentinel_notice ? 'informational findings; no blocking sentinel label' : STAGE_TRACKER_SENTINEL_TIP_FALLBACK;
+      return lead + (head ? ' at ' + head : '') + ': ' + (reason || fallback);
     }
     // Whether the item's lit chevron word carries the alert itself (a PR
     // parked at 085, or an issue riding one): the chip then adds nothing.
     function stageTrackerSentinelInLane(item) {
-      return !!(item && item.sentinel_alert) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
     }
     // A returned PR (071/072) keeps its routing word — the human already
     // acted, nothing is owed by the maintainer — and carries the alert as
@@ -459,7 +461,7 @@
     // then adds nothing.
     function stageTrackerSentinelAsSuffix(item) {
       const st = Number(item && item.stage) || 0;
-      return !!(item && item.sentinel_alert) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
     }
     // Pure: whose PR a 071/072 row waits on — the row's own author, or, for
     // an issue row drawn through its one covering PR (via_pr), that PR's

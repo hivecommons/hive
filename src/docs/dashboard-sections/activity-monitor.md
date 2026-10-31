@@ -99,6 +99,8 @@ The header reports the filtered row count and how many need attention; paginatio
 
 ### How you'll know something is waiting on you
 
+A verified trusted-author security notice without the live blocking sentinel label is informational, not the reason a human must act. Its tooltip says **Informational security notice (not a merge gate)**. An independent reviewer decision retains its quoted question with reviewer provenance. A login mentioned in that question is not an assignment or exclusive authority; neither that suggestion nor the PR author's identity supplies a decision owner. A real blocking sentinel label still names its security gate, even when a reviewer question also exists.
+
 The hive often parks work on a person: a decision asked at **045** / **085**, a PR at **090** ready for a human merge, an approval the hive's GitHub App cannot give (`needs-human`, `unauthorized`), or a contributor who has gone offline past their grace so the operator is the fallback. Those waits used to look like any other row ("PR in progress"); nothing added them up and nothing said so. Three surfaces now read one server block, `/api/stage-tracker` → `waiting_on_human` (`count`, `items[{repo, number, type, kind, since, who}]`), so a human wait is never silent:
 
 - **Sidebar.** A second, orange badge on **Hive activity monitor** carries the waiting-on-you count (the grey badge stays the row count). Its tooltip lists the five longest waits with what each needs and how long it has waited. Hidden at zero.
