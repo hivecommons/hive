@@ -526,8 +526,7 @@ jobs:
         if-no-files-found: warn
         retention-days: 1
   list-packages:
-    needs: required-context-scope
-    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:

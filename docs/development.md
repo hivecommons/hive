@@ -172,6 +172,9 @@ count (which can exceed a runner container's CPU quota); operators can set
 `HIVE_CI_GOSEC_CONCURRENCY` in the runner environment to tune it.
 The coverage scorer only lists packages and reads shard profiles; it does not
 archive shared Go caches in a serial post-step after scoring.
+Package discovery runs alongside the scope preflight; test shards still wait
+for both, and neither test nor coverage can pass a failed scope verdict.
+Out-of-scope PRs may perform discovery but still execute no test shards.
 
 Measure PR turnaround from workflow creation to the **last required check**
 completing, including runner queues and aggregate/coverage jobs, not just
