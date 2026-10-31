@@ -1,0 +1,1 @@
+- `hive-open-issue` requests that declare `--parent` or `--blocked-by` are no longer folded into an older open issue on a shared file path, component or canonical title stem; a genuine create reports `consolidation_skipped_reason` (`parent` or `blocked_by`) and the watcher logs the skip (#16065).
