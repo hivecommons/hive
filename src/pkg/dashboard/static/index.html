@@ -6818,56 +6818,36 @@
    menu, chat FAB or notices, every other section out of flow — but attended:
    the cursor stays, the gear works, and a ⤶ Return link goes back to the
    opener. The ⛶ button puts the document into the Fullscreen API and sets
-   body.ham-fullscreen, which shares every rule below — the document rather
-   than the section so the body-level toasts (waiting on you, merges) stay
-   visible while full screen. */
-    body.popout-mode, body.ham-fullscreen,
-    body.display-mode { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
-    body.popout-mode .oc-sidebar, body.popout-mode .oc-sidebar-resize, body.popout-mode .oc-topbar,
-    body.popout-mode #dash-notices, body.popout-mode #oc-agent-detail, body.popout-mode .hive-chat-fab,
-    body.popout-mode .hive-chat-panel, body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
-    body.ham-fullscreen .oc-sidebar, body.ham-fullscreen .oc-sidebar-resize, body.ham-fullscreen .oc-topbar,
-    body.ham-fullscreen #dash-notices, body.ham-fullscreen #oc-agent-detail, body.ham-fullscreen .hive-chat-fab,
-    body.ham-fullscreen .hive-chat-panel,
-    body.display-mode .oc-sidebar, body.display-mode .oc-sidebar-resize, body.display-mode .oc-topbar,
-    body.display-mode #dash-notices, body.display-mode #oc-agent-detail, body.display-mode .hive-chat-fab,
-    body.display-mode .hive-chat-panel, body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }
+   body.ham-fullscreen — the document rather than the section so the
+   body-level toasts (waiting on you, merges) stay visible while full screen.
+   Every chrome-less view (pop-out, full screen, display mode) also carries
+   body.ham-chromeless, which the shared layout rules below key on, so a new
+   view adds the class instead of another copy of every selector. */
+    body.ham-chromeless { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
+    body.ham-chromeless .oc-sidebar, body.ham-chromeless .oc-sidebar-resize, body.ham-chromeless .oc-topbar,
+    body.ham-chromeless #dash-notices, body.ham-chromeless #oc-agent-detail, body.ham-chromeless .hive-chat-fab,
+    body.ham-chromeless .hive-chat-panel { display: none !important; }
+    /* The welcome tour and NPS card stay in the main window; full screen
+       keeps them, as it always has. */
+    body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
+    body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }
     /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
        display:grid!important with id specificity; beat it with (1,2,2). */
-    html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
-    html body.display-mode #oc-topbar[id] { display: none !important; }
-    body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
-    body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
-    body.display-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
-    body.popout-mode #activity-monitor-section .dashboard-grip, body.popout-mode #activity-monitor-section .section-chevron,
-    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron,
-    body.display-mode #activity-monitor-section .dashboard-grip, body.display-mode #activity-monitor-section .section-chevron { display: none !important; }
+    html body.ham-chromeless #oc-topbar[id] { display: none !important; }
+    body.ham-chromeless #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.ham-chromeless #activity-monitor-section .dashboard-grip, body.ham-chromeless #activity-monitor-section .section-chevron { display: none !important; }
     /* The header cannot collapse the only section on the page, but its
        gear, full-screen and return buttons must still take clicks. */
-    body.popout-mode #activity-monitor-section .section-header-toggle,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle,
-    body.display-mode #activity-monitor-section .section-header-toggle { pointer-events: none; }
-    body.popout-mode #activity-monitor-section .section-header-toggle button,
-    body.popout-mode #activity-monitor-section .section-header-toggle .config-info,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle button,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info,
-    body.display-mode #activity-monitor-section .section-header-toggle button,
-    body.display-mode #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
+    body.ham-chromeless #activity-monitor-section .section-header-toggle { pointer-events: none; }
+    body.ham-chromeless #activity-monitor-section .section-header-toggle button,
+    body.ham-chromeless #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
     /* A collapsed state saved from the main window would leave an empty
        page with a header that cannot be clicked: always show the body. */
-    body.popout-mode #activity-monitor-section .section-body.collapsed,
-    body.ham-fullscreen #activity-monitor-section .section-body.collapsed,
-    body.display-mode #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
-    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions,
-    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
-    body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary,
-    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
-    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky,
-    body.display-mode .ham-sticky { top: 0; }
-    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols,
-    body.display-mode .ham-cols { top: var(--ham-sticky-bar-h); }
+    body.ham-chromeless #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
+    body.ham-chromeless #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
+    body.ham-chromeless #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
+    body.ham-chromeless .ham-sticky { top: 0; }
+    body.ham-chromeless .ham-cols { top: var(--ham-sticky-bar-h); }
 
     /* Header tools: ⧉ pop out, ⛶ full screen and 📺 display sit beside the gear and
        share its chip styling; the return link is a pop-out-only text pill. */
@@ -6913,6 +6893,60 @@
       body.display-mode .ham-playlist-track { display: none; }
       body.display-mode .ham-playlist-next { display: inline-block; }
     }
+
+    /* Display liveness (#15930): a header with the hive id, a clock and a
+       live dot, and — once the stream or the payload goes quiet — a dimmed
+       board under a "Stale: last update N ago" banner. Display mode only;
+       the "updated … ago" chip is unchanged everywhere. */
+    .ham-display-head, .ham-display-stale { display: none; }
+    body.display-mode .ham-display-head { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+    body.display-mode .ham-display-dot { color: var(--green); }
+    body.display-mode .ham-display-hive { font-weight: 600; color: var(--text); }
+    body.display-mode .ham-display-clock { margin-left: auto; }
+    body.display-mode.display-stale .ham-display-dot { color: var(--amber); }
+    body.display-mode.display-stale .ham-display-stale:not([hidden]) { display: block; margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-4); border: var(--line-width) solid var(--amber); border-radius: var(--r-sm); background: color-mix(in srgb, var(--amber) 14%, var(--panel)); color: var(--amber); font-size: var(--fs-md); font-weight: 600; }
+    body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
+    body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: opacity .6s ease, filter .6s ease; }
+    body.display-mode.display-stale #activity-monitor-panel, body.display-mode.display-stale #activity-monitor-meta,
+    body.display-mode.display-stale #activity-monitor-sticky, body.display-mode.display-stale #activity-monitor-native-queue { opacity: .45; filter: grayscale(.7); }
+
+    /* density=tv (#15931): larger type, only the stage strip, the title and
+       the stage/actor line, no filters or pager — the rows that fit and a
+       "+N more" footer (stageTrackerDisplayRowCap). */
+    body.display-density-tv #activity-monitor-section {
+      --fs-2xs: .9rem;
+      --fs-xs: 1rem;
+      --fs-sm: 1.15rem;
+      --fs-base: 1.25rem;
+      --fs-md: 1.4rem;
+    }
+    body.display-density-tv #activity-monitor-toolbar, body.display-density-tv #activity-monitor-labels,
+    body.display-density-tv #activity-monitor-native-queue, body.display-density-tv #activity-monitor-section .ham-pager,
+    body.display-density-tv #activity-monitor-section .ham-head-pr, body.display-density-tv #activity-monitor-section .ham-badges,
+    body.display-density-tv #activity-monitor-section .ham-since, body.display-density-tv #activity-monitor-section [data-ham-sub-key],
+    body.display-density-tv #activity-monitor-section .cue-event, body.display-density-tv #activity-monitor-section .ham-review-notes { display: none !important; }
+    body.display-density-tv #activity-monitor-section .ham-head-cols .ham-seg.ham-head-lead { flex: 1 1 0; }
+    body.display-density-tv .ham-display-more { display: block; text-align: center; font-size: var(--fs-md); font-weight: 600; color: var(--muted); }
+
+    /* shift=1 (#15931): an OLED burn-in shift — the board steps 1–2 px to a
+       new spot every 4 minutes. Off by default and inert under reduced
+       motion. */
+    @keyframes ham-display-shift {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(2px, 1px); }
+      50% { transform: translate(1px, 2px); }
+      75% { transform: translate(-1px, 1px); }
+      100% { transform: translate(0, 0); }
+    }
+    body.display-shift #activity-monitor-section { animation: ham-display-shift 16min steps(1, end) infinite; }
+
+    /* Reduced motion on a display: no burn-in shift and no dim transition,
+       the way the toasts already go linear; row movement is switched off in
+       JS (stageTrackerDisplayMotionEffect plays no effect at all). */
+    @media (prefers-reduced-motion: reduce) {
+      body.display-shift #activity-monitor-section { animation: none; }
+      body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
+      body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: none; }    }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -6957,12 +6991,22 @@
 // presentation only: the cursor stays, sound keeps the user's setting, it
 // never writes layout or theme to localStorage, and it hides the row action
 // affordances. Kiosk wins when both flags are present.
+// Display options (#15931), honoured only together with display=1:
+// `density=tv` (the only value; anything else is ignored) sets
+// body.display-density-tv, a larger three-column wall layout, and `shift=1`
+// sets body.display-shift, an OLED burn-in shift. Without display=1 both are
+// ignored, so the ordinary dashboard and kiosk render exactly as before.
+// Pop-out and display mode also set body.ham-chromeless, the one class the
+// shared chrome-less layout in css/popout.css keys on (full screen adds it at
+// runtime); popout-mode and display-mode keep their view-specific rules.
 (function(){
-  var kiosk=false, popout=false, display=false, sound=true;
-  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, display=false, sound=true, density='', shift=false;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
   window.HIVE_DISPLAY=display&&!kiosk;
+  window.HIVE_DISPLAY_DENSITY=window.HIVE_DISPLAY?density:'';
+  window.HIVE_DISPLAY_SHIFT=window.HIVE_DISPLAY&&shift;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
   window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
@@ -6972,12 +7016,16 @@
     document.body.classList.add('kiosk-mode');
   }else if(window.HIVE_POPOUT){
     document.body.classList.add('popout-mode');
+    document.body.classList.add('ham-chromeless');
   }
   if(kiosk||window.HIVE_POPOUT){
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
   if(window.HIVE_DISPLAY){
     document.body.classList.add('display-mode');
+    document.body.classList.add('ham-chromeless');
+    if(window.HIVE_DISPLAY_DENSITY==='tv') document.body.classList.add('display-density-tv');
+    if(window.HIVE_DISPLAY_SHIFT) document.body.classList.add('display-shift');
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();
@@ -18713,7 +18761,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // effect the setting picks, unless the tab is hidden or too many moved.
     function stageTrackerAnimateMoves(root) {
       if (!root) return 0;
-      const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      let effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      if (typeof stageTrackerDisplayEffect === 'function') effect = stageTrackerDisplayEffect(effect);
       const strips = Array.from(root.querySelectorAll('.ham-strip[data-ham-prev-col]'));
       const play = !!effect && !document.hidden && strips.length > 0 && strips.length <= STAGE_TRACKER_MOTION_MAX_ROWS;
       let n = 0;
@@ -20051,11 +20100,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
       const ordered = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
-      const grouping = _stageTrackerGroup === 'repo';
-      const page = grouping
-        ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
-        : stageTrackerPage(ordered, f);
-      if (page.page !== f.page) f.page = page.page;
+      // A TV display (display=1&density=tv) shows the rows that fit the
+      // screen, ungrouped, with "+N more" in place of the pager.
+      const tv = typeof stageTrackerDisplayTv === 'function' && stageTrackerDisplayTv();
+      const grouping = _stageTrackerGroup === 'repo' && !tv;
+      const page = tv
+        ? stageTrackerDisplayCapPage(ordered, stageTrackerDisplayTvCap())
+        : grouping
+          ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
+          : stageTrackerPage(ordered, f);
+      if (!tv && page.page !== f.page) f.page = page.page;
       // The rows this render draws (this page, group headers aside), for
       // stageTrackerPRListedOwnRow: a covered issue defers to its PR's row
       // only when that row is actually on screen. Kept beside the payload,
@@ -20091,8 +20145,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const meta = document.getElementById('activity-monitor-meta');
       if (meta) setIfChanged(meta, `<span class="ham-count"${counts.note ? ` title="${esc(counts.note)}"` : ''}>${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs, _stageTrackerPollError, _stageTrackerPollErrorSince)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
-      if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
-      const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      if (foot) setIfChanged(foot, tv ? stageTrackerDisplayMoreHtml(page.more) : page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
+      let effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      if (typeof stageTrackerDisplayEffect === 'function') effect = stageTrackerDisplayEffect(effect);
       if (!visible.length && !Object.keys(_stageTrackerCelebrating).length) {
         _stageTrackerMoves = {};
         stageTrackerSelectionSync(el, []);
@@ -20136,6 +20191,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (typeof stageTrackerPendingSync === 'function') stageTrackerPendingSync(el);
       stageTrackerCueAgeSync(el, nowMs);
       stageTrackerCueTick();
+      if (tv) stageTrackerDisplayMeasureRows(el);
       // Moves play once, on the render that follows the payload; a filter
       // or paging re-render of the same payload does not replay them.
       if (Object.keys(_stageTrackerMoves).length) { stageTrackerAnimateMoves(el); _stageTrackerMoves = {}; }
@@ -24842,13 +24898,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerIsFullscreen() {
       return !!(document.fullscreenElement && document.fullscreenElement === stageTrackerFullscreenTarget()) && document.body.classList.contains('ham-fullscreen');
     }
+    // body.ham-fullscreen marks browser full screen; body.ham-chromeless is
+    // the shared chrome-less layout (css/popout.css). Leaving full screen
+    // keeps the layout when the URL already asks for it (pop-out, display).
+    function stageTrackerSetFullscreenLayout(on) {
+      const cl = document.body.classList;
+      cl.toggle('ham-fullscreen', !!on);
+      cl.toggle('ham-chromeless', !!on || cl.contains('popout-mode') || cl.contains('display-mode'));
+    }
     // Pure: label + title for the ⛶ button given the current state.
     function stageTrackerFullscreenLabel(isFull) {
       return isFull ? STAGE_TRACKER_FULLSCREEN_LABELS.exit : STAGE_TRACKER_FULLSCREEN_LABELS.enter;
     }
     function stageTrackerRenderFullscreenButton() {
       // Esc (or the browser) leaving full screen must drop the layout too.
-      if (!document.fullscreenElement) document.body.classList.remove('ham-fullscreen');
+      if (!document.fullscreenElement) stageTrackerSetFullscreenLayout(false);
       const full = stageTrackerIsFullscreen();
       const btn = stageTrackerFullscreenButton();
       if (!btn) return;
@@ -24863,17 +24927,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!target) return Promise.resolve(false);
       let p;
       if (stageTrackerIsFullscreen()) {
-        document.body.classList.remove('ham-fullscreen');
+        stageTrackerSetFullscreenLayout(false);
         p = document.exitFullscreen ? document.exitFullscreen() : Promise.resolve();
       } else if (target.requestFullscreen) {
-        document.body.classList.add('ham-fullscreen');
+        stageTrackerSetFullscreenLayout(true);
         p = target.requestFullscreen();
       } else {
         if (typeof showToast === 'function') showToast('This browser does not support full screen here.', 'error');
         return Promise.resolve(false);
       }
       return Promise.resolve(p).then(() => { stageTrackerRenderFullscreenButton(); return true; }, (err) => {
-        document.body.classList.remove('ham-fullscreen');
+        stageTrackerSetFullscreenLayout(false);
         stageTrackerRenderFullscreenButton();
         if (typeof showToast === 'function') showToast('Full screen was refused: ' + ((err && err.message) || err), 'error');
         return false;
@@ -25301,6 +25365,241 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerPopoutSyncTitle();
       stageTrackerDisplayControlsInit();
       stageTrackerPlaylistInit();
+    });
+/* ---- Display mode: honest liveness and wall layout ---------------------
+       Rendering-only additions for `?display=1` (body.display-mode, see
+       boot.js and tracker-popout.js); nothing here runs, or changes a pixel,
+       on the ordinary Activity Monitor or a headless `?kiosk=1` stream.
+       Liveness (hivecommons/hive#15930): a 1 s tick dims the board and says
+       "Stale: last update N ago" once the event stream or the payload goes
+       quiet, and a display that cannot reconnect reloads itself on a capped
+       backoff. Layout (hivecommons/hive#15931): `density=tv` keeps the stage,
+       title and actor at a larger type and caps the rows to the viewport
+       with a "+N more" footer; `shift=1` is a CSS burn-in shift; reduced
+       motion turns off row movement. No endpoint, credential or URL knob
+       beyond `density` and `shift`. */
+
+    // tracker display liveness helpers begin
+    const STAGE_TRACKER_DISPLAY_RELOAD_AFTER_FAILS = 5;
+    const STAGE_TRACKER_DISPLAY_RELOAD_BASE_MS = 30000;
+    const STAGE_TRACKER_DISPLAY_RELOAD_MAX_MS = 600000;
+    // Pure: is a display board's data stale? Stale when the event stream has
+    // been silent for more than two poll intervals, or the payload's
+    // generated_at is older than two cache TTLs. A zero/absent timestamp is
+    // "not known yet" and judges nothing. sinceMs is the last update of the
+    // signal that went quiet (the newer one when both did); reason is
+    // 'sse', 'ttl' or 'both', '' when fresh.
+    function stageTrackerDisplayStale(nowMs, sseLastFrameMs, pollMs, generatedAtMs, cacheTtlMs) {
+      const now = Number(nowMs) || 0;
+      const sseAt = Number(sseLastFrameMs) || 0;
+      const genAt = Number(generatedAtMs) || 0;
+      const poll = Number(pollMs) || 0;
+      const ttl = Number(cacheTtlMs) || 0;
+      const sse = sseAt > 0 && poll > 0 && now - sseAt > 2 * poll;
+      const old = genAt > 0 && ttl > 0 && now - genAt > 2 * ttl;
+      if (!sse && !old) return { stale: false, sinceMs: 0, reason: '' };
+      if (sse && old) return { stale: true, sinceMs: Math.max(sseAt, genAt), reason: 'both' };
+      return sse ? { stale: true, sinceMs: sseAt, reason: 'sse' } : { stale: true, sinceMs: genAt, reason: 'ttl' };
+    }
+    // Pure: how long to wait before reloading a display whose stream keeps
+    // failing — 0 until STAGE_TRACKER_DISPLAY_RELOAD_AFTER_FAILS consecutive
+    // failed reconnects, then 30 s doubling per reload already tried this
+    // session (attempt), capped at 10 min.
+    function stageTrackerDisplayReloadDelayMs(failures, attempt) {
+      if ((Number(failures) || 0) < STAGE_TRACKER_DISPLAY_RELOAD_AFTER_FAILS) return 0;
+      const n = Math.min(30, Math.max(0, Math.floor(Number(attempt) || 0)));
+      return Math.min(STAGE_TRACKER_DISPLAY_RELOAD_MAX_MS, STAGE_TRACKER_DISPLAY_RELOAD_BASE_MS * Math.pow(2, n));
+    }
+    // Pure: should a display reload for this roll record (#15804's
+    // versionReadUpgradeProgress)? Only for a roll that finished after the
+    // page loaded, so the reload itself never triggers another.
+    function stageTrackerDisplayRollReload(roll, loadedAtMs) {
+      if (!roll || roll.source !== 'roll') return false;
+      const done = Number(roll.completedAt) || 0;
+      return done > 0 && done > (Number(loadedAtMs) || 0);
+    }
+    // Pure: "45 s", "4 m", "2 h", "3 d" for the stale banner.
+    function stageTrackerDisplayAgo(ms) {
+      const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+      if (s < 60) return s + ' s';
+      if (s < 3600) return Math.floor(s / 60) + ' m';
+      if (s < 86400) return Math.floor(s / 3600) + ' h';
+      return Math.floor(s / 86400) + ' d';
+    }
+    // Pure: the banner line for a stageTrackerDisplayStale result.
+    function stageTrackerDisplayStaleText(st, nowMs) {
+      if (!st || !st.stale) return '';
+      return st.sinceMs ? 'Stale: last update ' + stageTrackerDisplayAgo(nowMs - st.sinceMs) + ' ago' : 'Stale: no update yet';
+    }
+    // tracker display liveness helpers end
+
+    // tracker display layout helpers begin
+    const STAGE_TRACKER_DISPLAY_TV = 'tv';
+    const STAGE_TRACKER_DISPLAY_TV_ROW_PX = 96;
+    const STAGE_TRACKER_DISPLAY_TV_FOOT_PX = 48;
+    // Pure: how many rows fit a TV display — the viewport less everything
+    // above the rows (and the footer), over one row's height. At least one
+    // row, and one when the sizes are not known yet.
+    function stageTrackerDisplayRowCap(viewportPx, headerPx, rowPx) {
+      const v = Number(viewportPx), r = Number(rowPx);
+      const h = Math.max(0, Number(headerPx) || 0);
+      if (!(v > 0) || !(r > 0)) return 1;
+      return Math.max(1, Math.floor((v - h) / r));
+    }
+    // Pure: a page-shaped slice of the first `cap` rows with no pager
+    // (pages 1) and `more` = the rows that did not fit.
+    function stageTrackerDisplayCapPage(rows, cap) {
+      const all = Array.isArray(rows) ? rows : [];
+      const n = Math.max(1, Math.floor(Number(cap) || 1));
+      const shown = all.slice(0, n);
+      return { rows: shown, page: 1, pages: 1, from: shown.length ? 1 : 0, to: shown.length, total: all.length, size: n, more: all.length - shown.length };
+    }
+    // Pure: the "+N more" footer that replaces the pager on a TV display.
+    function stageTrackerDisplayMoreHtml(more) {
+      const n = Math.max(0, Math.floor(Number(more) || 0));
+      return n ? `<span class="ham-display-more" role="status">+${n} more</span>` : '';
+    }
+    // Pure: the row-motion effect for a render — none at all on a display
+    // under prefers-reduced-motion, unchanged everywhere else.
+    function stageTrackerDisplayMotionEffect(effect, display, reduced) {
+      return display && reduced ? '' : effect;
+    }
+    // tracker display layout helpers end
+
+    function stageTrackerDisplayTv() {
+      return stageTrackerDisplayMode() && window.HIVE_DISPLAY_DENSITY === STAGE_TRACKER_DISPLAY_TV;
+    }
+    function stageTrackerDisplayEffect(effect) {
+      const reduced = typeof stageTrackerReducedMotion === 'function' && stageTrackerReducedMotion();
+      return stageTrackerDisplayMotionEffect(effect, stageTrackerDisplayMode(), reduced);
+    }
+
+    // -- TV density: rows capped to the viewport ---------------------------
+    var _stageTrackerDisplayRowPx = 0;
+    var _stageTrackerDisplayCap = 0;
+    function stageTrackerDisplayTvCap() {
+      const panel = document.getElementById('activity-monitor-panel');
+      const cols = panel && panel.querySelector('.ham-cols');
+      const top = panel ? panel.getBoundingClientRect().top + (window.scrollY || 0) : 0;
+      const head = cols ? cols.getBoundingClientRect().height : 0;
+      _stageTrackerDisplayCap = stageTrackerDisplayRowCap(window.innerHeight, top + head + STAGE_TRACKER_DISPLAY_TV_FOOT_PX, _stageTrackerDisplayRowPx || STAGE_TRACKER_DISPLAY_TV_ROW_PX);
+      return _stageTrackerDisplayCap;
+    }
+    // After a TV render: measure the real row pitch and render again once if
+    // the estimate fitted a different number of rows.
+    function stageTrackerDisplayMeasureRows(el) {
+      if (!el || !stageTrackerDisplayTv()) return;
+      const rows = el.querySelectorAll('.ham-row');
+      if (!rows.length) return;
+      const a = rows[0].getBoundingClientRect();
+      const px = rows.length > 1 ? rows[1].getBoundingClientRect().top - a.top : a.height;
+      if (!(px > 0) || Math.abs(px - _stageTrackerDisplayRowPx) < 1) return;
+      _stageTrackerDisplayRowPx = px;
+      const before = _stageTrackerDisplayCap;
+      if (stageTrackerDisplayTvCap() !== before) requestAnimationFrame(function() { renderStageTracker(); });
+    }
+    var _stageTrackerDisplayResizeTimer = null;
+    window.addEventListener('resize', function() {
+      if (!stageTrackerDisplayTv()) return;
+      clearTimeout(_stageTrackerDisplayResizeTimer);
+      _stageTrackerDisplayResizeTimer = setTimeout(function() { renderStageTracker(); }, 150);
+    });
+
+    // -- Liveness: stale dimming, header and self-recovery ------------------
+    const STAGE_TRACKER_DISPLAY_TICK_MS = 1000;
+    const STAGE_TRACKER_DISPLAY_RELOAD_KEY = 'hive-display-reload-attempt';
+    var _stageTrackerDisplayLoadedAtMs = Date.now();
+    var _stageTrackerDisplayFails = 0;
+    var _stageTrackerDisplayReloadTimer = null;
+    var _stageTrackerDisplayAttemptCleared = false;
+    var _stageTrackerDisplayRollReloaded = false;
+    function stageTrackerDisplaySessionGet(key) {
+      try { return sessionStorage.getItem(key) || ''; } catch { return ''; }
+    }
+    function stageTrackerDisplaySessionSet(key, value) {
+      try { if (value === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value); } catch {}
+    }
+    // sse-bootstrap.js: the stream's onerror. Consecutive failures past the
+    // threshold schedule one reload; the URL (and so the view) survives it.
+    function stageTrackerDisplayNoteReconnectFailed() {
+      if (!stageTrackerDisplayMode()) return;
+      _stageTrackerDisplayFails++;
+      if (_stageTrackerDisplayReloadTimer) return;
+      const attempt = Number(stageTrackerDisplaySessionGet(STAGE_TRACKER_DISPLAY_RELOAD_KEY)) || 0;
+      const delay = stageTrackerDisplayReloadDelayMs(_stageTrackerDisplayFails, attempt);
+      if (!delay) return;
+      _stageTrackerDisplayReloadTimer = setTimeout(function() {
+        stageTrackerDisplaySessionSet(STAGE_TRACKER_DISPLAY_RELOAD_KEY, String(attempt + 1));
+        window.location.reload();
+      }, delay);
+    }
+    // sse-bootstrap.js: any frame. A live stream cancels a pending reload
+    // and resets the backoff.
+    function stageTrackerDisplayNoteFrame() {
+      if (!_stageTrackerDisplayFails && !_stageTrackerDisplayReloadTimer && _stageTrackerDisplayAttemptCleared) return;
+      _stageTrackerDisplayFails = 0;
+      if (_stageTrackerDisplayReloadTimer) { clearTimeout(_stageTrackerDisplayReloadTimer); _stageTrackerDisplayReloadTimer = null; }
+      if (!stageTrackerDisplayMode()) return;
+      _stageTrackerDisplayAttemptCleared = true;
+      stageTrackerDisplaySessionSet(STAGE_TRACKER_DISPLAY_RELOAD_KEY, null);
+    }
+    function stageTrackerDisplayMountHead() {
+      const body = document.querySelector('#activity-monitor-section .section-body');
+      if (!body || document.getElementById('activity-monitor-display-head')) return;
+      const head = document.createElement('div');
+      head.className = 'ham-display-head';
+      head.id = 'activity-monitor-display-head';
+      head.innerHTML = '<span class="ham-display-dot" aria-hidden="true">●</span><span class="ham-display-hive"></span><span class="ham-display-clock"></span>';
+      const banner = document.createElement('div');
+      banner.className = 'ham-display-stale';
+      banner.id = 'activity-monitor-display-stale';
+      banner.setAttribute('role', 'status');
+      banner.setAttribute('aria-live', 'polite');
+      banner.hidden = true;
+      body.insertBefore(banner, body.firstChild);
+      body.insertBefore(head, banner);
+    }
+    function stageTrackerDisplayTick(nowMs) {
+      if (!stageTrackerDisplayMode()) return;
+      const now = typeof nowMs === 'number' ? nowMs : Date.now();
+      const d = typeof _stageTracker !== 'undefined' ? _stageTracker : null;
+      const genAt = Date.parse((d && d.generated_at) || '') || 0;
+      const ttlMs = (Number(d && d.cache_ttl_s) || 0) * 1000;
+      // Until the first frame the stream is judged from page load, so a
+      // display that never connects still goes stale.
+      const sseAt = (typeof _sseEverFrameAtMs === 'number' && _sseEverFrameAtMs) || _stageTrackerDisplayLoadedAtMs;
+      const st = stageTrackerDisplayStale(now, sseAt, STAGE_TRACKER_POLL_MS, genAt, ttlMs);
+      document.body.classList.toggle('display-stale', st.stale);
+      const banner = document.getElementById('activity-monitor-display-stale');
+      if (banner) {
+        const text = stageTrackerDisplayStaleText(st, now);
+        if (banner.textContent !== text) banner.textContent = text;
+        banner.hidden = !st.stale;
+      }
+      const head = document.getElementById('activity-monitor-display-head');
+      if (head) {
+        const hive = head.querySelector('.ham-display-hive');
+        const id = typeof _stageTrackerPopoutHiveId === 'string' ? _stageTrackerPopoutHiveId : '';
+        if (hive && hive.textContent !== id) hive.textContent = id;
+        const clock = head.querySelector('.ham-display-clock');
+        const time = typeof formatDashboardTime === 'function'
+          ? formatDashboardTime(now, { hour: '2-digit', minute: '2-digit' }, '')
+          : '';
+        if (clock && clock.textContent !== time) clock.textContent = time;
+        const dot = head.querySelector('.ham-display-dot');
+        if (dot) dot.title = st.stale ? stageTrackerDisplayStaleText(st, now) : 'Live';
+      }
+      const roll = typeof versionReadUpgradeProgress === 'function' ? versionReadUpgradeProgress(now) : null;
+      if (!_stageTrackerDisplayRollReloaded && stageTrackerDisplayRollReload(roll, _stageTrackerDisplayLoadedAtMs)) {
+        _stageTrackerDisplayRollReloaded = true;
+        window.location.reload();
+      }
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+      if (!stageTrackerDisplayMode()) return;
+      stageTrackerDisplayMountHead();
+      stageTrackerDisplayTick();
+      dashboardSetInterval('display-liveness', stageTrackerDisplayTick, STAGE_TRACKER_DISPLAY_TICK_MS);
     });
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
@@ -49302,7 +49601,14 @@ function burnAreaChart() {
     var _eventSourceReconnectTimer = null;
     var _sseLastFrameAtMs = 0;
     var _sseOpenedAtMs = 0;
-    function noteSSEFrame() { _sseLastFrameAtMs = Date.now(); }
+    // The newest frame ever seen; unlike _sseLastFrameAtMs a reconnect does
+    // not reset it, so display mode can say how long the stream has been
+    // quiet (tracker-display.js).
+    var _sseEverFrameAtMs = 0;
+    function noteSSEFrame() {
+      _sseLastFrameAtMs = _sseEverFrameAtMs = Date.now();
+      if (typeof stageTrackerDisplayNoteFrame === 'function') stageTrackerDisplayNoteFrame();
+    }
     // sseWatchdogTick recycles a silent stream (see sseStreamIdle). `force`
     // (tab became visible again) always refetches /api/status: Safari and
     // Chrome throttle hidden-tab timers to once a minute or less, so the tick
@@ -49438,6 +49744,7 @@ function burnAreaChart() {
         }
         source.close();
         if (_eventSource === source) _eventSource = null;
+        if (typeof stageTrackerDisplayNoteReconnectFailed === 'function') stageTrackerDisplayNoteReconnectFailed();
         if (!_eventSourceReconnectTimer) {
           _eventSourceReconnectTimer = setTimeout(function() { _eventSourceReconnectTimer = null; connect(); }, 3000);
         }

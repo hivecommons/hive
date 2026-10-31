@@ -88,11 +88,16 @@
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
       const ordered = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
-      const grouping = _stageTrackerGroup === 'repo';
-      const page = grouping
-        ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
-        : stageTrackerPage(ordered, f);
-      if (page.page !== f.page) f.page = page.page;
+      // A TV display (display=1&density=tv) shows the rows that fit the
+      // screen, ungrouped, with "+N more" in place of the pager.
+      const tv = typeof stageTrackerDisplayTv === 'function' && stageTrackerDisplayTv();
+      const grouping = _stageTrackerGroup === 'repo' && !tv;
+      const page = tv
+        ? stageTrackerDisplayCapPage(ordered, stageTrackerDisplayTvCap())
+        : grouping
+          ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
+          : stageTrackerPage(ordered, f);
+      if (!tv && page.page !== f.page) f.page = page.page;
       // The rows this render draws (this page, group headers aside), for
       // stageTrackerPRListedOwnRow: a covered issue defers to its PR's row
       // only when that row is actually on screen. Kept beside the payload,
@@ -128,8 +133,9 @@
       const meta = document.getElementById('activity-monitor-meta');
       if (meta) setIfChanged(meta, `<span class="ham-count"${counts.note ? ` title="${esc(counts.note)}"` : ''}>${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs, _stageTrackerPollError, _stageTrackerPollErrorSince)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
-      if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
-      const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      if (foot) setIfChanged(foot, tv ? stageTrackerDisplayMoreHtml(page.more) : page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
+      let effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      if (typeof stageTrackerDisplayEffect === 'function') effect = stageTrackerDisplayEffect(effect);
       if (!visible.length && !Object.keys(_stageTrackerCelebrating).length) {
         _stageTrackerMoves = {};
         stageTrackerSelectionSync(el, []);
@@ -173,6 +179,7 @@
       if (typeof stageTrackerPendingSync === 'function') stageTrackerPendingSync(el);
       stageTrackerCueAgeSync(el, nowMs);
       stageTrackerCueTick();
+      if (tv) stageTrackerDisplayMeasureRows(el);
       // Moves play once, on the render that follows the payload; a filter
       // or paging re-render of the same payload does not replay them.
       if (Object.keys(_stageTrackerMoves).length) { stageTrackerAnimateMoves(el); _stageTrackerMoves = {}; }

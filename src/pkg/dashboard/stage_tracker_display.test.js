@@ -146,16 +146,22 @@ test('display mode wiring: header button, boot flag, chrome-less CSS and hidden 
   assert.match(html, /id="activity-monitor-display" data-action="toggleStageTrackerDisplay" data-stop="1" aria-pressed="false"/);
   assert.ok(html.includes("display=u.searchParams.get('display')==='1'"));
   assert.ok(html.includes('window.HIVE_DISPLAY=display&&!kiosk;'), 'kiosk wins');
-  assert.ok(html.includes("document.body.classList.add('display-mode');"));
+  assert.ok(html.includes("document.body.classList.add('display-mode');\n    document.body.classList.add('ham-chromeless');"), 'display shares the chrome-less layout class');
   for (const rule of [
-    'body.display-mode .hive-chat-panel, body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }',
-    'html body.display-mode #oc-topbar[id] { display: none !important; }',
-    'body.display-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }',
+    'body.ham-chromeless #dash-notices, body.ham-chromeless #oc-agent-detail, body.ham-chromeless .hive-chat-fab,',
+    'body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }',
+    'html body.ham-chromeless #oc-topbar[id] { display: none !important; }',
+    'body.ham-chromeless #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }',
     'body.display-mode #activity-monitor-section .ham-row-tools, body.display-mode #activity-monitor-selbar,',
     'body.display-mode .ham-decision-acts { display: none !important; }',
     'body.kiosk-mode .ham-header-tool, body.kiosk-mode .ham-popout-return { display: none !important; }',
   ]) assert.ok(html.includes(rule), 'missing CSS rule: ' + rule);
   assert.ok(!/body\.display-mode[^{]*\{[^}]*cursor:\s*none/.test(html), 'display mode keeps the cursor');
+  assert.ok(!/body\.ham-chromeless[^{]*\{[^}]*cursor:\s*none/.test(html), 'the shared layout keeps the cursor');
+  // One shared class, not one selector copy per chrome-less view (#15956).
+  const popoutCss = fs.readFileSync(path.join(__dirname, 'static-src', 'css', 'popout.css'), 'utf8');
+  assert.ok(!popoutCss.includes('body.ham-fullscreen #hive-dashboard-root'), 'full screen rides ham-chromeless');
+  assert.ok(!popoutCss.includes('body.display-mode #hive-dashboard-root'), 'display rides ham-chromeless');
   assert.ok(html.includes('function setLayout(mode) { if (window.hiveDisplayMode && window.hiveDisplayMode()) return; localStorage.setItem(LAYOUT_KEY, mode); }'), 'theme is never persisted from a display');
   assert.ok(html.includes('function dashboardLayoutWrite(){if(window.hiveDisplayMode&&window.hiveDisplayMode())return;'), 'layout is never persisted from a display');
 });
@@ -203,8 +209,8 @@ const controlsSrc = [
   'var _stageTrackerDisplayLastPointer = 0;', 'var _stageTrackerDisplayHideTimer = null;',
   'var _stageTrackerWakeLock = null;', 'var _stageTrackerWakeLockError = null;', 'var _stageTrackerWakeLockWanted = false;',
   ...['stageTrackerDisplayMode', 'stageTrackerDisplayUrl', 'toggleStageTrackerDisplay',
-    'stageTrackerFullscreenTarget', 'stageTrackerFullscreenButton', 'stageTrackerIsFullscreen', 'stageTrackerFullscreenLabel',
-    'stageTrackerRenderFullscreenButton', 'toggleStageTrackerFullscreen',
+    'stageTrackerFullscreenTarget', 'stageTrackerFullscreenButton', 'stageTrackerIsFullscreen', 'stageTrackerSetFullscreenLayout',
+    'stageTrackerFullscreenLabel', 'stageTrackerRenderFullscreenButton', 'toggleStageTrackerFullscreen',
     'stageTrackerDisplayControlsEl', 'stageTrackerDisplayControlsSync', 'stageTrackerDisplayControlsPing',
     'stageTrackerWakeLockSupported', 'stageTrackerRenderDisplayControls', 'stageTrackerWakeLockAcquire',
     'stageTrackerWakeLockRelease', 'stageTrackerToggleWakeLock', 'stageTrackerWakeLockOnVisible', 'stageTrackerDisplayExit',
