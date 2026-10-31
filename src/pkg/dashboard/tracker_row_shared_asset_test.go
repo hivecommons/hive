@@ -46,6 +46,16 @@ func TestTrackerRowSharedAssetCompat(t *testing.T) {
 	}
 }
 
+// TestTrackerRowRequiredGlobalsDefinedBySpoke pins that the spoke page defines
+// every STAGE_TRACKER_* constant the shared row asset reads, so the list the
+// hub asserts against stays tied to the values the spoke serves.
+func TestTrackerRowRequiredGlobalsDefinedBySpoke(t *testing.T) {
+	html := indexHTML(t)
+	for _, name := range trackerrow.RequiredGlobals {
+		jsConstLine(t, html, name)
+	}
+}
+
 // TestTrackerRowSharedAssetRendersSpokeFixtures renders the same fixtures
 // through the functions the spoke page defines and through the shared asset
 // files, and pins both to the spoke's existing columns and title markup.

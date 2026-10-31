@@ -30,3 +30,22 @@ var Files = []string{
 	// stageTrackerSplitTitleTag / stageTrackerTitleHtml: the escaped, text-only title.
 	"tracker-row-title.js",
 }
+
+// RequiredGlobals lists the STAGE_TRACKER_* constants the assets read as free
+// globals. A host must define each with the spoke's value: TestRequiredGlobals
+// keeps this list equal to what the assets reference, and
+// TestTrackerRowRequiredGlobalsDefinedBySpoke in pkg/dashboard fails when the
+// spoke stops defining one, so the hub can assert against it when it embeds
+// the assets.
+var RequiredGlobals = []string{
+	"STAGE_TRACKER_ISSUE_DECISION_COLUMN",
+	"STAGE_TRACKER_ISSUE_NEEDS_DECISION",
+	"STAGE_TRACKER_MERGE_COLUMN",
+	"STAGE_TRACKER_NEEDS_DECISION",
+	"STAGE_TRACKER_PATH",
+	"STAGE_TRACKER_POSSIBLY_EXISTS",
+	"STAGE_TRACKER_PRE_MERGE_SOAK",
+	"STAGE_TRACKER_PR_COLUMN",
+	"STAGE_TRACKER_TERMINAL",
+	"STAGE_TRACKER_TRIAGE_NEEDED",
+}
