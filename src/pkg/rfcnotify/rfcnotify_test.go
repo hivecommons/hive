@@ -318,7 +318,7 @@ func TestSweeperSeedsThenPostsAndPersists(t *testing.T) {
 	src := &fakeSource{open: []Issue{rfc(1, "open", "hold"), rfc(2, "open")}}
 	sw := NewSweeper(Options{StatePath: path, Now: clock, IncludeRepo: true, Logger: quiet})
 
-	res, err := sw.Run(context.Background(), src, post)
+	res, err := sw.Run(context.Background(), src, Poster(post))
 	if err != nil || !res.Seeded || len(posted) != 0 {
 		t.Fatalf("seed run: %+v %v posted=%v", res, err, posted)
 	}
@@ -327,7 +327,7 @@ func TestSweeperSeedsThenPostsAndPersists(t *testing.T) {
 	}
 	// Within the interval: skipped, no listing.
 	now = now.Add(time.Minute)
-	if res, _ := sw.Run(context.Background(), src, post); !res.Skipped {
+	if res, _ := sw.Run(context.Background(), src, Poster(post)); !res.Skipped {
 		t.Fatal("expected skip inside the interval")
 	}
 	// Next poll: hold lifted on #1, #2 closed, new #3 opened.
@@ -335,7 +335,7 @@ func TestSweeperSeedsThenPostsAndPersists(t *testing.T) {
 	fresh := rfc(3, "open")
 	fresh.CreatedAt = t0.Add(time.Minute)
 	src.updated = []Issue{rfc(1, "open"), withReason(rfc(2, "open"), "not_planned"), fresh}
-	res, err = sw.Run(context.Background(), src, post)
+	res, err = sw.Run(context.Background(), src, Poster(post))
 	if err != nil || res.Errors != 0 || len(res.Posted) != 3 {
 		t.Fatalf("poll run: %+v %v", res, err)
 	}
@@ -353,7 +353,7 @@ func TestSweeperSeedsThenPostsAndPersists(t *testing.T) {
 	now = now.Add(DefaultInterval)
 	posted = nil
 	sw2 := NewSweeper(Options{StatePath: path, Now: clock, Logger: quiet})
-	res, err = sw2.Run(context.Background(), src, post)
+	res, err = sw2.Run(context.Background(), src, Poster(post))
 	if err != nil || len(posted) != 0 || res.Seeded {
 		t.Fatalf("restart re-posted: %+v %v %v", res, err, posted)
 	}
@@ -364,7 +364,7 @@ func TestSweeperPostFailureRetriesNextPoll(t *testing.T) {
 	clock := func() time.Time { return now }
 	src := &fakeSource{open: []Issue{rfc(1, "open"), rfc(2, "open")}}
 	sw := NewSweeper(Options{Now: clock, Logger: quiet})
-	if _, err := sw.Run(context.Background(), src, func(string) error { return nil }); err != nil {
+	if _, err := sw.Run(context.Background(), src, Poster(func(string) error { return nil })); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(DefaultInterval)
@@ -377,7 +377,7 @@ func TestSweeperPostFailureRetriesNextPoll(t *testing.T) {
 		}
 		return nil
 	}
-	res, err := sw.Run(context.Background(), src, failSecond)
+	res, err := sw.Run(context.Background(), src, Poster(failSecond))
 	if err != nil || res.Errors != 1 || len(res.Posted) != 1 {
 		t.Fatalf("first run: %+v %v", res, err)
 	}
@@ -387,13 +387,13 @@ func TestSweeperPostFailureRetriesNextPoll(t *testing.T) {
 	}
 	now = now.Add(DefaultInterval)
 	var posted []string
-	res, err = sw.Run(context.Background(), src, func(s string) error { posted = append(posted, s); return nil })
+	res, err = sw.Run(context.Background(), src, Poster(func(s string) error { posted = append(posted, s); return nil }))
 	if err != nil || len(posted) != 1 || !strings.Contains(posted[0], "#2 ") {
 		t.Fatalf("retry run: %+v %v posted=%v", res, err, posted)
 	}
 	// Third poll: nothing left.
 	now = now.Add(DefaultInterval)
-	if res, _ := sw.Run(context.Background(), src, func(string) error { t.Fatal("unexpected post"); return nil }); len(res.Posted) != 0 {
+	if res, _ := sw.Run(context.Background(), src, Poster(func(string) error { t.Fatal("unexpected post"); return nil })); len(res.Posted) != 0 {
 		t.Fatal("re-posted")
 	}
 }
@@ -402,21 +402,21 @@ func TestSweeperRollbackForgetsUnpostedNewIssue(t *testing.T) {
 	now := t0
 	sw := NewSweeper(Options{Now: func() time.Time { return now }, Logger: quiet})
 	src := &fakeSource{}
-	if _, err := sw.Run(context.Background(), src, func(string) error { return nil }); err != nil {
+	if _, err := sw.Run(context.Background(), src, Poster(func(string) error { return nil })); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(DefaultInterval)
 	fresh := rfc(9, "open")
 	fresh.CreatedAt = t0.Add(time.Second)
 	src.updated = []Issue{fresh}
-	if res, _ := sw.Run(context.Background(), src, func(string) error { return errors.New("no") }); res.Errors != 1 {
+	if res, _ := sw.Run(context.Background(), src, Poster(func(string) error { return errors.New("no") })); res.Errors != 1 {
 		t.Fatalf("expected one error: %+v", res)
 	}
 	if sw.Detector().Known(fresh.Key()) {
 		t.Fatal("unposted new issue must be forgotten so it is announced next poll")
 	}
 	now = now.Add(DefaultInterval)
-	if res, _ := sw.Run(context.Background(), src, func(string) error { return nil }); len(res.Posted) != 1 {
+	if res, _ := sw.Run(context.Background(), src, Poster(func(string) error { return nil })); len(res.Posted) != 1 {
 		t.Fatalf("retry: %+v", res)
 	}
 }
@@ -427,18 +427,18 @@ func TestSweeperErrors(t *testing.T) {
 		t.Fatal("nil source must error")
 	}
 	src := &fakeSource{openErr: errors.New("boom")}
-	if _, err := sw.Run(context.Background(), src, func(string) error { return nil }); err == nil {
+	if _, err := sw.Run(context.Background(), src, Poster(func(string) error { return nil })); err == nil {
 		t.Fatal("seed error must surface")
 	}
 	src.openErr = nil
 	now := t0
 	sw = NewSweeper(Options{Now: func() time.Time { return now }, Logger: quiet})
-	if _, err := sw.Run(context.Background(), src, func(string) error { return nil }); err != nil {
+	if _, err := sw.Run(context.Background(), src, Poster(func(string) error { return nil })); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(DefaultInterval)
 	src.updErr = errors.New("rate limited")
-	if _, err := sw.Run(context.Background(), src, func(string) error { return nil }); err == nil {
+	if _, err := sw.Run(context.Background(), src, Poster(func(string) error { return nil })); err == nil {
 		t.Fatal("list error must surface")
 	}
 }
@@ -455,7 +455,7 @@ func TestNewSweeperUnreadableStateStartsFresh(t *testing.T) {
 	}
 	// Save failure (state path is a directory) surfaces from Run.
 	sw = NewSweeper(Options{StatePath: dir, Logger: quiet})
-	if _, err := sw.Run(context.Background(), &fakeSource{}, func(string) error { return nil }); err == nil {
+	if _, err := sw.Run(context.Background(), &fakeSource{}, Poster(func(string) error { return nil })); err == nil {
 		t.Fatal("save into a directory path must error")
 	}
 }
@@ -471,7 +471,7 @@ func gateSweeper(t *testing.T, opts Options, src *fakeSource) (*Sweeper, func())
 	}
 	sw := NewSweeper(opts)
 	src.open = []Issue{rfc(1, "open"), rfc(2, "open")}
-	if _, err := sw.Run(context.Background(), src, func(string) error { t.Fatal("seed posted"); return nil }); err != nil {
+	if _, err := sw.Run(context.Background(), src, Poster(func(string) error { t.Fatal("seed posted"); return nil })); err != nil {
 		t.Fatal(err)
 	}
 	return sw, func() { now = now.Add(DefaultInterval) }
@@ -495,13 +495,13 @@ func TestSweeperRichModeWithoutAnnouncerPostsNothingOnce(t *testing.T) {
 		sw, tick := gateSweeper(t, opts, src)
 		tick()
 		src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
-		res, err := sw.Run(context.Background(), src, func(string) error { t.Fatal("non-announcer posted"); return nil })
+		res, err := sw.Run(context.Background(), src, Poster(func(string) error { t.Fatal("non-announcer posted"); return nil }))
 		if err != nil || len(res.Posted) != 0 || res.Withheld != 1 {
 			t.Fatalf("first run: %+v %v", res, err)
 		}
 		tick()
 		src.updated = []Issue{withReason(rfc(2, "open"), "completed")}
-		if res, _ := sw.Run(context.Background(), src, func(string) error { t.Fatal("non-announcer posted"); return nil }); res.Withheld != 1 {
+		if res, _ := sw.Run(context.Background(), src, Poster(func(string) error { t.Fatal("non-announcer posted"); return nil })); res.Withheld != 1 {
 			t.Fatalf("second run: %+v", res)
 		}
 		if n := strings.Count(logs.String(), "rich mode requires rfc_announcer; not posting"); n != 1 {
@@ -511,7 +511,7 @@ func TestSweeperRichModeWithoutAnnouncerPostsNothingOnce(t *testing.T) {
 		sw.opts.Announcer = true
 		tick()
 		src.updated = []Issue{withReason(rfc(1, "open"), "completed"), withReason(rfc(2, "open"), "completed")}
-		if res, _ := sw.Run(context.Background(), src, func(string) error { t.Fatal("backfilled"); return nil }); len(res.Posted) != 0 {
+		if res, _ := sw.Run(context.Background(), src, Poster(func(string) error { t.Fatal("backfilled"); return nil })); len(res.Posted) != 0 {
 			t.Fatalf("backfill: %+v", res)
 		}
 	}
@@ -523,7 +523,7 @@ func TestSweeperRichModeAnnouncerPosts(t *testing.T) {
 	tick()
 	src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
 	var posted []string
-	res, err := sw.Run(context.Background(), src, func(s string) error { posted = append(posted, s); return nil })
+	res, err := sw.Run(context.Background(), src, Poster(func(s string) error { posted = append(posted, s); return nil }))
 	if err != nil || len(posted) != 1 || res.Withheld != 0 {
 		t.Fatalf("announcer: %+v %v %v", res, err, posted)
 	}
@@ -536,7 +536,7 @@ func TestSweeperLineModeIgnoresAnnouncer(t *testing.T) {
 		tick()
 		src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
 		var posted []string
-		if _, err := sw.Run(context.Background(), src, func(s string) error { posted = append(posted, s); return nil }); err != nil {
+		if _, err := sw.Run(context.Background(), src, Poster(func(s string) error { posted = append(posted, s); return nil })); err != nil {
 			t.Fatal(err)
 		}
 		want := "RFC closed (completed): #1 " + rfc(1, "open").Title + " - <https://github.com/hivecommons/hive/issues/1>"
@@ -554,7 +554,7 @@ func TestSweeperPrivateGate(t *testing.T) {
 	src.updated = []Issue{private(withReason(rfc(1, "open"), "completed")), withReason(rfc(2, "open"), "completed")}
 	var posted []string
 	post := func(s string) error { posted = append(posted, s); return nil }
-	res, err := sw.Run(context.Background(), src, post)
+	res, err := sw.Run(context.Background(), src, Poster(post))
 	if err != nil || res.Withheld != 1 || len(posted) != 1 || !strings.Contains(posted[0], "#2 ") {
 		t.Fatalf("private run: %+v %v %v", res, err, posted)
 	}
@@ -562,7 +562,7 @@ func TestSweeperPrivateGate(t *testing.T) {
 	sw.opts.IncludePrivate = true
 	tick()
 	posted = nil
-	if res, _ := sw.Run(context.Background(), src, post); len(posted) != 0 || res.Withheld != 0 {
+	if res, _ := sw.Run(context.Background(), src, Poster(post)); len(posted) != 0 || res.Withheld != 0 {
 		t.Fatalf("replayed: %+v %v", res, posted)
 	}
 
@@ -571,7 +571,7 @@ func TestSweeperPrivateGate(t *testing.T) {
 	tick2()
 	src2.updated = []Issue{private(withReason(rfc(1, "open"), "completed"))}
 	posted = nil
-	if res, _ := sw2.Run(context.Background(), src2, post); len(posted) != 1 || res.Withheld != 0 {
+	if res, _ := sw2.Run(context.Background(), src2, Poster(post)); len(posted) != 1 || res.Withheld != 0 {
 		t.Fatalf("include_private: %+v %v", res, posted)
 	}
 }
@@ -584,7 +584,7 @@ func TestSweeperUnknownVisibilityRetriesNextPoll(t *testing.T) {
 	src.updated = []Issue{unknown(withReason(rfc(1, "open"), "completed")), withReason(rfc(2, "open"), "completed")}
 	var posted []string
 	post := func(s string) error { posted = append(posted, s); return nil }
-	res, err := sw.Run(context.Background(), src, post)
+	res, err := sw.Run(context.Background(), src, Poster(post))
 	if err != nil || res.Unresolved != 1 || res.Withheld != 0 || len(posted) != 1 || !strings.Contains(posted[0], "#2 ") {
 		t.Fatalf("unknown run: %+v %v %v", res, err, posted)
 	}
@@ -592,7 +592,7 @@ func TestSweeperUnknownVisibilityRetriesNextPoll(t *testing.T) {
 	src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
 	tick()
 	posted = nil
-	if res, _ := sw.Run(context.Background(), src, post); len(posted) != 1 || res.Unresolved != 0 {
+	if res, _ := sw.Run(context.Background(), src, Poster(post)); len(posted) != 1 || res.Unresolved != 0 {
 		t.Fatalf("retry: %+v %v", res, posted)
 	}
 }
