@@ -70,13 +70,11 @@ type repoItemDecisionMock struct {
 	fixedIssueClosedBy int
 	// issueTitle / issueBody shape issue #7 (empty = untitled, no body).
 	issueTitle, issueBody string
-
+	// issueState shapes GET /issues/7 (empty means open).
 	issueState string
-
-	commentError int
-
-	editError int
-
+	// commentError / editError refuse POST /comments or PATCH /issues/N.
+	commentError, editError int
+	// editPaths records each PATCH path alongside edits.
 	editPaths []string
 }
 

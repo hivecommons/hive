@@ -53,7 +53,7 @@ func TestCloseIssueDecisionGuardsAndFailures(t *testing.T) {
 		{name: "PR type", user: "writer", number: 8, body: `{"decision":"close-issue","type":"pr"}`, want: http.StatusBadRequest},
 		{name: "PR disguised as issue", user: "writer", number: 8, want: http.StatusBadRequest},
 		{name: "already closed", user: "writer", number: 7, state: "closed", want: http.StatusConflict},
-		{name: "missing issue", user: "writer", number: 404, want: http.StatusBadGateway},
+		{name: "missing issue", user: "writer", number: 404, want: http.StatusNotFound},
 		{name: "required attribution refused", user: "writer", number: 7, commentError: http.StatusForbidden, want: http.StatusBadGateway},
 		{name: "remote close refused", user: "writer", number: 7, editError: http.StatusForbidden, want: http.StatusBadGateway},
 		{name: "remote close unavailable", user: "writer", number: 7, editError: http.StatusServiceUnavailable, want: http.StatusBadGateway},

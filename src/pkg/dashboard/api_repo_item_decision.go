@@ -436,8 +436,12 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 				jsonError(w, "close-issue applies to issues only", http.StatusBadRequest)
 				return
 			}
-			issue, _, err := gh.GoGitHub().Issues.Get(ctx, owner, repoName, number)
+			issue, resp, err := gh.GoGitHub().Issues.Get(ctx, owner, repoName, number)
 			if err != nil {
+				if resp != nil && resp.StatusCode == http.StatusNotFound {
+					jsonError(w, "issue not found", http.StatusNotFound)
+					return
+				}
 				jsonError(w, err.Error(), http.StatusBadGateway)
 				return
 			}

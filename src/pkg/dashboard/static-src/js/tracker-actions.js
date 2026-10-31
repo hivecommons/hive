@@ -1897,6 +1897,7 @@
           return (await stageTrackerAsk(id, 'confirm', { title: 'Close advisory', message: stageTrackerAdvisoryCloseMessage(items, refs, who), confirmLabel: 'Close' })) ? {} : null;
         case 'decide:close-issue': {
           const item = items[0];
+          // This destructive exact-issue action always asks; no confirmation opt-out.
           const v = await hivePrompt({ title: 'Close issue', label: 'Close ' + refs + ' — ' + (item.title || 'Untitled issue') + ' as completed, as ' + who + '? Only this issue closes; linked pull requests and other issues stay unchanged. An attributed closing note is posted. Additional comment (optional):', placeholder: 'Optional closing comment', confirmLabel: 'Close issue', danger: true });
           return v == null ? null : { comment: v };
         }
