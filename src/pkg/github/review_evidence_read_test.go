@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -219,6 +220,7 @@ type evidenceMergeFixture struct {
 	postFail  bool
 	comments  []string
 	posts     int
+	edits     int
 	prFetches int
 }
 
@@ -252,10 +254,21 @@ func newEvidenceMergeServer(t *testing.T, f *evidenceMergeFixture) *httptest.Ser
 				return
 			}
 			out := []map[string]any{}
-			for _, c := range f.comments {
-				out = append(out, map[string]any{"body": c})
+			for i, c := range f.comments {
+				out = append(out, map[string]any{"id": i + 1, "body": c})
 			}
 			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/comments/"):
+			f.edits++
+			id, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/repos/o/r/issues/comments/"))
+			var in struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if id >= 1 && id <= len(f.comments) {
+				f.comments[id-1] = in.Body
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/7/comments":
 			f.posts++
 			if f.postFail {

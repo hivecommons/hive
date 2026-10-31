@@ -605,7 +605,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		}
 		return res
 	}
-	closedMarker, reopenedMarker := c.closeOnMergeMarkers(ctx, owner, repoName, issueNumber, pr.GetNumber())
+	closedMarker, reopenedMarker, stageNoted := c.closeOnMergeMarkers(ctx, owner, repoName, issueNumber, pr.GetNumber())
 	if closedMarker {
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "marker_present"
 		return res
@@ -653,7 +653,12 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeAwaiting, "needs_confirmation_or_human"
 		return res
 	}
-	if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeCloseComment(pr))}); err != nil {
+	// The issue-stage lane may already have said "Fixed by #N" for this
+	// PR (mergedPRClosedStageMarker) and only failed to close; one closing
+	// comment per issue is enough (hivecommons/hive#15727 vs #15843).
+	if stageNoted {
+		c.noteCommentSuppressed()
+	} else if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeCloseComment(pr))}); err != nil {
 		res.Action, res.Reason = CloseOnMergeNoop, "close_comment_failed"
 		return res
 	}
@@ -916,35 +921,40 @@ func closeOnMergeShortSHA(sha string) string {
 }
 
 func (c *Client) hasCloseOnMergeMarker(ctx context.Context, owner, repo string, number int) bool {
-	closed, _ := c.closeOnMergeMarkers(ctx, owner, repo, number, 0)
+	closed, _, _ := c.closeOnMergeMarkers(ctx, owner, repo, number, 0)
 	return closed
 }
 
 // closeOnMergeMarkers reports, in one pass over the issue's comments, whether
-// Hive's close-on-merge marker is present and whether the reopened-after-merge
-// marker for pr is present.
-func (c *Client) closeOnMergeMarkers(ctx context.Context, owner, repo string, number, pr int) (closed, reopened bool) {
-	reopenedMarker := ""
+// Hive's close-on-merge marker is present, whether the reopened-after-merge
+// marker for pr is present, and whether the issue-stage lane already left
+// its own "Fixed by #pr" closing note (mergedPRClosedStageMarker).
+func (c *Client) closeOnMergeMarkers(ctx context.Context, owner, repo string, number, pr int) (closed, reopened, stageNoted bool) {
+	reopenedMarker, stageMarker := "", ""
 	if pr > 0 {
 		reopenedMarker = closeOnMergeReopenedMarker(pr)
+		stageMarker = mergedPRClosedStageMarkerFor(pr)
 	}
 	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: closeOnMergeCommentPageSize}}
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, number, opts)
 		if err != nil {
-			return closed, reopened
+			return closed, reopened, stageNoted
 		}
 		for _, comment := range comments {
 			body := comment.GetBody()
 			if strings.Contains(body, CloseOnMergeMarker) {
-				return true, reopened
+				return true, reopened, stageNoted
 			}
 			if reopenedMarker != "" && strings.Contains(body, reopenedMarker) {
 				reopened = true
 			}
+			if stageMarker != "" && strings.Contains(body, stageMarker) {
+				stageNoted = true
+			}
 		}
 		if resp == nil || resp.NextPage == 0 {
-			return closed, reopened
+			return closed, reopened, stageNoted
 		}
 		opts.Page = resp.NextPage
 	}

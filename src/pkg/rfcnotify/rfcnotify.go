@@ -52,6 +52,13 @@ type Issue struct {
 	StateReason string
 	Labels      []string
 	CreatedAt   time.Time
+	// Private is true when the issue's repository is private, or its
+	// visibility could not be resolved (fail closed). Such issues are not
+	// posted unless Options.IncludePrivate is set.
+	Private bool
+	// VisibilityUnknown is true when the lookup behind Private failed. The
+	// sweeper retries such events next poll instead of dropping them.
+	VisibilityUnknown bool
 }
 
 // Key is the per-issue identity the state is keyed by.

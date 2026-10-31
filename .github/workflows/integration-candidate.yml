@@ -1,0 +1,190 @@
+name: Integration candidate
+run-name: Integration ${{ fromJSON(inputs.manifest).id }} ${{ fromJSON(inputs.manifest).dispatchClaim.owner.nonce }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: Exact versioned subject emitted by an enrolled trusted materializer.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-candidate-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  subject:
+    name: integration subject
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate immutable ordered subject before assigning technical jobs
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SUBJECT_MANIFEST: ${{ inputs.manifest }}
+        with:
+          script: |
+            const crypto = require('node:crypto');
+            const MAX_MANIFEST_BYTES = 32 * 1024;
+            const MAX_CANDIDATE_MEMBERS = 8;
+            const EXPECTED_PARENTS = 2;
+            const fail = message => { throw new Error(message); };
+            const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value) && !/^0+$/.test(value);
+            const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) && !/^0+$/.test(value);
+            const raw = process.env.SUBJECT_MANIFEST || '';
+            if (Buffer.byteLength(raw, 'utf8') > MAX_MANIFEST_BYTES) fail('Candidate manifest exceeds the bounded protocol');
+            const subject = JSON.parse(raw);
+            const canonical = value => {
+              if (value === null || typeof value !== 'object') return JSON.stringify(value);
+              if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+              return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+            };
+            if (subject.schema !== 1 || subject.protocol !== 'integration-prefix-v1' ||
+                subject.engine !== 'hive' || !digest(subject.id) ||
+                subject.repo !== `${context.repo.owner}/${context.repo.repo}` ||
+                !sha(subject.baseSHA) || !digest(subject.policy) ||
+                !sha(subject.workflowTree) || !Number.isSafeInteger(subject.generation) ||
+                subject.generation < 1 || typeof subject.base !== 'string' || !subject.base.length) {
+              fail('Invalid integration subject identity; no candidate jobs admitted');
+            }
+            const {id, generation, preparedBy, dispatchClaim, ...immutable} = subject;
+            if (crypto.createHash('sha256').update(canonical(immutable)).digest('hex') !== id) {
+              fail('Subject ID does not bind its exact immutable membership, commits, trees and policy');
+            }
+            const claimKey = crypto.createHash('sha256').update(`integration-ci-initial-v1/${subject.id}`).digest('hex');
+            if (!dispatchClaim || dispatchClaim.state !== 'claimed' ||
+                dispatchClaim.key !== claimKey || dispatchClaim.ref !== `heads/hive-integration-intents/${claimKey}` ||
+                !sha(dispatchClaim.commit) || !dispatchClaim.owner ||
+                typeof dispatchClaim.owner.nonce !== 'string' || !/^[a-f0-9]{32}$/.test(dispatchClaim.owner.nonce) ||
+                !/^[1-9][0-9]*$/.test(dispatchClaim.owner.runID) || !/^[1-9][0-9]*$/.test(dispatchClaim.owner.attempt)) {
+              fail('Candidate has no exact shared single-attempt dispatch owner');
+            }
+            if (context.eventName !== 'workflow_dispatch' ||
+                context.ref !== `refs/tags/hive-integration/${subject.id}` ||
+                !Array.isArray(subject.members) || !Array.isArray(subject.prefixes) ||
+                subject.members.length < 1 || subject.members.length > MAX_CANDIDATE_MEMBERS ||
+                subject.members.length !== subject.prefixes.length) {
+              fail('Candidate dispatch/ref or bounded ordered membership mismatch');
+            }
+            const numbers = new Set();
+            const heads = new Set();
+            const variables = {owner: context.repo.owner, name: context.repo.repo,
+              claimRef: `refs/${dispatchClaim.ref}`};
+            const declarations = ['$owner:String!', '$name:String!', '$policy:String!', '$claimRef:String!'];
+            const objects = [];
+            for (let i = 0; i < subject.members.length; i++) {
+              const member = subject.members[i], prefix = subject.prefixes[i];
+              if (!member || !Number.isSafeInteger(member.pr) || member.pr < 1 ||
+                  numbers.has(member.pr) || heads.has(member.head) || !sha(member.head) ||
+                  !prefix || !sha(prefix.commit) || !sha(prefix.tree)) {
+                fail('Invalid or duplicate ordered candidate member');
+              }
+              numbers.add(member.pr);
+              heads.add(member.head);
+              declarations.push(`$prefix${i}:String!`);
+              variables[`prefix${i}`] = prefix.commit;
+              objects.push(`prefix${i}:object(expression:$prefix${i}){... on Commit{oid tree{oid} parents(first:${EXPECTED_PARENTS + 1}){nodes{oid}}}}`);
+            }
+            if (subject.prefixes.at(-1).commit !== context.sha) {
+              fail('Dispatch does not execute the actual tested candidate commit');
+            }
+            variables.policy = `${context.sha}:.github`;
+            const query = `query(${declarations.join(',')}){repository(owner:$owner,name:$name){nameWithOwner claim:ref(qualifiedName:$claimRef){target{oid ... on Commit{message}}} policy:object(expression:$policy){... on Tree{oid}} ${objects.join(' ')}}}`;
+            const {repository} = await github.graphql(query, variables);
+            if (repository?.nameWithOwner !== subject.repo || repository.policy?.oid !== subject.workflowTree) {
+              fail('Repository or producer workflow closure changed');
+            }
+            if (repository.claim?.target?.oid !== dispatchClaim.commit) {
+              fail('Shared dispatch authority changed or is unavailable; no TTL takeover');
+            }
+            const records = (repository.claim.target.message || '').split('\n').filter(line => line.startsWith('{'));
+            if (records.length !== 1) fail('Shared dispatch authority record is malformed');
+            const owner = JSON.parse(records[0]);
+            if (owner.schema !== 1 || owner.kind !== 'integration-ci-single-attempt-v1' ||
+                owner.key !== claimKey || owner.subjectID !== subject.id ||
+                owner.owner?.nonce !== dispatchClaim.owner.nonce ||
+                owner.owner?.runID !== dispatchClaim.owner.runID ||
+                owner.owner?.attempt !== dispatchClaim.owner.attempt) {
+              fail('Shared dispatch owner does not match the candidate execution');
+            }
+            let parent = subject.baseSHA;
+            for (let i = 0; i < subject.members.length; i++) {
+              const actual = repository[`prefix${i}`], expected = subject.prefixes[i];
+              const parents = actual?.parents?.nodes;
+              if (actual?.oid !== expected.commit || actual.tree?.oid !== expected.tree ||
+                  !Array.isArray(parents) || parents.length !== EXPECTED_PARENTS ||
+                  parents[0].oid !== parent || parents[1].oid !== subject.members[i].head) {
+                fail(`Candidate prefix ${i + 1} is not its exact ordered two-parent subject`);
+              }
+              parent = actual.oid;
+            }
+            core.info(`Validated immutable subject ${subject.id}; this is not promotion authorization.`);
+            core.info(`Manifest SHA256 ${crypto.createHash('sha256').update(raw).digest('hex')}`);
+
+  ci:
+    needs: subject
+    permissions:
+      contents: read
+    uses: ./.github/workflows/integration-technical-v2-ci.yml
+
+  tests:
+    needs: subject
+    permissions:
+      contents: read
+    uses: ./.github/workflows/integration-technical-v2-tests.yml
+
+  security:
+    needs: subject
+    permissions:
+      contents: read
+    uses: ./.github/workflows/integration-technical-go-security-analysis.yml
+
+  receipt:
+    name: integration producer receipt
+    needs: [subject, ci, tests, security]
+    if: ${{ always() && needs.subject.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Bind exact receipt bytes to this isolated finalizer job
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SUBJECT_MANIFEST: ${{ inputs.manifest }}
+          TECHNICAL_OUTCOMES: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const crypto = require('node:crypto');
+            const fs = require('node:fs');
+            const subject = JSON.parse(process.env.SUBJECT_MANIFEST);
+            const needs = JSON.parse(process.env.TECHNICAL_OUTCOMES);
+            const payload = Buffer.from(JSON.stringify({
+              schema: 1,
+              protocol: 'integration-producer-receipt-v1',
+              subject,
+              runID: process.env.GITHUB_RUN_ID,
+              runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+              outcomes: {ci: needs.ci.result, tests: needs.tests.result, security: needs.security.result},
+            }), 'utf8');
+            const digest = crypto.createHash('sha256').update(payload).digest('hex');
+            const token = await core.getIDToken(`hive-integration-producer-v1/${digest}`);
+            core.setSecret(token);
+            fs.mkdirSync('.integration-producer', {recursive: true});
+            fs.writeFileSync('.integration-producer/receipt.json', JSON.stringify({
+              schema: 1, payload: payload.toString('base64'), token,
+            }), {flag: 'wx', mode: 0o600});
+            core.info(`Recorded producer identity for ${subject.id}; passing CI and live policy require independent verification.`);
+      - name: Publish immutable attempt-specific producer receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-producer-receipt-${{ github.run_attempt }}
+          path: .integration-producer/receipt.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

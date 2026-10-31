@@ -659,7 +659,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				parkBlocked = true
 			}
 		}
-		err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, body)
+		if key := relayStatusNoteKey(body); key != "" && c.notificationsQuiet() {
+			// A one-line state note (awaiting-ci, parking, already fixed)
+			// is a section of the item's status comment in quiet mode.
+			var created bool
+			created, err = c.UpsertPRStatusSection(ctx, req.Repo, req.Number, key, body)
+			if err == nil && !created {
+				c.noteCommentSuppressed()
+			}
+		} else {
+			err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, body)
+		}
 		if errors.Is(err, ErrIssueCommentBudget) {
 			c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
 			return

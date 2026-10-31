@@ -1,6 +1,9 @@
-    // Queue references have their own rail: never reorder, copy, or reparent
-    // pipeline rows to make preparation look like merge-train admission.
+    // Preparation decorates the existing rows; it never sorts or admits them.
     var _stageTrackerPreparationShown = new Map();
+    var _stageTrackerPreparationRendered = new Map();
+    var _stageTrackerPreparationInline = [];
+    var _stageTrackerPreparationNow = 0;
+    const STAGE_TRACKER_PREPARATION_ACCENT = 3;
     function stageTrackerPreparationKey(repo, number) {
       return String(repo || '').trim().toLowerCase() + '/pr#' + Number(number);
     }
@@ -28,7 +31,7 @@
       const listed = stageTrackerPreparationRows(listedRows, stages);
       const page = stageTrackerPreparationRows(pageRows, stages);
       return (Array.isArray(data && data.base_preparation) ? data.base_preparation : []).map(q => {
-        const out = { queue: q, owner: null, waiting: [], unverified: [], inactive: 0 };
+        const out = { queue: q, owner: null, waiting: [], unverified: [], members: [], inactive: 0 };
         let uncertainAhead = false;
         let position = 0;
         const member = (p, role) => {
@@ -36,16 +39,23 @@
           const key = stageTrackerPreparationKey(q.repo, p.number);
           const found = known.get(key);
           const here = page.get(key);
-          const exact = p.state === 'current' && found && found.item.head && found.item.head === p.head_sha
+          if (found && (!stageTrackerLinkedPROpen(found.item, found.host) || found.item.hold
+            || (Array.isArray(found.item.modifiers) ? found.item.modifiers : []).some(m => m === 'held' || m === 'draft'))) { out.inactive++; return null; }
+          const exact = p.state === 'current' && found && stageTrackerLinkedPROpen(found.item, found.host)
+            && found.item.head && found.item.head === p.head_sha
             && (!p.current_head || p.current_head === found.item.head) && found.item.base_ref === q.base_ref
             && (!here || (here.item.head === p.head_sha && here.item.base_ref === q.base_ref));
+          const drawable = here && stageTrackerLinkedPROpen(here.item, here.host) && here.item.base_ref === q.base_ref;
+          const row = drawable ? here : found;
+          const entry = { ticket: p, role, position: 0, state: exact ? 'current' : 'unverified',
+            sequence: out.members.length, location: drawable ? 'page' : listed.has(key) ? 'offpage' : 'filtered',
+            row, head: row && row.item.head || '', base: q.base_ref, ticketHead: p.head_sha, ticketState: p.state };
+          out.members.push(entry);
           if (!exact) {
-            out.unverified.push({ ticket: p, role });
+            out.unverified.push(entry);
             if (role === 'waiting') uncertainAhead = true;
             return null;
           }
-          const entry = { ticket: p, role, position: 0, location: page.has(key) ? 'page' : listed.has(key) ? 'offpage' : 'filtered',
-            row: page.get(key) || found };
           if (role === 'waiting') {
             position++;
             entry.position = uncertainAhead ? 0 : position;
@@ -63,61 +73,159 @@
       });
     }
     function stageTrackerPreparationPlace(entry) {
+      if (entry.state === 'unverified') return 'Recorded preparation ' + (entry.role === 'owner' ? 'owner' : 'ticket') + ' · unverified';
       if (entry.role === 'owner') return 'Preparing';
       return entry.position > 0 ? 'Waiting ' + stageTrackerOrdinal(entry.position) + ' for preparation' : 'Waiting for preparation · position unverified';
     }
-    function stageTrackerPreparationVisualHtml(model, nowMs) {
-      const groups = (model || []).map((group, index) => {
-        const q = group.queue;
-        const members = (group.owner ? [group.owner] : []).concat(group.waiting);
-        const shown = members.filter(e => e.location === 'page');
-        const accent = stageTrackerTrainAccentClass(index);
-        const heading = `<h3 class="ham-train-head${accent}"><span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon', 'Preparation queue')} Preparation queue · ${esc(q.repo || '')} → ${esc(q.base_ref || 'unknown base')}</span></h3>`;
-        if (q.state !== 'observed') return `<section class="ham-preparation-group${accent}" aria-label="Preparation queue">${heading}<p class="ham-preparation-note">${esc(q.message || 'Preparation state unknown')}</p></section>`;
-        const owner = group.owner;
-        const ownerContext = owner && owner.location !== 'page' ? `Owner #${owner.ticket.number} · ${owner.ticket.pipeline || 'current pipeline blocker unknown'} · ticket age ${stageTrackerPreparationAge(owner.ticket, nowMs)}` : '';
-        const rows = shown.map(e => {
-          const it = e.row.item;
-          const place = stageTrackerPreparationPlace(e);
-          const where = e.row.nested ? 'shown under issue #' + e.row.host.number : 'shown in the pipeline below';
-          const detail = [e.ticket.pipeline || 'current pipeline blocker unknown', 'ticket age ' + stageTrackerPreparationAge(e.ticket, nowMs), where].join(' · ');
-          const label = '#' + e.ticket.number + (it.title ? ' ' + it.title : '');
-          const ref = it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(label)}</a>` : `<span>${esc(label)}</span>`;
-          return `<li class="ham-preparation-member${e.role === 'owner' ? ' ham-preparation-owner' : ''}" title="${esc(place + ' · ' + detail + '. Ticket head ' + e.ticket.head_sha + '. Preparation is not approval or a ready merge-train seat.')}"><span class="ham-train-chip">${esc(place)}</span><span class="ham-preparation-ref">${ref}</span><span class="ham-preparation-detail">${esc(detail)}</span></li>`;
-        }).join('');
-        const missing = ['offpage', 'filtered'].map(location => {
-          const entries = members.filter(e => e.location === location);
-          return entries.length ? `<p class="ham-preparation-note">${location === 'offpage' ? 'On another page or in a collapsed repo' : 'Not shown by the current filters'}: ${esc(entries.map(e => stageTrackerPreparationPlace(e) + ' #' + e.ticket.number).join(' · '))}</p>` : '';
-        }).join('');
-        const unverified = role => group.unverified.filter(e => e.role === role).map(e => `<p class="ham-preparation-note">Unverified recorded ${e.role === 'owner' ? 'owner' : 'ticket'} #${Number(e.ticket.number) || 0} · ${esc(e.ticket.detail || 'current identity or eligibility unknown')} · ticket age ${esc(stageTrackerPreparationAge(e.ticket, nowMs))}. No confirmed position or current-head approval is implied.</p>`).join('');
-        const count = `${shown.length} of ${members.length} confirmed tickets shown on this page`;
-        return `<section class="ham-preparation-group${accent}" aria-label="Preparation queue">${heading}<p class="ham-preparation-note">${esc(count)}</p>${ownerContext ? `<p class="ham-preparation-note">${esc(ownerContext)}</p>` : ''}${unverified('owner')}${rows ? `<ol class="ham-preparation-rail" aria-label="Confirmed preparation order on this page">${rows}</ol>` : '<p class="ham-preparation-note">No confirmed preparation members displayed on this page.</p>'}${missing}${unverified('waiting')}${group.inactive ? `<p class="ham-preparation-note">${group.inactive} inactive tickets excluded.</p>` : ''}</section>`;
-      }).join('');
-      return groups ? `<div class="ham-preparation-intro">Preparation order, not guaranteed merge order. FIFO follows first qualifying admission, not PR age. Independent ready PRs may merge; tickets can leave and re-admit. These are references to the pipeline rows below, whose stages, sorts and trees are unchanged.</div>${groups}` : '';
-    }
     function stageTrackerPreparationVisualSync(data, listedRows, pageRows, stages, nowMs) {
       _stageTrackerPreparationShown = new Map();
-      const el = document.getElementById('activity-monitor-preparation');
-      if (!el) return;
-      if (!data || !Array.isArray(data.items)) {
-        el.hidden = false;
-        el.innerHTML = '<p class="ham-preparation-note">Preparation queue unavailable · waiting for a current tracker snapshot.</p>';
-        return;
-      }
-      const model = stageTrackerPreparationVisualModel(data, listedRows, pageRows, stages);
-      const html = stageTrackerPreparationVisualHtml(model, nowMs);
-      el.hidden = !html;
-      if (el.innerHTML !== html) el.innerHTML = html;
-      for (const group of model) {
-        for (const e of (group.owner ? [group.owner] : []).concat(group.waiting)) {
-          if (e.location === 'page') _stageTrackerPreparationShown.set(stageTrackerPreparationKey(group.queue.repo, e.ticket.number), { head: e.ticket.head_sha, base: group.queue.base_ref });
+      _stageTrackerPreparationRendered = new Map();
+      _stageTrackerPreparationNow = nowMs;
+      _stageTrackerPreparationInline = data && Array.isArray(data.items)
+        ? stageTrackerPreparationVisualModel(data, listedRows, pageRows, stages)
+        : [{ queue: { state: 'unavailable', message: 'Waiting for a current tracker snapshot' }, members: [], unverified: [] }];
+      _stageTrackerPreparationInline.forEach((group, index) => {
+        for (const e of group.members) {
+          e.groupIndex = index;
+          if (e.location === 'page' && e.row) _stageTrackerPreparationShown.set(stageTrackerPreparationKey(group.queue.repo, e.ticket.number), e);
         }
+      });
+    }
+    function stageTrackerPreparationEntry(item) {
+      if (!item || (item.kind !== 'pr' && !item.via_pr)) return null;
+      const number = item.via_pr && item.preparation ? item.preparation.number : item.number;
+      const e = _stageTrackerPreparationShown.get(stageTrackerPreparationKey(item.repo, number));
+      return e && e.head === item.head && (!item.base_ref || item.base_ref === e.base) ? e : null;
+    }
+    function stageTrackerPreparationRowInfo(item, stages) {
+      if (!item || (typeof stageTrackerTrainKey === 'function' && stageTrackerTrainKey(item))) return null;
+      const prs = item.kind === 'pr' ? [item] : item.kind === 'issue'
+        ? stageTrackerLinkedSorted(item, stages).map(lp => stageTrackerLinkedPRItem(item, lp)) : [];
+      const members = prs.map(pr => stageTrackerPreparationEntry(pr));
+      if (!members.length || members.some(e => !e) || members.some(e => e.groupIndex !== members[0].groupIndex)) return null;
+      const ordered = members.every((e, i) => !i || e.sequence > members[i - 1].sequence);
+      return { groupIndex: members[0].groupIndex, members, ordered };
+    }
+    function stageTrackerPreparationAdjacent(a, b) {
+      return !!(a && b && a.ordered && b.ordered && a.groupIndex === b.groupIndex
+        && a.members[a.members.length - 1].sequence < b.members[0].sequence);
+    }
+    function stageTrackerPreparationHelp(group) {
+      const q = group.queue;
+      const details = [`${q.repo || 'Repository unknown'} → ${q.base_ref || 'base unknown'}`,
+        q.message || 'FIFO follows first qualifying admission, not PR age or guaranteed merge order.',
+        'Preparation is not CI, review approval, a ready train seat, or native queue membership.'];
+      if (q.observed_at) details.push('Snapshot ' + q.observed_at);
+      for (const e of group.members) {
+        details.push('#' + e.ticket.number + ' · ' + stageTrackerPreparationPlace(e)
+          + (e.location === 'page' ? '' : e.location === 'offpage' ? ' · another page or collapsed repo' : ' · hidden by filters or absent from snapshot')
+          + (e.state === 'unverified' ? ' · ' + (e.ticket.detail || 'current identity or eligibility unknown') : '')
+          + ' · ticket age ' + stageTrackerPreparationAge(e.ticket, _stageTrackerPreparationNow)
+          + ' · ticket head ' + (e.ticketHead || 'unknown')
+          + ' · current head ' + (e.head || 'unknown'));
       }
+      return details.join(' — ');
+    }
+    function stageTrackerPreparationTooltip(id, text, cls) {
+      return `<span class="config-info ${cls}" tabindex="0" data-stop="1" aria-label="${esc(text)}" aria-describedby="${esc(id)}"><span class="config-tooltip" id="${esc(id)}" role="tooltip">${esc(text)}</span></span>`;
+    }
+    function stageTrackerPreparationHeaderHtml(group, suffix, continuation) {
+      const current = group.members.filter(e => e.state === 'current');
+      const shown = current.filter(e => e.location === 'page');
+      const q = group.queue;
+      const count = group.unverified.length ? current.length + ' confirmed PRs'
+        : shown.length === current.length ? current.length + ' PRs' : shown.length + ' of ' + current.length + ' PRs here';
+      const front = q.owner && q.owner.state !== 'inactive'
+        ? ' · ' + (group.owner ? 'front: #' : 'recorded front: #') + q.owner.number : '';
+      const text = 'Preparation train · ' + (q.state !== 'observed' ? 'unavailable' : count + front)
+        + (continuation ? ' · continuation' : '');
+      const id = 'ham-prep-head-' + encodeURIComponent((q.repo || '') + '|' + (q.base_ref || '') + '|' + suffix);
+      return `<div class="ham-train-head${stageTrackerTrainAccentClass(STAGE_TRACKER_PREPARATION_ACCENT)} ham-preparation-head"><span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon', 'Preparation train')} ${esc(text)}</span>${stageTrackerPreparationTooltip(id, stageTrackerPreparationHelp(group), 'ham-preparation-help')}</div>`;
+    }
+    function stageTrackerPreparationMissingRows() {
+      return _stageTrackerPreparationInline.flatMap((group, index) => group.queue.state !== 'observed'
+        || (group.members.length && !group.members.some(e => e.location === 'page'))
+        ? [{ key: 'preparation-missing:' + index, html: stageTrackerPreparationHeaderHtml(group, 'missing', false) }] : []);
+    }
+    function stageTrackerPreparationInlineRows(rows, pageItems, stages) {
+      const byKey = new Map(pageItems.filter(Boolean).map(item => [stageTrackerItemKey(item), item]));
+      let prev = null;
+      const seen = new Set(), out = stageTrackerPreparationMissingRows();
+      for (const row of rows) {
+        const item = byKey.get(row.key);
+        const info = stageTrackerPreparationRowInfo(item, stages);
+        if (info && !stageTrackerPreparationAdjacent(prev, info)) {
+          out.push({ key: 'preparation:' + row.key, html: stageTrackerPreparationHeaderHtml(
+            _stageTrackerPreparationInline[info.groupIndex], row.key, seen.has(info.groupIndex)) });
+        }
+        if (info) seen.add(info.groupIndex);
+        out.push(row);
+        prev = info;
+      }
+      return out;
+    }
+    function stageTrackerPreparationRowClass(item, stages, ctx) {
+      const info = ctx && ctx.preparationInfo || stageTrackerPreparationRowInfo(item, stages);
+      if (!info || ctx && ctx.preparationParent) return '';
+      const prev = ctx && ctx.preparationPrev !== undefined ? ctx.preparationPrev : stageTrackerPreparationRowInfo(ctx && ctx.prevRow, stages);
+      const next = ctx && ctx.preparationNext !== undefined ? ctx.preparationNext : stageTrackerPreparationRowInfo(ctx && ctx.nextRow, stages);
+      const gap = !info.ordered || info.members.some((e, i) => i && e.sequence !== info.members[i - 1].sequence + 1)
+        || stageTrackerPreparationAdjacent(prev, info) && info.members[0].sequence !== prev.members[prev.members.length - 1].sequence + 1;
+      return ' ham-train' + stageTrackerTrainAccentClass(STAGE_TRACKER_PREPARATION_ACCENT) + ' ham-preparation-member'
+        + (info.members.some(e => e.role === 'owner' && e.state === 'current') ? ' ham-train-front' : '')
+        + (!stageTrackerPreparationAdjacent(info, next) ? ' ham-train-last' : '')
+        + (gap ? ' ham-preparation-gap' : '')
+        + (info.members.some(e => e.state === 'unverified') ? ' ham-preparation-unverified' : '');
+    }
+    function stageTrackerPreparationNodeHtml(item, stages, ctx) {
+      const info = ctx && ctx.preparationInfo || stageTrackerPreparationRowInfo(item, stages);
+      if (!info || ctx && ctx.preparationParent) return '';
+      const group = _stageTrackerPreparationInline[info.groupIndex];
+      const text = info.members.map(e => '#' + e.ticket.number + ' · ' + stageTrackerPreparationPlace(e)).join(' · ')
+        + (!info.ordered ? ' · linked row order differs from FIFO' : '') + ' — ' + stageTrackerPreparationHelp(group);
+      return stageTrackerPreparationTooltip('ham-prep-node-' + encodeURIComponent(stageTrackerItemKey(item)), text, 'ham-preparation-node');
+    }
+    function stageTrackerPreparationMark(item) {
+      const e = stageTrackerPreparationEntry(item);
+      if (e) _stageTrackerPreparationRendered.set(stageTrackerPreparationKey(item.repo, e.ticket.number), e);
+    }
+    function stageTrackerPreparationCommentHtml(item, ctx, key) {
+      const e = stageTrackerPreparationEntry(item);
+      if (!e) return typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(key, ctx) : '';
+      stageTrackerPreparationMark(item);
+      const event = ctx && ctx.events && ctx.events[key];
+      const eventHtml = typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(key, ctx) : '';
+      const caption = item.caption || item.reason || (e.state === 'current' ? e.ticket.pipeline : '') || '';
+      const captionVisible = caption && event && event.text && event.text.includes(caption)
+        && eventHtml && !eventHtml.includes('cue-event-tucked');
+      const parts = caption && !captionVisible ? [caption] : [];
+      if (!caption) parts.push('Current pipeline blocker unknown');
+      parts.push(e.state === 'unverified'
+        ? stageTrackerPreparationPlace(e) + ' · ' + (e.ticket.detail || 'current identity or eligibility unknown')
+        : e.role === 'owner' ? 'preparing base' : 'queued for base refresh' + (e.ticket.behind ? ' behind PR #' + e.ticket.behind : ' · owner unknown'));
+      parts.push('ticket age ' + stageTrackerPreparationAge(e.ticket, _stageTrackerPreparationNow));
+      if (e.row.nested) parts.push('shown under issue #' + e.row.host.number);
+      return eventHtml + `<div class="cue-event ham-preparation-comment"><span class="cue-event-body">${esc(parts.join(' · '))}</span></div>`;
+    }
+    function stageTrackerPreparationSubRows(linked, issue, stages, nowMs, ctx) {
+      const parent = stageTrackerPreparationRowInfo(issue, stages);
+      const infos = linked.map(lp => stageTrackerPreparationRowInfo(stageTrackerLinkedPRItem(issue, lp), stages));
+      const seen = new Set();
+      return linked.map((lp, i) => {
+        const info = infos[i];
+        const near = Object.assign({}, ctx, { preparationParent: parent, preparationInfo: info,
+          preparationPrev: infos[i - 1] || null, preparationNext: infos[i + 1] || null });
+        const heading = !parent && info && !stageTrackerPreparationAdjacent(infos[i - 1], info)
+          ? stageTrackerPreparationHeaderHtml(_stageTrackerPreparationInline[info.groupIndex], 'nested-' + issue.number + '-' + lp.number, seen.has(info.groupIndex)) : '';
+        if (info) seen.add(info.groupIndex);
+        return heading + stageTrackerSubRowHtml(lp, issue, stages, nowMs, near);
+      }).join('');
     }
     function stageTrackerPreparationRepresented(item) {
       const p = item && item.preparation;
-      if (!p || p.state !== 'current') return false;
+      if (!p || p.state === 'inactive') return false;
       if (item.kind === 'pr' ? Number(item.number) !== Number(p.number) : !item.via_pr) return false;
-      const shown = _stageTrackerPreparationShown.get(stageTrackerPreparationKey(item.repo, p.number));
-      return !!(shown && item.head === shown.head && p.head_sha === shown.head && (!p.current_head || p.current_head === shown.head) && (!item.base_ref || item.base_ref === shown.base));
+      const shown = _stageTrackerPreparationRendered.get(stageTrackerPreparationKey(item.repo, p.number));
+      return !!(shown && item.head === shown.head && p.head_sha === shown.ticketHead && p.state === shown.ticketState
+        && p.role === shown.role && (!item.base_ref || item.base_ref === shown.base));
     }

@@ -188,6 +188,13 @@ type Boundary interface {
 	Execute(ctx context.Context, claim Claim, effect func(context.Context) (Result, error)) (Result, error)
 }
 
+// JournaledBoundary refuses to invoke effect without an active operation
+// journal. Implementations freeze their effective mode for the whole operation;
+// ordinary Boundary may deliberately pass effects through when journaling is off.
+type JournaledBoundary interface {
+	ExecuteJournaled(ctx context.Context, claim Claim, effect func(context.Context) (Result, error)) (Result, error)
+}
+
 type NoopBoundary struct{}
 
 func (NoopBoundary) Execute(ctx context.Context, _ Claim, effect func(context.Context) (Result, error)) (Result, error) {
@@ -294,6 +301,19 @@ type LoggingBoundary struct {
 
 func (b LoggingBoundary) Execute(ctx context.Context, claim Claim, effect func(context.Context) (Result, error)) (Result, error) {
 	res, err := Execute(ctx, b.Next, claim, effect)
+	return b.record(claim, res, err)
+}
+
+func (b LoggingBoundary) ExecuteJournaled(ctx context.Context, claim Claim, effect func(context.Context) (Result, error)) (Result, error) {
+	journaled, ok := b.Next.(JournaledBoundary)
+	if !ok {
+		return Result{}, fmt.Errorf("%w: mutation boundary cannot require journaling", ErrDenied)
+	}
+	res, err := journaled.ExecuteJournaled(ctx, claim, effect)
+	return b.record(claim, res, err)
+}
+
+func (b LoggingBoundary) record(claim Claim, res Result, err error) (Result, error) {
 	if err != nil && errors.Is(err, ErrDenied) && b.Logger != nil {
 		b.Logger.Warn("mutation boundary denied external effect",
 			"repo", claim.Repo, "kind", claim.Kind, "target", claim.Target, "error", err)

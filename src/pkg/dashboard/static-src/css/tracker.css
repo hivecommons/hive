@@ -205,23 +205,24 @@
     .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
-    .ham-preparation { margin: var(--sp-3) 0; border: var(--line-width) solid var(--line); border-radius: var(--r); padding: var(--sp-3); }
-    .ham-preparation-intro, .ham-preparation-note { color: var(--muted); font-size: var(--fs-xs); margin: var(--sp-2) 0; overflow-wrap: anywhere; }
-    .ham-preparation-group { --ham-train-accent: var(--line-strong); min-width: 0; }
-    .ham-preparation-group.ham-train-k0 { --ham-train-accent: var(--blue); }
-    .ham-preparation-group.ham-train-k1 { --ham-train-accent: var(--purple); }
-    .ham-preparation-group.ham-train-k2 { --ham-train-accent: var(--cyan); }
-    .ham-preparation-group.ham-train-k3 { --ham-train-accent: var(--amber); }
-    .ham-preparation .ham-train-head { flex-wrap: wrap; margin: 0; font-weight: normal; }
-    .ham-preparation .ham-train-chip { white-space: normal; }
-    .ham-preparation-rail { list-style: none; margin: 0; padding: 0; }
-    .ham-preparation-member { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-5); font-size: var(--fs-sm); }
-    .ham-preparation-member::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
-    .ham-preparation-member:last-child::before { bottom: 50%; }
-    .ham-preparation-member::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
-    .ham-preparation-owner::after { background: var(--text); }
-    .ham-preparation-ref { min-width: 0; overflow-wrap: anywhere; }
-    .ham-preparation-detail { flex-basis: 100%; color: var(--text-faint); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+    .ham-preparation-head { flex-wrap: wrap; }
+    .ham-preparation-head .ham-train-chip { white-space: normal; }
+    .ham-preparation-head .ham-preparation-help { background: none; border-color: var(--ham-train-accent); color: var(--muted); }
+    .ham-preparation-help::before { content: '?'; }
+    .config-info.ham-preparation-node { position: absolute; left: calc(var(--sp-2) - 2px); top: calc(50% - var(--sp-2)); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
+    .ham-preparation-node:focus-visible { outline: var(--focus-ring-width) solid var(--ham-train-accent); outline-offset: var(--sp-1); }
+    .ham-row.ham-preparation-gap::before, .ham-sub.ham-preparation-member.ham-preparation-gap::before { border-left-style: dashed; }
+    .ham-row.ham-preparation-unverified::after, .ham-sub.ham-preparation-member.ham-preparation-unverified::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
+    .ham-preparation-comment { animation: none; }
+    /* Mixed issue trees keep their existing children; only actual prep PRs
+       receive a rail, at the original gutter offset minus the parent inset. */
+    .ham-row > .ham-preparation-head { margin-left: calc(-1 * var(--sp-2)); }
+    .ham-sub.ham-preparation-member { position: relative; --ham-train-accent: var(--amber); }
+    .ham-sub.ham-preparation-member::before { content: ''; position: absolute; left: 2px; top: calc(-1 * var(--sp-3) - var(--sp-2)); bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-sub.ham-preparation-member.ham-train-last::before { bottom: 50%; }
+    .ham-sub.ham-preparation-member::after { content: ''; position: absolute; left: -1px; top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
+    .ham-sub.ham-preparation-member.ham-train-front::after { background: var(--text); }
+    .ham-sub .config-info.ham-preparation-node { left: calc(-1 * var(--sp-1)); }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
     .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
     .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }

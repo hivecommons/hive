@@ -1,0 +1,1 @@
+- Add a default-disabled trusted integration-candidate materializer, create-only initial-dispatch ownership and isolated job-bound CI receipt workflows derived from read-only validation profiles; no execution controller, runtime activation or required CI/review replacement is enabled.

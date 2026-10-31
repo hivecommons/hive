@@ -1,0 +1,100 @@
+name: Prepare integration candidates
+
+on:
+  repository_dispatch:
+    types: [hive.integration.prepare.v1]
+  workflow_dispatch:
+    inputs:
+      request:
+        description: Bounded versioned request from an explicitly enrolled integration controller.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-preparation-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    name: trusted integration materializer
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    outputs:
+      receipt: ${{ steps.prepare.outputs.receipt }}
+    steps:
+      - name: Checkout trusted control code, never candidate code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Materialize and publish bounded immutable prefixes
+        id: prepare
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          INTEGRATION_REQUEST: ${{ inputs.request || github.event.client_payload.request }}
+          GH_TOKEN: ${{ github.token }}
+        with:
+          retries: 0
+          script: |
+            const fs = require('node:fs');
+            const {canonical, gitRunner, prepare} = require('./.github/scripts/integration-materialize.cjs');
+            const receipt = await prepare({
+              github, context,
+              requestText: process.env.INTEGRATION_REQUEST,
+              policyText: fs.readFileSync('.github/integration-producer-policy.json', 'utf8'),
+              actorID: process.env.GITHUB_ACTOR_ID,
+              execution: {runID: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT},
+              git: gitRunner(process.env.GH_TOKEN),
+            });
+            core.setOutput('receipt', Buffer.from(canonical(receipt), 'utf8').toString('base64'));
+            if (receipt.failure) core.warning(`${receipt.failure.reason}: prefix preparation is partial/rejected; no promotion is authorized`);
+            core.info(`Prepared ${receipt.prepared.length} exact subjects; dispatch acknowledgement is not CI completion.`);
+
+  receipt:
+    name: integration materializer receipt
+    needs: materialize
+    if: ${{ needs.materialize.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Attest trusted materialization without checkout or candidate execution
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          MATERIALIZATION_RECEIPT: ${{ needs.materialize.outputs.receipt }}
+        with:
+          script: |
+            const crypto = require('node:crypto');
+            const fs = require('node:fs');
+            const MAX_RECEIPT_BYTES = 256 * 1024;
+            const payload = Buffer.from(process.env.MATERIALIZATION_RECEIPT || '', 'base64');
+            if (!payload.length || payload.length > MAX_RECEIPT_BYTES) throw new Error('Materialization receipt is missing/oversized');
+            const receipt = JSON.parse(payload);
+            if (receipt.schema !== 1 || receipt.protocol !== 'integration-materializer-receipt-v1') {
+              throw new Error('Unknown materialization receipt version');
+            }
+            const digest = crypto.createHash('sha256').update(payload).digest('hex');
+            const token = await core.getIDToken(`hive-integration-materializer-v1/${digest}`);
+            core.setSecret(token);
+            fs.mkdirSync('.integration-producer', {recursive: true});
+            fs.writeFileSync('.integration-producer/materialization.json', JSON.stringify({
+              schema: 1, payload: payload.toString('base64'), token,
+            }), {flag: 'wx', mode: 0o600});
+            core.info(`Recorded exact preparation provenance; ${receipt.failure ? 'partial/rejected' : 'completed'} is not promotion authorization.`);
+      - name: Publish immutable attempt-specific materialization receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-materializer-receipt-${{ github.run_attempt }}
+          path: .integration-producer/materialization.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

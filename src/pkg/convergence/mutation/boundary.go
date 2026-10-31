@@ -42,6 +42,37 @@ type Boundary struct {
 	StuckAfter time.Duration
 }
 
+// ExecuteJournaled preserves legacy Execute's off-mode passthrough while
+// providing an explicit fail-closed contract for new journal-required effects.
+func (b *Boundary) ExecuteJournaled(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	if b == nil {
+		return effects.Result{}, fmt.Errorf("%w: mutation journal unavailable", effects.ErrDenied)
+	}
+	frozen := *b
+	if b.Mode != nil {
+		frozen.Executor.Mode = b.Mode()
+	}
+	frozen.Mode = nil
+	if !JournalingEnabled(frozen.Executor.Mode) || frozen.Executor.Ledger == nil || frozen.Executor.Journal == nil ||
+		frozen.Executor.Journal.path == "" {
+		return effects.Result{}, fmt.Errorf("%w: active persistent mutation journal required", effects.ErrDenied)
+	}
+	invoked := false
+	out, err := frozen.Execute(ctx, claim, func(ctx context.Context) (effects.Result, error) {
+		invoked = true
+		if err := frozen.Executor.Journal.syncPersistent(); err != nil {
+			return effects.Result{}, effects.NotApplied(fmt.Errorf("syncing mutation intent before effect: %w", err))
+		}
+		return effect(ctx)
+	})
+	if invoked || err == nil || out.Provenance != "" {
+		if syncErr := frozen.Executor.Journal.syncPersistent(); syncErr != nil {
+			return out, fmt.Errorf("mutation journal acknowledgement not synced: %w (execution: %v)", syncErr, err)
+		}
+	}
+	return out, err
+}
+
 func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error)) (effects.Result, error) {
 	if b == nil {
 		return effect(ctx)

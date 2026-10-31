@@ -274,6 +274,9 @@ type Client struct {
 	// no-findings review, one hive review per head. nil (nothing wired)
 	// reads as normal, so unwired clients behave as before.
 	quietNotificationsFn func() bool
+	// notifications counts comments created, edited and suppressed; logged
+	// hourly so the effect of quiet mode is measurable.
+	notifications notificationTally
 	// reviewRequireLabelsFn returns review.require_labels, read live so a
 	// Features-tab edit gates the next relay request without a rebuild. nil
 	// or empty means the gate is off.
@@ -2879,6 +2882,27 @@ func (c *Client) IssueCommentsContain(ctx context.Context, repo string, number i
 	}
 }
 
+// issueCommentsContainAny reports whether any comment on repo#number
+// contains any of needles, in one pass.
+func (c *Client) issueCommentsContainAny(ctx context.Context, repo string, number int, needles ...string) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	comments, err := c.listIssueComments(ctx, owner, repoName, number)
+	if err != nil {
+		return false, err
+	}
+	for _, comment := range comments {
+		for _, needle := range needles {
+			if needle != "" && strings.Contains(comment.GetBody(), needle) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // CreateIssueComment posts a comment on an issue or PR. The signature mirrors
 // forge.Forge.CreateIssueComment so escalation callers can swap in a neutral
 // forge adapter on non-GitHub hives without changing call sites.
@@ -2918,6 +2942,9 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 		}
 		return effects.Result{Provenance: comment.GetHTMLURL()}, apiErr
 	})
+	if err == nil {
+		c.noteCommentCreated()
+	}
 	return err
 }
 

@@ -610,3 +610,39 @@ func (j *Journal) persistLocked() error {
 	}
 	return os.Rename(tmpPath, j.path)
 }
+
+// syncPersistent is opt-in for journal-required effects. Keep legacy persistence
+// unchanged, but sync both the latest snapshot and its renamed directory entry
+// before these effects run and before acknowledging their result.
+func (j *Journal) syncPersistent() error {
+	if j == nil || j.path == "" {
+		return fmt.Errorf("persistent mutation journal path required")
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	unlock, err := j.lockAndRefreshLocked()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	file, err := os.Open(j.path)
+	if err != nil {
+		return fmt.Errorf("opening mutation journal to sync: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("syncing mutation journal: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(j.path))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("syncing mutation journal directory: %w", err)
+	}
+	return nil
+}
