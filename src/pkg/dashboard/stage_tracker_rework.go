@@ -111,6 +111,13 @@ func stageTrackerReworkFor(it StageTrackerItem, login string, stage stagelabels.
 	if requested.IsZero() {
 		requested = rec.EnteredAt
 	}
+	// A re-ask on the head the author pushed restarts the nudge clock and
+	// the stage entry; the ask the operator cares about is the original
+	// one (hivecommons/hive#16021).
+	pushedHead, pushedAt, pushed := stageTrackerReworkPushed(it, rec)
+	if pushed && !rec.ReworkAskedAt.IsZero() && rec.ReworkAskedAt.Before(requested) {
+		requested = rec.ReworkAskedAt
+	}
 	if requested.IsZero() {
 		return nil
 	}
@@ -125,9 +132,16 @@ func stageTrackerReworkFor(it StageTrackerItem, login string, stage stagelabels.
 	}
 	// Pushed: the head the request named is gone. The stage engine routes
 	// the row back to 050 on its next sweep; until then the row says so.
-	if rec.NudgeHead != "" && it.Head != "" && it.Head != rec.NudgeHead {
-		out.State, out.Evidence, out.Head = reworkStatePushed, reworkEvidenceCommit, it.Head
-		if it.UpdatedAt != nil && it.UpdatedAt.After(requested) {
+	// Or the engine already did, found the pushed head red again and asked
+	// once more for it: the author answered the ask all the same.
+	if pushed {
+		out.State, out.Evidence, out.Head = reworkStatePushed, reworkEvidenceCommit, pushedHead
+		if !pushedAt.IsZero() {
+			if pushedAt.After(now) {
+				pushedAt = now
+			}
+			out.Since = &pushedAt
+		} else if it.UpdatedAt != nil && it.UpdatedAt.After(requested) {
 			u := *it.UpdatedAt
 			out.Since = &u
 		}
@@ -182,4 +196,37 @@ func stageTrackerReworkFor(it StageTrackerItem, login string, stage stagelabels.
 		out.Since = out.RequestedAt
 	}
 	return out
+}
+
+// stageTrackerReworkPushed reports the author's head pushed after the ask,
+// and when it landed when the record knows: the row's head is no longer
+// the one the nudge named (the sweep has not re-staged the row yet; the
+// push instant is the booked one when the webhook saw it), or the record
+// remembers the push across the re-ask on that head
+// (hivecommons/hive#16021) — unless the re-ask is a review verdict on it,
+// which means the re-review the push queued has happened and the new ask
+// stands on its own.
+func stageTrackerReworkPushed(it StageTrackerItem, rec stagelabels.Record) (head string, at time.Time, ok bool) {
+	if rec.NudgeHead != "" && it.Head != "" && it.Head != rec.NudgeHead {
+		if strings.EqualFold(rec.LastPushSha, it.Head) {
+			at = rec.LastPushAt
+		}
+		return it.Head, at, true
+	}
+	head, at, ok = rec.ReworkPushed()
+	if !ok || (it.Head != "" && !strings.EqualFold(it.Head, head)) {
+		return "", time.Time{}, false
+	}
+	if stageTrackerReworkAnswered(rec.Reason) {
+		return "", time.Time{}, false
+	}
+	return head, at, true
+}
+
+// stageTrackerReworkAnswered reports whether the standing ask's reason is
+// a review verdict — a reviewer or the swarm looked at the pushed head and
+// asked for more — rather than a gate the hive reads off the head (CI,
+// conflict, sign-off).
+func stageTrackerReworkAnswered(reason string) bool {
+	return stageTrackerPushNext(stagelabels.NeedsAuthor, reason) == pushNextReReview
 }

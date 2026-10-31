@@ -177,3 +177,10 @@ func (s *Server) stageTrackerWaitingPushStale() time.Duration {
 func stageTrackerPushOnHead(it StageTrackerItem, rec stagelabels.Record) bool {
 	return it.Head == "" || strings.EqualFold(it.Head, rec.LastPushSha) || strings.EqualFold(it.Head, rec.ActivityHead)
 }
+
+// stageTrackerPushPending reports whether the row's `push` field says a
+// head landed that CI / the re-review have not settled: the ball is with
+// the hive, so the row asks nothing of a person (hivecommons/hive#16021).
+func stageTrackerPushPending(it StageTrackerItem) bool {
+	return it.Push != nil && it.Push.State == pushStatePushed
+}

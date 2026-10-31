@@ -572,7 +572,9 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 	if slices.Contains(stageTrackerNeedsHumanStages, it.Stage) {
 		return true
 	}
-	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman
+	// The author pushed and the hive has not evaluated the new head yet:
+	// the ball is with the hive, not a person (hivecommons/hive#16021).
+	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman && !stageTrackerPushPending(it)
 }
 
 // stageTrackerOnHold mirrors the dashboard's stageTrackerItemOnHold: the

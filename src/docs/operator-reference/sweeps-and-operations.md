@@ -158,7 +158,15 @@ returns to the column's own word — stage only, the 👤 clears because the
 ball is back with the hive — and the gray pill names the push: `@user
 pushed abc1234 · 2m` (links to the commit), `adopted from @x's #N · pushed
 2m ago` on an adopted row, `pushed abc1234 · 2m` on a plain CI / Review
-row; the hive line reads `push seen 2m ago → CI/re-review queued`. When the
+row; the hive line reads `push seen 2m ago → CI/re-review queued`. A pushed
+human-authored 071 / 072 row asks nothing of a person until the hive has
+looked at the new head: no "Needs @author" decision, not counted as needs-
+human (hivecommons/hive#16021). When the new head is red again and the
+sweep returns it to 071 within one pass, the record keeps the original ask
+and the push that answered it (`rework_asked_at`, `rework_pushed_head`,
+`rework_pushed_at`), so the chip reads `· re-review pending` dated from the
+push rather than `· no response` for a fresh ask on the very head the
+author just pushed; a review verdict on that head is a fresh ask. When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR
