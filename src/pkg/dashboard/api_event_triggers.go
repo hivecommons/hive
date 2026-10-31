@@ -112,13 +112,14 @@ func (s *Server) handleEventTriggersPut(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, config.ErrTriggerRulesChanged.Error(), http.StatusPreconditionFailed)
 		return
 	}
+	remaining := make(map[config.TriggerRule]int, len(current))
+	for _, rule := range current {
+		remaining[rule]++
+	}
 	for i, rule := range rules {
-		unchanged := false
-		for _, old := range current {
-			if old == rule {
-				unchanged = true
-				break
-			}
+		unchanged := remaining[rule] > 0
+		if unchanged {
+			remaining[rule]--
 		}
 		// Preserve legacy rules verbatim; new/edited rules must target an
 		// existing agent, even though the runtime skips unknown targets.

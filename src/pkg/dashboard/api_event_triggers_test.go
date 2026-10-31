@@ -103,6 +103,15 @@ func TestEventTriggersPresetPersistenceAndPreservation(t *testing.T) {
 	if stale.Code != http.StatusPreconditionFailed || !reflect.DeepEqual(cfg.TriggerRulesSnapshot(), want) {
 		t.Fatalf("stale revision overwrote concurrent rules: %d", stale.Code)
 	}
+	duplicate, err := json.Marshal(map[string]any{"rules": append(cfg.TriggerRulesSnapshot(), legacy)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := putEventTriggers(s, string(duplicate), rec.Header().Get("ETag"))
+	if rejected.Code != http.StatusBadRequest || !strings.Contains(rejected.Body.String(), "existing target agent") ||
+		!reflect.DeepEqual(cfg.TriggerRulesSnapshot(), want) {
+		t.Fatalf("new copies must not inherit legacy validation exceptions: %d %s", rejected.Code, rejected.Body.String())
+	}
 	// An advanced edit retains order and untouched legacy expressions/targets.
 	want[1].Expr = `event.kind == "pr.opened" && event.repo == "repo1" && !event.is_draft`
 	body, err = json.Marshal(map[string]any{"rules": want})
