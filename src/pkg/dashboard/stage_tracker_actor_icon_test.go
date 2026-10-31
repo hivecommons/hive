@@ -23,7 +23,7 @@ func TestStageTrackerActorIconKindsJS(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+stageTrackerRowsFixtureJS+`
 const actorSvg = (html) => (/<svg class="ham-ico ham-actor-ico"[^>]*aria-label="([^"]*)"[^>]*>([\s\S]*?)<\/svg>/.exec(strip(html)) || []);
-const detour = (html) => (/<span class="ham-detour">([^<]*)<\/span>/.exec(strip(html)) || [])[1];
+const detour = (html) => (/<span class="ham-detour(?: ham-has-holder)?">([^<]*)</.exec(strip(html)) || [])[1];
 const litTitle = (html) => (/<li class="ham-seg active[^"]*"[^>]*title="([^"]*)"/.exec(strip(html)) || [])[1] || '';
 const since = new Date(now - 10 * 3600000).toISOString();
 const pr = (n, extra) => Object.assign({ repo: 'hivecommons/docs', number: n, kind: 'pr', title: 'docs: resync', url: 'https://x/' + n, stage: 70, stage_since: since, caption: 'Fixing', author: 'alice', author_kind: 'human' }, extra || {});
