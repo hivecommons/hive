@@ -482,6 +482,12 @@ func maintainHeldPRMergeability(
 	}
 }
 
+var heldPRUpdateStopAnnounced sync.Map
+
+func heldPRUpdateStopKey(repo string, pr github.PullRequest, reason string) string {
+	return fmt.Sprintf("%s#%d|%s|%s|%s", repo, pr.Number, pr.HeadSHA, pr.BaseSHA, reason)
+}
+
 // stopHeldPRUpdate records that the guard stops updating pr's head on its
 // base for reason and tells a person once. err is GitHub's refusal, nil when
 // the guard stopped without asking.
@@ -492,7 +498,14 @@ func stopHeldPRUpdate(ctx context.Context, writer forge.IssueWriter, store *hold
 	if err != nil {
 		args = append(args, "error", err)
 	}
-	logger.Warn("hold guard: stopped keeping held PR mergeable until its head or base moves", args...)
+	// The ledger entry can be dropped and re-snapshotted between passes (a
+	// hold that lifts and returns), losing the stop; the process remembers
+	// each (PR, head, base, reason) it already announced.
+	if _, seen := heldPRUpdateStopAnnounced.LoadOrStore(heldPRUpdateStopKey(repo, pr, reason), struct{}{}); seen {
+		logger.Debug("hold guard: held PR update still stopped until its head or base moves", args...)
+	} else {
+		logger.Warn("hold guard: stopped keeping held PR mergeable until its head or base moves", args...)
+	}
 	noteHeldPRUpdateStopped(ctx, writer, store, repo, pr, reason, logger)
 }
 

@@ -7,7 +7,9 @@ package main
 // projectbluefin/ghostscript-printer-app#152, projectbluefin/ps-printer-app#136).
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -349,5 +351,27 @@ func TestEnforceHoldGuardSettledUpdateIsNotDriftAtLift(t *testing.T) {
 				t.Fatalf("excluded=%v comments=%v; a head the hive never saw while held must re-hold for review", got, fake.comments)
 			}
 		})
+	}
+}
+
+// A stop whose ledger entry was dropped and re-snapshotted (hold lifted, then
+// returned) is announced at WARN once per head, base and reason, not every pass.
+func TestStopHeldPRUpdateWarnsOncePerHeadAndBase(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	store := newTestHoldGuardStore(t)
+	pr := github.PullRequest{Repo: "widgets", Number: 9016, HeadSHA: "once-h1", BaseSHA: "once-b1", MergeableState: "dirty", FromFork: true}
+	for i := 0; i < 3; i++ {
+		store.Clear("acme/widgets", pr.Number)
+		store.Snapshot("acme/widgets", pr.Number, pr.HeadSHA, nil)
+		stopHeldPRUpdate(context.Background(), nil, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+	}
+	if n := strings.Count(buf.String(), "stopped keeping held PR mergeable"); n != 1 {
+		t.Fatalf("warned %d times, want 1:\n%s", n, buf.String())
+	}
+	pr.BaseSHA = "once-b2"
+	stopHeldPRUpdate(context.Background(), nil, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+	if n := strings.Count(buf.String(), "stopped keeping held PR mergeable"); n != 2 {
+		t.Fatalf("a moved base must warn again; got %d warnings", n)
 	}
 }
