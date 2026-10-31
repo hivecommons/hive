@@ -176,6 +176,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAdvisoryCloseHint"),
 		jsFunc(t, html, "stageTrackerAdvisoryCloseMessage"),
 		jsFunc(t, html, "stageTrackerNothingToActOn"),
+		jsFunc(t, html, "stageTrackerCopyLink"),
 		jsFunc(t, html, "runRowAction"),
 		jsFunc(t, html, "makeToastSticky"),
 		stageTrackerDomStubJS,
