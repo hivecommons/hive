@@ -164,7 +164,7 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 		postCtx, cancel := context.WithTimeout(ctx, claimCommentTimeout)
 		defer cancel()
 		body := ghpkg.IssueClaimCommentBody(claim.Identity, claim.StartedAt, claim.ExpiresAt)
-		if err := commenter.CreateIssueComment(postCtx, repoFull, number, body); err != nil {
+		if err := postClaimComment(postCtx, commenter, repoFull, number, body); err != nil {
 			h.logger.Warn("[contribute-ws] issue claim comment failed; claim recorded on the lease only",
 				"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number, "error", err)
 		} else {
@@ -188,4 +188,22 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 	}
 	h.setLeaseClaim(identityOf(c), taskID, claim, posted)
 	return claim, posted
+}
+
+// claimNoteFolder is the optional seam a commenter offers to deliver a note
+// as a section of the item's single hive status comment in quiet
+// notification mode (*ghpkg.Client.PostClaimNote). Claim readers scan
+// every hive comment body for the `<!-- hive:claim … -->` marker, so the
+// marker inside a status section is as authoritative as its own comment.
+type claimNoteFolder interface {
+	PostClaimNote(ctx context.Context, repo string, number int, body string) error
+}
+
+// postClaimComment posts the claim marker comment, folding it into the
+// status comment when the commenter can and quiet mode asks for it.
+func postClaimComment(ctx context.Context, commenter planIssueCommenter, repo string, number int, body string) error {
+	if folder, ok := commenter.(claimNoteFolder); ok {
+		return folder.PostClaimNote(ctx, repo, number, body)
+	}
+	return commenter.CreateIssueComment(ctx, repo, number, body)
 }

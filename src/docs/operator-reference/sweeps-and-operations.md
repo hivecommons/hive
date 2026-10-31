@@ -546,6 +546,35 @@ no longer reported as a stage regression, and a PR the hive itself is
 holding — queued behind the merge-train front, being rebased by the train,
 or waiting on a base refresh — is never marked stalled.
 
+The status comment also carries, in quiet mode, the notes the hive used to
+post on issues and merged PRs as comments of their own:
+
+- the post-merge **evidence pointer** (`<!-- hive-review-evidence -->`), as
+  an `Evidence:` section — the bundle is stored server-side and linked from
+  the Activity Monitor;
+- the **unblocked** note (`<!-- hive:unblocked -->`) on an issue whose
+  blocking PR settled; it is also idempotent per cause in either mode (a
+  second sweep that sees the same issue and the same settled PR posts
+  nothing), and is skipped altogether when the same merge is closing the
+  issue;
+- the **review backlog summary** (`<!-- hive:review-backlog-summary -->`);
+- a contributor's **claim marker** (`<!-- hive:claim … -->`) posted by the
+  contribute hub — claim readers scan every hive comment body for the
+  marker, so the section is as authoritative as the comment was;
+- an agent's relayed **status notes**: `hive/awaiting-ci: …`, `Parking on
+  stage/045-needs-decision: …` and `Already fixed …`. Any other relayed
+  comment — a finding, a triage verdict with evidence, a question — is still
+  posted as a comment.
+
+Closing an issue leaves exactly one closing comment: when the issue-stage
+lane has already said `Fixed by #N` the close-on-merge sweep closes without
+repeating it, and vice versa.
+
+The client counts what it did and logs one INFO line an hour,
+`github notifications created=N edited=M suppressed=K` (cumulative since
+start: comments created, comments edited in place, notes folded or found
+already present), so the effect of the mode can be charted from the logs.
+
 `normal` restores the previous behaviour: every note is its own comment,
 every perspective's verdict its own review, every new head its own mention.
 
