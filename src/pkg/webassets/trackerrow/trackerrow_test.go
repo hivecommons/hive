@@ -2,6 +2,8 @@ package trackerrow
 
 import (
 	"io/fs"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -60,5 +62,41 @@ func TestAssetsDefineRowFunctions(t *testing.T) {
 				t.Errorf("%s contains %q; the shared row asset must stay pure presentation", name, banned)
 			}
 		}
+	}
+}
+
+// TestRequiredGlobals pins RequiredGlobals to the STAGE_TRACKER_* names the
+// embedded assets reference, so a new input cannot be added without listing
+// it, and that every entry carries a value and a well-formed declaration.
+func TestRequiredGlobals(t *testing.T) {
+	re := regexp.MustCompile(`\bSTAGE_TRACKER_[A-Z0-9_]+\b`)
+	seen := map[string]bool{}
+	for _, name := range Files {
+		b, err := fs.ReadFile(FS, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range re.FindAllString(string(b), -1) {
+			seen[m] = true
+		}
+	}
+	var got []string
+	for m := range seen {
+		got = append(got, m)
+	}
+	sort.Strings(got)
+	var want []string
+	for _, g := range RequiredGlobals {
+		want = append(want, g.Name)
+		if g.JS == "" {
+			t.Errorf("%s has no JS value; RequiredGlobals must pin the spoke's literal", g.Name)
+		}
+		if d := g.Decl(); d != "const "+g.Name+" = "+g.JS+";" || !re.MatchString(d) {
+			t.Errorf("%s Decl() = %q", g.Name, d)
+		}
+	}
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("assets reference %v, RequiredGlobals is %v", got, want)
 	}
 }
