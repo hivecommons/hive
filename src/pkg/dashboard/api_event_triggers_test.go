@@ -174,7 +174,14 @@ func TestEventTriggersRejectInvalidAndUnpersistedRules(t *testing.T) {
 		t.Fatalf("failed persistence accepted: %d %s", failed.Code, failed.Body.String())
 	}
 	cfg.SourcePath = t.TempDir()
-	config.RuntimeConfigFile, config.DashboardOverlayFile = t.TempDir(), t.TempDir()
+	// Every layer must fail regardless of test order. An empty directory is
+	// not enough for the runtime path: saveLocked removes it and retries
+	// (the root-owned-file recovery), and the retry succeeds. A file under
+	// a directory that does not exist fails the write, the remove and the
+	// retry alike.
+	missingDir := filepath.Join(t.TempDir(), "missing")
+	config.RuntimeConfigFile = filepath.Join(missingDir, "hive.yaml.runtime")
+	config.DashboardOverlayFile = filepath.Join(missingDir, "dashboard-overlay.yaml")
 	failed = putEventTriggers(s, `{"rules":[]}`, version)
 	if failed.Code != http.StatusInternalServerError || !reflect.DeepEqual(cfg.TriggerRulesSnapshot(), before) ||
 		strings.Contains(failed.Body.String(), cfg.SourcePath) {
