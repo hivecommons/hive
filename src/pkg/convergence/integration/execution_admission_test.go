@@ -152,6 +152,7 @@ func TestExecutionAdmissionGlobalSlotsAndNativeLimits(t *testing.T) {
 	if decision, err := store.PlanExecution(cfg, in); err != nil || decision.Plan == nil {
 		t.Fatalf("first: %+v %v", decision, err)
 	}
+
 	in.Repo = second.Repo
 	if decision, err := store.PlanExecution(cfg, in); err != nil || decision.Allowed {
 		t.Fatalf("reused global slots: %+v %v", decision, err)
@@ -164,5 +165,26 @@ func TestExecutionAdmissionGlobalSlotsAndNativeLimits(t *testing.T) {
 	in.Cost.Complete = false
 	if decision, _ := store.PlanExecution(cfg, in); decision.Allowed {
 		t.Fatal("native unknown telemetry was treated as zero")
+	}
+}
+
+func TestExecutionAdmissionInvalidUnenrolledAndNativeJobBudget(t *testing.T) {
+	store, cfg, in := executionAdmissionFixture(t)
+	invalid := cfg
+	invalid.Mode = "unexpected"
+	if _, err := store.PlanExecution(invalid, in); err == nil {
+		t.Fatal("invalid configuration authorized execution")
+	}
+	outside := in
+	outside.Repo = "o/unlisted"
+	if decision, err := store.PlanExecution(cfg, outside); err != nil || !decision.Allowed || decision.EffectiveWriter != "legacy" {
+		t.Fatalf("unenrolled destination changed behavior: %+v %v", decision, err)
+	}
+	cfg.Scopes[0].Authority = "native"
+	cfg.MaxJobs = 2
+	in.Cost.Jobs, in.Cost.Running = 1, 1
+	in.NativeSelected = true
+	if decision, err := store.PlanExecution(cfg, in); err != nil || decision.Allowed {
+		t.Fatalf("native Hive admission exceeded assigned-job bound: %+v %v", decision, err)
 	}
 }

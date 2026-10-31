@@ -48,6 +48,7 @@ func TestExecutionSafeResumeOnlyKnownNotAppliedAndBounded(t *testing.T) {
 	if err != nil || admitted.Plan == nil {
 		t.Fatalf("plan: %+v %v", admitted, err)
 	}
+
 	plan, err := store.ResumeExecution(cfg, admitted.Plan.Recipe.ID(), in.Cost, in.Now)
 	if err != nil || plan.Attempt != 1 {
 		t.Fatalf("unissued resume: %+v %v", plan, err)
@@ -82,5 +83,27 @@ func TestExecutionSafeResumeOnlyKnownNotAppliedAndBounded(t *testing.T) {
 	}
 	if _, err := store.ResumeExecution(cfg, plan.Recipe.ID(), in.Cost, in.Now.Add(time.Hour)); err == nil {
 		t.Fatal("ignored attempt bound")
+	}
+}
+
+func TestExecutionResumeRefusesMissingPlanDisabledProfileAndSpentBudget(t *testing.T) {
+	store, cfg, in := executionAdmissionFixture(t)
+	if _, err := store.ResumeExecution(cfg, "missing", in.Cost, in.Now); err == nil {
+		t.Fatal("resumed nonexistent recipe")
+	}
+	admitted, err := store.PlanExecution(cfg, in)
+	if err != nil || admitted.Plan == nil {
+		t.Fatalf("plan: %+v %v", admitted, err)
+	}
+	disabled := cfg
+	disabled.Mode = config.IntegrationAdvisory
+	if _, err := store.ResumeExecution(disabled, admitted.Plan.Recipe.ID(), in.Cost, in.Now); err == nil {
+		t.Fatal("advisory resumed dispatch")
+	}
+	spent := cfg.MaxRunnerMinutes
+	cost := in.Cost
+	cost.RunnerMinutes = &spent
+	if _, err := store.ResumeExecution(cfg, admitted.Plan.Recipe.ID(), cost, in.Now); err == nil {
+		t.Fatal("resumed past global minute budget")
 	}
 }

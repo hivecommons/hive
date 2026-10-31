@@ -341,7 +341,24 @@ func (s *Server) observeIntegrationExecutionWebhook(event, delivery string, body
 			return err
 		}
 	}
-	if event == "workflow_run" || event == "workflow_job" || event == "pull_request" || event == "pull_request_review" || event == "push" {
+	policyChanged := event == "branch_protection_rule" || event == "repository_ruleset"
+	if policyChanged {
+		for _, scope := range cfg.Scopes {
+			if !strings.EqualFold(scope.Repo, payload.Repository.FullName) {
+				continue
+			}
+			id := "execution/github/" + delivery + "/policy/" + scope.Base
+			if store.HasEvent(id) {
+				continue
+			}
+			invalidation := integration.ExecutionInvalidation{Repo: scope.Repo, Base: scope.Base, Revision: uint64(now.UnixNano()),
+				Reason: "actual protection/ruleset event changed eligibility; exact live policy revalidation required"}
+			if err := store.AppendExecution(id, now, integration.ExecutionEvent{Version: integration.ExecutionSchemaVersion, Invalidate: &invalidation}); err != nil {
+				return err
+			}
+		}
+	}
+	if policyChanged || event == "workflow_run" || event == "workflow_job" || event == "pull_request" || event == "pull_request_review" || event == "push" {
 		s.integration.mu.Lock()
 		if now.Sub(s.integration.executionLastNudge) >= config.MinIntegrationExecutionInterval {
 			s.integration.executionLastReconcile = time.Time{}

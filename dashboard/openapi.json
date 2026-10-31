@@ -97,16 +97,30 @@
         }
       }
     },
+    "/api/integration-orchestration/execution-identity": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Prepare create-only local execution identity (owner only)",
+        "description": "Creates or reads the private local installation identity and durable execution journal. Returns a designated executor ID and explicit disabled status. This does not enroll an executor, grant permissions, change configuration, dispatch CI or enable promotion. Cloned identity and automatic failover are unsupported.",
+        "responses": {
+          "200": {"description": "Local executor identity and explicit no-activation limits"},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "Private durable identity or journal unavailable"}
+        }
+      }
+    },
     "/api/config/integration-orchestration": {
       "put": {
         "tags": ["System"],
         "summary": "Replace bounded integration orchestration configuration (owner only)",
-        "description": "Full off|advisory|enforce configuration with exact repository/base scopes, static execution/admission budgets, bounded lease/window/age/retries and optional pinned workflow contracts. JSON durations use nanoseconds. Disabling is independent of evidence-store availability and never releases authoritative claims/native entries.",
+        "description": "Full off|advisory|enforce configuration with independent execution opt-in, exact repository/base scopes, static budgets, bounded lease/window/age/retries and pinned producer/actor/authority profiles. JSON durations use nanoseconds. Execution changes require expected_execution compare-and-swap. Enforced Hive authority must be verifiably revoked at its shared forge epoch before OFF/advisory or authority handover. Execution-only updates never release authoring reservations; rollback retains evidence and unknown mutation outcomes and never releases authoritative claims/native entries.",
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
         "responses": {
           "200": {"description": "Validated effective configuration"},
           "400": {"description": "Invalid mode, scope, contract or bounds"},
           "403": {"description": "Owner role required"},
+          "409": {"description": "Old Hive authority epoch not verifiably revoked"},
+          "412": {"description": "Execution profile changed or expected_execution missing/stale"},
           "500": {"description": "Configuration could not be persisted"},
           "503": {"description": "Enforcement ledger unavailable; disable remains permitted"}
         }

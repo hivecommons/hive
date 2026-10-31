@@ -3,6 +3,7 @@ package integration
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -162,6 +163,7 @@ func TestExecutionIdentityDurablePrivateAndNoAutomaticRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	second, err := OpenExecutionIdentity(path)
 	if err != nil || first.ID != second.ID || len(first.ID) != 64 {
 		t.Fatalf("identity changed: %+v %+v %v", first, second, err)
@@ -184,5 +186,24 @@ func TestExecutionIdentityDurablePrivateAndNoAutomaticRepair(t *testing.T) {
 	body, err := os.ReadFile(path)
 	if err != nil || string(body) != "{" {
 		t.Fatal("corrupt identity was overwritten")
+	}
+}
+
+func TestExecutionIdentityRejectsInvalidParentAndFuturePrivateState(t *testing.T) {
+	path := executionFixturePath(t) + ".identity"
+	if err := os.WriteFile(path, []byte("existing regular file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExecutionIdentity(filepath.Join(path, "child")); err == nil {
+		t.Fatal("identity accepted a file as parent")
+	}
+	if _, err := OpenExecutionIdentity(""); err == nil {
+		t.Fatal("identity accepted empty path")
+	}
+	if err := os.WriteFile(path, []byte(`{"version":999,"key":"AA=="}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExecutionIdentity(path); err == nil {
+		t.Fatal("future/corrupt private identity was accepted or automatically repaired")
 	}
 }

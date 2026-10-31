@@ -76,6 +76,24 @@ func TestIntegrationPromotionRejectsIncompleteAuthorityFence(t *testing.T) {
 		if request.validate() == nil {
 			t.Fatalf("accepted unsafe epoch: %+v", request)
 		}
+
+	}
+}
+
+func TestIntegrationReconciledDestinationCannotQualifyUnprovenActor(t *testing.T) {
+	fixture := promotionFixture()
+	fixture.ref = fixture.request.TestedSHA
+	server := fixture.server(t)
+	defer server.Close()
+	client := testClient(t, server.URL)
+	journal := &integrationPromotionJournal{unresolved: true}
+	result, acknowledged, err := client.PromoteIntegrationStepWithAcknowledgement(context.Background(), fixture.request, journal,
+		func(context.Context, IntegrationPromotion) error {
+			t.Error("reconciled state must not issue another CAS")
+			return nil
+		})
+	if err != nil || result.Provenance != fixture.request.TestedSHA || acknowledged || fixture.writes.Load() != 0 {
+		t.Fatalf("reconciliation fabricated successful actor RPC: %+v ack=%v err=%v writes=%d", result, acknowledged, err, fixture.writes.Load())
 	}
 }
 
