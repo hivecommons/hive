@@ -253,8 +253,35 @@ func TestActivityEventRing_FleetCapAndPerBlockCap(t *testing.T) {
 	if len(all.events) != activityEventRingSize {
 		t.Fatalf("ring holds %d events, want %d", len(all.events), activityEventRingSize)
 	}
-	if first, last := all.events[0].event.Seq, all.events[len(all.events)-1].event.Seq; first != seq-activityEventRingSize+1 || last != seq {
-		t.Fatalf("ring spans seq %d..%d, want the newest %d ending at %d", first, last, activityEventRingSize, seq)
+	if last := all.events[len(all.events)-1].event.Seq; last != seq {
+		t.Fatalf("ring ends at seq %d, want the newest %d", last, seq)
+	}
+}
+
+// One spoke flooding the fleet-wide ring must not evict another hive's
+// events; its own oldest events are evicted and counted as dropped.
+func TestActivityEventRing_FloodCannotEvictOtherHive(t *testing.T) {
+	var st activityStore
+	st.record("hive-b", withEvents(activityDigest("o/b", 1), activityEv(1, hubactivity.EventStage, "o/b", 1)), activityT0)
+	seq := uint64(1)
+	for i := range 5 * activityEventRingSize / hubactivity.MaxEvents {
+		batch := make([]hubactivity.Event, 0, hubactivity.MaxEvents)
+		for range hubactivity.MaxEvents {
+			seq++
+			batch = append(batch, activityEv(seq, hubactivity.EventStage, "o/a", int(seq)))
+		}
+		st.record("hive-a", withEvents(activityDigest("o/a", 1), batch...), activityT0.Add(time.Duration(i+1)*time.Second))
+	}
+	b := st.eventsSnapshot([]string{"hive-b"})
+	if len(b.events) != 1 || b.events[0].event.Seq != 1 || b.dropped["hive-b"] != 0 {
+		t.Fatalf("hive-b has %d events, dropped %d; want its 1 event kept", len(b.events), b.dropped["hive-b"])
+	}
+	all := st.eventsSnapshot([]string{"hive-a", "hive-b"})
+	if len(all.events) != activityEventRingSize {
+		t.Fatalf("ring holds %d events, want %d", len(all.events), activityEventRingSize)
+	}
+	if a := st.eventsSnapshot([]string{"hive-a"}); a.dropped["hive-a"] == 0 {
+		t.Fatalf("hive-a evictions were not counted as dropped")
 	}
 }
 
