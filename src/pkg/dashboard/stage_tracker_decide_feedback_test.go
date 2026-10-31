@@ -3,6 +3,10 @@ package dashboard
 import (
 	"strings"
 	"testing"
+	"time"
+
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Let hive decide answers at once, a covered issue defers to its PR's row,
@@ -109,17 +113,20 @@ const asking = { number: 15647, url: 'https://github.com/o/r/pull/15647', title:
   decision_needed: { question: 'Approve or send back?', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: true }, { action: 'decide:approve', label: 'Approve', enabled: true }] } };
 const issue = { repo: 'o/r', kind: 'issue', number: 15320, title: 'Tracker lead chips', url: 'https://github.com/o/r/issues/15320', stage: 40, actor: 'maintainer', modifiers: [], linked_prs: [asking] };
 const prRow = Object.assign({ repo: 'o/r', kind: 'pr' }, asking);
-// Rows are what the last render drew (_stageTracker.rows, from
-// stageTrackerVisible); before any render nothing is listed, so no chip.
+// Rows are what the render draws (ctx.rows, the page from
+// tracker-filter-render.js); before any render nothing is listed, so no chip.
 _stageTracker = { items: [issue, prRow] };
 assert.ok(!stageTrackerLeadActionOnRow(issue, ctx).passive, 'no render yet: no chip');
+// The helper is pure: it reads only the rows it is given.
+assert.strictEqual(stageTrackerPRListedOwnRow(issue, { kind: 'pr', number: 15647 }), false);
+assert.strictEqual(stageTrackerPRListedOwnRow(issue, { kind: 'pr', number: 15647 }, [issue, prRow]), true);
 // The PR not listed as a row: the issue keeps its button (no sub-rows drawn).
-_stageTracker = { items: [issue], rows: [issue] };
+ctx.rows = [issue];
 let a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.strictEqual(a.id, 'decide:delegate'); assert.ok(!a.passive);
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(issue, ctx)), 1);
 // Listed as its own row: passive, naming the PR; the chip is a span, no button.
-_stageTracker = { items: [issue, prRow], rows: [issue, prRow] };
+ctx.rows = [issue, prRow];
 a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.strictEqual(a.passive, 15647, JSON.stringify(a));
 let h = stageTrackerLeadActionHtml(issue, ctx);
@@ -133,23 +140,23 @@ assert.strictEqual(buttons(stageTrackerLeadActionHtml(prRow, ctx)), 1);
 // leaves it out of rows, so no chip — the issue keeps its button when no
 // sub-row is drawn (one covering PR) and yields it to the sub-row when several are.
 const nested = Object.assign({}, prRow, { nested_under: 15320 });
-_stageTracker = { items: [issue, nested], rows: [issue] };
+_stageTracker = { items: [issue, nested] }; ctx.rows = [issue];
 a = stageTrackerLeadActionOnRow(issue, ctx);
 assert.ok(a && !a.passive, 'a nested PR is not its own row: ' + JSON.stringify(a));
 assert.strictEqual(buttons(stageTrackerLeadActionHtml(issue, ctx)), 1, 'the issue row keeps its only decision button');
 assert.strictEqual(stageTrackerLeadActionOnRow(issue, ctx, [asking]), null, 'drawn as a sub-row, the sub-row carries it');
 // A render records the drawn rows; the chip follows them, not the items:
-// the PR hidden by the filter leaves the button on the issue, the PR drawn
-// as a row turns it into the chip.
-_stageTracker = { items: [issue, prRow], rows: [issue] };
+// the PR hidden by the filter or on another page leaves the button on the
+// issue, the PR drawn as a row turns it into the chip.
+_stageTracker = { items: [issue, prRow] }; ctx.rows = [issue];
 assert.ok(!stageTrackerLeadActionOnRow(issue, ctx).passive, 'the PR not drawn: no chip');
-_stageTracker = { items: [issue, nested], rows: [issue, nested] };
+_stageTracker = { items: [issue, nested] }; ctx.rows = [issue, nested];
 assert.strictEqual(stageTrackerLeadActionOnRow(issue, ctx).passive, 15647, 'the PR drawn (Pull requests view aside, a row is a row): chip');
 // A server-marked lead that is not Let hive decide is named as itself.
 const merging = Object.assign({}, asking, { decision_needed: { question: 'Merge?', options: [{ action: 'decide:merge-now', label: 'Merge now', enabled: true, lead: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } });
 const issue2 = Object.assign({}, issue, { number: 15321, linked_prs: [merging] });
 const mergingRow = Object.assign({ repo: 'o/r', kind: 'pr' }, merging);
-_stageTracker = { items: [issue2, mergingRow], rows: [issue2, mergingRow] };
+_stageTracker = { items: [issue2, mergingRow] }; ctx.rows = [issue2, mergingRow];
 a = stageTrackerLeadActionOnRow(issue2, ctx);
 assert.strictEqual(a.id, 'decide:merge-now', JSON.stringify(a)); assert.strictEqual(a.passive, 15647);
 h = stageTrackerLeadActionHtml(issue2, ctx);
@@ -162,5 +169,47 @@ func TestStageTrackerHumanChevronSaysWhyJS(t *testing.T) {
 	html := indexHTML(t)
 	if !strings.Contains(html, "function stageTrackerHumanWhy(item, kind)") || !strings.Contains(html, "sa.why || humanWhy(item, sa.kind)") {
 		t.Error("the human next-move tooltip must fall back to the row's reason")
+	}
+	// The render hands the drawn page to the lead picker on ctx; the
+	// payload object carries nothing the client derived.
+	for _, want := range []string{
+		"_stageTrackerRows = page.rows.map(e => grouping ? e.item : e).filter(Boolean);",
+		"ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;",
+		"stageTrackerPRListedOwnRow(item, a.target, ctx && ctx.rows)",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	if strings.Contains(html, "_stageTracker.rows") {
+		t.Error("the drawn rows must not be stashed on the server payload")
+	}
+}
+
+// The server's stage_actor.why on a 085 row says why the person is wanted
+// — the tooltip shows sa.why whenever it is set, so a bare "a human
+// decision is owed" would leave the 👤 marker unexplained on every row.
+func TestStageTrackerDecisionActorWhySaysWhy(t *testing.T) {
+	now := time.Date(2026, 10, 30, 18, 0, 0, 0, time.UTC)
+	actor := func(it StageTrackerItem) *StageTrackerActor {
+		it.Kind = "pr"
+		return stageTrackerStageActor(it, nil, now)
+	}
+	a := actor(StageTrackerItem{Stage: stagelabels.NeedsDecision.Number(), Reason: "contributor-lane:workflow-path"})
+	if a.Kind != StageActorHuman || a.Why != "a human decision is owed — workflow path" {
+		t.Errorf("reason-backed why = %q (kind %q)", a.Why, a.Kind)
+	}
+	a = actor(StageTrackerItem{Stage: stagelabels.IssueNeedsDecision.Number(), DecisionNeeded: &StageTrackerDecision{Question: "Keep #1 and close #2, or keep #2 and close #1?"}})
+	if a.Kind != StageActorHuman || a.Why != "a human decision is owed — Keep #1 and close #2, or keep #2 and close #1?" {
+		t.Errorf("question-backed why = %q (kind %q)", a.Why, a.Kind)
+	}
+	a = actor(StageTrackerItem{Stage: stagelabels.NeedsDecision.Number()})
+	if a.Kind != StageActorHuman || a.Why != "a human decision is owed" {
+		t.Errorf("bare why = %q (kind %q)", a.Why, a.Kind)
+	}
+	// The unauthorized step keeps its own, more specific, why.
+	a = actor(StageTrackerItem{Stage: stagelabels.NeedsDecision.Number(), Reason: stageengineprstage.StageReasonUnauthorizedPrefix + stageengineprstage.UnauthorizedStepApproveWorkflowRuns})
+	if !strings.Contains(a.Why, "not permitted to") {
+		t.Errorf("unauthorized why = %q", a.Why)
 	}
 }

@@ -199,6 +199,8 @@
       const ctx = stageTrackerActionCtx(item.repo);
       if (!ctx) return '';
       ctx.nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      // The rows this render draws, so a covered issue can defer to its PR's row.
+      ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
       return stageTrackerLeadActionHtml(item, ctx, subRows);
     }
     // PR link, then the lineage chip (null = none), then the base pill.

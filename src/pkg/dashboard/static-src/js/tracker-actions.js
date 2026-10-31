@@ -490,23 +490,23 @@
     // button — "Let hive decide" showed twice per item (hive#15320 →
     // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
-    // Pure: is the covering PR also a row of its own in the tracker (a
-    // top-level row, not a sub-row)? Then only that row carries the button.
-    // Reads the rows the last render drew (_stageTracker.rows, set by
-    // stageTrackerRender from stageTrackerVisible), not the payload's items:
-    // a PR nested_under a listed issue is in items but is never its own row
-    // outside the Pull requests view (tracker-filter.js stageTrackerVisible),
-    // and a filter may hide the PR while it shows the issue. The nesting
-    // rule lives in stageTrackerVisible alone: with no rows recorded yet
-    // nothing is drawn, so nothing is "listed" and the chip is not shown.
-    function stageTrackerPRListedOwnRow(issue, t) {
-      if (!_stageTracker || !Array.isArray(_stageTracker.rows)) return false;
+    // Pure: is the covering PR also a row of its own among rows, the rows
+    // the render draws (a top-level row, not a sub-row)? Then only that row
+    // carries the button. rows is ctx.rows at the call site — the drawn
+    // page (tracker-filter-render.js _stageTrackerRows), not the payload's
+    // items: a PR nested_under a listed issue is in items but is never its
+    // own row outside the Pull requests view (tracker-filter.js
+    // stageTrackerVisible), and a filter or the page may hide the PR while
+    // it shows the issue. With no rows given nothing is drawn, so nothing
+    // is "listed" and the chip is not shown.
+    function stageTrackerPRListedOwnRow(issue, t, rows) {
+      if (!Array.isArray(rows)) return false;
       const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'pr', number: t.number });
-      return _stageTracker.rows.some(it => it && stageTrackerItemKey(it) === key);
+      return rows.some(it => it && stageTrackerItemKey(it) === key);
     }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
-      if (a && a.target && item.kind === 'issue' && a.target.kind === 'pr' && stageTrackerPRListedOwnRow(item, a.target)) return Object.assign({}, a, { passive: a.target.number });
+      if (a && a.target && item.kind === 'issue' && a.target.kind === 'pr' && stageTrackerPRListedOwnRow(item, a.target, ctx && ctx.rows)) return Object.assign({}, a, { passive: a.target.number });
       if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
@@ -525,7 +525,7 @@
       // The covering PR has its own row: the decision — whatever its lead
       // (Let hive decide, Merge now, Adopt…) — is taken there, so this row
       // shows a passive chip that names that lead rather than a second button.
-      if (a.passive) return `<span class="ham-badge ham-decision-pending" title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on its row')}">decision pending on #${Number(a.passive) || 0}</span>`;
+      if (a.passive) return `<span class="ham-badge" title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on its row')}">decision pending on #${Number(a.passive) || 0}</span>`;
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
