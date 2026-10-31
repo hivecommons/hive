@@ -64,7 +64,7 @@ All routes are under `/v1`. Bodies and responses are JSON; errors are
 | `POST /v1/agents` | `{"name":…, "definition":{…}}` | `Definitions.AddAgent` (when `definition` is present), `Lifecycle.Start` | `201 {"agent":…, "process":Process}`; `400` bad name, `409` the name already has a definition, `422` the runtime refused it |
 | `GET /v1/agents/{name}` | | `Observer.GetStatus` | `Process` |
 | `GET /v1/agents/{name}/logs?source=pane\|buffer\|full&n=N` | | `GetOutput` / `GetBufferOutput` / `FullLogHeader`+`CaptureFullLog` | `{"agent","source","lines":[…]}` or `{"header","content"}` for `full` |
-| `GET /v1/agents/{name}/logs?follow=1` | | `GetBufferOutput`, polled | `text/event-stream` of `agent.log` records `{"agent","lines":[…]}` |
+| `GET /v1/agents/{name}/logs?follow=1&n=N` | | `GetBufferOutput`, polled | `text/event-stream` of `agent.log` records `{"agent","lines":[…]}`; the first replays the last `n` buffered lines (none for `n=0`; the 200-line follow window when `n` is absent) |
 | `POST /v1/agents/{name}/kick` | `{"message":…}` | `Kicker.SendKick` | `{"agent","process"}` |
 | `POST /v1/agents/{name}/stop` | | `Lifecycle.Stop` | `{"agent","process"}` |
 | `GET /v1/events` | | watcher + `Kicker.SetKickObserver` + the `crux.Host` observers | `text/event-stream` of `Event` records |
