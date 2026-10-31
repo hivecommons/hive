@@ -237,23 +237,35 @@ exempt=(
 )
 
 if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-  offenders=""
-  while IFS= read -r tracked; do
-    skip=""
-    for exempt_path in "${exempt[@]}"; do
-      [[ "$tracked" == "$exempt_path" ]] && skip="yes"
-    done
-    [[ -n "$skip" ]] && continue
-    [[ -f "${ROOT}/${tracked}" ]] || continue
+  # Read each tracked file once instead of spawning one grep per pattern/file
+  # (over 100,000 processes on the current tree). Keep literal byte matching,
+  # symlink handling, and all existing exemptions, including binary files.
+  python3 - "$ROOT" "${#broad_patterns[@]}" "${broad_patterns[@]}" "${exempt[@]}" <<'PYSCAN'
+import os
+import subprocess
+import sys
+from pathlib import Path
 
-    for pattern in "${broad_patterns[@]}"; do
-      if grep -qF -- "$pattern" "${ROOT}/${tracked}" 2>/dev/null; then
-        offenders+="${tracked}: ${pattern}"$'\n'
-      fi
-    done
-  done < <(git -C "$ROOT" ls-files)
-
-  [[ -z "$offenders" ]] || fail "broad Podman/Buildah cleanup found:"$'\n'"${offenders}"
+root = Path(sys.argv[1])
+pattern_count = int(sys.argv[2])
+patterns = [pattern.encode() for pattern in sys.argv[3:3 + pattern_count]]
+exempt = set(sys.argv[3 + pattern_count:])
+tracked = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
+offenders = []
+for name in tracked.split(b"\0"):
+    if not name:
+        continue
+    relative = os.fsdecode(name)
+    path = root / relative
+    if relative in exempt or not path.is_file():
+        continue
+    contents = path.read_bytes()
+    for pattern in patterns:
+        if pattern in contents:
+            offenders.append(f"{relative}: {pattern.decode()}")
+if offenders:
+    sys.exit("FAIL: broad Podman/Buildah cleanup found:\n" + "\n".join(offenders))
+PYSCAN
   pass_count=$((pass_count + 1))
 fi
 

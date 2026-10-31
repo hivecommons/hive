@@ -152,6 +152,28 @@ Two flags that appear in CI but are *not* part of the PR gate:
   report. Coverage is scored, but it is not the required merge gate; a failing
   test is.
 
+### CI wall clock and required checks
+
+The `v2 CI` workflow runs Go build/vet, deployment and shell contracts, and
+Node/runtime contracts as three independent lanes. The protected
+`build-and-test` check aggregates **all three** and fails if any lane fails,
+is cancelled, or unexpectedly skips. This changes scheduling, not which
+contracts run. The separate race/shuffle matrix and per-package coverage
+checks remain required and unchanged.
+
+The Podman cleanup contract reads every tracked file once, checking all
+forbidden literal patterns together rather than spawning a grep for each
+pattern in each file. Go security CI caches the version-pinned gosec binary;
+the scan itself still runs every time. Gosec's recursive discovery includes
+nested modules, so its `./...` scan covers Crux without scanning it twice.
+Other Go tools still need both `./...` and `./crux/...`.
+
+Measure PR turnaround from workflow creation to the **last required check**
+completing, including runner queues and aggregate/coverage jobs, not just
+the slowest test shard's execution. Cache misses and shared runner load
+can change this substantially; a short shard alone is not a five-minute
+pipeline.
+
 ### Affected-package selection on pull requests
 
 On a pull request the gate does not always run every package. The
