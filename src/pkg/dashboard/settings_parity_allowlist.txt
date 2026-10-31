@@ -370,6 +370,11 @@ knowledge.vaults[].auto_index # TODO #11854
 knowledge.vaults[].git_sync # TODO #11854
 knowledge.vaults[].name # TODO #11854
 knowledge.vaults[].path # TODO #11854
+notifications.discord.rfc_announcer # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
+notifications.discord.rfc_backlink_comment # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
+notifications.discord.rfc_format # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
+notifications.discord.rfc_include_private # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
+notifications.discord.rfc_threads # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
 planning.design_labels[] # TODO #11854
 planning.plan_labels[] # TODO #11854
 project.agent_issue_decision_policy # TODO #12851
