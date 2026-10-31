@@ -1542,6 +1542,23 @@
     .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
+    .ham-preparation { margin: var(--sp-3) 0; border: var(--line-width) solid var(--line); border-radius: var(--r); padding: var(--sp-3); }
+    .ham-preparation-intro, .ham-preparation-note { color: var(--muted); font-size: var(--fs-xs); margin: var(--sp-2) 0; overflow-wrap: anywhere; }
+    .ham-preparation-group { --ham-train-accent: var(--line-strong); min-width: 0; }
+    .ham-preparation-group.ham-train-k0 { --ham-train-accent: var(--blue); }
+    .ham-preparation-group.ham-train-k1 { --ham-train-accent: var(--purple); }
+    .ham-preparation-group.ham-train-k2 { --ham-train-accent: var(--cyan); }
+    .ham-preparation-group.ham-train-k3 { --ham-train-accent: var(--amber); }
+    .ham-preparation .ham-train-head { flex-wrap: wrap; margin: 0; font-weight: normal; }
+    .ham-preparation .ham-train-chip { white-space: normal; }
+    .ham-preparation-rail { list-style: none; margin: 0; padding: 0; }
+    .ham-preparation-member { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-5); font-size: var(--fs-sm); }
+    .ham-preparation-member::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-preparation-member:last-child::before { bottom: 50%; }
+    .ham-preparation-member::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
+    .ham-preparation-owner::after { background: var(--text); }
+    .ham-preparation-ref { min-width: 0; overflow-wrap: anywhere; }
+    .ham-preparation-detail { flex-basis: 100%; color: var(--text-faint); font-size: var(--fs-xs); overflow-wrap: anywhere; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
     .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
     .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }
@@ -7803,6 +7820,7 @@
         <button type="button" class="ham-chip ham-queue-chip" id="activity-monitor-queue" data-action="hamQueueToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-queue-pop" title="Merge queue: empty" hidden>⛓ Merge queue <span class="ham-queue-n">0</span></button>
         <div class="ham-merged-pop ham-queue-pop" id="activity-monitor-queue-pop" role="dialog" aria-label="Merge queue" hidden></div>
       </div>
+      <div id="activity-monitor-preparation" class="ham-preparation" role="region" aria-label="Preparation queues" hidden></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
     </div>
@@ -14737,8 +14755,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_TRAIN_ICON_PATH = '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>';
     const STAGE_TRACKER_TRAIN_ICON_TITLE = 'Merge queue';
     // Pure: the inline-SVG train with its "Merge queue" hover.
-    function stageTrackerTrainIconHtml(cls) {
-      return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}"><title>${esc(STAGE_TRACKER_TRAIN_ICON_TITLE)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
+    function stageTrackerTrainIconHtml(cls, title) {
+      const label = title || STAGE_TRACKER_TRAIN_ICON_TITLE;
+      return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
     }
     // Pure: ordinal place words — "1st", "2nd", "3rd", "4th", "11th",
     // "21st" (the owner's wording for the queue: "Merge queued · 1st").
@@ -19356,6 +19375,129 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         navCountDelta(document.getElementById(id), null);
       }
     }
+    // Queue references have their own rail: never reorder, copy, or reparent
+    // pipeline rows to make preparation look like merge-train admission.
+    var _stageTrackerPreparationShown = new Map();
+    function stageTrackerPreparationKey(repo, number) {
+      return String(repo || '').trim().toLowerCase() + '/pr#' + Number(number);
+    }
+    function stageTrackerPreparationRows(rows, stages) {
+      const byKey = new Map();
+      const items = (Array.isArray(rows) ? rows : []).map(e => e && e.item ? e.item : e && !e.group ? e : null);
+      const adopted = stageTrackerAdoptOrphanPRs(items);
+      for (const it of adopted) {
+        if (!it) continue;
+        const put = pr => {
+          const key = stageTrackerPreparationKey(it.repo, pr.number);
+          if (it.kind === 'pr' || !byKey.has(key)) byKey.set(key, { item: pr, host: it, nested: it.kind === 'issue' });
+        };
+        if (it.kind === 'pr') put(it);
+        else if (it.kind === 'issue') {
+          for (const lp of stageTrackerLinkedSorted(it, stages)) {
+            if (stageTrackerLinkedPROpen(lp, it)) put(stageTrackerLinkedPRItem(it, lp));
+          }
+        }
+      }
+      return byKey;
+    }
+    function stageTrackerPreparationVisualModel(data, listedRows, pageRows, stages) {
+      const known = stageTrackerPreparationRows(data && data.items, stages);
+      const listed = stageTrackerPreparationRows(listedRows, stages);
+      const page = stageTrackerPreparationRows(pageRows, stages);
+      return (Array.isArray(data && data.base_preparation) ? data.base_preparation : []).map(q => {
+        const out = { queue: q, owner: null, waiting: [], unverified: [], inactive: 0 };
+        let uncertainAhead = false;
+        let position = 0;
+        const member = (p, role) => {
+          if (!p || p.state === 'inactive') { if (p) out.inactive++; return null; }
+          const key = stageTrackerPreparationKey(q.repo, p.number);
+          const found = known.get(key);
+          const here = page.get(key);
+          const exact = p.state === 'current' && found && found.item.head && found.item.head === p.head_sha
+            && (!p.current_head || p.current_head === found.item.head) && found.item.base_ref === q.base_ref
+            && (!here || (here.item.head === p.head_sha && here.item.base_ref === q.base_ref));
+          if (!exact) {
+            out.unverified.push({ ticket: p, role });
+            if (role === 'waiting') uncertainAhead = true;
+            return null;
+          }
+          const entry = { ticket: p, role, position: 0, location: page.has(key) ? 'page' : listed.has(key) ? 'offpage' : 'filtered',
+            row: page.get(key) || found };
+          if (role === 'waiting') {
+            position++;
+            entry.position = uncertainAhead ? 0 : position;
+          }
+          return entry;
+        };
+        if (q.state === 'observed') {
+          out.owner = member(q.owner, 'owner');
+          for (const p of (Array.isArray(q.waiting) ? q.waiting : [])) {
+            const entry = member(p, 'waiting');
+            if (entry) out.waiting.push(entry);
+          }
+        }
+        return out;
+      });
+    }
+    function stageTrackerPreparationPlace(entry) {
+      if (entry.role === 'owner') return 'Preparing';
+      return entry.position > 0 ? 'Waiting ' + stageTrackerOrdinal(entry.position) + ' for preparation' : 'Waiting for preparation · position unverified';
+    }
+    function stageTrackerPreparationVisualHtml(model, nowMs) {
+      const groups = (model || []).map((group, index) => {
+        const q = group.queue;
+        const members = (group.owner ? [group.owner] : []).concat(group.waiting);
+        const shown = members.filter(e => e.location === 'page');
+        const accent = stageTrackerTrainAccentClass(index);
+        const heading = `<h3 class="ham-train-head${accent}"><span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon', 'Preparation queue')} Preparation queue · ${esc(q.repo || '')} → ${esc(q.base_ref || 'unknown base')}</span></h3>`;
+        if (q.state !== 'observed') return `<section class="ham-preparation-group${accent}" aria-label="Preparation queue">${heading}<p class="ham-preparation-note">${esc(q.message || 'Preparation state unknown')}</p></section>`;
+        const owner = group.owner;
+        const ownerContext = owner && owner.location !== 'page' ? `Owner #${owner.ticket.number} · ${owner.ticket.pipeline || 'current pipeline blocker unknown'} · ticket age ${stageTrackerPreparationAge(owner.ticket, nowMs)}` : '';
+        const rows = shown.map(e => {
+          const it = e.row.item;
+          const place = stageTrackerPreparationPlace(e);
+          const where = e.row.nested ? 'shown under issue #' + e.row.host.number : 'shown in the pipeline below';
+          const detail = [e.ticket.pipeline || 'current pipeline blocker unknown', 'ticket age ' + stageTrackerPreparationAge(e.ticket, nowMs), where].join(' · ');
+          const label = '#' + e.ticket.number + (it.title ? ' ' + it.title : '');
+          const ref = it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(label)}</a>` : `<span>${esc(label)}</span>`;
+          return `<li class="ham-preparation-member${e.role === 'owner' ? ' ham-preparation-owner' : ''}" title="${esc(place + ' · ' + detail + '. Ticket head ' + e.ticket.head_sha + '. Preparation is not approval or a ready merge-train seat.')}"><span class="ham-train-chip">${esc(place)}</span><span class="ham-preparation-ref">${ref}</span><span class="ham-preparation-detail">${esc(detail)}</span></li>`;
+        }).join('');
+        const missing = ['offpage', 'filtered'].map(location => {
+          const entries = members.filter(e => e.location === location);
+          return entries.length ? `<p class="ham-preparation-note">${location === 'offpage' ? 'On another page or in a collapsed repo' : 'Not shown by the current filters'}: ${esc(entries.map(e => stageTrackerPreparationPlace(e) + ' #' + e.ticket.number).join(' · '))}</p>` : '';
+        }).join('');
+        const unverified = role => group.unverified.filter(e => e.role === role).map(e => `<p class="ham-preparation-note">Unverified recorded ${e.role === 'owner' ? 'owner' : 'ticket'} #${Number(e.ticket.number) || 0} · ${esc(e.ticket.detail || 'current identity or eligibility unknown')} · ticket age ${esc(stageTrackerPreparationAge(e.ticket, nowMs))}. No confirmed position or current-head approval is implied.</p>`).join('');
+        const count = `${shown.length} of ${members.length} confirmed tickets shown on this page`;
+        return `<section class="ham-preparation-group${accent}" aria-label="Preparation queue">${heading}<p class="ham-preparation-note">${esc(count)}</p>${ownerContext ? `<p class="ham-preparation-note">${esc(ownerContext)}</p>` : ''}${unverified('owner')}${rows ? `<ol class="ham-preparation-rail" aria-label="Confirmed preparation order on this page">${rows}</ol>` : '<p class="ham-preparation-note">No confirmed preparation members displayed on this page.</p>'}${missing}${unverified('waiting')}${group.inactive ? `<p class="ham-preparation-note">${group.inactive} inactive tickets excluded.</p>` : ''}</section>`;
+      }).join('');
+      return groups ? `<div class="ham-preparation-intro">Preparation order, not guaranteed merge order. FIFO follows first qualifying admission, not PR age. Independent ready PRs may merge; tickets can leave and re-admit. These are references to the pipeline rows below, whose stages, sorts and trees are unchanged.</div>${groups}` : '';
+    }
+    function stageTrackerPreparationVisualSync(data, listedRows, pageRows, stages, nowMs) {
+      _stageTrackerPreparationShown = new Map();
+      const el = document.getElementById('activity-monitor-preparation');
+      if (!el) return;
+      if (!data || !Array.isArray(data.items)) {
+        el.hidden = false;
+        el.innerHTML = '<p class="ham-preparation-note">Preparation queue unavailable · waiting for a current tracker snapshot.</p>';
+        return;
+      }
+      const model = stageTrackerPreparationVisualModel(data, listedRows, pageRows, stages);
+      const html = stageTrackerPreparationVisualHtml(model, nowMs);
+      el.hidden = !html;
+      if (el.innerHTML !== html) el.innerHTML = html;
+      for (const group of model) {
+        for (const e of (group.owner ? [group.owner] : []).concat(group.waiting)) {
+          if (e.location === 'page') _stageTrackerPreparationShown.set(stageTrackerPreparationKey(group.queue.repo, e.ticket.number), { head: e.ticket.head_sha, base: group.queue.base_ref });
+        }
+      }
+    }
+    function stageTrackerPreparationRepresented(item) {
+      const p = item && item.preparation;
+      if (!p || p.state !== 'current') return false;
+      if (item.kind === 'pr' ? Number(item.number) !== Number(p.number) : !item.via_pr) return false;
+      const shown = _stageTrackerPreparationShown.get(stageTrackerPreparationKey(item.repo, p.number));
+      return !!(shown && item.head === shown.head && p.head_sha === shown.head && (!p.current_head || p.current_head === shown.head) && (!item.base_ref || item.base_ref === shown.base));
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -19420,6 +19562,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Rows under a "Merging" hold the payload already dropped ride along (#15245).
       const d = typeof stageTrackerMergingHoldView === 'function' ? stageTrackerMergingHoldView(_stageTracker, _stageTrackerMergingHold, nowMs) : _stageTracker;
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
+        if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
         stageTrackerSidebarCountsUnknown();
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
@@ -19448,6 +19591,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
         : stageTrackerPage(ordered, f);
       if (page.page !== f.page) f.page = page.page;
+      if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(d, ordered, page.rows, stages, nowMs);
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
@@ -23053,6 +23197,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPreparationChipHtml(item) {
       const p = item && item.preparation;
       if (!p || p.state === 'inactive') return '';
+      if (p.state === 'current' && typeof stageTrackerPreparationRepresented === 'function' && stageTrackerPreparationRepresented(item)) return '';
       const word = stageTrackerPreparationWord(p);
       const label = p.state === 'current' ? word : 'Preparation owner · unverified';
       return `<span class="ham-badge" title="${esc(word + ' · ticket head ' + p.head_sha + ' · ' + stageTrackerPreparationAge(p, Date.now()) + '. Preparation is not CI, review approval, or a ready merge-train seat.')}">${esc(label)}</span>`;
@@ -23101,10 +23246,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerQueueItems = [];
     var _stageTrackerPreparationQueues = [];
     function stageTrackerQueueChip() { return document.getElementById('activity-monitor-queue'); }
-    // Hide only when neither trains nor preparation observations exist.
+    // The visible preparation rail owns preparation context. Keep this
+    // popover only for actual ready trains, with the old fallback off-rail.
     function stageTrackerQueueSync(items, nowMs, preparation) {
       _stageTrackerQueueItems = Array.isArray(items) ? items : [];
-      _stageTrackerPreparationQueues = Array.isArray(preparation) ? preparation : [];
+      const preparationRail = typeof stageTrackerPreparationVisualSync === 'function' && document.getElementById('activity-monitor-preparation');
+      _stageTrackerPreparationQueues = !preparationRail && Array.isArray(preparation) ? preparation : [];
       const chip = stageTrackerQueueChip();
       if (!chip) return;
       const trains = stageTrackerQueueTrains(_stageTrackerQueueItems);
@@ -23116,6 +23263,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const prepSummary = prepOwners + ' owner · ' + prepWaiting + ' waiting' + (prepUnverified ? ' · ' + prepUnverified + ' unverified tickets' : '');
       const prepUnknown = _stageTrackerPreparationQueues.some(q => q.state !== 'observed');
       chip.hidden = !trains.length && !_stageTrackerPreparationQueues.length;
+      if (chip.hidden && typeof hamQueueToggle === 'function') hamQueueToggle(false);
       const nEl = chip.querySelector('.ham-queue-n');
       const count = _stageTrackerPreparationQueues.length ? n + ' train PRs · ' + (prepUnknown ? 'prep unknown' : prepSummary) : String(n);
       if (nEl && nEl.textContent !== count) nEl.textContent = count;
