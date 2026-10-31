@@ -1174,3 +1174,63 @@ func TestStageTrackerEnrichSoftLinks(t *testing.T) {
 		t.Fatalf("issues GETs in one rebuild = %d, want the cap %d", n, stageTrackerLinkLookups)
 	}
 }
+
+// hivecommons/hive#16015: the row's author kind and its claimant come from
+// one source of truth. A login with a contributor-hub profile is a clanker
+// owner (pkg/authorkind rule "registry", the one the stage engine applies
+// when it adopts), so the tracker must not read it as a person just because
+// the PR carries no author/<kind> label or hive marker.
+func TestStageTrackerRegistryAuthorKind(t *testing.T) {
+	owner := func(login string) bool { return strings.EqualFold(login, "karibhou") }
+	cases := []struct {
+		kind, src, author string
+		owner             func(string) bool
+		wantKind, wantSrc string
+	}{
+		{authorKindHuman, authorKindSrcInfer, "Karibhou", owner, authorKindClanker, authorKindSrcRegistry},
+		{authorKindHuman, authorKindSrcInfer, "pat", owner, authorKindHuman, authorKindSrcInfer},
+		{authorKindHuman, authorKindSrcLabel, "karibhou", owner, authorKindHuman, authorKindSrcLabel},
+		{authorKindHive, authorKindSrcInfer, "karibhou", owner, authorKindHive, authorKindSrcInfer},
+		{"", "", "karibhou", owner, authorKindClanker, authorKindSrcRegistry},
+		{authorKindHuman, authorKindSrcInfer, "karibhou", nil, authorKindHuman, authorKindSrcInfer},
+		{authorKindHuman, authorKindSrcInfer, "", owner, authorKindHuman, authorKindSrcInfer},
+	}
+	for _, c := range cases {
+		k, src := stageTrackerRegistryAuthorKind(c.kind, c.src, c.author, c.owner)
+		if k != c.wantKind || src != c.wantSrc {
+			t.Errorf("%q/%q/%q: got %q/%q want %q/%q", c.kind, c.src, c.author, k, src, c.wantKind, c.wantSrc)
+		}
+	}
+}
+
+func TestStageTrackerRegisteredContributorIsClanker(t *testing.T) {
+	setupContributeEnv(t)
+	if err := saveContributorProfile(&ContributorProfile{GitHubUsername: "Karibhou", ContributorID: "c-karibhou", TrustTier: "trusted"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 21, 18, 49, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	resp := s.buildStageTracker(status, store, now)
+
+	pr101 := trackerItem(t, resp, "pr", 101)
+	if pr101.AuthorKind != authorKindClanker || pr101.AuthorKindSource != authorKindSrcRegistry {
+		t.Fatalf("pr101 by registered contributor: kind=%q src=%q, want clanker/registry", pr101.AuthorKind, pr101.AuthorKindSource)
+	}
+	if pr101.Claimant == nil || pr101.Claimant.Kind != claimantKindClanker || pr101.Claimant.Login != "karibhou" {
+		t.Fatalf("pr101 claimant = %+v, want the contributor's clanker", pr101.Claimant)
+	}
+	if issue7 := trackerItem(t, resp, "issue", 7); issue7.AuthorKind != authorKindClanker || issue7.AuthorKindSource != authorKindSrcRegistry {
+		t.Fatalf("issue7 by registered contributor: kind=%q src=%q", issue7.AuthorKind, issue7.AuthorKindSource)
+	}
+	// Labels and the App's own login outrank the registry.
+	if pr102 := trackerItem(t, resp, "pr", 102); pr102.AuthorKind != authorKindHive || pr102.AuthorKindSource != authorKindSrcLabel {
+		t.Fatalf("pr102: kind=%q src=%q", pr102.AuthorKind, pr102.AuthorKindSource)
+	}
+	// A hive-attributed relay PR keeps its marker-inferred source.
+	if pr103 := trackerItem(t, resp, "pr", 103); pr103.AuthorKind != authorKindClanker || pr103.AuthorKindSource != authorKindSrcInfer {
+		t.Fatalf("pr103: kind=%q src=%q", pr103.AuthorKind, pr103.AuthorKindSource)
+	}
+}

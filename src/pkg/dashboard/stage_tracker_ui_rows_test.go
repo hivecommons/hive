@@ -356,6 +356,11 @@ assert.strictEqual(stageTrackerTrailText({ history: [] }), '');
 assert.strictEqual(stageTrackerTrailText({}), '');
 assert.strictEqual(stageTrackerTrailText({ history: [{ number: 0 }, { number: 10 }] }), 'Open → Actionable', '000 reads as Open');
 assert.ok(!stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, history: [{ number: 999 }, { number: 998 }] }, now).includes('Trail:'), 'no Trail clause when nothing can be named');
+// hivecommons/hive#16015: a registered contributor's PR reads as their clanker,
+// and the tooltip says the registry decided it; an inferred kind still says so.
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 15998, stage: 74, author: 'Karibhou', author_kind: 'clanker', author_kind_source: 'registry' }, now).includes('Author: @Karibhou (agent, registered contributor)'), 'registry source named in the tooltip');
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, author: 'pat', author_kind: 'human', author_kind_source: 'inferred' }, now).includes('Author: @pat (person, inferred)'), 'inferred source still named');
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, author: 'pat', author_kind: 'human', author_kind_source: 'label' }, now).includes('Author: @pat (person)'), 'label source says nothing');
 const savedStages = _stageTracker;
 _stageTracker = null;
 assert.strictEqual(stageTrackerTrailText(live14787), 'review-pending → needs-author → review-pending → needs-decision', 'the slug stands in before the stage table loads');
