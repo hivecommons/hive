@@ -5,8 +5,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -411,55 +409,25 @@ func TestActivityPage_BoardModel(t *testing.T) {
 
 // The shared row asset reads the STAGE_TRACKER_* constants as free globals
 // that only the spoke page defines (#16067 / #16081). The hub page must
-// define every one the embedded asset references, with the spoke's value,
-// or the hub would light different strip columns than the spoke tracker.
-// The set is derived from the embedded files themselves, so a constant the
-// asset starts reading fails here until the page defines it.
+// define every one with the spoke's value, or the hub would light different
+// strip columns than the spoke tracker. trackerrow.RequiredGlobals is that
+// contract: TestRequiredGlobals keeps its names equal to what the embedded
+// asset references, and TestTrackerRowRequiredGlobalsDefinedBySpoke pins its
+// values to the spoke's declarations, so asserting against it here covers
+// the hub with the same single list.
 func TestActivityPage_DefinesTrackerRowGlobalsWithSpokeValues(t *testing.T) {
-	globalRe := regexp.MustCompile(`\bSTAGE_TRACKER_[A-Z_]+\b`)
-	required := map[string]bool{}
-	for _, name := range trackerrow.Files {
-		b, err := fs.ReadFile(trackerrow.FS, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, g := range globalRe.FindAllString(string(b), -1) {
-			required[g] = true
-		}
-	}
-	if len(required) == 0 {
-		t.Fatal("found no STAGE_TRACKER_* globals in the shared row asset; the scan is broken")
-	}
-
-	spokeFiles, err := filepath.Glob(filepath.Join("..", "dashboard", "static-src", "js", "*.js"))
-	if err != nil || len(spokeFiles) == 0 {
-		t.Fatalf("spoke static-src not found (%v)", err)
-	}
-	var spoke strings.Builder
-	for _, f := range spokeFiles {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		spoke.Write(b)
-		spoke.WriteByte('\n')
+	if len(trackerrow.RequiredGlobals) == 0 {
+		t.Fatal("trackerrow.RequiredGlobals is empty; the shared asset contract is missing")
 	}
 	js := readActivityScript(t)
-	decl := func(src, name string) string {
-		m := regexp.MustCompile(`(?m)^\s*const ` + name + ` = (.+?);`).FindStringSubmatch(src)
+	for _, g := range trackerrow.RequiredGlobals {
+		m := regexp.MustCompile(`(?m)^\s*(const ` + regexp.QuoteMeta(g.Name) + ` = .+?;)`).FindStringSubmatch(js)
 		if m == nil {
-			return ""
-		}
-		return strings.TrimSpace(m[1])
-	}
-	for name := range required {
-		want := decl(spoke.String(), name)
-		if want == "" {
-			t.Errorf("the spoke no longer defines %s; update the shared asset contract", name)
+			t.Errorf("activity.js must define %s: the shared row asset reads it (want %q)", g.Name, g.Decl())
 			continue
 		}
-		if got := decl(js, name); got != want {
-			t.Errorf("activity.js %s = %q, want the spoke's %q", name, got, want)
+		if got := strings.TrimSpace(m[1]); got != g.Decl() {
+			t.Errorf("activity.js declares %q, trackerrow.RequiredGlobals pins the spoke's %q", got, g.Decl())
 		}
 	}
 	if !strings.Contains(js, "function esc(") {
