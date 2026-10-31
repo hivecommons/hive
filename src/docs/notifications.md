@@ -203,3 +203,28 @@ notifications:
     bot_token: ${DISCORD_BOT_TOKEN}
     rfc_channel_id: "1540404487099777136"
 ```
+
+### Rich mode, the designated announcer, and private repositories
+
+These keys sit next to `rfc_channel_id`. All of them default off, and with none of them set the notices are the one-line posts above, unchanged.
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `rfc_format` | `""` (= `line`) | `line` posts one line per transition. `card` selects rich mode; card rendering lands in a later change. Any other value is a config error. |
+| `rfc_threads` | `false` | Rich mode: one Discord thread per RFC (rendering lands later). |
+| `rfc_announcer` | `false` | Marks this hive as the one designated announcer for `rfc_channel_id`. Rich mode posts only from the announcer. |
+| `rfc_backlink_comment` | `false` | Parsed now; a later change uses it to comment the thread link back on the RFC. |
+| `rfc_include_private` | `false` | Authorizes posting RFCs from private repositories to the channel. |
+
+- **Announcer rule.** Rich mode means `rfc_format: card` or `rfc_threads: true`. A hive in rich mode without `rfc_announcer: true` posts nothing and logs `rfc notify: rich mode requires rfc_announcer; not posting` once. It keeps recording transitions, so turning on the announcer later does not backfill old ones. Set `rfc_announcer: true` on exactly one hive per channel. Line mode ignores the key.
+- **Private rule (every mode, line mode included).** An RFC in a private or `internal` repository is not posted unless `rfc_include_private: true`. This keeps its title and link out of the channel. The hive resolves each repo's visibility once and caches it for an hour. A repo whose visibility cannot be resolved counts as private (fail closed). A withheld transition is still recorded, so it is never posted later.
+
+```yaml
+notifications:
+  discord:
+    bot_token: ${DISCORD_BOT_TOKEN}
+    rfc_channel_id: "1540404487099777136"
+    rfc_format: card
+    rfc_announcer: true          # only on the one announcing hive
+    rfc_include_private: false   # default: private-repo RFCs are not posted
+```

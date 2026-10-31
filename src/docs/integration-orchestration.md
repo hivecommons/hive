@@ -338,6 +338,56 @@ listing. Reported minutes per merged PR are an observed-window aggregate, not a
 claim that every individual change's eventual cost is known. Unfinished execution
 and unattributed jobs remain explicit.
 
+## Candidate producer trust boundary
+
+The reusable technical workflows accept a typed `integration_candidate` input
+that defaults to false. False preserves ordinary PR, push and native
+`merge_group` behavior. Candidate calls require an explicitly dispatched
+`refs/tags/hive-integration/` ref, run on disposable GitHub-hosted runners with
+read-only technical-job permissions, do not persist checkout credentials, and
+retain full test/coverage requirements without manual-run toolchain soft failure.
+Their distinct concurrency groups do not cancel another reusable technical
+workflow in the same caller run. Candidate code never runs in issue/release
+writers; no repository secrets may be inherited by a candidate caller.
+
+These call seams and the producer verifier are source support, not an installed
+producer, execution controller, runtime opt-in, protection migration or
+execution-readiness claim. Existing authoring enforce mode does not activate
+them. The current eleven-context destination contract still needs genuine
+candidate-aware producers; author-head green statuses must not be copied.
+
+The producer identity protocol uses
+[GitHub OIDC claims](https://docs.github.com/en/actions/reference/security/oidc)
+including the actual finalizer `check_run_id`, run/attempt, repository/actor
+identities, workflow SHA/ref and hosted runner environment. A custom audience
+binds the SHA-256 digest of the exact payload bytes. Only the trusted finalizer
+may obtain signing identity; untrusted technical jobs receive no such
+permission. Verification uses only GitHub's fixed issuer/public signing keys,
+without installation credentials or token-selected key URLs. Refreshes are
+bounded/coalesced, and no cache mutex spans remote I/O. Missing issuer keys or
+claims are unknown, not passing validation.
+
+A signed producer identity is not proof that all CI passed. The consumer must
+separately establish exact subject/tree/ordered-head membership, installed
+reviewed workflow/action closure, real successful finalizer and required
+technical jobs, immutable artifact identity/digest and complete observations.
+Signed issuance must fall within the independently observed finalizer interval;
+a historical attestation is not a currently valid bearer login or live
+promotion authorization. Rotation/durable verification history and the actual
+isolated provider execution remain required lifecycle work.
+
+Executing untrusted candidate code from a default-ref dispatch can expose that
+ref's Actions-cache namespace even with a read-only GitHub token. The intended
+producer therefore requires controlled immutable candidate refs and verified
+trusted definitions, not an arbitrary author workflow. Publication with a
+trusted control workflow's `GITHUB_TOKEN` suppresses push-triggered workflows;
+[GitHub documents explicit dispatch and certain approval-required PR-event
+exceptions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+The installation's trigger permissions, controlled-ref protections and real
+candidate-required-context compatibility must be verified before opt-in. This
+feature does not grant those permissions, change protections or install a live
+pilot.
+
 The append-only journal uses local cross-process fencing, suffix replay and
 fsync; no remote reads occur under its lock. Replay is bounded to 256 MiB,
 100,000 records and 1 MiB per record. At a bound or corruption, new observations
@@ -364,10 +414,128 @@ exposes nonlinear machine/feedback tradeoffs; and
 [ICST 2026 PRediBatch](https://conf.researchr.org/details/icst-2026/icst-2026-industry/8/Predictive-Pull-Request-Batching-to-Accelerate-Merge-Pipelines-in-Continuous-Integrat)
 reports a BMW-data simulation, not Hive production results. These support checking
 bounded work-in-progress, anti-starvation and invalidation/failed-execution cost,
-not skipping validation. This implementation supplies neither ML prioritization,
-custom batching, speculative group construction, batch bisection nor another
-merge authority. Native group observations only describe groups GitHub created.
+not skipping validation. The bounded authoring/admission layer supplies neither ML prioritization,
+custom batching, batch bisection nor another merge authority. Native group
+observations only describe groups GitHub created. The separately opt-in
+candidate producer source described below constructs exact speculative prefixes;
+it is not an installed promotion controller.
 
 There is no automatic live pilot, adaptive concurrency growth, runner
 procurement or claim of 5,000 merged PRs/day. That is an empirical capacity
 target requiring observed quality and retained outcomes, not a code milestone.
+
+## Optional candidate producer protocol: source phase
+
+The reference source now includes a real preparation/validation workflow graph,
+not just a green-status copier:
+
+- `integration-candidate-prepare.yml` accepts an explicitly installed
+  `hive.integration.prepare.v1` repository-dispatch transport, or an authorized
+  manual workflow dispatch. It only uses trusted default-branch control code.
+  The checked-in `.github/integration-producer-policy.json` is **disabled**, has
+  no authorized actor and has no enrolled repo/base. Installation is not
+  activation; existing authoring `enforce` does not enable a writer.
+- The trusted materializer never checks out or executes candidate code. It
+  fetches exact objects, obtains the actual merge base for each prior synthetic
+  prefix and next head, uses `git merge-tree`, and creates two-parent commits
+  with deterministic metadata and actual bot DCO sign-off. It refuses changed
+  installed policy/harness paths, different heads, forks and moved starting
+  bases. Clean earlier prefixes are retained if a later prefix conflicts.
+- Each prefix is published as a controlled tag using the trusted job's
+  `GITHUB_TOKEN`, then validation is dispatched immediately rather than waiting
+  for the tail. The tag is never force-updated; author and destination refs are
+  not changed. Default-ref dispatch does **not** execute candidate code.
+- `integration-candidate.yml` checks the actual commit/tree/two-parent ordered
+  lineage in one bounded GraphQL query before assigning technical jobs. Its
+  three callee workflows are mechanically derived from the landed CI/test/
+  security sources, with writer jobs absent, hosted runners and checkout
+  credentials explicitly disabled. Mutable runner/cache/selection variables
+  are fixed in the qualified candidate profile; test selection is disabled.
+- An isolated finalizer, with no checkout or candidate execution, signs exact
+  receipt bytes using job-bound GitHub OIDC and publishes an immutable
+  attempt-specific artifact. Candidate validation and trusted materialization
+  use distinct audiences/ref/event profiles. A receipt authenticates provenance:
+  **its successful publication is not passing CI or promotion authorization**.
+
+Ordinary PR/push/native-group workflows retain their typed default-false path.
+To update source workflow definitions, regenerate the call-only artifacts with
+`python3 .github/scripts/generate-integration-ci.py`. Canonical CI, not a local
+guard run, checks generation and the materializer/isolation contracts. This
+avoids granting extra permissions to a virtual caller merely because skipped
+legacy reporter/release jobs still declare writes.
+
+### Cross-hive ownership and explicit limits
+
+The producer uses an atomic create-only forge ref for each exact initial
+candidate CI-dispatch key. The intent records the trusted workflow run/attempt
+and a random invocation nonce before the dispatch RPC. A competing materializer
+becomes an observer; unreadable or ambiguous intent becomes unknown. The
+candidate preflight rechecks that exact ref/owner before technical execution.
+Reservations expiring, a process restarting or an elapsed cooldown do not
+authorize replacing this intent. There is no force update, TTL steal or automatic
+failover. These create-only records are audit/attempt ownership, not permanent
+source-file locks.
+
+This is narrowly **initial candidate validation**, not an implementation of
+legacy PR CI rerun authority. The independent CI-reporting reconciler supplies
+verified head/run/attempt/job observations and `owner-action-required`; an
+observation is not mutation permission. Neither the local journal/flock,
+post-effect comments nor destination CAS coordinates independent hive storage.
+No second legacy rerun owner is installed here.
+
+The initial supported execution model must explicitly enroll its designated
+requesting principal and trusted workflow executor; other hives observe.
+Namespace protections, all participating writer routing and credential custody
+remain installation prerequisites. Cooperative create-only ownership does not
+prevent an administrator deleting an intent or an unsupported writer ignoring
+the protocol. GitHub's Actions dispatch/rerun RPC does not consume a caller
+fencing/idempotency token: forge CAS alone cannot fence a paused RPC sender.
+Ambiguous effects must be reconciled, not automatically reassigned after a TTL.
+Bootstrap repository-dispatch/control-job overhead is real execution cost;
+duplicate event delivery is not claimed to be free or exactly-once.
+
+[GitHub documents installation-token Contents:write for repository dispatch](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event)
+and [its trusted default-branch SHA/ref](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#repository_dispatch).
+This is an explicitly selected transport, **not** fallback after an Actions
+permission error. No App Actions-write grant is requested. Only the trusted
+materializer job has the minimum job-scoped Contents/Actions writes needed to
+publish controlled refs and dispatch validation; technical jobs are read-only,
+and only isolated finalizers have OIDC permission.
+
+### Remaining readiness gates
+
+Source contract tests are not isolated provider execution proof. Read-only
+candidate and materializer observers now bind authoritative run/attempt/job/check
+metadata, immutable artifact digest, exact signed bytes and enrolled ordered
+commit/tree/workflow closure. Their source tests include changed attempts,
+partial publication and mismatched producers/subjects; they do not prove an
+installed provider execution. Actual job observations include materialization
+and finalizer overhead, not just local recorder time. Durable verification/key
+history, controller wiring and shared promotion authority handover are still
+required. Existing
+eleven protected-branch contexts do not automatically become satisfied by
+prefixed reusable jobs. No copied DCO/review greens, branch-rule bypass,
+signature/linear-history downgrade or unproved conditional no-op is permitted.
+Protection-compatible exact-commit promotion must be verified using the actual
+designated actor and equivalent gates in an isolated installation first.
+
+No producer, execution mode, rules, permissions, repository variable, image or
+runtime has been activated by this source work. Source SHA, image publication,
+deployed runtime, desired mode and effective writer are distinct facts.
+
+| Metric | Current claim |
+| --- | --- |
+| Eligible-to-start / CI-to-promotion / end-to-end p50 and p95 | Unknown: no engine benchmark |
+| Successful integrations/day attributable to this engine | Unknown: execution is OFF |
+| Runner-minutes/success, canceled/rebuild waste, failure recovery | Unknown: actual job accounting/controlled comparison required |
+| Global merges observed by the overnight collector | Existing-flow baseline, not autonomous attribution to this feature |
+
+### Decision-to-evidence-to-test mapping
+
+| Decision | Source/result and limitation | Required check |
+| --- | --- | --- |
+| Parallel exact prefixes, not textual independence | [Full FSE 2023 paper](https://arxiv.org/html/2308.13129): historical simulation, no merge conflicts/rerun testing, compile time excluded; not Hive production proof | Exact ordered parents/trees; actual conflict handling; publication precedes later materialization |
+| No fixed batch-fill delay, ML or speculative proof transfer | PRediBatch primary abstract reports simulation; batching saves compute only under workload/recovery assumptions | Identical workload/resource/policy comparison; record discarded execution and rebuild cost |
+| Preserve documented promoted prefixes; invalidate changed dependent subjects | [Zuul speculative execution](https://zuul-ci.org/docs/zuul/latest/gating.html) and GitHub merge-group semantics; provider behavior is not Hive parity | Prefix identity stable across observer/lease generations; never recast A+B proof as B-only |
+| Fixed bounded admission before adaptation | Little's-law capacity accounting describes average WIP, not tail latency or fairness | Assigned-job wall minutes, shared-job dedup, unknown completeness, aging/fairness and explicit limits |
+| Trusted control, isolated technical jobs/finalizers | GitHub trigger/cache/OIDC contracts; provider receipts and protections still need isolated verification | No candidate checkout in privileged/finalizer jobs; exact job-bound identities, no skipped writer permissions, ambiguous claims never retried blindly |

@@ -1,6 +1,12 @@
 name: v2 Tests
 
 on:
+  workflow_call:
+    inputs:
+      integration_candidate:
+        description: Run an installed immutable Integration-aware candidate with isolated read-only technical jobs.
+        type: boolean
+        default: false
   merge_group:
     types: [checks_requested]
   schedule:
@@ -79,8 +85,8 @@ env:
 # group on run_id gives every such run its own group, so they can neither
 # cancel each other nor queue behind one another.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ inputs.integration_candidate && 'integration-tests' || github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ !inputs.integration_candidate && github.event_name == 'pull_request' }}
 
 # ── Sharding layout (#4118) ──────────────────────────────────────────────────
 # The suite is split so PR wall-clock ≈ the slowest single piece, not the sum.
@@ -208,7 +214,7 @@ concurrency:
 jobs:
   required-context-scope:
     name: required context scope
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
       run-tests: ${{ steps.scope.outputs.run-tests }}
@@ -220,6 +226,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          if [ "${{ inputs.integration_candidate }}" = true ] &&
+             { [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [[ "$GITHUB_REF" != refs/tags/hive-integration/* ]]; }; then
+            echo "::error::Integration candidates require an explicitly dispatched immutable candidate tag"
+            exit 1
+          fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "run-tests=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -276,7 +287,7 @@ jobs:
       fail-fast: false
       matrix:
         idx: [1, 2, 3, 4]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -302,6 +313,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.select.outputs.run == 'true'
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -391,7 +404,7 @@ jobs:
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
-          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ !inputs.integration_candidate && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
@@ -557,7 +570,7 @@ jobs:
           - { lane: scheduler, pkg: pkg/scheduler, idx: 1, total: 3 }
           - { lane: scheduler, pkg: pkg/scheduler, idx: 2, total: 3 }
           - { lane: scheduler, pkg: pkg/scheduler, idx: 3, total: 3 }
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -591,6 +604,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.select.outputs.run == 'true'
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -680,7 +695,7 @@ jobs:
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
-          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ !inputs.integration_candidate && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
@@ -842,7 +857,7 @@ jobs:
       fail-fast: false
       matrix:
         idx: [1, 2, 3, 4, 5]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     defaults:
       run:
@@ -868,6 +883,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.select.outputs.run == 'true'
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -933,7 +950,7 @@ jobs:
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
-          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ !inputs.integration_candidate && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
@@ -1091,7 +1108,7 @@ jobs:
   list-packages:
     needs: required-context-scope
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.partition.outputs.matrix }}
@@ -1112,6 +1129,7 @@ jobs:
       # present for the affected-package diff below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
           fetch-depth: 2
 
       # Populate the shared node-local Go tool cache under the runner pods'
@@ -1165,7 +1183,7 @@ jobs:
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
-          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ !inputs.integration_candidate && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
@@ -1402,7 +1420,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.list-packages.outputs.matrix) }}
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     defaults:
       run:
@@ -1428,6 +1446,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.select.outputs.run == 'true'
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -1517,7 +1537,7 @@ jobs:
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
-          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ !inputs.integration_candidate && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
@@ -1623,7 +1643,7 @@ jobs:
       fail-fast: false
       matrix:
         idx: [1, 2, 3]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -1649,6 +1669,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.select.outputs.run == 'true'
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -1738,7 +1760,7 @@ jobs:
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
-          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ !inputs.integration_candidate && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
@@ -1863,7 +1885,7 @@ jobs:
     # the surviving run still fail-closes on any non-success shard result.
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     needs: [required-context-scope, list-packages, test-hub, test-sliced, test-agent, test-rest, test-dashboard-shuffle]
     steps:
@@ -2005,10 +2027,10 @@ jobs:
   # still parsed for the two states a profile cannot express: FAIL and
   # `? ... [no test files]` — both hard failures, as before.
   coverage:
-    if: ${{ always() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/'))) }}
+    if: ${{ always() && (inputs.integration_candidate || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/'))) }}
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     needs: [required-context-scope, list-packages, test-hub, test-sliced, test-agent, test-rest]
     steps:
@@ -2049,6 +2071,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ steps.cov-scope.outputs.score == 'true' }}
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -2459,7 +2483,7 @@ jobs:
           echo "All packages meet their coverage floor" >> "$GITHUB_STEP_SUMMARY"
 
   patch-coverage:
-    if: ${{ github.event_name == 'pull_request' && needs.coverage.result == 'success' && needs.required-context-scope.outputs.run-tests == 'true' && !cancelled() }}
+    if: ${{ !inputs.integration_candidate && github.event_name == 'pull_request' && needs.coverage.result == 'success' && needs.required-context-scope.outputs.run-tests == 'true' && !cancelled() }}
     needs: [coverage, required-context-scope]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -2500,7 +2524,7 @@ jobs:
             --pr "$PR_NUMBER" \
             --advisory
   create-issue-on-failure:
-    if: (failure() || cancelled()) && github.event_name == 'schedule'
+    if: "!inputs.integration_candidate && (failure() || cancelled()) && github.event_name == 'schedule'"
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     needs: [list-packages, test-hub, test-sliced, test-agent, test-rest, test-dashboard-shuffle]
@@ -2557,7 +2581,7 @@ jobs:
             });
 
   create-issues-on-flakes:
-    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/v5' || github.ref == 'refs/heads/v6') && needs.test-hub.result == 'success' && needs.test-sliced.result == 'success' && needs.test-agent.result == 'success' && needs.test-rest.result == 'success' && needs.test-dashboard-shuffle.result == 'success'
+    if: "!inputs.integration_candidate && always() && github.event_name == 'push' && (github.ref == 'refs/heads/v5' || github.ref == 'refs/heads/v6') && needs.test-hub.result == 'success' && needs.test-sliced.result == 'success' && needs.test-agent.result == 'success' && needs.test-rest.result == 'success' && needs.test-dashboard-shuffle.result == 'success'"
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     needs: [test-hub, test-sliced, test-agent, test-rest, test-dashboard-shuffle]
@@ -2706,7 +2730,7 @@ jobs:
   # objects each. Push/schedule only: PR-scoped cache saves are invisible to
   # other branches and would only thrash the repo's 10GB cache budget.
   warm-build-cache:
-    if: github.event_name != 'pull_request' && !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')
+    if: "!inputs.integration_candidate && github.event_name != 'pull_request' && !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')"
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 40
     defaults:
@@ -2757,7 +2781,7 @@ jobs:
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
-          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ !inputs.integration_candidate && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \

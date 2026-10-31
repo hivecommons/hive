@@ -128,6 +128,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if !c.GitHub.Notifications.Valid() {
 		return fmt.Errorf("github.notifications.mode must be %q or %q", NotificationsModeQuiet, NotificationsModeNormal)
 	}
+	if c.Notifications.Discord != nil && !c.Notifications.Discord.RFCFormatValid() {
+		return fmt.Errorf("notifications.discord.rfc_format must be %q or %q", RFCFormatLine, RFCFormatCard)
+	}
 	if _, err := HeartbeatOmitClasses(c.Hub.HeartbeatOmit); err != nil {
 		return err
 	}
@@ -227,6 +230,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		c.Dashboard.SnapshotFrameAncestors = normalized
 	}
 
+	if err := c.Dashboard.Matrix.Validate(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateDashboardPublicURL(c.Dashboard.PublicURL); err != nil {
 		return err
 	} else {

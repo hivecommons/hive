@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -127,7 +128,7 @@ func TestRunRFCNotifySweepIncludesRepoForMultiRepoHive(t *testing.T) {
 }
 
 func TestRFCNotifySourceAdaptsClient(t *testing.T) {
-	if newRFCNotifySource(nil) != nil {
+	if newRFCNotifySource(nil, nil) != nil {
 		t.Fatal("nil client must yield a nil source")
 	}
 	var queries []string
@@ -138,9 +139,9 @@ func TestRFCNotifySourceAdaptsClient(t *testing.T) {
 	}))
 	defer server.Close()
 	c := github.NewClientForTest(server.URL, "org", []string{"repo"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	src := newRFCNotifySource(c)
+	src := newRFCNotifySource(c, &rfcNotifyState{lookupPrivate: func(context.Context, string) (bool, error) { return false, nil }})
 	open, err := src.ListOpen(context.Background())
-	if err != nil || len(open) != 1 || open[0].Repo != "org/repo" || open[0].Number != 7 || open[0].Author != "ann" || open[0].StateReason != "completed" || len(open[0].Labels) != 1 {
+	if err != nil || len(open) != 1 || open[0].Repo != "org/repo" || open[0].Number != 7 || open[0].Author != "ann" || open[0].StateReason != "completed" || len(open[0].Labels) != 1 || open[0].Private {
 		t.Fatalf("ListOpen = %+v %v", open, err)
 	}
 	since := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
@@ -149,5 +150,176 @@ func TestRFCNotifySourceAdaptsClient(t *testing.T) {
 	}
 	if len(queries) != 2 || !strings.Contains(queries[0], "state=open") || !strings.Contains(queries[1], "state=all") || !strings.Contains(queries[1], "since=") {
 		t.Fatalf("queries = %v", queries)
+	}
+}
+
+func rfcNotifyRecorder(t *testing.T, posted *[]string) *rfcNotifyState {
+	t.Helper()
+	return &rfcNotifyState{
+		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
+		newPoster: func(string, string) rfcnotify.Poster {
+			return func(s string) error { *posted = append(*posted, s); return nil }
+		},
+	}
+}
+
+// forcePoll drops the sweeper so the next run rebuilds it on the same
+// state file and polls instead of waiting out the interval.
+func forcePoll(state *rfcNotifyState) { state.sweeper = nil }
+
+func TestRFCNotifyGatesFor(t *testing.T) {
+	if g := rfcNotifyGatesFor(nil, 1); g != (rfcNotifyGates{format: rfcnotify.FormatLine}) {
+		t.Fatalf("nil config gates = %+v", g)
+	}
+	cfg := rfcNotifyConfig("tok", "1")
+	if g := rfcNotifyGatesFor(cfg, 3); g != (rfcNotifyGates{includeRepo: true, format: rfcnotify.FormatLine}) {
+		t.Fatalf("default gates = %+v", g)
+	}
+	d := cfg.Notifications.Discord
+	d.RFCFormat, d.RFCThreads, d.RFCAnnouncer, d.RFCBacklinkComment, d.RFCIncludePrivate = "card", true, true, true, true
+	want := rfcNotifyGates{format: rfcnotify.FormatCard, threads: true, announcer: true, backlink: true, includePrivate: true}
+	if g := rfcNotifyGatesFor(cfg, 1); g != want {
+		t.Fatalf("gates = %+v, want %+v", g, want)
+	}
+}
+
+func TestRunRFCNotifySweepGatesFromConfig(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var posted []string
+	state := rfcNotifyRecorder(t, &posted)
+	open := rfcnotify.Issue{Repo: "o/r", Number: 1, Title: "RFC: a", URL: "u", State: "open", CreatedAt: time.Now().Add(-time.Hour)}
+	priv := rfcnotify.Issue{Repo: "o/p", Number: 2, Title: "RFC: b", URL: "v", State: "open", Private: true, CreatedAt: time.Now().Add(-time.Hour)}
+	src := &rfcNotifyFakeSource{open: []rfcnotify.Issue{open, priv}}
+	cfg := rfcNotifyConfig("tok", "1")
+	cfg.Notifications.Discord.RFCFormat = "card"
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+
+	// Rich mode without the announcer: nothing posted, state advances.
+	closed := open
+	closed.State, closed.StateReason = "closed", "completed"
+	src.updated = []rfcnotify.Issue{closed}
+	forcePoll(state)
+	res := runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if len(posted) != 0 || res.Withheld != 1 {
+		t.Fatalf("non-announcer: %+v posted=%v", res, posted)
+	}
+	// A config change rebuilds the sweeper with the new gates.
+	cfg.Notifications.Discord.RFCAnnouncer = true
+	before := state.sweeper
+	privClosed := priv
+	privClosed.State, privClosed.StateReason = "closed", "completed"
+	src.updated = []rfcnotify.Issue{closed, privClosed}
+	res = runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if state.sweeper == before || !state.gates.announcer {
+		t.Fatal("config change did not rebuild the sweeper")
+	}
+	// #1 already advanced (no backfill); private #2 is withheld.
+	if len(posted) != 0 || res.Withheld != 1 {
+		t.Fatalf("announcer, private: %+v posted=%v", res, posted)
+	}
+}
+
+func TestRunRFCNotifySweepIncludePrivate(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var posted []string
+	state := rfcNotifyRecorder(t, &posted)
+	cfg := rfcNotifyConfig("tok", "1")
+	cfg.Notifications.Discord.RFCIncludePrivate = true
+	src := &rfcNotifyFakeSource{}
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	src.updated = []rfcnotify.Issue{{Repo: "o/p", Number: 3, Title: "RFC: c", URL: "w", State: "open", Private: true, CreatedAt: time.Now().Add(time.Hour)}}
+	forcePoll(state)
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if len(posted) != 1 || posted[0] != "RFC opened: #3 RFC: c - <w>" {
+		t.Fatalf("posted = %v", posted)
+	}
+}
+
+func TestRFCNotifyVisibilityCacheFailsClosed(t *testing.T) {
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	calls := map[string]int{}
+	state := &rfcNotifyState{
+		now: func() time.Time { return now },
+		lookupPrivate: func(_ context.Context, repo string) (bool, error) {
+			calls[repo]++
+			switch repo {
+			case "o/pub":
+				return false, nil
+			case "o/priv":
+				return true, nil
+			}
+			return false, errors.New("boom")
+		},
+	}
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if priv, err := state.repoPrivate(ctx, nil, "o/pub"); priv || err != nil {
+			t.Fatalf("public repo = %v, %v", priv, err)
+		}
+	}
+	if calls["o/pub"] != 1 {
+		t.Fatalf("public repo not cached: calls=%v", calls)
+	}
+	if priv, err := state.repoPrivate(ctx, nil, "o/priv"); !priv || err != nil {
+		t.Fatal("private repo must be private")
+	}
+	for i := 0; i < 2; i++ {
+		if priv, err := state.repoPrivate(ctx, nil, "o/err"); !priv || err == nil {
+			t.Fatalf("failed lookup must fail closed with an error: %v, %v", priv, err)
+		}
+	}
+	if calls["o/err"] != 2 {
+		t.Fatalf("failed lookup must retry: calls=%v", calls)
+	}
+	now = now.Add(rfcRepoVisibilityTTL)
+	_, _ = state.repoPrivate(ctx, nil, "o/pub")
+	if calls["o/pub"] != 2 {
+		t.Fatalf("visibility not refreshed after the TTL: calls=%v", calls)
+	}
+
+	// The source marks RFCs only, and a nil state fails closed.
+	issues := []rfcnotify.Issue{{Repo: "o/pub", Title: "RFC: x"}, {Repo: "o/err", Title: "not one"}}
+	got := rfcNotifySource{state: state}.markPrivate(ctx, append([]rfcnotify.Issue(nil), issues...))
+	if got[0].Private || got[1].Private || calls["o/err"] != 2 {
+		t.Fatalf("markPrivate = %+v calls=%v", got, calls)
+	}
+	if got := (rfcNotifySource{}).markPrivate(ctx, append([]rfcnotify.Issue(nil), issues...)); !got[0].Private || got[1].Private {
+		t.Fatalf("nil state markPrivate = %+v", got)
+	}
+}
+
+func TestGithubRepoPrivate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/org/pub":
+			_, _ = w.Write([]byte(`{"name":"pub","private":false,"visibility":"public"}`))
+		case "/repos/org/old":
+			_, _ = w.Write([]byte(`{"name":"old","private":false}`))
+		case "/repos/org/priv":
+			_, _ = w.Write([]byte(`{"name":"priv","private":true,"visibility":"private"}`))
+		case "/repos/org/int":
+			_, _ = w.Write([]byte(`{"name":"int","private":false,"visibility":"internal"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer server.Close()
+	c := github.NewClientForTest(server.URL, "org", []string{"pub"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	lookup := githubRepoPrivate(c)
+	ctx := context.Background()
+	for repo, want := range map[string]bool{"org/pub": false, "org/old": false, "org/priv": true, "org/int": true} {
+		if got, err := lookup(ctx, repo); err != nil || got != want {
+			t.Errorf("%s: private=%v err=%v, want %v", repo, got, err, want)
+		}
+	}
+	for _, repo := range []string{"org/missing", "noslash", "/x"} {
+		if got, err := lookup(ctx, repo); err == nil || !got {
+			t.Errorf("%s: private=%v err=%v, want fail closed", repo, got, err)
+		}
+	}
+	if got, err := githubRepoPrivate(nil)(ctx, "org/pub"); err == nil || !got {
+		t.Error("nil client must fail closed")
 	}
 }

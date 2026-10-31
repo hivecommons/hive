@@ -1,6 +1,7 @@
 package rfcnotify
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -456,5 +457,142 @@ func TestNewSweeperUnreadableStateStartsFresh(t *testing.T) {
 	sw = NewSweeper(Options{StatePath: dir, Logger: quiet})
 	if _, err := sw.Run(context.Background(), &fakeSource{}, func(string) error { return nil }); err == nil {
 		t.Fatal("save into a directory path must error")
+	}
+}
+
+// gateSweeper seeds a sweeper on #1 and #2, then scripts the next poll to
+// close both, returning a clock advancer for further polls.
+func gateSweeper(t *testing.T, opts Options, src *fakeSource) (*Sweeper, func()) {
+	t.Helper()
+	now := t0
+	opts.Now = func() time.Time { return now }
+	if opts.Logger == nil {
+		opts.Logger = quiet
+	}
+	sw := NewSweeper(opts)
+	src.open = []Issue{rfc(1, "open"), rfc(2, "open")}
+	if _, err := sw.Run(context.Background(), src, func(string) error { t.Fatal("seed posted"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	return sw, func() { now = now.Add(DefaultInterval) }
+}
+
+func TestOptionsRich(t *testing.T) {
+	if (Options{}).Rich() || (Options{Format: FormatLine, Announcer: true}).Rich() {
+		t.Fatal("line mode must not be rich")
+	}
+	if !(Options{Format: FormatCard}).Rich() || !(Options{Threads: true}).Rich() {
+		t.Fatal("card or threads must be rich")
+	}
+}
+
+func TestSweeperRichModeWithoutAnnouncerPostsNothingOnce(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	for _, opts := range []Options{{Format: FormatCard, Logger: logger}, {Threads: true, Logger: logger}} {
+		logs.Reset()
+		src := &fakeSource{}
+		sw, tick := gateSweeper(t, opts, src)
+		tick()
+		src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
+		res, err := sw.Run(context.Background(), src, func(string) error { t.Fatal("non-announcer posted"); return nil })
+		if err != nil || len(res.Posted) != 0 || res.Withheld != 1 {
+			t.Fatalf("first run: %+v %v", res, err)
+		}
+		tick()
+		src.updated = []Issue{withReason(rfc(2, "open"), "completed")}
+		if res, _ := sw.Run(context.Background(), src, func(string) error { t.Fatal("non-announcer posted"); return nil }); res.Withheld != 1 {
+			t.Fatalf("second run: %+v", res)
+		}
+		if n := strings.Count(logs.String(), "rich mode requires rfc_announcer; not posting"); n != 1 {
+			t.Fatalf("warning logged %d times, want 1:\n%s", n, logs.String())
+		}
+		// The state advanced: becoming the announcer later does not backfill.
+		sw.opts.Announcer = true
+		tick()
+		src.updated = []Issue{withReason(rfc(1, "open"), "completed"), withReason(rfc(2, "open"), "completed")}
+		if res, _ := sw.Run(context.Background(), src, func(string) error { t.Fatal("backfilled"); return nil }); len(res.Posted) != 0 {
+			t.Fatalf("backfill: %+v", res)
+		}
+	}
+}
+
+func TestSweeperRichModeAnnouncerPosts(t *testing.T) {
+	src := &fakeSource{}
+	sw, tick := gateSweeper(t, Options{Format: FormatCard, Threads: true, Announcer: true}, src)
+	tick()
+	src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
+	var posted []string
+	res, err := sw.Run(context.Background(), src, func(s string) error { posted = append(posted, s); return nil })
+	if err != nil || len(posted) != 1 || res.Withheld != 0 {
+		t.Fatalf("announcer: %+v %v %v", res, err, posted)
+	}
+}
+
+func TestSweeperLineModeIgnoresAnnouncer(t *testing.T) {
+	for _, announcer := range []bool{false, true} {
+		src := &fakeSource{}
+		sw, tick := gateSweeper(t, Options{Announcer: announcer}, src)
+		tick()
+		src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
+		var posted []string
+		if _, err := sw.Run(context.Background(), src, func(s string) error { posted = append(posted, s); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		want := "RFC closed (completed): #1 " + rfc(1, "open").Title + " - <https://github.com/hivecommons/hive/issues/1>"
+		if len(posted) != 1 || posted[0] != want {
+			t.Fatalf("announcer=%v posted %q, want %q", announcer, posted, want)
+		}
+	}
+}
+
+func TestSweeperPrivateGate(t *testing.T) {
+	private := func(is Issue) Issue { is.Private = true; return is }
+	src := &fakeSource{}
+	sw, tick := gateSweeper(t, Options{}, src)
+	tick()
+	src.updated = []Issue{private(withReason(rfc(1, "open"), "completed")), withReason(rfc(2, "open"), "completed")}
+	var posted []string
+	post := func(s string) error { posted = append(posted, s); return nil }
+	res, err := sw.Run(context.Background(), src, post)
+	if err != nil || res.Withheld != 1 || len(posted) != 1 || !strings.Contains(posted[0], "#2 ") {
+		t.Fatalf("private run: %+v %v %v", res, err, posted)
+	}
+	// The private record advanced, so authorizing later does not replay it.
+	sw.opts.IncludePrivate = true
+	tick()
+	posted = nil
+	if res, _ := sw.Run(context.Background(), src, post); len(posted) != 0 || res.Withheld != 0 {
+		t.Fatalf("replayed: %+v %v", res, posted)
+	}
+
+	src2 := &fakeSource{}
+	sw2, tick2 := gateSweeper(t, Options{IncludePrivate: true}, src2)
+	tick2()
+	src2.updated = []Issue{private(withReason(rfc(1, "open"), "completed"))}
+	posted = nil
+	if res, _ := sw2.Run(context.Background(), src2, post); len(posted) != 1 || res.Withheld != 0 {
+		t.Fatalf("include_private: %+v %v", res, posted)
+	}
+}
+
+func TestSweeperUnknownVisibilityRetriesNextPoll(t *testing.T) {
+	unknown := func(is Issue) Issue { is.Private, is.VisibilityUnknown = true, true; return is }
+	src := &fakeSource{}
+	sw, tick := gateSweeper(t, Options{}, src)
+	tick()
+	src.updated = []Issue{unknown(withReason(rfc(1, "open"), "completed")), withReason(rfc(2, "open"), "completed")}
+	var posted []string
+	post := func(s string) error { posted = append(posted, s); return nil }
+	res, err := sw.Run(context.Background(), src, post)
+	if err != nil || res.Unresolved != 1 || res.Withheld != 0 || len(posted) != 1 || !strings.Contains(posted[0], "#2 ") {
+		t.Fatalf("unknown run: %+v %v %v", res, err, posted)
+	}
+	// Visibility now resolves public: the dropped transition is announced.
+	src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
+	tick()
+	posted = nil
+	if res, _ := sw.Run(context.Background(), src, post); len(posted) != 1 || res.Unresolved != 0 {
+		t.Fatalf("retry: %+v %v", res, posted)
 	}
 }
