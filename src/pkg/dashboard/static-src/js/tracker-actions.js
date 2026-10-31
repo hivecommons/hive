@@ -35,6 +35,7 @@
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:close-read': 'Close now',
+      'decide:close-issue': 'Close issue',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:re-author': 'Re-author as hive PR',
@@ -51,7 +52,8 @@
     const STAGE_TRACKER_MERGE_ACTIONS = ['decide:queue-merge', 'decide:merge-now'];
     // Generic items every row has; a server-named decision option with one
     // of these ids is not repeated at the top of the menu.
-    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt'];
+    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt', 'decide:close-issue'];
+    const _stageTrackerCloseIssueBusy = new Set();
     // Accept triage shows on an issue the chevron calls "Triage needed":
     // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
     // 045). A needs-triage left on a claimed or covered issue is reported
@@ -160,6 +162,10 @@
       if (!d || !Array.isArray(d.items)) return null;
       for (const it of d.items) if (stageTrackerItemKey(it) === key) return it;
       for (const it of d.items) {
+        for (const li of (Array.isArray(it.linked_issues) ? it.linked_issues : [])) {
+          const issue = { repo: it.repo, number: li.number, kind: 'issue', title: li.title || '', url: li.url || '', state: li.state || '' };
+          if (stageTrackerItemKey(issue) === key) return issue;
+        }
         for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
           const pr = stageTrackerLinkedPRItem(it, lp);
           if (stageTrackerItemKey(pr) === key) return pr;
@@ -167,8 +173,17 @@
       }
       return null;
     }
+    // Linked issues in a PR-only view still have their own exact target.
+    function stageTrackerLinkedIssueToolsHtml(item) {
+      return (Array.isArray(item.linked_issues) ? item.linked_issues : []).filter(li => li && Number(li.number) > 0 && li.state === 'open').map(li => {
+        const issue = { repo: item.repo, number: li.number, kind: 'issue' };
+        const ref = stageTrackerRefOf(issue);
+        return `<span class="ham-badge" data-ham-sub-key="${esc(stageTrackerItemKey(issue))}">Issue #${Number(li.number)} <button type="button" class="ham-kebab" aria-label="Actions for ${esc(ref)}" aria-haspopup="menu" data-action="hamRowMenu" data-arg-types="e,t" data-stop="1" data-prevent="1">⋯</button></span>`;
+      }).join('');
+    }
     function stageTrackerItemsForKeys(keys) {
-      return keys.map(k => stageTrackerItemByKey(_stageTracker, k)).filter(Boolean);
+      const data = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(_stageTracker, Date.now()) : _stageTracker;
+      return keys.map(k => stageTrackerItemByKey(data, k)).filter(Boolean);
     }
     // What the signed-in viewer may do on this repo. Hold permission is
     // looked up lazily (the server answers 403 either way); needs-human is
@@ -395,6 +410,12 @@
     }
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
+      if (typeof stageTrackerMergedPRKnown === 'function' && stageTrackerMergedPRKnown(item)) {
+        return [
+          { id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+          { id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+        ];
+      }
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const has = m => mods.indexOf(m) >= 0;
       const write = ctx.canHold !== false;
@@ -443,6 +464,7 @@
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
+      if (item.kind === 'issue' && String(item.state || '').toLowerCase() !== 'closed') out.push(Object.assign({ id: 'decide:close-issue', label: 'Close issue…', danger: true, hint: 'only this issue · completed' }, stageTrackerActionAllowed('decide:close-issue', ctx)));
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
       return out;
@@ -777,10 +799,10 @@
     // The row (or nested PR) an event happened on, as the items a menu acts
     // on: a selected row with company stands for the whole selection.
     function stageTrackerMenuTargets(target) {
-      const sub = target && target.closest ? target.closest('[data-ham-sub-key]') : null;
+      const sub = target && target.closest ? target.closest('[data-ham-sub-key], [data-ham-target-key]') : null;
       const row = target && target.closest ? target.closest('.ham-row[data-ham-key]') : null;
       if (!row && !sub) return null;
-      const key = sub ? sub.dataset.hamSubKey : row.dataset.hamKey;
+      const key = sub ? (sub.dataset.hamTargetKey || sub.dataset.hamSubKey) : row.dataset.hamKey;
       const list = row ? row.parentNode : sub.closest('#activity-monitor-panel');
       const keys = _stageTrackerSel.has(key) && _stageTrackerSel.size > 1 && list ? stageTrackerRowKeys(list).filter(k => _stageTrackerSel.has(k)) : [key];
       return { items: stageTrackerItemsForKeys(keys), restore: sub ? (sub.querySelector('.ham-kebab') || row) : row };
@@ -1163,6 +1185,10 @@
     // Pure: which endpoint an action hits for one item. `once` marks a
     // hive-wide call made one time per batch.
     function stageTrackerActionRequest(item, id, payload) {
+      if (typeof stageTrackerTerminalView === 'function') {
+        item = stageTrackerTerminalView({ items: [item] }, Date.now()).items[0];
+        if (!item || (typeof stageTrackerMergedPRKnown === 'function' && stageTrackerMergedPRKnown(item))) return null;
+      }
       payload = payload || {};
       const p = repoParts(item.repo);
       const n = Number(item.number) || 0;
@@ -1177,6 +1203,7 @@
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
         case 'blocker:recheck': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/recheck', body: {} };
         case 'blocker:close-partial': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/close-partial', body: { comment: payload.comment || '' } };
+        case 'decide:close-issue': return item.kind !== 'issue' || String(item.state || '').toLowerCase() === 'closed' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'close-issue', comment: payload.comment || '', type: 'issue' } };
       }
       if (id === 'decide:delegate' || id === 'decide:delegate:rerun') {
         const body = { type, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' };
@@ -1333,6 +1360,7 @@
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          if (id === 'decide:close-issue' && data.status !== 'closed' && data.status !== 'refused') throw new Error(data.error || 'The server did not confirm that the issue closed');
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
           if (req.poll && !stageTrackerDelegatedDone(data)) {
             showToast('Hive is deciding ' + stageTrackerRefOf(it) + '…', 'info');
@@ -1442,7 +1470,7 @@
     // flagged PR, so the operator reads the security reason before
     // choosing Approve; '' when nothing in items is flagged.
     function stageTrackerSentinelPreface(items) {
-      return (items || []).filter(it => it && it.sentinel_alert).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
+      return (items || []).filter(it => it && it.sentinel_alert && !it.sentinel_notice).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
     }
     // Every confirm a row action raises can be opted out of per browser,
     // per action id (the dialog's "Don't ask again for this action" box;
@@ -1878,6 +1906,12 @@
         }
         case 'decide:close-read':
           return (await stageTrackerAsk(id, 'confirm', { title: 'Close advisory', message: stageTrackerAdvisoryCloseMessage(items, refs, who), confirmLabel: 'Close' })) ? {} : null;
+        case 'decide:close-issue': {
+          const item = items[0];
+          // This destructive exact-issue action always asks; no confirmation opt-out.
+          const v = await hivePrompt({ title: 'Close issue', label: 'Close ' + refs + ' — ' + (item.title || 'Untitled issue') + ' as completed, as ' + who + '? Only this issue closes; linked pull requests and other issues stay unchanged. An attributed closing note is posted. Additional comment (optional):', placeholder: 'Optional closing comment', confirmLabel: 'Close issue', danger: true });
+          return v == null ? null : { comment: v };
+        }
         case 'decide:merge-now': {
           const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
           if (items.some(stageTrackerNeedsRebase)) {
@@ -1997,7 +2031,7 @@
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
-      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
+      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
@@ -2017,7 +2051,7 @@
     }
     // The ledger name of a row action id (the inverse of the badge's
     // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
-    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
     // A failed or refused action is noted on the row at once, so the
     // history badge turns red and its hover's first line names the reason
     // — the server's ledger only sees 5xx and refused answers, and a
@@ -2047,7 +2081,7 @@
     // Pure: the state signature a toast / acting row waits to see change.
     function stageTrackerItemState(it) {
       if (!it) return '';
-      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '') + (it.rebase_merge && it.rebase_merge.state ? '|rm:' + it.rebase_merge.state : '') + (it.rebase && it.rebase.text ? '|rb:' + it.rebase.text : '');
+      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '') + (it.state ? '|state:' + it.state : '') + (it.rebase_merge && it.rebase_merge.state ? '|rm:' + it.rebase_merge.state : '') + (it.rebase && it.rebase.text ? '|rb:' + it.rebase.text : '');
     }
     function stageTrackerTargetKey(target) {
       return target && target.number ? stageTrackerItemKey({ repo: target.repo, kind: target.kind === 'pr' ? 'pr' : 'issue', number: target.number }) : '';
@@ -2307,11 +2341,37 @@
       const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
       if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
     }
+    // A copy must identify the selected item, not its parent issue or a
+    // decision target. Keep the canonical URL (including its forge host).
+    function stageTrackerCopyLink(item) {
+      if (!item || (item.kind !== 'issue' && item.kind !== 'pr')) return '';
+      const url = String(item.url || '');
+      const m = /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/(issues|pull)\/(\d+)(?:[?#].*)?$/.exec(url);
+      return m && m[1] === (item.kind === 'pr' ? 'pull' : 'issues') && Number(m[2]) === Number(item.number) && Number(item.number) > 0 ? url : '';
+    }
     async function runRowAction(action, row) {
       let items = Array.isArray(row) ? row.slice() : (row ? [row] : []);
       const id = action;
       const rows = items.slice();
       if (!items.length) return { toasts: [], pending: [] };
+      if (id === 'decide:close-issue') {
+        // Never remap an issue close through its covering PR or fan it out.
+        if (items.length !== 1 || !stageTrackerActionRequest(items[0], id)) {
+          stageTrackerNothingToActOn(id, rows);
+          return { toasts: [], pending: [] };
+        }
+        const key = stageTrackerItemKey(items[0]);
+        if (_stageTrackerCloseIssueBusy.has(key) || _stageTrackerPending.some(p => p.keys.indexOf(key) >= 0)) return { toasts: [], pending: [] };
+        _stageTrackerCloseIssueBusy.add(key);
+        try {
+          const payload = await stageTrackerActionPayload(items, id, rows);
+          if (payload == null) return { toasts: [], pending: [], cancelled: true };
+          const results = await stageTrackerRunActions(items, id, payload, rows);
+          return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };
+        } finally {
+          _stageTrackerCloseIssueBusy.delete(key);
+        }
+      }
       if (id === 'open') {
         for (const it of items) if (it.url) window.open(it.url, '_blank', 'noopener');
         return { toasts: [], pending: [] };
@@ -2327,10 +2387,11 @@
         return { toasts: [], pending: [] };
       }
       if (id === 'copy') {
-        const text = items.map(it => it.url).filter(Boolean).join('\n');
         try {
+          const links = items.map(stageTrackerCopyLink);
+          if (links.some(url => !url)) throw new Error('No matching GitHub link for the selected item — refresh the tracker and try again');
           if (!navigator.clipboard) throw new Error('clipboard unavailable');
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(links.join('\n'));
           showToast(items.length > 1 ? 'Copied ' + items.length + ' links' : 'Link copied', 'success');
         } catch (e) { showToast('Could not copy: ' + (e && e.message ? e.message : 'clipboard unavailable'), 'error'); }
         return { toasts: [], pending: [] };
@@ -2513,4 +2574,3 @@
     // kind → { name, bytes (ArrayBuffer), buffer (AudioBuffer|null), failed }
     var _stageTrackerClips = { open: null, merge: null };
     var _stageTrackerSettingsReturnFocus = null;
-

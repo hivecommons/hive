@@ -20,6 +20,10 @@ func TestStageTrackerNeedsHuman(t *testing.T) {
 		{"071 human author", StageTrackerItem{Stage: 71, AuthorKind: authorKindHuman}, true, false},
 		{"071 clanker author", StageTrackerItem{Stage: 71, AuthorKind: "clanker"}, false, false},
 		{"072 human author", StageTrackerItem{Stage: 72, AuthorKind: authorKindHuman}, true, false},
+		// hivecommons/hive#16021: the author pushed; CI / the re-review for
+		// the new head are the hive's to run.
+		{"071 human author who pushed", StageTrackerItem{Stage: 71, AuthorKind: authorKindHuman, Push: &StageTrackerPush{State: pushStatePushed}}, false, false},
+		{"071 human author still waited on", StageTrackerItem{Stage: 71, AuthorKind: authorKindHuman, Push: &StageTrackerPush{State: pushStateWaiting}}, true, false},
 		{"needs-human pill", StageTrackerItem{Stage: 20, Modifiers: []string{modNeedsHuman}}, true, false},
 		{"needs-decision pill", StageTrackerItem{Stage: 50, Modifiers: []string{modNeedsDecision}}, true, false},
 		{"unauthorized pill", StageTrackerItem{Stage: 50, Modifiers: []string{modUnauthorized}}, true, false},
@@ -46,8 +50,8 @@ func TestStageTrackerNeedsHuman(t *testing.T) {
 		items = append(items, c.it)
 	}
 	nh, oh := stageTrackerHumanCounts(items)
-	if nh != 9 || oh != 2 {
-		t.Fatalf("counts = (%d, %d), want (9, 2)", nh, oh)
+	if nh != 10 || oh != 2 {
+		t.Fatalf("counts = (%d, %d), want (10, 2)", nh, oh)
 	}
 	for i, c := range cases {
 		if items[i].NeedsHuman != c.needsHuman || items[i].OnHold != c.hold {

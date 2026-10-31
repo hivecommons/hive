@@ -71,6 +71,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_NOBODY_LEAD"),
 		jsFunc(t, html, "stageTrackerStageActor"),
 		jsFunc(t, html, "stageTrackerActorKind"),
+		jsFunc(t, html, "stageTrackerExternalPRWork"),
 		jsFunc(t, html, "stageTrackerActorTip"),
 		jsConstLine(t, html, "STAGE_TRACKER_HIVE_PREFIXES"),
 		jsConstLine(t, html, "STAGE_TRACKER_CLAIMANT_SOURCE"),

@@ -501,3 +501,21 @@ func TestSpokeActivityWireCompat(t *testing.T) {
 		t.Fatalf("spoke did not decode the ack: %+v err=%v", ack, err)
 	}
 }
+
+func TestActivityStoreForget(t *testing.T) {
+	var st activityStore
+	st.record("hive-a", activityDigest("o/r", 1), activityT0)
+	st.record("hive-b", activityDigest("o/r", 2), activityT0)
+
+	st.forget("hive-a")
+	if got := st.snapshot([]string{"hive-a"}); len(got) != 0 {
+		t.Errorf("forgotten hive still held: %v", got)
+	}
+	if got := st.snapshot([]string{"hive-b"}); len(got) != 1 {
+		t.Errorf("forget dropped an unrelated hive: %v", got)
+	}
+
+	st.forget("unknown")
+	var nilStore *activityStore
+	nilStore.forget("hive-a")
+}

@@ -119,11 +119,11 @@ assert.strictEqual(stageTrackerAnchor(50, stages, 'pr', row(prior)), 50, 'stays 
 
 // The hover keeps the history, in plain words with the short head.
 const note = stageTrackerPriorHeadMergeFailedNote(row(prior));
-assert.strictEqual(note, 'merge attempt on previous head aaaaaaa failed: branch protection');
+assert.strictEqual(note, 'earlier merge attempt on head aaaaaaa failed: branch protection');
 assert.ok(!/http|api\.github\.com/.test(note), note);
 // Raw-only payload (no kind): the SPA classifies the text itself.
-assert.strictEqual(stageTrackerPriorHeadMergeFailedNote(row({ prior_head_merge_failed: raw })), 'merge attempt on previous head failed: branch protection');
-assert.strictEqual(stageTrackerPriorHeadMergeFailedNote(row({ prior_head_merge_failed: '405 1 of 3 required status checks are expected.' })), 'merge attempt on previous head failed: required checks had not reported');
+assert.strictEqual(stageTrackerPriorHeadMergeFailedNote(row({ prior_head_merge_failed: raw })), 'earlier merge attempt failed: branch protection');
+assert.strictEqual(stageTrackerPriorHeadMergeFailedNote(row({ prior_head_merge_failed: '405 1 of 3 required status checks are expected.' })), 'earlier merge attempt failed: required checks had not reported');
 // Nothing to say without a prior refusal.
 assert.strictEqual(stageTrackerPriorHeadMergeFailedNote(row({ state: 'gate-pending' })), '');
 assert.strictEqual(stageTrackerPriorHeadMergeFailedNote({}), '');

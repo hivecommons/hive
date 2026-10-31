@@ -191,8 +191,12 @@ full-screen Activity Monitor.
 
 Matrix is an experimental, default-off code display for a separate channel,
 [`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).
-It shows pushed added lines only, from positively identified hive identities,
-on public repositories explicitly allowlisted in `dashboard.matrix.repos`.
+It depends on the Matrix display renderer (`/?kiosk=1&view=matrix`,
+[#15936](https://github.com/hivecommons/hive/issues/15936)); without that
+renderer the dashboard ignores `view=matrix` and the kiosk serves the ordinary
+Activity Monitor. When active it shows pushed added lines only, from positively
+identified hive identities, on public repositories explicitly allowlisted in
+`dashboard.matrix.repos`.
 Private patches, unverified authors and excluded paths are never shown. Lines
 touched by scrubbing are dropped entirely rather than displayed with redactions;
 the built-in secret/path filters and `dashboard.matrix.exclude_paths` apply.
@@ -213,16 +217,19 @@ unaffected.
 channel.** The overlay has `replicas: 0`; applying it starts no streamer.
 Channel availability alone does not authorize activation. The owner must:
 
-1. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
+1. Confirm the deployed dashboard build serves the Matrix display for
+   `view=matrix` (#15936). A build without it broadcasts the ordinary kiosk
+   Activity Monitor on the Matrix channel, not code lines.
+2. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
    and verify the Matrix display and its author restriction and scrub/drop rules
    before any broadcast. An empty allowlist captures nothing.
-2. Provision `hivecommonsmatrix` independently, create namespace
+3. Provision `hivecommonsmatrix` independently, create namespace
    `hive-stream-matrix`, and create the out-of-band
    `twitch-stream-matrix` Secret there with its
    `TWITCH_STREAM_KEY`. Provision a separate `dashboard-token` Secret there
    for the dashboard source. Never reuse the main channel's `twitch-stream`
    Secret, or put key values in source, issues or documentation.
-3. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
+4. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
    zero only after authorization and readiness checks. Applying the overlay,
    creating the Twitch Secret and scaling up are all owner-only actions;
    this configuration does not authorize deployment or activation.

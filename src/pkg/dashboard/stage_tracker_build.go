@@ -194,10 +194,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if hasAttempt && (attempt.InFlight() || attempt.Merged) {
 			it.Caption, it.Actor = stageTrackerMergingCaption(attempt), StageActorHive
 		}
-		// Adoption is clanker-only (a human's PR is never adopted), so a
-		// human-authored 072 row keeps its plain caption. The one exception
-		// is a person's PR the engine was asked to adopt and refused
-		// (hivecommons/hive#15202): that row says "not adopted" wherever it sits.
+		// Do not infer a human takeover request from an author wait. A
+		// recorded author-person ownership policy gets neutral ownership
+		// wording; explicit adoption actions and provenance stay separate.
 		personRefused := hasRec && it.Kind == "pr" && rec.AdoptionBlocked(it.Head) == stagelabels.AdoptBlockedAuthorPerson
 		if personRefused || (stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman) {
 			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, adoptionClock, now); it.Adoption != nil {
@@ -205,12 +204,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 		}
 		it.Push = stageTrackerPushFor(*it, stage, rec, hasRec, pushStaleAfter, now)
-		pushed := it.Push != nil && it.Push.State == pushStatePushed
+		pushed := it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking)
 		if pushed {
 			// The ball is back with the hive: the row says what the push
 			// queued, and its note ages from the push (a new hive line).
 			it.Caption = stageTrackerPushCaption(it.Push, now)
-			if it.NoteChangedAt == nil || it.Push.Since.After(*it.NoteChangedAt) {
+			if it.Push.Since == nil {
+				it.NoteChangedAt = nil
+			}
+			if it.Push.Since != nil && (it.NoteChangedAt == nil || it.Push.Since.After(*it.NoteChangedAt)) {
 				at := *it.Push.Since
 				it.NoteChangedAt = &at
 			}
@@ -301,6 +303,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
 			it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
 		}
+		it.AuthorKind, it.AuthorKindSource = stageTrackerRegistryAuthorKind(it.AuthorKind, it.AuthorKindSource, it.Author, isClankerOwner)
 		if l, ok := config.FirstOriginLabel(issue.Labels); ok {
 			it.Origin = config.OriginSourceOf(l)
 		} else {
@@ -373,7 +376,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
 		it.BaseRef = pr.BaseRef
 		it.ciRed = strings.EqualFold(pr.CIStatus, "failure") || len(pr.FailingChecks) > 0
+		it.ciChecking = it.Head != "" && !it.ciRed && strings.EqualFold(pr.CIStatus, "pending") && pr.CIChecksRunning
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
+		it.AuthorKind, it.AuthorKindSource = stageTrackerRegistryAuthorKind(it.AuthorKind, it.AuthorKindSource, it.Author, isClankerOwner)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
 		}
@@ -398,6 +403,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// is offline says what that means for it.
 		it.Caption = stageTrackerOfflineAuthorCaption(it.Caption, it.Presence, it.Stage, adoptionClock, now)
 		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
+		it.SentinelNotice = it.SentinelAlert && !slices.ContainsFunc(pr.Labels, func(label string) bool {
+			return strings.EqualFold(strings.TrimSpace(label), sentinelLabel)
+		})
 		// The sentinel chip is a merge-gate pill too (the trusted-author
 		// notice and the real alert alike): sentinel_alert stays truthful
 		// for the gate word and the Decide… preface, but before the gate
@@ -488,7 +496,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	resp.Items = stageTrackerDropOperatorClosed(resp.Items, now, operatorActionClosedGrace())
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	s.applyDecidedProjection(resp.Items, now)
-	applyRebaseAttempts(resp.Items)
+	applyRebaseAttempts(resp.Items, now)
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
@@ -514,6 +522,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
+	stageTrackerResolveHumanAttention(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
 }
@@ -570,7 +579,8 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 	if slices.Contains(stageTrackerNeedsHumanStages, it.Stage) {
 		return true
 	}
-	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman
+	humanOwner := it.AuthorKind == authorKindHuman || (it.Adoption != nil && it.Adoption.BlockedBy == stagelabels.AdoptBlockedAuthorPerson)
+	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && humanOwner && !stageTrackerPushPending(it)
 }
 
 // stageTrackerOnHold mirrors the dashboard's stageTrackerItemOnHold: the
@@ -802,9 +812,18 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 // came from (stageTrackerSource*Name; "" with a nil body when the build
 // failed or ctx ended while waiting on an in-flight build).
 func (s *Server) stageTrackerPayloadSource(ctx context.Context, status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, source string) {
+	return s.stageTrackerPayloadFrom(ctx, status, now, true)
+}
+
+// stageTrackerPayloadFrom is stageTrackerPayloadSource; markServed false
+// reads the tracker without counting as a client that asked for it, so an
+// in-process reader (the hub activity digest) adds no SSE nudges.
+func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayload, now time.Time, markServed bool) (body []byte, etag string, generatedAt time.Time, source string) {
 	ttl := s.stageTrackerCacheTTL()
 	s.stageTrackerCacheMu.Lock()
-	s.stageTrackerServed = true
+	if markServed {
+		s.stageTrackerServed = true
+	}
 	c := s.stageTrackerCache
 	if len(c.body) > 0 && !c.stale && now.Sub(c.generatedAt) < ttl {
 		s.stageTrackerCacheMu.Unlock()
@@ -904,6 +923,7 @@ func (s *Server) invalidateStageTrackerCache() (served bool) {
 	s.stageTrackerGen++
 	served = s.stageTrackerServed
 	s.stageTrackerCacheMu.Unlock()
+	s.notifyStageTrackerPublish()
 	return served
 }
 

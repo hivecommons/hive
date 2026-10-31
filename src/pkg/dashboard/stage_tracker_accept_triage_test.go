@@ -35,7 +35,7 @@ const ctx = { user: true, canHold: true, canHuman: true, login: 'octo', nowMs: N
 // The primary case: an issue at 015 "Triage needed".
 const triage = { repo: 'o/r', kind: 'issue', number: 1, title: 'From an untrusted reporter', url: 'https://github.com/o/r/issues/1', stage: 15, modifiers: [] };
 let as = stageTrackerRowActions(triage, ctx);
-assert.deepStrictEqual(ids(as), ['accept-triage', 'hold', 'retry', 'needs-human', 'open', 'copy'], 'Accept triage heads the menu');
+assert.deepStrictEqual(ids(as), ['accept-triage', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy'], 'Accept triage heads the menu');
 const accept = as.find(a => a.id === 'accept-triage');
 assert.strictEqual(accept.label, 'Accept triage');
 assert.strictEqual(accept.enabled, true);

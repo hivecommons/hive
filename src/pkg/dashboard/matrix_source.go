@@ -352,9 +352,11 @@ func (s *Server) MatrixObserver(cfg config.MatrixConfig) func(github.SentinelPat
 	}
 	if s.matrix == nil {
 		s.matrix = newMatrixSource(cfg, s.logger)
+		s.matrix.setNotify(s.nudgeMatrixLines)
 		s.matrix.start()
 	} else {
 		s.matrix.setConfig(cfg)
+		s.matrix.setNotify(s.nudgeMatrixLines)
 	}
 	return s.matrix.Observe
 }

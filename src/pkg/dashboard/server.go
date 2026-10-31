@@ -118,8 +118,9 @@ type Server struct {
 
 	// matrix is the dashboard.matrix line source (matrix_source.go); nil
 	// until MatrixObserver is called with an active config.
-	matrixMu sync.Mutex
-	matrix   *matrixSource
+	matrixMu    sync.Mutex
+	matrix      *matrixSource
+	matrixNudge stageTrackerNudger
 
 	port       int
 	authToken  string
@@ -1553,6 +1554,7 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		terminalHandoffs: make(map[string]terminalHandoff),
 		cliModels:        newCLIModelCache(),
 		startedAt:        time.Now(),
+		matrixNudge:      stageTrackerNudger{interval: matrixLinesNudgeInterval},
 	}
 	s.registerCoreRoutes()
 	// A merge attempt beginning or ending is a tracker change the next poll
