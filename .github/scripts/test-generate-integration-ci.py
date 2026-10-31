@@ -48,6 +48,7 @@ class CompositionTest(unittest.TestCase):
             elif mutation == "missing":
                 job["name"] = "not-the-required-context"
             elif mutation == "checkout":
+                job = documents["v2-ci.yml"]["jobs"]["build-go"]
                 checkout = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/checkout@"))
                 checkout.setdefault("with", {})["ref"] = "other-head"
             else:
