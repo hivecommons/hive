@@ -1,0 +1,1 @@
+- Group complete preparation issue/PR row units into a front-first FIFO block with an uninterrupted connector through captions and nested spacing; preserve unrelated rows and child associations, distinguish unverified recorded fronts, and validate geometry in Chrome with its required runtime dependencies.
