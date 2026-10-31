@@ -321,6 +321,23 @@ parked for a person.) The risk classes are:
 | `licensing-legal` | license, copyright, legal, privacy, compliance, trademark, CLA |
 | `unverifiable` | the reviewer says it could not read, judge or test the change, or the requirement is ambiguous |
 
+The `sensitive-paths` class also covers what the reviewer asks a person
+about, not only how the question is worded. A `requires_human` or
+decision-requested perspective whose in-scope finding sits on a sensitive
+path (the sentinel defaults plus `security.sensitive_paths`) stays a
+person's decision. The aggregate keeps `requires_human` with
+`decision_finding: sensitive path <file>: …`, no fix is dispatched, and the
+PR parks at `stage/085-needs-decision`. The 085 comment prints that finding
+and the reviewer's question, so it names the change the maintainer must
+commit. Before this, "apply the `pr-validate.yml` hunk from the PR body"
+named no risk class, so the ask was routed to the fixer as
+`changes_requested`. The PR then sat at `stage/070-fixing`, wearing
+`stage/stalled` on and off, through six fix attempts that could not land a
+workflow edit (projectbluefin/bonedigger#106). A perspective that asks for
+changes on a workflow file still goes to the fixer, which may hold the
+Workflows permission. The permissions-tightening carve-out applies as it
+does to the question.
+
 Set the policy to `escalate` to preserve the older behavior where every
 decision marker parks the PR for a person. The reviewer template
 (`policies/reviewer-queue.md`) also tells the swarm to check the linked
