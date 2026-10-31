@@ -46,7 +46,9 @@ func (p Poster) Post(content string) error {
 	return p(content)
 }
 
-// PostCard implements Publisher for Poster by falling back to Post.
+// PostCard implements Publisher for Poster by falling back to Post. The
+// sweeper always passes the formatted line as content; the embed.Title
+// fallback only serves direct callers that pass none.
 func (p Poster) PostCard(content string, embed Embed) (string, error) {
 	if content != "" {
 		return "", p(content)

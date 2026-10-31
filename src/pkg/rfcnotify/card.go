@@ -3,9 +3,11 @@ package rfcnotify
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/discord"
 )
 
@@ -146,11 +148,11 @@ func ParseRFC(body string) RFCMeta {
 						links := extractRFCLinks(val)
 						if len(links) > 0 {
 							for _, l := range links {
-								if !containsString(meta.RelatedRFCLinks, l) {
+								if !slices.Contains(meta.RelatedRFCLinks, l) {
 									meta.RelatedRFCLinks = append(meta.RelatedRFCLinks, l)
 								}
 							}
-						} else if val != "" && !containsString(meta.RelatedRFCLinks, defuseLinks(val)) {
+						} else if val != "" && !slices.Contains(meta.RelatedRFCLinks, defuseLinks(val)) {
 							meta.RelatedRFCLinks = append(meta.RelatedRFCLinks, defuseLinks(val))
 						}
 					}
@@ -229,15 +231,6 @@ func isNumberedItem(line string) bool {
 	return numberedItemRE.MatchString(line)
 }
 
-func containsString(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 func truncateRunes(s string, limit int) string {
 	if limit <= 0 {
 		return ""
@@ -252,7 +245,7 @@ func truncateRunes(s string, limit int) string {
 func isNeedsDecision(labels []string) bool {
 	for _, l := range labels {
 		l = strings.ToLower(strings.TrimSpace(l))
-		if l == "stage/045-needs-decision" || l == "needs-decision" || l == "stage/085-needs-decision" {
+		if l == config.DefaultNeedsDecisionLabel || l == config.LegacyNeedsDecisionLabel || l == config.PRNeedsDecisionStageLabel {
 			return true
 		}
 	}

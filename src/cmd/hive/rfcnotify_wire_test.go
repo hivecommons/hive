@@ -43,7 +43,7 @@ func rfcNotifyConfig(token, channel string) *config.Config {
 
 func TestRunRFCNotifySweepDisabledIsNoOp(t *testing.T) {
 	src := &rfcNotifyFakeSource{open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "RFC: a", State: "open"}}}
-	state := &rfcNotifyState{newPoster: func(string, string) rfcnotify.Poster {
+	state := &rfcNotifyState{newPublisher: func(string, string) rfcnotify.Publisher {
 		t.Fatal("disabled notices must not build a poster")
 		return nil
 	}}
@@ -69,9 +69,9 @@ func TestRunRFCNotifySweepSeedsThenPosts(t *testing.T) {
 	var builtFor []string
 	state := &rfcNotifyState{
 		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
-		newPoster: func(token, channel string) rfcnotify.Poster {
+		newPublisher: func(token, channel string) rfcnotify.Publisher {
 			builtFor = append(builtFor, token+"@"+channel)
-			return func(s string) error { posted = append(posted, s); return nil }
+			return rfcnotify.Poster(func(s string) error { posted = append(posted, s); return nil })
 		},
 	}
 	held := rfcnotify.Issue{Repo: "hivecommons/hive", Number: 12062, Title: "[RFC]: Evidence pipeline", URL: "https://github.com/hivecommons/hive/issues/12062", State: "open", Labels: []string{"hold"}, CreatedAt: time.Now().Add(-time.Hour)}
@@ -112,8 +112,8 @@ func TestRunRFCNotifySweepIncludesRepoForMultiRepoHive(t *testing.T) {
 	var posted []string
 	state := &rfcNotifyState{
 		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
-		newPoster: func(string, string) rfcnotify.Poster {
-			return func(s string) error { posted = append(posted, s); return nil }
+		newPublisher: func(string, string) rfcnotify.Publisher {
+			return rfcnotify.Poster(func(s string) error { posted = append(posted, s); return nil })
 		},
 	}
 	cfg := rfcNotifyConfig("tok", "1")
@@ -159,8 +159,8 @@ func rfcNotifyRecorder(t *testing.T, posted *[]string) *rfcNotifyState {
 	t.Helper()
 	return &rfcNotifyState{
 		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
-		newPoster: func(string, string) rfcnotify.Poster {
-			return func(s string) error { *posted = append(*posted, s); return nil }
+		newPublisher: func(string, string) rfcnotify.Publisher {
+			return rfcnotify.Poster(func(s string) error { *posted = append(*posted, s); return nil })
 		},
 	}
 }
