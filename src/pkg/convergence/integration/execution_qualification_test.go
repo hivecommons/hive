@@ -26,7 +26,7 @@ func TestExecutionQualificationRequiresActualPromotionAndSignedProofLineage(t *t
 	if err := store.AppendExecution("without-promotion", in.Now, event); err == nil {
 		t.Fatal("qualified a configured boolean")
 	}
-	promotion := ExecutionPromotion{Repo: "o/r", Base: proof.Subject.Base, SubjectID: proof.Subject.ID,
+	promotion := ExecutionPromotion{Repo: "o/r", Base: proof.Subject.Base, SubjectID: proof.Subject.ID, ProviderAcknowledged: true,
 		ExpectedSHA: proof.Subject.BaseSHA, TestedSHA: last.Commit, AuthorityCommit: qualification.AuthorityCommit,
 		MutationKey: qualification.MutationKey, State: "applied", PR: 1, Head: proof.Subject.Members[0].Head, Attempt: 1, ObservedAt: in.Now}
 	if err := store.AppendExecution("actual-promotion", in.Now, ExecutionEvent{Version: ExecutionSchemaVersion, Promotion: &promotion}); err != nil {

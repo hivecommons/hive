@@ -684,22 +684,23 @@ func (s *Server) handleIntegrationConfigPut(w http.ResponseWriter, r *http.Reque
 		jsonError(w, "execution configuration changed or expected_execution missing; reload before saving", http.StatusPreconditionFailed)
 		return
 	}
-	// Reset only our reservations on every configuration transition, including
-	// allowlist/bounds drift. Disabling must remain possible with a failed disk.
-	if ledgerErr == nil {
+	parentChanged := executionParentChanged(previous, next)
+	// Execution-only changes must not release the independent authoring
+	// layer's reservations or rewrite its producer-policy generation.
+	if parentChanged && ledgerErr == nil {
 		ledgerErr = store.Append(integration.Event{Version: integration.SchemaVersion, ID: fmt.Sprintf("rollback/%d", time.Now().UnixNano()), At: time.Now(), Release: "*", Reason: "operator changed orchestration configuration"})
 	}
-	if ledgerErr == nil {
+	if parentChanged && ledgerErr == nil {
 		ledgerErr = store.SetPolicies(next.Policies, time.Now())
 	}
-	if ledgerErr != nil && next.Effective().Mode == config.IntegrationEnforce {
+	if parentChanged && ledgerErr != nil && next.Effective().Mode == config.IntegrationEnforce {
 		jsonError(w, ledgerErr.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	s.deps.Config.IntegrationOrchestration = next
 	if err := s.saveConfig(); err != nil {
 		s.deps.Config.IntegrationOrchestration = previous
-		if ledgerErr == nil {
+		if parentChanged && ledgerErr == nil {
 			if restoreErr := store.SetPolicies(previous.Policies, time.Now()); restoreErr != nil {
 				s.webhookLogger().Error("integration producer policy rollback unavailable", "error", restoreErr)
 			}

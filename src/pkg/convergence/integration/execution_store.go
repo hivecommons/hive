@@ -58,7 +58,7 @@ func (s *Store) validateExecution(e ExecutionEvent) error {
 			return fmt.Errorf("qualification has no observed promotion/proof lineage")
 		}
 		promotion, exists := s.execution.promotions[q.MutationKey]
-		if !exists || promotion.State != "applied" || promotion.Repo != q.Repo ||
+		if !exists || promotion.State != "applied" || !promotion.ProviderAcknowledged || promotion.Repo != q.Repo ||
 			promotion.Base != q.ProbeBase || promotion.SubjectID != q.SubjectID ||
 			promotion.TestedSHA != q.TestedSHA || promotion.AuthorityCommit != q.AuthorityCommit {
 			return fmt.Errorf("qualification is not bound to its actual applied isolated promotion")

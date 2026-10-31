@@ -157,6 +157,19 @@ func (p IntegrationPromotion) claim() effects.Claim {
 // a PR merge's expected author head, and createCommitOnBranch do not promote
 // this existing tested commit with a destination compare-and-swap.
 func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromotion, boundary effects.Boundary, guard IntegrationPromotionGuard) (effects.Result, error) {
+	return c.promoteIntegrationStep(ctx, p, boundary, guard, nil)
+}
+
+// PromoteIntegrationStepWithAcknowledgement additionally distinguishes an actual
+// successful provider RPC from observing an already-achieved journalled state.
+// Only the former can qualify a previously unproven protected actor/profile.
+func (c *Client) PromoteIntegrationStepWithAcknowledgement(ctx context.Context, p IntegrationPromotion, boundary effects.Boundary, guard IntegrationPromotionGuard) (effects.Result, bool, error) {
+	acknowledged := false
+	result, err := c.promoteIntegrationStep(ctx, p, boundary, guard, func() { acknowledged = true })
+	return result, acknowledged, err
+}
+
+func (c *Client) promoteIntegrationStep(ctx context.Context, p IntegrationPromotion, boundary effects.Boundary, guard IntegrationPromotionGuard, acknowledge func()) (effects.Result, error) {
 	if c == nil || c.client == nil {
 		return effects.Result{}, ErrNoGitHubClient
 	}
@@ -219,6 +232,9 @@ func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromot
 		}
 		if out.UpdateRefs == nil || out.UpdateRefs.ClientMutationID != id {
 			return effects.Result{}, fmt.Errorf("integration promotion acknowledgement is incomplete; reconciliation required")
+		}
+		if acknowledge != nil {
+			acknowledge()
 		}
 		return effects.Result{Provenance: p.TestedSHA}, nil
 	}

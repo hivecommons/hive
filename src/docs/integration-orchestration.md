@@ -595,6 +595,8 @@ destination, or unsupported bypass/merge policy refuse qualification. A real
 one-member isolated protected probe must demonstrate the exact actor, technical
 context compatibility, no-op reference-fence behavior, actual CAS and exact PR
 merge acknowledgement. A configured qualification ID is not a receipt.
+An ambiguous crash/reconciled destination without a durable successful provider
+RPC acknowledgement cannot qualify the actor; it requires a new isolated probe.
 Multi-member empirical scale remains a separate operator-approved experiment.
 
 Native authority uses only ordinary Hive enqueue admission and existing cached

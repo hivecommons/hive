@@ -26,6 +26,12 @@ func TestExecutionDefaultOffNeverInitializesWriterAndTrackerUnknownIsNotGreen(t 
 }
 
 func TestExecutionProfileCASAndScopedReleaseSelection(t *testing.T) {
+	parent := config.IntegrationOrchestrationConfig{Mode: config.IntegrationAdvisory}
+	onlyExecution := parent
+	onlyExecution.Execution.Mode = config.IntegrationAdvisory
+	if executionParentChanged(parent, onlyExecution) {
+		t.Fatal("execution-only update would release authoring reservations")
+	}
 	if !executionConfigEqual(config.IntegrationExecutionConfig{}, config.IntegrationExecutionConfig{Mode: config.IntegrationOff}) {
 		t.Fatal("zero OFF changed identity")
 	}

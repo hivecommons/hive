@@ -112,11 +112,12 @@ func (s *Server) promoteExecutionReady(ctx context.Context, store *integration.S
 			HeadRepo: pr.GetHead().GetRepo().GetFullName(), HeadRef: pr.GetHead().GetRef(),
 			SubjectID: subject.ID, Policy: scope.Policy, Generation: integrationExecutionPromotionGeneration,
 			AuthorityRef: scope.AuthorityRef, AuthorityCommit: scope.AuthorityCommit}
-		result, promoteErr := s.deps.GHClient.PromoteIntegrationStep(ctx, request, s.integration.executionBoundary,
+		result, acknowledged, promoteErr := s.deps.GHClient.PromoteIntegrationStepWithAcknowledgement(ctx, request, s.integration.executionBoundary,
 			func(ctx context.Context, exact ghpkg.IntegrationPromotion) error {
 				return s.executionPromotionGuard(ctx, store, cfg, scope, protection, proof, exact)
 			})
 		promotion.ObservedAt = time.Now()
+		promotion.ProviderAcknowledged = acknowledged
 		switch {
 		case promoteErr == nil && result.Provenance == last.Commit:
 			promotion.State, promotion.Reason = "applied", "actual protected atomic destination+author-head+authority-epoch CAS acknowledged/reconciled"
@@ -277,6 +278,9 @@ func (s *Server) executionPromotionGuard(ctx context.Context, store *integration
 }
 
 func (s *Server) recordExecutionQualification(ctx context.Context, store *integration.Store, scope config.IntegrationExecutionScope, protection string, promotion integration.ExecutionPromotion, now time.Time) error {
+	if !promotion.ProviderAcknowledged {
+		return fmt.Errorf("isolated state was reconciled without a durable successful provider acknowledgement; actor compatibility unproven, new isolated probe required")
+	}
 	for _, qualified := range store.ExecutionSnapshot().Qualifications {
 		if qualified.ID == scope.QualificationID {
 			return nil

@@ -29,9 +29,12 @@ func TestIntegrationPromotionAuthorityEpochIsInAtomicMutation(t *testing.T) {
 				}
 				return nil
 			}
-			_, err := client.PromoteIntegrationStep(context.Background(), f.request, journal, guard)
+			_, acknowledged, err := client.PromoteIntegrationStepWithAcknowledgement(context.Background(), f.request, journal, guard)
 			if (err != nil) != moved {
 				t.Fatalf("moved=%t: %v", moved, err)
+			}
+			if acknowledged == moved {
+				t.Fatal("provider acknowledgement did not distinguish an actual applied RPC from refusal")
 			}
 			f.mu.Lock()
 			defer f.mu.Unlock()

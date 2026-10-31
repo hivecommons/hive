@@ -70,8 +70,10 @@ func (s *Server) integrationExecutionCost(cfg config.IntegrationExecutionConfig,
 				through = observed.Through
 			}
 		}
-		if through.IsZero() || now.Sub(through) > cfg.ObservationAge {
-			return integration.Cost{Reason: fmt.Sprintf("%s#%s author/native workflow cohort stale/unknown", scope.Repo, scope.Base)}
+		if through.IsZero() || through.After(now) || now.Sub(through) > cfg.ObservationAge {
+			out.Complete = false
+			out.Reason = fmt.Sprintf("%s#%s author/native workflow cohort stale/unknown", scope.Repo, scope.Base)
+			through = now
 		}
 		cohorts := []integration.Coverage{}
 		for _, sources := range [][]integration.Coverage{oldSnapshot.Coverage, ownSnapshot.Coverage} {
@@ -89,12 +91,17 @@ func (s *Server) integrationExecutionCost(cfg config.IntegrationExecutionConfig,
 		accounted := integration.ExecutionCohortCost(scope.Repo, scope.Base, through.Add(-cfg.Window), through,
 			cohorts, oldSnapshot.Jobs, ownSnapshot.Jobs)
 		if !accounted.Complete || accounted.RunnerMinutes == nil {
-			return integration.Cost{Reason: fmt.Sprintf("%s#%s authoritative job coverage incomplete; growth frozen", scope.Repo, scope.Base)}
+			out.Complete = false
+			out.Reason = fmt.Sprintf("%s#%s authoritative job coverage incomplete; growth frozen", scope.Repo, scope.Base)
+		} else {
+			total += *accounted.RunnerMinutes
 		}
-		total += *accounted.RunnerMinutes
 		out.Jobs += accounted.Jobs
 		out.Running += accounted.Running
 		out.ObservedRunnerMinutes += accounted.ObservedRunnerMinutes
+	}
+	if !out.Complete {
+		out.RunnerMinutes = nil
 	}
 	return out
 }

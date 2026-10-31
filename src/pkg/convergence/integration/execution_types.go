@@ -144,19 +144,20 @@ type ExecutionInvalidation struct {
 }
 
 type ExecutionPromotion struct {
-	Repo            string    `json:"repo"`
-	Base            string    `json:"base"`
-	SubjectID       string    `json:"subject_id"`
-	ExpectedSHA     string    `json:"expected_sha"`
-	TestedSHA       string    `json:"tested_sha"`
-	AuthorityCommit string    `json:"authority_commit"`
-	MutationKey     string    `json:"mutation_key"`
-	State           string    `json:"state"`
-	Reason          string    `json:"reason"`
-	PR              int       `json:"pr"`
-	Head            string    `json:"head"`
-	Attempt         int       `json:"attempt"`
-	ObservedAt      time.Time `json:"observed_at"`
+	ProviderAcknowledged bool      `json:"provider_acknowledged"`
+	Repo                 string    `json:"repo"`
+	Base                 string    `json:"base"`
+	SubjectID            string    `json:"subject_id"`
+	ExpectedSHA          string    `json:"expected_sha"`
+	TestedSHA            string    `json:"tested_sha"`
+	AuthorityCommit      string    `json:"authority_commit"`
+	MutationKey          string    `json:"mutation_key"`
+	State                string    `json:"state"`
+	Reason               string    `json:"reason"`
+	PR                   int       `json:"pr"`
+	Head                 string    `json:"head"`
+	Attempt              int       `json:"attempt"`
+	ObservedAt           time.Time `json:"observed_at"`
 }
 
 type ExecutionStatus struct {

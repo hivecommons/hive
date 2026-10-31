@@ -42,8 +42,13 @@ func (s *Server) refreshExecutionTracker(store *integration.Store, cfg config.In
 	view := &IntegrationExecutionTracker{Version: integration.ExecutionSchemaVersion, Mode: cfg.Effective().Mode,
 		RuntimeVersion: versionHash, SourceVersion: "unknown", PublishedImage: "unknown", ObservedAt: now,
 		ObservationAgeSeconds: cfg.ObservationAge.Seconds(),
-		Telemetry:             s.integrationExecutionCost(cfg, store, now), Statuses: snapshot.Statuses,
-		Candidates: []IntegrationExecutionTrackerCandidate{}}
+		Telemetry:             s.integrationExecutionCost(cfg, store, now),
+		Candidates:            []IntegrationExecutionTrackerCandidate{}}
+	for _, status := range snapshot.Statuses {
+		if _, enrolled := cfg.Scope(status.Repo, status.Base); enrolled {
+			view.Statuses = append(view.Statuses, status)
+		}
+	}
 	latest := map[string]integration.ExecutionProof{}
 	for _, proof := range snapshot.Proofs {
 		scope, enrolled := cfg.Scope(proof.Subject.Repo, proof.Subject.Base)

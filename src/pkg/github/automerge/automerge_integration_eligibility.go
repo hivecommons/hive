@@ -40,6 +40,17 @@ func integrationEligibilityProbe(ctx context.Context) bool {
 	return ok
 }
 
+func (c *Engine) integrationReadOnlyOptions() Options {
+	options := c.integrationOptions
+	options.MutationBoundary = integrationEligibilityReadOnlyBoundary{}
+	options.StageTracker = NewStageTracker()
+	options.BasePreparation = NewBasePreparationStore("")
+	// Review requirements remain intact; a diagnostic probe must not enqueue
+	// a planner repair or overwrite the real tracker/preparation observations.
+	options.HumanChangeRequests = nil
+	return options
+}
+
 // IntegrationEligibility executes the existing applicable lane's complete
 // evaluation with a fresh check cohort. Its private stop occurs after all lane
 // gates but before any merge/native enqueue. It does not treat the contributor-
@@ -52,8 +63,7 @@ func (c *Engine) IntegrationEligibility(ctx context.Context, repo, base string, 
 	// Do not mutate a shared engine's boundary or copy its mutexes. An isolated
 	// evaluator retains the exact live policy callbacks and refuses preparation,
 	// branch updates and repair effects while consulting the same lane gates.
-	options := c.integrationOptions
-	options.MutationBoundary = integrationEligibilityReadOnlyBoundary{}
+	options := c.integrationReadOnlyOptions()
 	c = New(c.transport, options)
 	if number < 1 || head == "" || base == "" {
 		return nil, "exact integration member missing", nil

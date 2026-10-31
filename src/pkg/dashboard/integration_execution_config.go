@@ -19,6 +19,11 @@ func executionConfigEqual(a, b config.IntegrationExecutionConfig) bool {
 	return reflect.DeepEqual(a, b)
 }
 
+func executionParentChanged(a, b config.IntegrationOrchestrationConfig) bool {
+	a.Execution, b.Execution = config.IntegrationExecutionConfig{}, config.IntegrationExecutionConfig{}
+	return !reflect.DeepEqual(a, b)
+}
+
 func executionReleasedScopes(previous, next config.IntegrationExecutionConfig) []config.IntegrationExecutionScope {
 	out := []config.IntegrationExecutionScope{}
 	for _, old := range previous.Scopes {
