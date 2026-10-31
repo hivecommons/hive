@@ -540,9 +540,45 @@ func TestIssueRequestWatcher_FoldsSameComponentStream(t *testing.T) {
 }
 
 // The #16065 failure: a child declaring --parent/--blocked-by was folded into
-// a sibling child citing the same file. A declared DAG placement is a distinct
-// node, so the request files its own issue and reports why it skipped the fold.
+// a sibling child citing the same file. Three open bot siblings on the shared
+// path put the control case over sameComponentFoldThreshold, so the same
+// request without DAG placement folds; with it, the request is a distinct
+// node, files its own issue and reports why it skipped the fold.
 func TestIssueRequestWatcher_DAGPlacementSkipsSharedPathFold(t *testing.T) {
+	siblings := []openTwin{
+		{number: 63, author: testBot, title: "[scanner] child A", body: "src/docs/shared.md and src/a.go"},
+		{number: 61, author: testBot, title: "[scanner] child B", body: "src/docs/shared.md and src/b.go"},
+		{number: 58, author: testBot, title: "[scanner] child D", body: "src/docs/shared.md and src/d.go"},
+	}
+	request := func(parent int, blockedBy []int) IssueRequest {
+		return IssueRequest{
+			Repo: "o/r", Agent: "scanner",
+			Title:     "[scanner] child C",
+			Body:      "src/docs/shared.md and src/c.go",
+			Parent:    parent,
+			BlockedBy: blockedBy,
+		}
+	}
+
+	t.Run("control: no DAG placement folds into the oldest sibling", func(t *testing.T) {
+		m := &consolidationMock{}
+		srv := consolidationMockServer(t, siblings, m)
+		defer srv.Close()
+		c := issueTestClient(t, srv.URL)
+		c.appBotLogin = testBot
+
+		_, res := fileRequest(t, c, withIssueDir(t), request(0, nil))
+		if m.created != 0 || len(m.commentedOn) != 1 || m.commentedOn[0] != 58 {
+			t.Fatalf("created=%d comments=%v, want the request folded into #58", m.created, m.commentedOn)
+		}
+		if !res.OK || !res.Consolidated || res.Number != 58 || res.ConsolidatedReason != "component:src/docs/shared.md" {
+			t.Errorf("result = %+v, want consolidated into #58 on the shared component", res)
+		}
+		if res.ConsolidationSkippedReason != "" {
+			t.Errorf("consolidation_skipped_reason = %q, want empty on a fold", res.ConsolidationSkippedReason)
+		}
+	})
+
 	cases := []struct {
 		name       string
 		parent     int
@@ -556,28 +592,19 @@ func TestIssueRequestWatcher_DAGPlacementSkipsSharedPathFold(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &consolidationMock{}
-			srv := consolidationMockServer(t, []openTwin{
-				{number: 63, author: testBot, title: "[scanner] child A", body: "src/docs/shared.md and src/a.go"},
-				{number: 61, author: testBot, title: "[scanner] child B", body: "src/docs/shared.md and src/b.go"},
-			}, m)
+			srv := consolidationMockServer(t, siblings, m)
 			defer srv.Close()
 			c := issueTestClient(t, srv.URL)
 			c.appBotLogin = testBot
 
-			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
-				Repo: "o/r", Agent: "scanner",
-				Title:     "[scanner] child C",
-				Body:      "src/docs/shared.md and src/c.go",
-				Parent:    tc.parent,
-				BlockedBy: tc.blockedBy,
-			})
+			_, res := fileRequest(t, c, withIssueDir(t), request(tc.parent, tc.blockedBy))
 			if m.created != 1 {
 				t.Fatalf("created %d issues, want a new issue instead of a fold", m.created)
 			}
 			if len(m.commentedOn) != 0 {
 				t.Errorf("comments posted on %v, want none on siblings", m.commentedOn)
 			}
-			if !res.OK || res.Consolidated {
+			if !res.OK || res.Consolidated || res.AlreadyExisted {
 				t.Errorf("result = %+v, want ok and not consolidated", res)
 			}
 			if res.ConsolidationSkippedReason != tc.wantReason {
@@ -585,6 +612,59 @@ func TestIssueRequestWatcher_DAGPlacementSkipsSharedPathFold(t *testing.T) {
 			}
 		})
 	}
+
+	// Sibling children share a title stem as readily as a path: "RFC: child
+	// A" and "RFC: child C" canonicalise alike once the colon qualifier is
+	// stripped. A DAG node keeps only the exact-title match.
+	t.Run("canonical-stem sibling is not reused", func(t *testing.T) {
+		m := &consolidationMock{}
+		srv := consolidationMockServer(t, []openTwin{
+			{number: 63, author: testBot, title: "[scanner] Streaming activity monitor wiring: Twitch broadcast", body: "src/docs/streaming.md"},
+		}, m)
+		defer srv.Close()
+		c := issueTestClient(t, srv.URL)
+		c.appBotLogin = testBot
+
+		_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+			Repo: "o/r", Agent: "scanner",
+			Title:  "[scanner] Streaming activity monitor wiring: display mode",
+			Body:   "src/docs/streaming.md and src/display.go",
+			Parent: 15965,
+		})
+		if m.created != 1 || len(m.commentedOn) != 0 {
+			t.Fatalf("created=%d comments=%v, want a new issue", m.created, m.commentedOn)
+		}
+		if !res.OK || res.Consolidated || res.AlreadyExisted || res.ConsolidationSkippedReason != "parent" {
+			t.Errorf("result = %+v, want a plain create reporting the parent skip", res)
+		}
+	})
+
+	// The exact-title gate is unchanged (#16065 keeps it): a retried create
+	// reuses the issue it itself filed, and the result reports the reuse
+	// rather than a skipped fold.
+	t.Run("exact title still reuses", func(t *testing.T) {
+		m := &consolidationMock{}
+		srv := consolidationMockServer(t, siblings, m)
+		defer srv.Close()
+		c := issueTestClient(t, srv.URL)
+		c.appBotLogin = testBot
+
+		_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+			Repo: "o/r", Agent: "scanner",
+			Title:  "[scanner] child B",
+			Body:   "src/docs/shared.md and src/b.go",
+			Parent: 15965,
+		})
+		if m.created != 0 || len(m.commentedOn) != 0 {
+			t.Fatalf("created=%d comments=%v, want #61 reused silently", m.created, m.commentedOn)
+		}
+		if !res.OK || !res.AlreadyExisted || res.Number != 61 {
+			t.Errorf("result = %+v, want already_existed naming #61", res)
+		}
+		if res.ConsolidationSkippedReason != "" {
+			t.Errorf("consolidation_skipped_reason = %q, want empty when the exact-title gate reused the issue", res.ConsolidationSkippedReason)
+		}
+	})
 }
 
 // The #14360 failure: a scanner code-change finding on a Windows module was

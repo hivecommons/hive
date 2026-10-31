@@ -164,8 +164,13 @@ type IssueResponse struct {
 	// "subject", "file_set", or "component:<path>" (#14360), so the agent can
 	// tell a true twin from a weak shared-path fold.
 	ConsolidatedReason string `json:"consolidated_reason,omitempty"`
-	// ConsolidationSkippedReason echoes the request's no_consolidate_reason
-	// when the watcher skipped consolidation because the caller asked.
+	// ConsolidationSkippedReason names why the watcher filed a new issue
+	// instead of folding: the request's no_consolidate_reason when the caller
+	// asked (#14360), or the watcher-derived "parent" / "blocked_by" when the
+	// request declared DAG placement and the file-set, component and
+	// canonical-subject folds were skipped (#16065). The DAG-derived values
+	// are reported only on a genuine create, never alongside Consolidated or
+	// AlreadyExisted.
 	ConsolidationSkippedReason string `json:"consolidation_skipped_reason,omitempty"`
 	// RejectedDuplicate reports that no issue was created because a maintainer
 	// recently closed an agent-filed issue covering the same file set as
@@ -766,13 +771,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			dagSkipReason = "blocked_by"
 		}
 		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: req.NoConsolidateReason == "", SkipSharedPathFold: dagSkipReason != ""})
-		if req.NoConsolidateReason == "" && dagSkipReason != "" {
-			resp.ConsolidationSkippedReason = dagSkipReason
-		}
 		if req.NoConsolidateReason != "" {
 			resp.ConsolidationSkippedReason = req.NoConsolidateReason
 			c.logger.Info("issue-request watcher: consolidation skipped at the caller's request",
 				slog.String("repo", req.Repo), slog.String("reason", req.NoConsolidateReason), slog.String("agent", req.Agent))
+		} else if dagSkipReason != "" && err == nil && !res.Consolidated && !res.AlreadyExisted && !res.RejectedTwin {
+			// Only a genuine create reports the skip: an exact-title reuse or
+			// a rejected twin still applies, and the result must not claim
+			// both a fold and a skipped fold.
+			resp.ConsolidationSkippedReason = dagSkipReason
+			c.logger.Info("issue-request watcher: file-set and component folds skipped, request declares DAG placement",
+				slog.String("repo", req.Repo), slog.String("reason", dagSkipReason), slog.String("agent", req.Agent))
 		}
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
@@ -1210,9 +1219,11 @@ type CreateIssueRequest struct {
 	// ConsolidateOpen turns on open-twin consolidation: a finding over the
 	// same files as an open hive-filed issue is folded into it (#9376).
 	ConsolidateOpen bool
-	// SkipSharedPathFold suppresses the file-set and same-component folds
-	// (#16065) for a request that declares DAG placement (--parent or
-	// --blocked-by). The exact-title and rejected-twin gates still apply.
+	// SkipSharedPathFold suppresses the file-set, same-component and
+	// canonical-subject folds (#16065) for a request that declares DAG
+	// placement (--parent or --blocked-by): sibling children routinely share
+	// a path and a title stem. The exact-title and rejected-twin gates still
+	// apply.
 	SkipSharedPathFold bool
 	// FoldMatch, when set, narrows ConsolidateOpen: a file-set or
 	// same-component twin is folded into only when FoldMatch accepts its
@@ -1364,6 +1375,13 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	if err == nil && scan.subject != nil && req.FoldMatch != nil &&
 		!issueshape.SameTitle(scan.subject.GetTitle(), title) &&
 		!req.FoldMatch(scan.subject.GetTitle(), scan.subject.GetBody()) {
+		scan.subject = nil
+	}
+	// A declared DAG node keeps only the exact-title match: sibling children
+	// of one decomposition share a title stem ("<RFC>: child A/B") as readily
+	// as they share a path (#16065).
+	if err == nil && scan.subject != nil && req.SkipSharedPathFold &&
+		!issueshape.SameTitle(scan.subject.GetTitle(), title) {
 		scan.subject = nil
 	}
 	if err != nil {
