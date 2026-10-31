@@ -63,8 +63,9 @@ type Options struct {
 	// Announcer marks this hive as the designated announcer for the
 	// channel. Rich mode posts nothing without it; line mode ignores it.
 	Announcer bool
-	// Backlink opts into a GitHub comment linking the RFC thread; carried
-	// for a later change and unused today.
+	// Backlink opts into one GitHub comment linking the RFC's Discord thread,
+	// posted only after the thread exists and at most once per RFC. It needs
+	// a Source that implements Commenter.
 	Backlink bool
 	// IncludePrivate authorizes posting issues whose Private is true.
 	IncludePrivate bool
@@ -94,6 +95,10 @@ type Result struct {
 	// Unresolved counts events whose repository visibility could not be
 	// determined; they stay unannounced and are retried on the next poll.
 	Unresolved int
+	// Threads counts Discord threads started, Reconciled counts cards
+	// adopted from channel history after a crash, and Backlinks counts GitHub
+	// backlink comments posted (threads mode).
+	Threads, Reconciled, Backlinks int
 }
 
 // Sweeper owns the detector and its cadence.
@@ -103,6 +108,8 @@ type Sweeper struct {
 	lastRun time.Time
 	// warnedAnnouncer makes the rich-mode announcer warning log once.
 	warnedAnnouncer bool
+	// threads is the Discord surface of threads mode; see SetThreads.
+	threads Threads
 }
 
 // NewSweeper loads the state at opts.StatePath (an unreadable file logs
@@ -130,6 +137,16 @@ func NewSweeper(opts Options) *Sweeper {
 		}
 	}
 	return &Sweeper{opts: opts, det: det}
+}
+
+// SetThreads attaches the Discord surface threads mode posts through.
+// Without it, Options.Threads falls back to the one-line poster.
+func (s *Sweeper) SetThreads(t Threads) { s.threads = t }
+
+// threadsActive reports whether this run owns Discord threads: the option,
+// the designated-announcer gate and a Discord surface are all present.
+func (s *Sweeper) threadsActive() bool {
+	return s.opts.Threads && s.opts.Announcer && s.threads != nil
 }
 
 // Detector exposes the sweeper's detector for inspection.
@@ -164,6 +181,12 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 		return res, s.save()
 	}
 
+	if s.threadsActive() {
+		// Settle cards and threads a crash or a failed call left half-done
+		// before diffing, so they never wait on a new transition.
+		s.reconcile(&res)
+	}
+
 	since := s.det.Watermark().Add(-s.opts.Slack)
 	issues, err := src.ListUpdatedSince(ctx, since)
 	if err != nil {
@@ -186,6 +209,11 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 		res.Withheld = len(events)
 		return res, s.save()
 	}
+	var tr *threadRun
+	if s.threadsActive() {
+		base := cloneState(before)
+		tr = &threadRun{s: s, res: &res, base: &base}
+	}
 	for i, ev := range events {
 		if ev.Issue.VisibilityUnknown && !s.opts.IncludePrivate {
 			res.Unresolved++
@@ -199,7 +227,20 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 			continue
 		}
 		msg := Format(ev, s.opts.IncludeRepo)
-		if err := post(msg); err != nil {
+		if tr != nil {
+			if keep, err := tr.deliver(ev, msg); err != nil {
+				res.Errors++
+				s.opts.Logger.Warn("rfc notify: post failed", "issue", ev.Issue.Key(), "kind", ev.Kind, "error", err)
+				// A card whose write-ahead intent is saved is retried by
+				// reconciliation, so only the events after it are replayed.
+				if keep {
+					s.det.rollback(before, events[i+1:])
+				} else {
+					s.det.rollback(before, events[i:])
+				}
+				break
+			}
+		} else if err := post(msg); err != nil {
 			res.Errors++
 			s.opts.Logger.Warn("rfc notify: post failed", "issue", ev.Issue.Key(), "kind", ev.Kind, "error", err)
 			// Keep what was announced, forget what was not: replay the
@@ -209,6 +250,9 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 		}
 		res.Posted = append(res.Posted, msg)
 		res.Events = append(res.Events, ev)
+	}
+	if tr != nil {
+		s.backlinks(ctx, src, &res)
 	}
 	return res, s.save()
 }

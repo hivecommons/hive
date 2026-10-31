@@ -502,3 +502,98 @@ func TestRunRFCNotifySweepRFCPRs(t *testing.T) {
 		t.Fatalf("merge: %+v posted=%q", res, posted)
 	}
 }
+
+// rfcNotifyFakeThreads records what threads mode sends to Discord.
+type rfcNotifyFakeThreads struct {
+	posts, echoes []string
+	threads       []string
+	sends         []string
+}
+
+func (f *rfcNotifyFakeThreads) Post(content, nonce string) (string, error) {
+	f.posts = append(f.posts, content+"|"+nonce)
+	return "m1", nil
+}
+
+func (f *rfcNotifyFakeThreads) StartThread(messageID, name string) (string, error) {
+	f.threads = append(f.threads, messageID+"|"+name)
+	return "t1", nil
+}
+
+func (f *rfcNotifyFakeThreads) Send(threadID, content string) error {
+	f.sends = append(f.sends, threadID+"|"+content)
+	return nil
+}
+
+func (f *rfcNotifyFakeThreads) Echo(content string) error {
+	f.echoes = append(f.echoes, content)
+	return nil
+}
+
+func (f *rfcNotifyFakeThreads) Recent(int) ([]rfcnotify.Message, error) { return nil, nil }
+
+func (f *rfcNotifyFakeThreads) ThreadURL(id string) (string, error) { return "https://d/" + id, nil }
+
+func TestRunRFCNotifySweepThreadsMode(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var lines []string
+	state := rfcNotifyRecorder(t, &lines)
+	fake := &rfcNotifyFakeThreads{}
+	var builtFor []string
+	state.newThreads = func(token, channel string) rfcnotify.Threads {
+		builtFor = append(builtFor, token+"@"+channel)
+		return fake
+	}
+	src := &rfcNotifyFakeSource{open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "RFC: a", URL: "u", State: "open", CreatedAt: time.Now().Add(-time.Hour)}}}
+	cfg := rfcNotifyConfig("tok", "42")
+	cfg.Notifications.Discord.RFCThreads = true
+	cfg.Notifications.Discord.RFCAnnouncer = true
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+
+	fresh := rfcnotify.Issue{Repo: "o/r", Number: 2, Title: "RFC: b", URL: "v", State: "open", CreatedAt: time.Now().Add(time.Hour)}
+	src.updated = []rfcnotify.Issue{fresh}
+	forcePoll(state)
+	res := runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if res.Threads != 1 || len(fake.posts) != 1 || len(fake.threads) != 1 || !strings.HasPrefix(fake.threads[0], "m1|#2 RFC: b") {
+		t.Fatalf("threads mode: %+v posts=%v threads=%v", res, fake.posts, fake.threads)
+	}
+	if len(lines) != 0 {
+		t.Fatalf("threads mode must not use the line poster: %v", lines)
+	}
+	if len(builtFor) != 1 || builtFor[0] != "tok@42" {
+		t.Fatalf("threads built for %v", builtFor)
+	}
+	// A channel change rebuilds the Discord surface for the new channel.
+	cfg.Notifications.Discord.RFCChannelID = "43"
+	forcePoll(state)
+	src.updated = nil
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if len(builtFor) != 2 || builtFor[1] != "tok@43" {
+		t.Fatalf("threads not rebuilt for the new channel: %v", builtFor)
+	}
+}
+
+func TestRunRFCNotifySweepThreadsNeedAnnouncer(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var lines []string
+	state := rfcNotifyRecorder(t, &lines)
+	fake := &rfcNotifyFakeThreads{}
+	state.newThreads = func(string, string) rfcnotify.Threads { return fake }
+	src := &rfcNotifyFakeSource{open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "RFC: a", URL: "u", State: "open", CreatedAt: time.Now().Add(-time.Hour)}}}
+	cfg := rfcNotifyConfig("tok", "42")
+	cfg.Notifications.Discord.RFCThreads = true
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	src.updated = []rfcnotify.Issue{{Repo: "o/r", Number: 2, Title: "RFC: b", URL: "v", State: "open", CreatedAt: time.Now().Add(time.Hour)}}
+	forcePoll(state)
+	res := runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if res.Withheld != 1 || len(fake.posts)+len(fake.echoes)+len(fake.threads) != 0 || len(lines) != 0 {
+		t.Fatalf("a hive that is not the announcer must not call Discord: %+v %+v", res, fake)
+	}
+}
+
+func TestRFCNotifySourceCommentWithoutClient(t *testing.T) {
+	var c rfcnotify.Commenter = rfcNotifySource{}
+	if err := c.Comment(context.Background(), "o/r", 1, "Discussion thread: x"); !errors.Is(err, github.ErrNoGitHubClient) {
+		t.Fatalf("err = %v, want ErrNoGitHubClient", err)
+	}
+}

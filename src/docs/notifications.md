@@ -211,9 +211,9 @@ These keys sit next to `rfc_channel_id`. All of them default off, and with none 
 | Key | Default | Effect |
 | --- | --- | --- |
 | `rfc_format` | `""` (= `line`) | `line` posts one line per transition. `card` selects rich mode; card rendering lands in a later change. Any other value is a config error. |
-| `rfc_threads` | `false` | Rich mode: one Discord thread per RFC (rendering lands later). |
+| `rfc_threads` | `false` | Rich mode: one Discord thread per RFC in the existing text channel (see [Threads](#one-thread-per-rfc-rfc_threads)). Needs `rfc_announcer`. |
 | `rfc_announcer` | `false` | Marks this hive as the one designated announcer for `rfc_channel_id`. Rich mode posts only from the announcer. |
-| `rfc_backlink_comment` | `false` | Parsed now; a later change uses it to comment the thread link back on the RFC. |
+| `rfc_backlink_comment` | `false` | With `rfc_threads`, comments `Discussion thread: <url>` on the RFC once, after the thread exists. |
 | `rfc_include_private` | `false` | Authorizes posting RFCs from private repositories to the channel. |
 
 - **Announcer rule.** Rich mode means `rfc_format: card` or `rfc_threads: true`. A hive in rich mode without `rfc_announcer: true` posts nothing and logs `rfc notify: rich mode requires rfc_announcer; not posting` once. It keeps recording transitions, so turning on the announcer later does not backfill old ones. Set `rfc_announcer: true` on exactly one hive per channel. Line mode ignores the key.
@@ -229,3 +229,26 @@ notifications:
     rfc_announcer: true          # only on the one announcing hive
     rfc_include_private: false   # default: private-repo RFCs are not posted
 ```
+
+#### One thread per RFC (`rfc_threads`)
+
+On the announcer, `rfc_threads: true` keeps the text channel (no Forum) and turns each RFC into a card plus a thread:
+
+- **Opened** posts the card, then starts a thread on it named `#N <title>` (cut to Discord's 100 characters). The card and the thread ID are stored per RFC in `/data/rfc-notify.json`, which is now state version 2; a version 1 file loads unchanged, and a file written by a newer hive is refused rather than downgraded.
+- **Closed, ready to implement and doc accepted** post into the RFC's thread. Closed and ready also echo one line to the channel. An RFC announced before threads were enabled has no thread and keeps getting the plain channel line; it is never back-filled.
+- **Idempotency.** Before the card is posted the hive saves a write-ahead intent with a deterministic nonce (a hash of `repo#number` plus `opened`, 25 characters) and sends it with Discord's `nonce` and `enforce_nonce`, so a retry inside Discord's dedup window returns the same message. Channel history is never treated as a claim between hives; the single announcer is the only writer.
+- **Reconciliation.** At startup, and whenever an RFC has an intent without a confirmed card or a card without a thread, the hive does one lookup of the channel's last 50 messages for a message of its own bot with the card's nonce or exact text. A match is adopted (no second card); with no match the card is re-posted once more with the same nonce. A failed lookup re-posts nothing. Card posts and thread starts are each tried at most 3 times across polls and restarts, then logged and left alone. Only RFCs this hive began announcing are reconciled, so there is no historical burst.
+- **Backlink (`rfc_backlink_comment: true`).** Once the thread is confirmed the hive comments `Discussion thread: <thread URL>` on the RFC, through the per-issue bot comment budget. The flag is saved after it succeeds, so restarts do not repeat it; a failure leaves the flag unset and is retried up to 3 times, then logged. Default off: the hive never comments on issues otherwise.
+- **Rate limits and failures.** Every Discord call honours a `429` `retry_after` with at most 3 bounded retries (each wait capped at 15 seconds). Failures count in the sweep's `errors`, are logged as warnings, and are written to the audit log as `rfc-notify` lines with `threads`, `reconciled`, `backlinks` and `errors`.
+
+```yaml
+notifications:
+  discord:
+    bot_token: ${DISCORD_BOT_TOKEN}
+    rfc_channel_id: "1540404487099777136"
+    rfc_threads: true
+    rfc_announcer: true            # only on the one announcing hive
+    rfc_backlink_comment: false    # opt in to comment the thread link on the RFC
+```
+
+The bot needs the `Create Public Threads` and `Send Messages in Threads` permissions, plus `Read Message History` for reconciliation.
