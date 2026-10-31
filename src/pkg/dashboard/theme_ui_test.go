@@ -175,7 +175,7 @@ func TestAppearanceThemeHoverCannotResizeSettingsModal(t *testing.T) {
 		"--font-ui: Inter, ui-sans-serif",
 		"--font-mono: 'SF Mono'",
 		"--fs-base: .82rem;",
-		"--sp-7: 20px;",
+		spRamp[7],
 		"--r: 6px;",
 		"--radius: var(--r);",
 	} {
