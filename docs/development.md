@@ -178,6 +178,10 @@ Out-of-scope PRs may perform discovery but still execute no test shards.
 The Docker PR freshness reload also keeps the matrix platform, so an ARM64
 job reuses and probes its ARM64 build instead of rebuilding a host-architecture
 image.
+Public PR image builds default to the free `ubuntu-24.04-arm` native runner
+already used by the Podman ARM64 lane; an explicit `HIVE_ARM64_RUNNER` override
+still wins. Private repositories and release/push events retain their existing
+runner selection, and QEMU is installed only when the selected host needs it.
 
 Measure PR turnaround from workflow creation to the **last required check**
 completing, including runner queues and aggregate/coverage jobs, not just

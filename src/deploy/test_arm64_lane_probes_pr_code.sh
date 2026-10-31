@@ -48,6 +48,17 @@ else
       "an arm64 job would rebuild and probe the host architecture instead of its own image"
 fi
 
+EXPECTED_DOCKER_ARM64_JOBS=3
+native_pr_runners="$(grep -F 'runs-on:' "$DOCKER" \
+  | grep -F "vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false" \
+  | grep -cF '["ubuntu-24.04-arm"]')"
+if [ "$native_pr_runners" -eq "$EXPECTED_DOCKER_ARM64_JOBS" ]; then
+  ok "all three Docker ARM64 builds default to free native runners only on public PRs"
+else
+  bad "Docker ARM64 native PR runner selection is incomplete" \
+      "keep the explicit ARM64 override and existing private/release runner fallback in all three image jobs"
+fi
+
 # ── The lane must build on a pull request ────────────────────────────────
 if grep -q "if: github.event_name == 'pull_request'" "$LANE" \
    && grep -qE '^\s+podman build' "$LANE"; then
