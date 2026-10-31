@@ -87,17 +87,8 @@ func IsSecuritySensitiveFinding(r PerspectiveReport, sensitivePaths []string) (s
 	if class, risk := DecisionQuestionRiskClassFor(r.DecisionQuestion, r.PermissionsTighteningOnly); risk && securitySensitiveClasses[class] {
 		return class + " question from the " + string(r.Perspective) + " review", true
 	}
-	paths := sensitivePaths
-	if paths == nil {
-		paths = SecuritySensitivePaths(nil)
-	}
-	for _, f := range r.Findings {
-		if !InScopeFinding(f) {
-			continue
-		}
-		if file := strings.TrimSpace(f.File); file != "" && intent.PathMatchesAny(file, paths) {
-			return fmt.Sprintf("sensitive path %s: %s finding %q", file, r.Perspective, strings.TrimSpace(f.Title)), true
-		}
+	if finding, ok := sensitivePathFinding(r, sensitivePaths); ok {
+		return finding, true
 	}
 	for _, f := range r.Findings {
 		if !InScopeFinding(f) {
@@ -109,6 +100,24 @@ func IsSecuritySensitiveFinding(r PerspectiveReport, sensitivePaths []string) (s
 	}
 	if securityTermIn(r.Summary, r.PermissionsTighteningOnly) {
 		return "the " + string(r.Perspective) + " review flags insecure behaviour", true
+	}
+	return "", false
+}
+
+// sensitivePathFinding names r's first in-scope finding on a sensitive path
+// (nil paths means the defaults).
+func sensitivePathFinding(r PerspectiveReport, sensitivePaths []string) (string, bool) {
+	paths := sensitivePaths
+	if paths == nil {
+		paths = SecuritySensitivePaths(nil)
+	}
+	for _, f := range r.Findings {
+		if !InScopeFinding(f) {
+			continue
+		}
+		if file := strings.TrimSpace(f.File); file != "" && intent.PathMatchesAny(file, paths) {
+			return fmt.Sprintf("sensitive path %s: %s finding %q", file, r.Perspective, strings.TrimSpace(f.Title)), true
+		}
 	}
 	return "", false
 }

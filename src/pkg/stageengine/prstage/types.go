@@ -270,7 +270,7 @@ func (v ReviewVerdict) WithDecisionAnswer(by, head, directive string) ReviewVerd
 }
 
 func NormalizeReviewVerdict(v ReviewVerdict) ReviewVerdict {
-	if !v.Configured || v.Approved || v.DecisionRequested || (v.HiveAuthoredKnown && !v.HiveAuthored) || v.FixCycleCapReached || strings.ToLower(strings.TrimSpace(v.Verdict)) != "requires_human" {
+	if !v.Configured || v.Approved || v.DecisionRequested || (v.HiveAuthoredKnown && !v.HiveAuthored) || v.FixCycleCapReached || strings.TrimSpace(v.DecisionFinding) != "" || strings.ToLower(strings.TrimSpace(v.Verdict)) != "requires_human" {
 		return v
 	}
 	text := strings.TrimSpace(v.DecisionQuestion + "\n" + strings.Join(v.HumanSummaries, "\n"))
