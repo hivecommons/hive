@@ -305,6 +305,11 @@ func stageTrackerClipReason(s string) string {
 // stageTrackerDecisionWhy: the clause after "a human decision is owed" —
 // the lane reason humanized ("workflow path"), else the asker's question.
 func stageTrackerDecisionWhy(it StageTrackerItem) string {
+	if it.SentinelNotice && it.DecisionNeeded != nil && it.DecisionNeeded.AskedBy == decisionAskedByReviewer {
+		if question := strings.TrimSpace(it.DecisionNeeded.Question); question != "" {
+			return "reviewer question: " + question
+		}
+	}
 	if clause := humanizeStageReason(it.Reason); clause != "" {
 		return clause
 	}
