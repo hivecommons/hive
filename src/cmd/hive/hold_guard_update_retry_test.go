@@ -355,23 +355,45 @@ func TestEnforceHoldGuardSettledUpdateIsNotDriftAtLift(t *testing.T) {
 }
 
 // A stop whose ledger entry was dropped and re-snapshotted (hold lifted, then
-// returned) is announced at WARN once per head, base and reason, not every pass.
-func TestStopHeldPRUpdateWarnsOncePerHeadAndBase(t *testing.T) {
+// returned) is announced at WARN once per head, base and reason, and its
+// person-facing note posted once per head and reason, not every pass.
+func TestStopHeldPRUpdateWarnsAndNotesOncePerHeadAndBase(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	store := newTestHoldGuardStore(t)
+	writer := &fakeIssueWriter{}
 	pr := github.PullRequest{Repo: "widgets", Number: 9016, HeadSHA: "once-h1", BaseSHA: "once-b1", MergeableState: "dirty", FromFork: true}
 	for i := 0; i < 3; i++ {
 		store.Clear("acme/widgets", pr.Number)
 		store.Snapshot("acme/widgets", pr.Number, pr.HeadSHA, nil)
-		stopHeldPRUpdate(context.Background(), nil, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+		stopHeldPRUpdate(context.Background(), writer, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
 	}
 	if n := strings.Count(buf.String(), "stopped keeping held PR mergeable"); n != 1 {
 		t.Fatalf("warned %d times, want 1:\n%s", n, buf.String())
 	}
+	if len(writer.comments) != 1 {
+		t.Fatalf("posted %d notes, want 1: %q", len(writer.comments), writer.comments)
+	}
+	// A moved base warns again but the note stays per head and reason.
 	pr.BaseSHA = "once-b2"
-	stopHeldPRUpdate(context.Background(), nil, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+	store.Clear("acme/widgets", pr.Number)
+	store.Snapshot("acme/widgets", pr.Number, pr.HeadSHA, nil)
+	stopHeldPRUpdate(context.Background(), writer, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
 	if n := strings.Count(buf.String(), "stopped keeping held PR mergeable"); n != 2 {
 		t.Fatalf("a moved base must warn again; got %d warnings", n)
+	}
+	if len(writer.comments) != 1 {
+		t.Fatalf("a moved base must not re-post the note; got %d", len(writer.comments))
+	}
+	// A moved head is a new stop: warn and note again.
+	pr.HeadSHA = "once-h2"
+	store.Clear("acme/widgets", pr.Number)
+	store.Snapshot("acme/widgets", pr.Number, pr.HeadSHA, nil)
+	stopHeldPRUpdate(context.Background(), writer, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+	if n := strings.Count(buf.String(), "stopped keeping held PR mergeable"); n != 3 {
+		t.Fatalf("a moved head must warn again; got %d warnings", n)
+	}
+	if len(writer.comments) != 2 {
+		t.Fatalf("a moved head must earn a new note; got %d", len(writer.comments))
 	}
 }
