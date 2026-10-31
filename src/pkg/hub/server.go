@@ -4346,6 +4346,8 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 	}
 	id := r.PathValue("id")
 	s.forgetUncollectibleUpgrade(id)
+	// Memory-only activity digests must not outlive the hive (#16002).
+	s.activity.forget(id)
 	s.mu.Lock()
 	removed := false
 	for i, h := range s.registry.Hives {
