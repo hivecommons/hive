@@ -1,0 +1,1 @@
+- Matrix `GET /api/matrix/lines` now applies `max` after per-repo allowlist filtering, so paging with `max` no longer returns empty pages (and stalls) when the oldest lines in the window belong to repos the caller cannot see.
