@@ -1163,8 +1163,9 @@ type HeartbeatPayload struct {
 	// SelfExperimentsOptIn is local consent; absent or false means opted out.
 	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
 	// Activity is the optional bounded activity digest for the hub-wide
-	// Activity Monitor (#15861/#15951). Nil until the publisher (#15963)
-	// populates it; omitempty keeps the beat unchanged meanwhile.
+	// Activity Monitor (#15861/#15951), attached by the activity publisher
+	// (#15963) at send time; nil when hub.activity is off or the tracker has
+	// nothing yet, an etag-only marker when the hub holds it already.
 	Activity *hubactivity.Digest `json:"activity,omitempty"`
 }
 
@@ -1385,6 +1386,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var freshCollect FreshStatusCollector
 	var onUpgradePolicy UpgradePolicyCallback
 	var onUpgradeAnnounce UpgradeAnnounceCallback
+	var activitySrc *ActivitySource
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -1417,12 +1419,24 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onUpgradePolicy = fn
 		case UpgradeAnnounceCallback:
 			onUpgradeAnnounce = fn
+		case ActivitySource:
+			activitySrc = &fn
 		}
 	}
 
 	logger.Info("hub heartbeat enabled", "url", hubURL, "interval", interval)
 
 	waitForReady(ctx, logger)
+
+	if activitySrc != nil {
+		pub := newActivityPublisher(*activitySrc, hubURL, logger)
+		activityPub.Store(pub)
+		defer activityPub.CompareAndSwap(pub, nil)
+		go pub.run(ctx)
+		if activitySrc.Subscribe != nil {
+			activitySrc.Subscribe(pub.notify)
+		}
+	}
 
 	processHeartbeatResponse := func(resp *HeartbeatResponse) {
 		if resp == nil {
@@ -1777,6 +1791,15 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 	if !payload.SelfExperimentsOptIn {
 		nous.SelfExperiments.Apply(false, nil)
 	}
+	// The activity digest is built at send time and its acknowledgement
+	// applied under the publisher's lock, so an out-of-band update cannot
+	// interleave between this beat and its response.
+	pub := activityPub.Load()
+	if pub != nil {
+		pub.mu.Lock()
+		defer pub.mu.Unlock()
+		payload.Activity = pub.heartbeatDigestLocked(ctx)
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
@@ -1849,6 +1872,9 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 				"app_id", hbResp.GitHubAppConfig.AppID,
 				"installation_id", hbResp.GitHubAppConfig.InstallationID,
 			)
+		}
+		if pub != nil {
+			pub.acknowledgeLocked(hbResp.ActivityETag)
 		}
 		return &hbResp
 	}
