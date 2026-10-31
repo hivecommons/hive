@@ -12,7 +12,7 @@ import (
 )
 
 func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
-	for _, mode := range []string{"proven", "no-event", "wrong-check-head", "foreign-app", "missing-check", "pending", "failed", "skipped", "policy-unavailable", "truncated", "bad-ancestry", "moved-ref", "queue-error", "no-queue"} {
+	for _, mode := range []string{"proven", "two-members", "second-member-absent", "position-gap", "no-event", "wrong-check-head", "foreign-app", "missing-check", "pending", "failed", "skipped", "policy-unavailable", "truncated", "bad-ancestry", "moved-ref", "queue-error", "no-queue"} {
 		t.Run(mode, func(t *testing.T) {
 			base, candidate, member, tree := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +27,15 @@ func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
 						_, _ = w.Write([]byte(`{"data":{"repository":{"mergeQueue":null}}}`))
 						return
 					}
-					_, _ = fmt.Fprintf(w, `{"data":{"repository":{"mergeQueue":{"entries":{"pageInfo":{"hasNextPage":%t},"nodes":[{"id":"entry-7","position":1,"state":"AWAITING_CHECKS","enqueuedAt":"2026-10-30T12:00:00Z","baseCommit":{"oid":%q},"headCommit":{"oid":%q},"pullRequest":{"number":7,"headRefOid":%q,"baseRefName":"v5"}}]}}}}}`, mode == "truncated", base, candidate, member)
+					position, firstCandidate, extra := 1, candidate, ""
+					if mode == "position-gap" {
+						position = 2
+					}
+					if mode == "two-members" || mode == "second-member-absent" {
+						firstCandidate = tree
+						extra = fmt.Sprintf(`,{"id":"entry-8","position":2,"state":"AWAITING_CHECKS","baseCommit":{"oid":%q},"headCommit":{"oid":%q},"pullRequest":{"number":8,"headRefOid":%q,"baseRefName":"v5"}}`, tree, candidate, strings.Repeat("e", 40))
+					}
+					_, _ = fmt.Fprintf(w, `{"data":{"repository":{"mergeQueue":{"entries":{"pageInfo":{"hasNextPage":%t},"nodes":[{"id":"entry-7","position":%d,"state":"AWAITING_CHECKS","enqueuedAt":"2026-10-30T12:00:00Z","baseCommit":{"oid":%q},"headCommit":{"oid":%q},"pullRequest":{"number":7,"headRefOid":%q,"baseRefName":"v5"}}%s]}}}}}`, mode == "truncated", position, base, firstCandidate, member, extra)
 				case strings.HasSuffix(r.URL.Path, "/actions/runs"):
 					_, _ = fmt.Fprintf(w, `{"workflow_runs":[{"id":10,"event":"merge_group","head_sha":%q,"head_branch":"gh-readonly-queue/v5/pr-7"}]}`, candidate)
 				case strings.HasSuffix(r.URL.Path, "/required_status_checks"):
@@ -48,6 +56,12 @@ func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
 					_, _ = fmt.Fprintf(w, `{"sha":%q,"tree":{"sha":%q}}`, candidate, tree)
 				case strings.Contains(r.URL.Path, "/compare/"):
 					ancestor := member
+					if strings.Contains(r.URL.Path, strings.Repeat("e", 40)) {
+						ancestor = strings.Repeat("e", 40)
+						if mode == "second-member-absent" {
+							ancestor = base
+						}
+					}
 					if mode == "bad-ancestry" {
 						ancestor = base
 					}
@@ -103,12 +117,16 @@ func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
 				}
 				return
 			}
-			if len(got.Entries) != 1 || got.Entries[0].EnqueuedAt == nil || got.Entries[0].State != "AWAITING_CHECKS" || len(got.Candidates) != 1 {
+			memberCount := 1
+			if mode == "two-members" || mode == "second-member-absent" {
+				memberCount = 2
+			}
+			if len(got.Entries) != memberCount || got.Entries[0].EnqueuedAt == nil || got.Entries[0].State != "AWAITING_CHECKS" || len(got.Candidates) != 1 {
 				t.Fatalf("queue observations: %+v", got)
 			}
 			group := got.Candidates[0]
-			proven := mode != "no-event" && mode != "truncated" && mode != "bad-ancestry" && mode != "moved-ref"
-			if (group.Membership == "proven") != proven || proven && (len(group.Members) != 1 || group.Members[0].Head != member || group.Tree != tree) ||
+			proven := mode != "no-event" && mode != "truncated" && mode != "bad-ancestry" && mode != "moved-ref" && mode != "position-gap" && mode != "second-member-absent"
+			if (group.Membership == "proven") != proven || proven && (len(group.Members) != memberCount || group.Members[0].Head != member || group.Tree != tree) ||
 				!proven && len(group.Members) != 0 {
 				t.Fatalf("unproved member mapping: %+v", group)
 			}
@@ -123,7 +141,7 @@ func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
 			case "policy-unavailable", "moved-ref":
 				wantCI = "unknown"
 			}
-			if group.CI != wantCI || mode == "truncated" && got.Complete {
+			if group.CI != wantCI || (mode == "truncated" || mode == "position-gap") && (got.Complete || got.EntriesComplete) {
 				t.Fatalf("candidate evidence: %+v", group)
 			}
 		})
