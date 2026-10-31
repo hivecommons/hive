@@ -64,6 +64,8 @@ type storedActivity struct {
 type activityStore struct {
 	mu     sync.Mutex
 	byHive map[string]storedActivity
+	// events is the fleet-wide ring of recent activity events (#15964).
+	events activityEventRing
 }
 
 // record applies a heartbeat's activity block and returns the etag the hub
@@ -85,6 +87,9 @@ func (st *activityStore) record(hiveID string, block *hubactivity.Digest, now ti
 		}
 		return ""
 	}
+	// Events ride on markers and full digests alike, and are taken even
+	// when the marker's etag misses.
+	st.events.ingest(hiveID, block.Events, block.EventsDropped, now)
 	if block.IsUnchangedMarker() {
 		// Compare in the stored (cleaned) form, or a marker whose etag
 		// changes under cleaning would never match and wedge the handshake.
@@ -124,6 +129,7 @@ func (st *activityStore) forget(hiveID string) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	delete(st.byHive, hiveID)
+	st.events.forget(hiveID)
 }
 
 func (st *activityStore) forgetOldLocked(now time.Time) {
@@ -132,6 +138,7 @@ func (st *activityStore) forgetOldLocked(now time.Time) {
 			delete(st.byHive, id)
 		}
 	}
+	st.events.forgetOld(now, activityForgetAfter)
 }
 
 // snapshot copies the blocks of the given hives only, so data of hives the
@@ -262,6 +269,9 @@ type ActivityHiveView struct {
 	Totals        *hubactivity.Totals `json:"totals,omitempty"`
 	// Truncated is how many of this hive's items its digest left out.
 	Truncated int `json:"truncated,omitempty"`
+	// EventsDropped is how many of this hive's events the spoke's or the
+	// hub's per-block cap dropped before they reached the ring (#15964).
+	EventsDropped int `json:"events_dropped,omitempty"`
 }
 
 // ActivityViewItem is one merged item tagged with its hive.
@@ -274,6 +284,9 @@ type ActivityViewItem struct {
 type ActivityView struct {
 	Hives []ActivityHiveView `json:"hives"`
 	Items []ActivityViewItem `json:"items"`
+	// Events are the visible hives' recent stage hops, opens and merges
+	// from the fleet-wide ring, oldest first (#15964).
+	Events []ActivityViewEvent `json:"events"`
 	// Truncated is how many matching items the response cap left out, on
 	// top of what each hive's own digest already left out.
 	Truncated int `json:"truncated,omitempty"`
@@ -282,7 +295,7 @@ type ActivityView struct {
 // buildActivityView merges the blocks of the visible hives only. Hives must
 // already be authorized for the viewer.
 func buildActivityView(hives []activityHive, blocks map[string]storedActivity, f activityFilter, now time.Time) ActivityView {
-	view := ActivityView{Hives: []ActivityHiveView{}, Items: []ActivityViewItem{}}
+	view := ActivityView{Hives: []ActivityHiveView{}, Items: []ActivityViewItem{}, Events: []ActivityViewEvent{}}
 	for _, h := range hives {
 		hv := ActivityHiveView{HiveID: h.ID, Name: h.Name, LastHeartbeat: h.LastHeartbeat}
 		block, ok := blocks[h.ID]
@@ -359,7 +372,9 @@ func (s *HubServer) handleHubActivity(w http.ResponseWriter, r *http.Request) {
 	for i, h := range hives {
 		ids[i] = h.ID
 	}
-	view := buildActivityView(hives, s.activity.snapshot(ids), f, now)
+	blocks := s.activity.snapshot(ids)
+	view := buildActivityView(hives, blocks, f, now)
+	addActivityEvents(&view, hives, blocks, s.activity.eventsSnapshot(ids), f)
 	body, err := json.Marshal(view)
 	if err != nil {
 		s.logger.Error("hub activity: encode view", "error", err)

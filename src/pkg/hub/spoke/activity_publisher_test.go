@@ -264,15 +264,19 @@ type recordingPost struct {
 	ok     bool
 }
 
-func (r *recordingPost) post(_ context.Context, d *hubactivity.Digest) (string, int, bool) {
+func (r *recordingPost) post(_ context.Context, d *hubactivity.Digest) (activityAck, int, bool) {
 	r.sent <- d
 	if r.gate != nil {
 		<-r.gate
 	}
 	if !r.ok {
-		return "", r.status, false
+		return activityAck{}, r.status, false
 	}
-	return d.ETag, r.status, true
+	ack := activityAck{ETag: d.ETag}
+	if n := len(d.Events); n > 0 {
+		ack.Events = d.Events[n-1].Seq
+	}
+	return ack, r.status, true
 }
 
 func TestActivityUpdatesCoalesceToOnePer15sWithBackpressure(t *testing.T) {
