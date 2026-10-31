@@ -76,6 +76,7 @@ func (s *HubServer) handleActivityUpdate(w http.ResponseWriter, r *http.Request)
 	}
 	resp := HeartbeatResponse{OK: true}
 	resp.ActivityETag = s.activity.record(hiveID, payload.Update.Activity, time.Now().UTC())
+	resp.ActivityEventsAck = s.activity.eventsAck(hiveID)
 	w.Header().Set("Content-Type", "application/json")
 	s.signHeartbeatResponse(w, &resp, hiveID)
 	data, _ := json.Marshal(resp)

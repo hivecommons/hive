@@ -2825,6 +2825,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
 	resp.ActivityETag = activityAck
+	resp.ActivityEventsAck = s.activity.eventsAck(payload.HiveID)
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic

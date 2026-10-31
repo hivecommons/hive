@@ -5686,6 +5686,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					}
 					return b.dashSrv.HubActivityItems(ctx)
 				},
+				// Snapshot supersedes Items and adds recent merges, from
+				// which the publisher derives merge events (#15964).
+				Snapshot: func(ctx context.Context) (hubactivity.Snapshot, bool) {
+					if b.dashSrv == nil {
+						return hubactivity.Snapshot{}, false
+					}
+					return b.dashSrv.HubActivitySnapshot(ctx)
+				},
 				Subscribe: func(notify func()) {
 					if b.dashSrv != nil {
 						b.dashSrv.OnStageTrackerPublish(notify)
