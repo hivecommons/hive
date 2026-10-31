@@ -20,14 +20,21 @@
 // cursor stays, the settings gear works, preferences persist as usual, and a
 // "Return to dashboard" link focuses the opener. Reloading keeps the layout
 // because the flag lives in the URL.
+// Display mode (#15925): `?display=1` is the same chrome-less layout for an
+// attended wall screen, entered from the 📺 header button. It is
+// presentation only: the cursor stays, sound keeps the user's setting, it
+// never writes layout or theme to localStorage, and it hides the row action
+// affordances. Kiosk wins when both flags are present.
 (function(){
-  var kiosk=false, popout=false, sound=true;
-  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, display=false, sound=true;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
+  window.HIVE_DISPLAY=display&&!kiosk;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
   window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
+  window.hiveDisplayMode=function(){ return !!window.HIVE_DISPLAY; };
   window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };
   if(kiosk){
     document.body.classList.add('kiosk-mode');
@@ -35,6 +42,10 @@
     document.body.classList.add('popout-mode');
   }
   if(kiosk||window.HIVE_POPOUT){
+    if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
+  }
+  if(window.HIVE_DISPLAY){
+    document.body.classList.add('display-mode');
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();
