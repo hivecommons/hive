@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -232,6 +233,27 @@ func outputErr(prefix string, err error, output []byte) error {
 }
 
 func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
+	name, argv := m.tmuxCommandLine(agent, args...)
+	return exec.Command(name, argv...)
+}
+
+// tmuxCmdContext is tmuxCmd bound to ctx: the tmux client is killed when ctx
+// is done, so a wedged tmux server (socket accepted, never answering) cannot
+// hold the caller past its deadline (#16097). WaitDelay bounds the wait for
+// the output pipes after the kill.
+func (m *Manager) tmuxCmdContext(ctx context.Context, agent *AgentProcess, args ...string) *exec.Cmd {
+	name, argv := m.tmuxCommandLine(agent, args...)
+	cmd := exec.CommandContext(ctx, name, argv...)
+	cmd.WaitDelay = tmuxCmdWaitDelay
+	return cmd
+}
+
+// tmuxCmdWaitDelay is how long a context-bound tmux command may keep its
+// output pipes open after ctx kills it.
+const tmuxCmdWaitDelay = time.Second
+
+// tmuxCommandLine returns the program and argv tmuxCmd/tmuxCmdContext run.
+func (m *Manager) tmuxCommandLine(agent *AgentProcess, args ...string) (string, []string) {
 	if err := validateTmuxKillSessionArgs(args); err != nil {
 		agentName := ""
 		if agent != nil {
@@ -240,16 +262,16 @@ func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
 		if m.logger != nil {
 			m.logger.Warn("refusing unsafe tmux kill-session", "agent", agentName, "error", err)
 		}
-		return exec.Command("false")
+		return "false", nil
 	}
 
 	base := m.tmuxBaseArgs(agent)
 	tmuxArgs := append(base[1:], args...)
 	if agent.UID > 0 {
 		suExecArgs := append([]string{m.agentExecUserSpec(agent), base[0]}, tmuxArgs...)
-		return exec.Command("su-exec", suExecArgs...)
+		return "su-exec", suExecArgs
 	}
-	return exec.Command(base[0], tmuxArgs...)
+	return base[0], tmuxArgs
 }
 
 func validateTmuxKillSessionArgs(args []string) error {
@@ -415,10 +437,27 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 // consulted — SessionMissing's early returns exist precisely so it is not —
 // replace this and observe the calls.
 var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
-	cmd := m.tmuxCmd(agent, "has-session", "-t", agent.tmuxSession)
+	exists, _ := probeTmuxSession(context.Background(), m, agent)
+	return exists
+}
+
+// tmuxSessionProbe is the ctx-bounded has-session probe the watchdog's
+// Observe uses (#16097). Like tmuxSessionExists it is a function variable
+// solely as a TEST SEAM; production never assigns it.
+var tmuxSessionProbe = probeTmuxSession
+
+// probeTmuxSession runs `tmux has-session` under ctx. err is non-nil only when
+// ctx ended the probe (deadline or cancellation) — the session's existence is
+// then unknown, which callers must not read as "no session". Every other
+// failure keeps tmuxSessionExists's historical answer: false.
+func probeTmuxSession(ctx context.Context, m *Manager, agent *AgentProcess) (bool, error) {
+	cmd := m.tmuxCmdContext(ctx, agent, "has-session", "-t", agent.tmuxSession)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
-		return true
+		return true, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, fmt.Errorf("tmux has-session: %w", ctxErr)
 	}
 	stderr := strings.TrimSpace(string(output))
 	if tmuxStderrMeansNoSession(stderr) {
@@ -426,7 +465,7 @@ var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 			m.logger.Debug("tmux has-session: no session",
 				"name", agent.Name, "session", agent.tmuxSession, "stderr", stderr)
 		}
-		return false
+		return false, nil
 	}
 	if m != nil && m.logger != nil && agent != nil {
 		m.logger.Warn("tmux has-session failed",
@@ -437,7 +476,7 @@ var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 			"error", err,
 			"stderr", stderr)
 	}
-	return false
+	return false, nil
 }
 
 // tmuxStderrMeansNoSession reports whether has-session stderr is tmux's normal
@@ -588,6 +627,24 @@ func (m *Manager) sandboxFullLog(name, logDir string) (string, error) {
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).
 func (m *Manager) captureVisiblePaneForAgent(agent *AgentProcess) string {
 	return m.terminalSession().CaptureVisiblePane(agent)
+}
+
+// visiblePaneContextCapturer is implemented by terminals that can bound a
+// visible-pane capture with a context. It is a separate, optional interface so
+// the exported TerminalSession stays unchanged.
+type visiblePaneContextCapturer interface {
+	CaptureVisiblePaneContext(ctx context.Context, agent *AgentProcess) (string, error)
+}
+
+// captureVisiblePaneForAgentContext is captureVisiblePaneForAgent bounded by
+// ctx where the terminal supports it. err is non-nil only when ctx ended the
+// capture; other failures yield "" exactly like the unbounded capture.
+func (m *Manager) captureVisiblePaneForAgentContext(ctx context.Context, agent *AgentProcess) (string, error) {
+	term := m.terminalSession()
+	if c, ok := term.(visiblePaneContextCapturer); ok {
+		return c.CaptureVisiblePaneContext(ctx, agent)
+	}
+	return term.CaptureVisiblePane(agent), nil
 }
 
 func (m *Manager) tmuxSessionHasAttachedClientForAgent(agent *AgentProcess) bool {
