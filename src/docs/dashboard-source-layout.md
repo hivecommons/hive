@@ -112,6 +112,19 @@ code without importing `pkg/dashboard`. The generator only reads
 `TestTrackerRowSharedAssetRendersSpokeFixtures` renders the same fixtures
 through both. Edit both copies in the same PR.
 
+The same rule applies to the Activity Monitor URL-view and display-playlist
+helpers: `stageTrackerDefaultFilter` (`js/tracker-words-stage.js`),
+`stageTrackerNormalizeFilter` (`js/tracker-filter.js`) and the
+`tracker url view helpers` and `tracker display playlist helpers` blocks of
+`js/tracker-filter-state.js`. `src/pkg/webassets/trackerview/tracker-view.js`
+carries a verbatim copy so the hub Fleet activity page reads `am.*`, `am.view`
+and `interval` as a spoke display does
+([#16064](https://github.com/hivecommons/hive/issues/16064)).
+`TestTrackerViewSharedAssetCompat` (in `pkg/dashboard`) compares that copy
+with the declarations in the committed `static/index.html` and fails when they
+drift: after editing one of these spoke helpers, run `make dashboard-gen` and
+re-copy them into `tracker-view.js` in the same PR.
+
 ## Working with it
 
 ```sh
