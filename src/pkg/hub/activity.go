@@ -33,8 +33,9 @@ const (
 	activityStaleAfter        = 2 * activityHeartbeatInterval
 
 	// activityForgetAfter drops a hive's block from memory once it has not
-	// been refreshed for this long, so hives that stopped reporting (or left
-	// the registry) cannot pin memory forever.
+	// been refreshed for this long. It is a backstop for hives that stopped
+	// reporting while still registered: a hive removed from the registry has
+	// its block purged immediately via activityStore.forget.
 	activityForgetAfter = 24 * time.Hour
 
 	// maxActivityResponseItems bounds the merged response no matter how many
