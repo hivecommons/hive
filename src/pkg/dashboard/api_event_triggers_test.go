@@ -174,10 +174,7 @@ func TestEventTriggersRejectInvalidAndUnpersistedRules(t *testing.T) {
 		t.Fatalf("failed persistence accepted: %d %s", failed.Code, failed.Body.String())
 	}
 	cfg.SourcePath = t.TempDir()
-	// Save removes an empty runtime-path directory and retries successfully.
-	// A missing parent keeps the fallback unwritable after that retry.
-	unwritable := filepath.Join(t.TempDir(), "missing")
-	config.RuntimeConfigFile, config.DashboardOverlayFile = filepath.Join(unwritable, "runtime"), filepath.Join(unwritable, "overlay")
+	config.RuntimeConfigFile, config.DashboardOverlayFile = t.TempDir(), t.TempDir()
 	failed = putEventTriggers(s, `{"rules":[]}`, version)
 	if failed.Code != http.StatusInternalServerError || !reflect.DeepEqual(cfg.TriggerRulesSnapshot(), before) ||
 		strings.Contains(failed.Body.String(), cfg.SourcePath) {
