@@ -28,7 +28,9 @@ function load(env) {
     pick(/function toggleStageTrackerDisplay\(\) \{[\s\S]*?\n    \}\n/, 'toggleStageTrackerDisplay'),
     pick(/function stageTrackerRenderDisplayButton\(\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRenderDisplayButton'),
     pick(/function stageTrackerDisplayBlocksRowAction\(ev, display\) \{[\s\S]*?\n    \}\n/, 'stageTrackerDisplayBlocksRowAction'),
-    'return { stageTrackerDisplayUrl, stageTrackerDisplayHotkey, toggleStageTrackerDisplay, stageTrackerRenderDisplayButton, stageTrackerDisplayBlocksRowAction };',
+    pick(/const STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR = [^\n]*\n/, 'DISPLAY_OVERLAY_SELECTOR'),
+    pick(/function stageTrackerDisplayOverlayOpen\(doc\) \{[\s\S]*?\n    \}\n/, 'stageTrackerDisplayOverlayOpen'),
+    'return { stageTrackerDisplayUrl, stageTrackerDisplayHotkey, toggleStageTrackerDisplay, stageTrackerRenderDisplayButton, stageTrackerDisplayBlocksRowAction, stageTrackerDisplayOverlayOpen, STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR };',
   ].join('\n');
   const attrs = {};
   const btn = { textContent: '', title: '', attrs, setAttribute(k, v) { attrs[k] = v; } };
@@ -118,6 +120,25 @@ test('a display keeps row actions away: context menu, menu keys, Space and modif
   for (const ev of [{ type: 'contextmenu' }, { type: 'keydown', key: ' ' }, { type: 'click', shiftKey: true }]) {
     assert.strictEqual(b(ev, false), false, 'nothing changes when display mode is off');
   }
+});
+
+test('Esc leaves display mode only when no popover or dialog is open: settings, labels, merged and queue popovers and hive dialogs all take Esc first', () => {
+  const { api } = load();
+  const sel = api.STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR;
+  for (const id of ['activity-monitor-settings-overlay', 'activity-monitor-labels-overlay', 'activity-monitor-merged-pop', 'activity-monitor-queue-pop']) assert.ok(sel.includes('#' + id), id);
+  assert.ok(sel.includes('.hive-dialog-overlay'));
+  const doc = els => ({ querySelectorAll: s => (s === sel ? els : []) });
+  const el = (o) => Object.assign({ hidden: false, classList: { contains: () => false }, style: {} }, o || {});
+  assert.strictEqual(api.stageTrackerDisplayOverlayOpen(doc([])), false, 'nothing open');
+  assert.strictEqual(api.stageTrackerDisplayOverlayOpen(doc([el({ hidden: true })])), false, 'hidden attribute (merged/queue popovers)');
+  assert.strictEqual(api.stageTrackerDisplayOverlayOpen(doc([el({ classList: { contains: c => c === 'hidden' } })])), false, '.hidden class (settings overlay)');
+  assert.strictEqual(api.stageTrackerDisplayOverlayOpen(doc([el({ style: { display: 'none' } })])), false, 'display:none');
+  assert.strictEqual(api.stageTrackerDisplayOverlayOpen(doc([el({ hidden: true }), el()])), true, 'one open popover is enough');
+  assert.strictEqual(api.stageTrackerDisplayOverlayOpen(null), false);
+  assert.ok(html.includes('if (stageTrackerDisplayOverlayOpen(document)) return;\n      e.preventDefault();\n      toggleStageTrackerDisplay();'), 'the Esc listener checks overlays before leaving');
+  // The merged and queue popover closers also claim Esc so later listeners see defaultPrevented.
+  assert.ok(html.includes("if (pop && !pop.hidden) { e.preventDefault(); hamMergedToggle(false);"), 'merged popover claims Esc');
+  assert.ok(html.includes("if (pop && !pop.hidden) { e.preventDefault(); hamQueueToggle(false);"), 'queue popover claims Esc');
 });
 
 test('display mode wiring: header button, boot flag, chrome-less CSS and hidden row actions; kiosk still hides every header tool', () => {

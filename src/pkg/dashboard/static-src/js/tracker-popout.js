@@ -195,6 +195,24 @@
       if (ev.key !== STAGE_TRACKER_DISPLAY_KEY) return false;
       return !!(inTracker || display);
     }
+    // Pure: is a popover or dialog open that Esc should close instead of
+    // leaving display mode? Leaving reloads the page and drops session-only
+    // am.* edits, so any open overlay wins — the tracker's own settings,
+    // labels, merged and queue popovers, and every hive dialog — whatever
+    // order their Esc handlers run in.
+    const STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR = '#activity-monitor-settings-overlay, #activity-monitor-labels-overlay, #activity-monitor-merged-pop, #activity-monitor-queue-pop, .hive-dialog-overlay';
+    function stageTrackerDisplayOverlayOpen(doc) {
+      if (!doc || typeof doc.querySelectorAll !== 'function') return false;
+      const els = doc.querySelectorAll(STAGE_TRACKER_DISPLAY_OVERLAY_SELECTOR);
+      for (let i = 0; i < els.length; i++) {
+        const el = els[i];
+        if (el.hidden) continue;
+        if (el.classList && el.classList.contains('hidden')) continue;
+        if (el.style && el.style.display === 'none') continue;
+        return true;
+      }
+      return false;
+    }
     function toggleStageTrackerDisplay() {
       const url = stageTrackerDisplayUrl(window.location.href, !stageTrackerDisplayMode());
       if (url) window.location.assign(url);
@@ -237,8 +255,7 @@
       const section = document.getElementById('activity-monitor-section');
       const inTracker = !!(section && t && t.nodeType === 1 && section.contains(t));
       if (!stageTrackerDisplayHotkey(e, inTracker, typing, stageTrackerDisplayMode(), !!document.fullscreenElement)) return;
-      const overlay = document.getElementById('activity-monitor-settings-overlay');
-      if (overlay && !overlay.classList.contains('hidden')) return;
+      if (stageTrackerDisplayOverlayOpen(document)) return;
       e.preventDefault();
       toggleStageTrackerDisplay();
     });
