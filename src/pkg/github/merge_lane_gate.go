@@ -43,6 +43,12 @@ type LaneMergeRequest struct {
 	// never merges it, and lets it leave with the lane's own reason; any
 	// other PR is not recorded.
 	FrontOnly bool
+	// ReleaseGoneFronts asks the lane to read every current front of Repo
+	// (Number and Branch unset) and release one that can no longer merge into
+	// its branch: closed, merged outside the lane, a draft or retargeted. The
+	// sweeps list open PRs only, so no path calls in for such a front again.
+	// The lane never merges, enqueues or writes to GitHub here.
+	ReleaseGoneFronts bool
 }
 
 // LaneMergeResult is what the lane did. Reason is set for every no-merge.

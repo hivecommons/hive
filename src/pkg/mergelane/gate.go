@@ -37,6 +37,9 @@ func NativeMergeQueueReason(branch string) string {
 // the lane runs; otherwise the PR records its eligibility and, only when it
 // is at the front, runs one lane round that may end in the pinned merge.
 func (l *Lane) Merge(ctx context.Context, req ghub.LaneMergeRequest) (ghub.LaneMergeResult, error) {
+	if req.ReleaseGoneFronts {
+		return l.releaseGoneFronts(ctx, req.Repo)
+	}
 	branch := strings.TrimSpace(req.Branch)
 	if branch == "" {
 		p, err := l.opts.GitHub.PullRequest(ctx, req.Repo, req.Number)
@@ -89,6 +92,39 @@ func (l *Lane) advanceRejectedFront(ctx context.Context, repo, branch string, pr
 	}
 	dec, err := l.Advance(ctx, repo, branch, pr, nil)
 	return ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason}, err
+}
+
+// releaseGoneFronts serves the sweep's once-per-pass front check: every front
+// of repo whose PR can no longer merge into its branch leaves at once. The
+// outcome is left when any front left, with one "#N: reason" per front.
+func (l *Lane) releaseGoneFronts(ctx context.Context, repo string) (ghub.LaneMergeResult, error) {
+	if strings.TrimSpace(repo) == "" {
+		err := errors.New("mergelane: a repo is required to check its fronts")
+		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeRefused, Reason: err.Error()}, err
+	}
+	recs, err := l.opts.Store.Lanes(repo)
+	if err != nil {
+		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeWaiting, Reason: "reading the lane failed: " + err.Error()}, err
+	}
+	res := ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeWaiting}
+	var left []string
+	var errs []error
+	for _, rec := range recs {
+		if rec.Front == nil {
+			continue
+		}
+		reason, err := l.releaseGoneFront(ctx, rec.Repo, rec.Branch, rec.Front.PR)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if reason != "" {
+			left = append(left, fmt.Sprintf("#%d: %s", rec.Front.PR, reason))
+		}
+	}
+	if len(left) > 0 {
+		res.Outcome, res.Reason = ghub.LaneOutcomeLeft, strings.Join(left, "; ")
+	}
+	return res, errors.Join(errs...)
 }
 
 // nativeMergeQueue returns a refusal when branch has GitHub's native merge

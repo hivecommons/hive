@@ -1853,6 +1853,7 @@ func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool,
 			result.Merged = append(result.Merged, laneResult.Merged...)
 		}
 	}
+	c.releaseGoneLaneFronts(ctx, targets)
 	if stageResult, stageErr := c.ApplyStageLabels(ctx); stageErr != nil {
 		c.warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
 	} else if stageResult.Writes+stageResult.Comments > 0 {
@@ -2344,6 +2345,37 @@ func (c *Engine) rejectBeforeLane(ctx context.Context, serialized bool, gate hgi
 		c.info("automerge sweep: rejected PR left the serialized lane front", "repo", owner+"/"+repo, "pr", number, "reason", reason, "lane_reason", res.Reason)
 	}
 	return AutoMergeSweepEvent{}, reason, nil
+}
+
+// releaseGoneLaneFronts asks the serialized lane, once per pass and
+// hive-serialized repo, to release a front PR that was closed, merged outside
+// the lane, made a draft or retargeted. The lanes above list open PRs only, so
+// no path calls in for such a front again: without this it held every waiter
+// until the front timeout (up to 4x that while its checks were last pending).
+// The lane reads one PR per front and never merges here.
+func (c *Engine) releaseGoneLaneFronts(ctx context.Context, targets SweepTargets) {
+	for _, repo := range c.activeRepos() {
+		owner, name := c.transport.SplitRepo(repo)
+		fullRepo := owner + "/" + name
+		if !targets.selectsRepo(fullRepo) {
+			continue
+		}
+		serialized, gate := c.serializedLane(repo)
+		if !serialized || gate == nil {
+			continue
+		}
+		res, err := hgithub.RunSerializedLane(ctx, gate, hgithub.LaneMergeRequest{
+			Repo:              fullRepo,
+			Path:              hgithub.PRAuditPathSweep,
+			ReleaseGoneFronts: true,
+		})
+		switch {
+		case err != nil:
+			c.warn("automerge sweep: serialized lane could not check its fronts", "repo", fullRepo, "error", err)
+		case res.Outcome == hgithub.LaneOutcomeLeft:
+			c.info("automerge sweep: a closed, merged or retargeted PR left the serialized lane front", "repo", fullRepo, "lane_reason", res.Reason)
+		}
+	}
 }
 
 // mergeThroughLane hands a PR that passed every gate of its sweep path to the
