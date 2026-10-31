@@ -18,17 +18,19 @@ const (
 // protocol preserves both the preceding integration commit and the author head.
 // It deliberately does not implement squash, rebase or tree-equivalent reuse.
 type IntegrationPromotion struct {
-	Repo        string
-	Base        string
-	ExpectedSHA string
-	TestedSHA   string
-	TestedTree  string
-	AuthorHead  string
-	HeadRepo    string
-	HeadRef     string
-	SubjectID   string
-	Policy      string
-	Generation  uint64
+	Repo            string
+	Base            string
+	ExpectedSHA     string
+	TestedSHA       string
+	TestedTree      string
+	AuthorHead      string
+	HeadRepo        string
+	HeadRef         string
+	SubjectID       string
+	Policy          string
+	Generation      uint64
+	AuthorityRef    string
+	AuthorityCommit string
 }
 
 // IntegrationPromotionGuard must revalidate the destination's exclusive writer,
@@ -54,6 +56,14 @@ func (p IntegrationPromotion) validate() error {
 		len(p.SubjectID) > integrationPromotionMaxLabelBytes || len(p.Policy) > integrationPromotionMaxLabelBytes ||
 		strings.ContainsAny(p.SubjectID+p.Policy, "\r\n\x00") {
 		return fmt.Errorf("incomplete exact integration promotion")
+	}
+	if p.AuthorityRef != "" || p.AuthorityCommit != "" {
+		if !strings.HasPrefix(p.AuthorityRef, "refs/heads/hive-integration-authority/") ||
+			!integrationPromotionBranch(strings.TrimPrefix(p.AuthorityRef, "refs/heads/")) ||
+			!integrationPromotionOID(p.AuthorityCommit) ||
+			p.AuthorityRef == "refs/heads/"+p.Base || p.AuthorityRef == "refs/heads/"+p.HeadRef {
+			return fmt.Errorf("invalid designated-executor authority epoch fence")
+		}
 	}
 	return nil
 }
@@ -121,7 +131,7 @@ func integrationPromotionBranch(base string) bool {
 }
 
 func (p IntegrationPromotion) claim() effects.Claim {
-	return effects.Claim{
+	claim := effects.Claim{
 		Repo: p.Repo, Kind: effects.KindBranchUpdate,
 		Target: "refs/heads/" + p.Base, Actor: "integration-aware",
 		Inputs: map[string]string{
@@ -132,11 +142,15 @@ func (p IntegrationPromotion) claim() effects.Claim {
 			"policy": p.Policy, "generation": fmt.Sprint(p.Generation),
 		},
 	}
+	if p.AuthorityRef != "" {
+		claim.Inputs["authority_ref"], claim.Inputs["authority_commit"] = p.AuthorityRef, p.AuthorityCommit
+	}
+	return claim
 }
 
 // PromoteIntegrationStep is a transport protocol, not an installed execution
-// authority. Callers must explicitly opt in and supply a durable mutation
-// boundary and the live guard; no current automerge lane calls this method.
+// authority. The opt-in controller supplies a durable mutation boundary and
+// complete live guard; normal merge lanes route without calling it directly.
 //
 // GitHub's updateRefs atomically checks the destination and a no-op author-ref
 // fence server-side. Cross-repository fork refs cannot participate. REST UpdateRef,
@@ -183,17 +197,22 @@ func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromot
 			} `json:"updateRefs"`
 		}
 		id := effects.StableDigest(claim.Repo, claim.Target, effects.StableInputs(claim.Inputs))
+		updates := []map[string]any{{
+			"name": "refs/heads/" + p.Base, "beforeOid": p.ExpectedSHA,
+			"afterOid": p.TestedSHA, "force": false,
+		}, {
+			"name": "refs/heads/" + p.HeadRef, "beforeOid": p.AuthorHead,
+			"afterOid": p.AuthorHead, "force": false,
+		}}
+		if p.AuthorityRef != "" {
+			updates = append(updates, map[string]any{"name": p.AuthorityRef,
+				"beforeOid": p.AuthorityCommit, "afterOid": p.AuthorityCommit, "force": false})
+		}
 		err := c.graphQL(ctx, `mutation($input: UpdateRefsInput!) {
  updateRefs(input: $input) { clientMutationId }
 }`, map[string]any{"input": map[string]any{
 			"repositoryId": repository.GetNodeID(), "clientMutationId": id,
-			"refUpdates": []map[string]any{{
-				"name": "refs/heads/" + p.Base, "beforeOid": p.ExpectedSHA,
-				"afterOid": p.TestedSHA, "force": false,
-			}, {
-				"name": "refs/heads/" + p.HeadRef, "beforeOid": p.AuthorHead,
-				"afterOid": p.AuthorHead, "force": false,
-			}},
+			"refUpdates": updates,
 		}}, &out)
 		if err != nil {
 			return effects.Result{}, err

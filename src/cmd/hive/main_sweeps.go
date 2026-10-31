@@ -815,6 +815,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	defer sweepSpan.End()
 	opts := automerge.Options{
 		IntegrationAdmission:     dashSrv.IntegrationNativeAdmission,
+		IntegrationExecution:     dashSrv.IntegrationExecutionRoute,
 		IntegrationFilesObserved: dashSrv.IntegrationObserveFiles,
 		Logger:                   logger,
 		MergerAuthorizer:         trustedMergerFunc(cfg),

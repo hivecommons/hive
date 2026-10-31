@@ -17,23 +17,42 @@ import (
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence/integration"
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 type integrationRuntime struct {
-	mu                   sync.Mutex
-	once                 sync.Once
-	store                *integration.Store
-	err                  error
-	path                 string
-	lastReconcile        time.Time
-	reconcileScopeOffset int
-	advice               map[string]integrationDispatchObservation
+	mu                            sync.Mutex
+	once                          sync.Once
+	store                         *integration.Store
+	err                           error
+	path                          string
+	lastReconcile                 time.Time
+	reconcileScopeOffset          int
+	advice                        map[string]integrationDispatchObservation
+	executionOnce                 sync.Once
+	executionStore                *integration.Store
+	executionErr                  error
+	executionPath                 string
+	executionGates                map[string]integrationExecutionGate
+	executionLastReconcile        time.Time
+	executionLastNudge            time.Time
+	executionReconciling          bool
+	executionScopeOffset          int
+	executionIdentity             integration.ExecutionIdentity
+	executionEvaluator            automerge.IntegrationEligibilityGate
+	executionPreparationEvaluator automerge.IntegrationEligibilityGate
+	executionBoundary             *mutation.Boundary
+	executionVerifier             *ghpkg.IntegrationProducerVerifier
 }
 
-func (s *Server) IntegrationNativeAdmission(_ context.Context, repo string, pr *gh.PullRequest) (string, error) {
+func (s *Server) IntegrationNativeAdmission(ctx context.Context, repo string, pr *gh.PullRequest) (string, error) {
+	if reason, err := s.integrationExecutionNativeAdmission(ctx, repo, pr); reason != "" || err != nil {
+		return reason, err
+	}
 	cfg := s.integrationConfig()
 	if pr == nil || !cfg.Allows(repo, pr.GetBase().GetRef()) {
 		return "", nil
@@ -620,12 +639,12 @@ func (s *Server) handleIntegrationConfigPut(w http.ResponseWriter, r *http.Reque
 		jsonError(w, "configuration unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	store, ledgerErr := s.integrationStore()
 	s.integration.mu.Lock()
 	defer s.integration.mu.Unlock()
 	previous := s.deps.Config.IntegrationOrchestration
 	// Reset only our reservations on every configuration transition, including
 	// allowlist/bounds drift. Disabling must remain possible with a failed disk.
-	store, ledgerErr := s.integrationStore()
 	if ledgerErr == nil {
 		ledgerErr = store.Append(integration.Event{Version: integration.SchemaVersion, ID: fmt.Sprintf("rollback/%d", time.Now().UnixNano()), At: time.Now(), Release: "*", Reason: "operator changed orchestration configuration"})
 	}

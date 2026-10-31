@@ -1389,7 +1389,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in. A
 	// relay evaluation never enqueues, so it keeps the current-base gates.
 	queueSkipsBase := sync.OnceValue(func() bool { return !relay && c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
-	if mergeableState == "behind" && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) {
+	if mergeableState == "behind" && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) && !integrationCombinedBaseProvided(ctx) {
 		if relay {
 			return eval, "behind", nil
 		}
