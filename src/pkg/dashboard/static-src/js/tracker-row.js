@@ -201,11 +201,20 @@
     }
     // " · Next move: hive @fixer — fixer commented · 3m ago", or, with
     // nobody on it, " · no one is working on this right now — <why>".
+    // A person's move with no stage_actor.why says why from the row's own
+    // reason, so the 👤 marker never leaves the question unanswered.
+    function stageTrackerHumanWhy(item, kind) {
+      if (kind !== 'human' && kind !== 'maintainer') return '';
+      return String(item.human_merge_reason_text || item.reason || '').trim();
+    }
     function stageTrackerActorTip(item) {
+      // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
+      const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';
       const sa = stageTrackerStageActor(item);
-      if (!sa) { const k = stageTrackerActorKind(item); return k ? ' · Next move: ' + k : ''; }
+      if (!sa) { const k = stageTrackerActorKind(item); const w = humanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
       if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
-      return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (sa.why ? ' — ' + sa.why : '');
+      const why = sa.why || humanWhy(item, sa.kind);
+      return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
     // Who holds the row: the payload's claimant {kind, login, agent, hive,
     // since, source} (hivecommons/hive#15422). The chevron gets one short

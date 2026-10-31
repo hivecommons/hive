@@ -96,6 +96,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLeadAction"),
 		jsFunc(t, html, "stageTrackerMaintainerMoved"),
 		jsFunc(t, html, "stageTrackerDevWarn"),
+		jsFunc(t, html, "stageTrackerPRListedOwnRow"),
+		jsFunc(t, html, "stageTrackerPRDrawnUnderOther"),
 		jsFunc(t, html, "stageTrackerLeadActionOnRow"),
 		jsFunc(t, html, "stageTrackerLeadActionHtml"),
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
@@ -160,6 +162,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerClearPending"),
 		jsFunc(t, html, "stageTrackerPendingLive"),
 		jsFunc(t, html, "stageTrackerPendingExpire"),
+		jsFunc(t, html, "stageTrackerLeadBusySync"),
 		jsFunc(t, html, "stageTrackerPendingSync"),
 		// Progress + failure surfacing for every mutating action (hivecommons/hive#15436).
 		jsConstBlock(t, html, "STAGE_TRACKER_TERMINAL_CAPTIONS"),
@@ -187,10 +190,14 @@ function hamStubEl(tag) {
   const el = { tagName: tag, className: '', textContent: '', children: [], attrs: {}, parentNode: null, _listeners: {},
     classList: { add(c) { if (!el.className.split(' ').includes(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(' ').filter(x => x && x !== c).join(' '); }, contains(c) { return el.className.split(' ').includes(c); } },
     appendChild(c) { c.parentNode = el; el.children.push(c); return c; }, prepend(c) { c.parentNode = el; el.children.unshift(c); },
-    setAttribute(k, v) { el.attrs[k] = String(v); }, getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
+    setAttribute(k, v) { el.attrs[k] = String(v); }, getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; }, removeAttribute(k) { delete el.attrs[k]; },
     addEventListener(n, fn) { el._listeners[n] = fn; }, remove() { if (el.parentNode) el.parentNode.children = el.parentNode.children.filter(c => c !== el); el.parentNode = null; },
     get lastChild() { return el.children[el.children.length - 1] || null; },
-    querySelector(sel) { const m = sel.match(/^:scope > \.([\w-]+)$/); if (!m) return null; return el.children.find(c => c.classList.contains(m[1])) || null; },
+    querySelector(sel) {
+      // ":scope > .child .descendant[attr]" — the lead button under the row head.
+      const d = sel.match(/^:scope > \.([\w-]+) \.([\w-]+)(?:\[([\w-]+)\])?$/);
+      if (d) { const head = el.children.find(c => c.classList && c.classList.contains(d[1])); if (!head) return null; const walk = n => { for (const c of (n.children || [])) { if (c.classList && c.classList.contains(d[2]) && (!d[3] || c.attrs[d[3]] != null)) return c; const r = walk(c); if (r) return r; } return null; }; return walk(head); }
+      const m = sel.match(/^:scope > \.([\w-]+)$/); if (!m) return null; return el.children.find(c => c.classList && c.classList.contains(m[1])) || null; },
     querySelectorAll(sel) { const out = []; const walk = n => { for (const c of (n.children || [])) { if (!c.attrs) continue; if ((sel.includes('[data-ham-key]') && c.attrs['data-ham-key'] != null) || (sel.includes('[data-ham-sub-key]') && c.attrs['data-ham-sub-key'] != null)) out.push(c); walk(c); } }; walk(el); return out; },
   };
   return el;

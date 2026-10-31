@@ -73,3 +73,30 @@
        Presentation only — server authorization is unchanged. */
     body.display-mode #activity-monitor-section .ham-row-tools, body.display-mode #activity-monitor-selbar,
     body.display-mode .ham-decision-acts { display: none !important; }
+
+/* ---- display controls & playlists (#15929, #15932) ----------------------
+   Display mode only (body.display-mode is never set under kiosk, and kiosk
+   hides both anyway). The controls overlay is appended to the body by
+   js/tracker-popout.js, revealed by pointer movement or keyboard focus and
+   faded out after 3 s idle. The playlist bar shows the time left before the
+   next URL-defined view; under prefers-reduced-motion it is a static
+   "next in Ns" label instead. */
+    .ham-display-controls, .ham-playlist { display: none; }
+    body.kiosk-mode .ham-display-controls, body.kiosk-mode .ham-playlist { display: none !important; }
+    body.display-mode .ham-display-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); position: fixed; top: var(--sp-3); right: var(--sp-3); z-index: 9400; padding: var(--sp-2); border-radius: var(--r-lg); border: 1px solid var(--border); background: var(--panel); box-shadow: var(--shadow-raised); opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+    body.display-mode .ham-display-controls.is-visible { opacity: 1; pointer-events: auto; }
+    .ham-display-control { padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--panel); color: var(--text); font: inherit; font-size: var(--fs-xs); line-height: 1.2; white-space: nowrap; cursor: pointer; }
+    .ham-display-control:hover:not(:disabled), .ham-display-control:focus-visible { border-color: var(--blue); color: var(--blue); outline: none; }
+    .ham-display-control[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
+    .ham-display-control[data-state="denied"] { border-color: var(--amber); color: var(--amber); }
+    .ham-display-control:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ham-display-link { min-width: 24em; }
+    .ham-display-link[hidden] { display: none; }
+    body.display-mode .ham-playlist { display: block; position: fixed; top: 0; left: 0; right: 0; z-index: 9300; pointer-events: none; }
+    .ham-playlist-track { height: 3px; background: color-mix(in srgb, var(--blue) 15%, transparent); }
+    .ham-playlist-bar { display: block; height: 100%; background: var(--blue); transform-origin: left center; transform: scaleX(var(--ham-playlist-left, 1)); transition: transform 1s linear; }
+    .ham-playlist-next { display: none; position: fixed; right: var(--sp-3); bottom: var(--sp-3); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--panel); color: var(--muted); font-size: var(--fs-2xs); }
+    @media (prefers-reduced-motion: reduce) {
+      body.display-mode .ham-playlist-track { display: none; }
+      body.display-mode .ham-playlist-next { display: inline-block; }
+    }

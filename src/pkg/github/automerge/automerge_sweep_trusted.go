@@ -125,7 +125,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// current-base gate stays in force unless the operator explicitly set
 	// auto_merge.native_merge_queue.skip_current_base_gate.
 	queueSkipsBase := sync.OnceValue(func() bool { return c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
-	if strings.EqualFold(pr.GetMergeableState(), "behind") && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) {
+	if strings.EqualFold(pr.GetMergeableState(), "behind") && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) && !integrationCombinedBaseProvided(ctx) {
 		if !branchUpdateAllowed {
 			// Keep the cause: still behind, retried next tick, not CI
 			// state and not author work (hivecommons/hive#12607).
@@ -635,7 +635,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in.
 	queueSkipsBase := sync.OnceValue(func() bool { return c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
-	if mergeableState == "behind" && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) {
+	if mergeableState == "behind" && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) && !integrationCombinedBaseProvided(ctx) {
 		headSHA := ""
 		if pr.GetHead() != nil {
 			headSHA = pr.GetHead().GetSHA()

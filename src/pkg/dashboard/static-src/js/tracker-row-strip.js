@@ -214,8 +214,13 @@
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : ''));
-      const actorLine = stageTrackerActorTip(item);
-      if (actorLine) lines.push(actorLine.replace(/^ · /, ''));
+      let actorLine = stageTrackerActorTip(item).replace(/^ · /, '');
+      // The 035 next-move why is the caption again in lower case ("a human
+      // decision is owed — workflow path"): said once, the next-move line
+      // then names only who moves (hivecommons/hive#15773).
+      const whyAt = actorLine.indexOf(' — ');
+      if (whyAt > 0 && lines[1] && actorLine.slice(whyAt + 3).trim().toLowerCase() === String(lines[1]).trim().toLowerCase()) actorLine = actorLine.slice(0, whyAt);
+      if (actorLine) lines.push(actorLine);
       if (typeof stageTrackerNewLines === 'function') lines.push(...stageTrackerNewLines(item, nowMs));
       const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       if (blockedPR) lines.push(blockedPR.tip);

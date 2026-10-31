@@ -92,9 +92,11 @@ type boot struct {
 	// rebuilt client after that; forgeStateOnce guards the build. Held in
 	// an atomic because the dashboard's count wiring reads it late, from
 	// the metrics collector goroutine (#13376).
-	forgeState     atomic.Pointer[forgestate.Store]
-	forgeStateOnce sync.Once
-	requestRelays  *requestRelaySupervisor
+	forgeState                        atomic.Pointer[forgestate.Store]
+	forgeStateOnce                    sync.Once
+	requestRelays                     *requestRelaySupervisor
+	integrationEligibility            automerge.IntegrationEligibilityGate
+	integrationPreparationEligibility automerge.IntegrationEligibilityGate
 
 	// bootConfig
 	startTime                     time.Time

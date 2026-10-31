@@ -80,6 +80,10 @@ type Options struct {
 	// IntegrationAdmission may withhold a NEW native enqueue for a scoped CI
 	// budget. It never replaces any gate, cancels work, or reorders the queue.
 	IntegrationAdmission func(context.Context, string, *gh.PullRequest) (string, error)
+	// IntegrationExecution routes a fully gated candidate to the explicitly
+	// selected execution authority before either direct merge or native enqueue.
+	IntegrationExecution   IntegrationExecutionHook
+	IntegrationSelfAllowed func() bool
 	// BasePreparation persists front-only final preparation across all lanes.
 	// nil uses the shared durable store.
 	BasePreparation  *BasePreparationStore
@@ -272,6 +276,8 @@ type Engine struct {
 
 	nativeMergeQueuePolicy func() NativeMergeQueuePolicy
 	integrationAdmission   func(context.Context, string, *gh.PullRequest) (string, error)
+	integrationExecution   IntegrationExecutionHook
+	integrationOptions     Options
 	nativeQueueProbeMu     sync.Mutex
 	nativeQueueProbes      map[string]nativeQueueProbe
 
@@ -463,6 +469,8 @@ func New(transport Transport, opts Options) *Engine {
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
 		nativeMergeQueuePolicy:            opts.NativeMergeQueue,
 		integrationAdmission:              opts.IntegrationAdmission,
+		integrationExecution:              opts.IntegrationExecution,
+		integrationOptions:                opts,
 		rebaseResolver:                    opts.RebaseResolver,
 		rebaseEpisode:                     opts.RebaseEpisode,
 		fixDispatch:                       opts.FixDispatchStatus,

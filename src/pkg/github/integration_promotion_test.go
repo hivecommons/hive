@@ -54,18 +54,19 @@ func (j *integrationPromotionJournal) LookupApplied(context.Context, effects.Cla
 }
 
 type integrationPromotionFixture struct {
-	request  IntegrationPromotion
-	ref      string
-	headRef  string
-	tree     string
-	parents  []string
-	repoID   string
-	repoName string
-	errorAt  string
-	reply    string
-	mu       sync.Mutex
-	input    map[string]any
-	writes   atomic.Int32
+	request   IntegrationPromotion
+	ref       string
+	headRef   string
+	authority string
+	tree      string
+	parents   []string
+	repoID    string
+	repoName  string
+	errorAt   string
+	reply     string
+	mu        sync.Mutex
+	input     map[string]any
+	writes    atomic.Int32
 }
 
 func integrationPromotionRequest() IntegrationPromotion {
@@ -138,6 +139,9 @@ func (f *integrationPromotionFixture) server(t *testing.T) *httptest.Server {
 			refs := map[string]string{
 				"refs/heads/" + f.request.Base:    f.ref,
 				"refs/heads/" + f.request.HeadRef: f.headRef,
+			}
+			if f.request.AuthorityRef != "" {
+				refs[f.request.AuthorityRef] = f.authority
 			}
 			for _, raw := range updates {
 				update, valid := raw.(map[string]any)

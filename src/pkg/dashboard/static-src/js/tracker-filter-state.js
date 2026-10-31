@@ -48,6 +48,64 @@
       return url.toString();
     }
     // tracker url view helpers end
+    // Display playlists (hivecommons/hive#15932): a display-mode URL may
+    // carry repeated `am.view` params, each a URL-encoded `am.*` query
+    // string, plus `interval=Ns|Nm` (10 s–1 h, default 60 s). The playlist
+    // lives entirely in the URL — there are no named presets anywhere. A
+    // view is today an `am.*` tracker filter; another view kind would be one
+    // more branch in stageTrackerPlaylistView.
+    // tracker display playlist helpers begin
+    const STAGE_TRACKER_PLAYLIST_PARAM = 'am.view';
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_PARAM = 'interval';
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_DEFAULT_MS = 60000;
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_MIN_MS = 10000;
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_MAX_MS = 3600000;
+    // Pure: `interval` (`45s`, `5m`) in ms, clamped; anything else is the default.
+    function stageTrackerPlaylistIntervalMs(raw) {
+      const m = /^\s*(\d{1,7})\s*([sm])\s*$/i.exec(raw == null ? '' : String(raw));
+      if (!m) return STAGE_TRACKER_PLAYLIST_INTERVAL_DEFAULT_MS;
+      const ms = Number(m[1]) * (m[2].toLowerCase() === 'm' ? 60000 : 1000);
+      return Math.min(STAGE_TRACKER_PLAYLIST_INTERVAL_MAX_MS, Math.max(STAGE_TRACKER_PLAYLIST_INTERVAL_MIN_MS, ms));
+    }
+    // Pure: one decoded `am.view` value as { filter, group }, or null when it
+    // names no known `am.*` key (or nests another am.view) — such a view is
+    // skipped.
+    function stageTrackerPlaylistView(raw) {
+      let p;
+      try { p = new URLSearchParams(String(raw == null ? '' : raw).replace(/^\?/, '')); } catch { return null; }
+      const keys = Array.from(p.keys());
+      if (keys.indexOf(STAGE_TRACKER_PLAYLIST_PARAM) >= 0) return null;
+      const known = STAGE_TRACKER_URL_KEYS.concat(['group']).map(k => STAGE_TRACKER_URL_PREFIX + k);
+      if (!keys.some(k => known.indexOf(k) >= 0)) return null;
+      return stageTrackerFilterFromUrl('https://hive.invalid/?' + p.toString());
+    }
+    // Pure: { views: [{ filter, group }…], intervalMs } for a URL. Fewer than
+    // two views means the caller does not rotate.
+    function stageTrackerParsePlaylist(href) {
+      let url;
+      try { url = new URL(href); } catch { return { views: [], intervalMs: STAGE_TRACKER_PLAYLIST_INTERVAL_DEFAULT_MS }; }
+      const views = url.searchParams.getAll(STAGE_TRACKER_PLAYLIST_PARAM).map(stageTrackerPlaylistView).filter(Boolean);
+      return { views, intervalMs: stageTrackerPlaylistIntervalMs(url.searchParams.get(STAGE_TRACKER_PLAYLIST_INTERVAL_PARAM)) };
+    }
+    // Pure: which of n views is showing. Derived from wall-clock time (pass
+    // startMs 0), so a reload or an SSE reconnect lands on the same view.
+    function stageTrackerPlaylistIndex(startMs, nowMs, intervalMs, n) {
+      if (!(n >= 2) || !(intervalMs > 0)) return 0;
+      const k = Math.floor((Number(nowMs) - Number(startMs)) / intervalMs);
+      if (!Number.isFinite(k)) return 0;
+      return ((k % n) + n) % n;
+    }
+    // Pure: ms left before the next view.
+    function stageTrackerPlaylistRemainingMs(startMs, nowMs, intervalMs) {
+      if (!(intervalMs > 0)) return 0;
+      const e = (((Number(nowMs) - Number(startMs)) % intervalMs) + intervalMs) % intervalMs;
+      return Number.isFinite(e) ? intervalMs - e : 0;
+    }
+    // Pure: the reduced-motion label.
+    function stageTrackerPlaylistNextLabel(remainingMs) {
+      return 'next in ' + Math.max(0, Math.ceil((Number(remainingMs) || 0) / 1000)) + 's';
+    }
+    // tracker display playlist helpers end
     // The tab's URL view, read once. While it is set the filter and group
     // are session-only: saves stay in this object and never reach
     // localStorage, so two screens on one profile cannot clobber each other.

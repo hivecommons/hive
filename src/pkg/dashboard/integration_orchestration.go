@@ -17,23 +17,46 @@ import (
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence/integration"
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 type integrationRuntime struct {
-	mu                   sync.Mutex
-	once                 sync.Once
-	store                *integration.Store
-	err                  error
-	path                 string
-	lastReconcile        time.Time
-	reconcileScopeOffset int
-	advice               map[string]integrationDispatchObservation
+	mu                            sync.Mutex
+	once                          sync.Once
+	store                         *integration.Store
+	err                           error
+	path                          string
+	lastReconcile                 time.Time
+	reconcileScopeOffset          int
+	advice                        map[string]integrationDispatchObservation
+	executionOnce                 sync.Once
+	executionStore                *integration.Store
+	executionErr                  error
+	executionPath                 string
+	executionLastReconcile        time.Time
+	executionLastNudge            time.Time
+	executionReconciling          bool
+	executionCancel               context.CancelFunc
+	executionTracker              *IntegrationExecutionTracker
+	executionTrackerConfig        config.IntegrationExecutionConfig
+	executionCostObservations     map[string]executionCostObservation
+	executionScopeOffset          int
+	executionEligibilityOffsets   map[string]int
+	executionIdentity             integration.ExecutionIdentity
+	executionEvaluator            automerge.IntegrationEligibilityGate
+	executionPreparationEvaluator automerge.IntegrationEligibilityGate
+	executionBoundary             *mutation.Boundary
+	executionVerifier             *ghpkg.IntegrationProducerVerifier
 }
 
-func (s *Server) IntegrationNativeAdmission(_ context.Context, repo string, pr *gh.PullRequest) (string, error) {
+func (s *Server) IntegrationNativeAdmission(ctx context.Context, repo string, pr *gh.PullRequest) (string, error) {
+	if reason, err := s.integrationExecutionNativeAdmission(ctx, repo, pr); reason != "" || err != nil {
+		return reason, err
+	}
 	cfg := s.integrationConfig()
 	if pr == nil || !cfg.Allows(repo, pr.GetBase().GetRef()) {
 		return "", nil
@@ -538,6 +561,7 @@ func (s *Server) registerIntegrationRoutes() {
 	s.mux.HandleFunc("PUT /api/config/integration-orchestration", s.handleIntegrationConfigPut)
 	s.mux.HandleFunc("POST /api/integration-orchestration/intents", s.handleIntegrationIntent)
 	s.mux.HandleFunc("POST /api/integration-orchestration/reconcile", s.handleIntegrationReconcile)
+	s.mux.HandleFunc("POST /api/integration-orchestration/execution-identity", s.handleIntegrationExecutionIdentity)
 }
 
 func (s *Server) handleIntegrationGet(w http.ResponseWriter, r *http.Request) {
@@ -573,6 +597,13 @@ func (s *Server) handleIntegrationGet(w http.ResponseWriter, r *http.Request) {
 	resp["dispatch_advice"] = s.integrationDispatchAdvice()
 	resp["dispatch_advice_contract"] = "last actual internal/contributor evaluations; bounded boot-local diagnostics, not durable merge proof"
 	resp["aging_policy"] = "oldest intent within existing priority/own-work bands; per-repository/base active and budget bounds; no native reordering"
+	if cfg.Execution.Effective().Mode != config.IntegrationOff {
+		if execution, err := s.integrationExecutionStore(); err != nil {
+			resp["execution"] = map[string]any{"state": "unknown", "error": err.Error(), "runtime_version": versionHash}
+		} else {
+			resp["execution"] = executionPublicProjection(execution, cfg.Execution, time.Now())
+		}
+	}
 	store, err := s.integrationStore()
 	if err != nil {
 		resp["state"] = "unknown"
@@ -607,11 +638,15 @@ func (s *Server) handleIntegrationConfigPut(w http.ResponseWriter, r *http.Reque
 	if !requireOwnerRole(w, r) {
 		return
 	}
-	var next config.IntegrationOrchestrationConfig
-	if err := decodeBody(r, &next); err != nil {
+	var request struct {
+		config.IntegrationOrchestrationConfig
+		ExpectedExecution *config.IntegrationExecutionConfig `json:"expected_execution,omitempty"`
+	}
+	if err := decodeBody(r, &request); err != nil {
 		jsonError(w, "invalid configuration", http.StatusBadRequest)
 		return
 	}
+	next := request.IntegrationOrchestrationConfig
 	if err := next.Validate(); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -620,32 +655,66 @@ func (s *Server) handleIntegrationConfigPut(w http.ResponseWriter, r *http.Reque
 		jsonError(w, "configuration unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	previousExecution := s.integrationConfig().Execution.Effective()
+	ctx, cancel := context.WithTimeout(r.Context(), integrationReconcileTimeout)
+	defer cancel()
+	if err := s.executionHandoverGuard(ctx, previousExecution, next.Execution); err != nil {
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
+	var execution *integration.Store
+	var executionErr error
+	if previousExecution.Mode != config.IntegrationOff || next.Execution.Effective().Mode != config.IntegrationOff {
+		execution, executionErr = s.integrationExecutionStore()
+		if executionErr != nil && next.Execution.Effective().Mode == config.IntegrationEnforce {
+			jsonError(w, "execution durable identity/accounting unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	store, ledgerErr := s.integrationStore()
 	s.integration.mu.Lock()
 	defer s.integration.mu.Unlock()
 	previous := s.deps.Config.IntegrationOrchestration
-	// Reset only our reservations on every configuration transition, including
-	// allowlist/bounds drift. Disabling must remain possible with a failed disk.
-	store, ledgerErr := s.integrationStore()
-	if ledgerErr == nil {
+	if !executionConfigEqual(previous.Execution, previousExecution) {
+		jsonError(w, "execution profile changed during authority preflight; reload before saving", http.StatusPreconditionFailed)
+		return
+	}
+	if !executionConfigEqual(previous.Execution, next.Execution) &&
+		(request.ExpectedExecution == nil || !executionConfigEqual(previous.Execution, *request.ExpectedExecution)) {
+		jsonError(w, "execution configuration changed or expected_execution missing; reload before saving", http.StatusPreconditionFailed)
+		return
+	}
+	parentChanged := executionParentChanged(previous, next)
+	// Execution-only changes must not release the independent authoring
+	// layer's reservations or rewrite its producer-policy generation.
+	if parentChanged && ledgerErr == nil {
 		ledgerErr = store.Append(integration.Event{Version: integration.SchemaVersion, ID: fmt.Sprintf("rollback/%d", time.Now().UnixNano()), At: time.Now(), Release: "*", Reason: "operator changed orchestration configuration"})
 	}
-	if ledgerErr == nil {
+	if parentChanged && ledgerErr == nil {
 		ledgerErr = store.SetPolicies(next.Policies, time.Now())
 	}
-	if ledgerErr != nil && next.Effective().Mode == config.IntegrationEnforce {
+	if parentChanged && ledgerErr != nil && next.Effective().Mode == config.IntegrationEnforce {
 		jsonError(w, ledgerErr.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	s.deps.Config.IntegrationOrchestration = next
 	if err := s.saveConfig(); err != nil {
 		s.deps.Config.IntegrationOrchestration = previous
-		if ledgerErr == nil {
+		if parentChanged && ledgerErr == nil {
 			if restoreErr := store.SetPolicies(previous.Policies, time.Now()); restoreErr != nil {
 				s.webhookLogger().Error("integration producer policy rollback unavailable", "error", restoreErr)
 			}
 		}
 		jsonError(w, "integration configuration persistence failed", http.StatusInternalServerError)
 		return
+	}
+	if s.integration.executionCancel != nil {
+		s.integration.executionCancel()
+	}
+	if executionErr == nil && execution != nil {
+		if err := execution.ReleaseExecutionReservations(executionReleasedScopes(previous.Execution, next.Execution), time.Now()); err != nil {
+			s.webhookLogger().Error("execution configuration saved; own reservation cleanup unavailable; evidence retained", "error", err)
+		}
 	}
 	s.auditFromRequest(r, "config_integration_orchestration", auditDetail("mode", next.Effective().Mode), "")
 	if ledgerErr != nil {

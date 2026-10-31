@@ -815,6 +815,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	defer sweepSpan.End()
 	opts := automerge.Options{
 		IntegrationAdmission:     dashSrv.IntegrationNativeAdmission,
+		IntegrationExecution:     dashSrv.IntegrationExecutionRoute,
 		IntegrationFilesObserved: dashSrv.IntegrationObserveFiles,
 		Logger:                   logger,
 		MergerAuthorizer:         trustedMergerFunc(cfg),
@@ -1286,7 +1287,14 @@ const sentinelSweepInterval = github.SentinelReconcileInterval
 // trust or rules.
 func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *dashboard.Server) github.SentinelSweepOptions {
 	sc := cfg.Sentinel
+	// The Matrix line source only ever sees patches when dashboard.matrix is
+	// active (#15934); otherwise PatchObserver stays nil and nothing is kept.
+	var patchObserver func(github.SentinelPatchObservation)
+	if dashSrv != nil {
+		patchObserver = dashSrv.MatrixObserver(cfg.Dashboard.Matrix)
+	}
 	return github.SentinelSweepOptions{
+		PatchObserver:       patchObserver,
 		Label:               sc.LabelOrDefault(),
 		LabelColor:          config.DefaultSentinelLabelColor,
 		LabelDescription:    config.DefaultSentinelLabelDescription,

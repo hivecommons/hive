@@ -387,6 +387,57 @@ func TestRFCNotifySourceListsPRs(t *testing.T) {
 	}
 }
 
+func TestRFCNotifySourceCachesNotRFCPRsByHeadSHA(t *testing.T) {
+	since := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+	sha, fileCalls := "sha1", 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/org/repo/pulls":
+			_, _ = w.Write([]byte(`[{"number":40,"title":"🐛 fix: typo","state":"open","head":{"sha":"` + sha + `"},"created_at":"2026-10-20T00:00:00Z","updated_at":"2026-10-28T00:00:00Z"}]`))
+		case "/repos/org/repo/pulls/40/files":
+			fileCalls++
+			_, _ = w.Write([]byte(`[{"filename":"README.md","status":"modified"}]`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c := github.NewClientForTest(server.URL, "org", []string{"repo"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	src := newRFCNotifySource(c, &rfcNotifyState{lookupPrivate: func(context.Context, string) (bool, error) { return false, nil }}).(rfcnotify.PRSource)
+	poll := func(wantCalls int) {
+		t.Helper()
+		prs, err := src.ListPRsUpdatedSince(context.Background(), since)
+		if err != nil || len(prs) != 1 || prs[0].RFC() {
+			t.Fatalf("ListPRsUpdatedSince = %+v %v", prs, err)
+		}
+		if fileCalls != wantCalls {
+			t.Fatalf("ListFiles calls = %d, want %d", fileCalls, wantCalls)
+		}
+	}
+	poll(1)
+	poll(1)
+	sha = "sha2"
+	poll(2)
+	poll(2)
+}
+
+func TestRFCNotifyNotRFCPRCacheIsBounded(t *testing.T) {
+	s := &rfcNotifyState{}
+	for i := 0; i < rfcNotPRCacheMax*2; i++ {
+		s.rememberNotRFCPR(fmt.Sprintf("org/repo#%d", i), "sha")
+	}
+	if len(s.notRFCPRs) > rfcNotPRCacheMax {
+		t.Errorf("cache grew to %d entries, cap %d", len(s.notRFCPRs), rfcNotPRCacheMax)
+	}
+	var nilState *rfcNotifyState
+	nilState.rememberNotRFCPR("k", "sha")
+	if nilState.notRFCPR("k", "sha") {
+		t.Error("nil state must not cache")
+	}
+}
+
 type rfcNotifyPRFakeSource struct {
 	rfcNotifyFakeSource
 	prs     []rfcnotify.Issue

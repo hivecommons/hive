@@ -90,6 +90,12 @@ func (c *Engine) warnCurrentBaseFallbackOnce(displayRepo string, number int, rea
 // stop is false when the merge may proceed; otherwise the caller returns the
 // event, reason and error as-is.
 func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo string, number int, baseBranch, headSHA string, branchUpdateAllowed bool, holdReason string, fork bool, admissionLane ...string) (AutoMergeSweepEvent, string, bool, error) {
+	if combined, err := integrationCombinedBaseCheck(ctx, owner+"/"+repo, baseBranch, number, headSHA); combined {
+		if err != nil {
+			return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, err
+		}
+		return AutoMergeSweepEvent{}, "", false, nil
+	}
 	if !c.requireCurrentBaseFor(owner+"/"+repo) || c.gh == nil {
 		return AutoMergeSweepEvent{}, "", false, nil
 	}

@@ -710,6 +710,9 @@
     .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
     .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
     .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
+    /* Busy (Let hive decide gathering its preview) also sets aria-disabled, so this
+       compound rule sits after the disabled one and wins: the working colour, not faint/dashed. */
+    .ham-lead-act[aria-busy="true"][aria-disabled="true"] { cursor: progress; opacity: 1; border-style: solid; border-color: var(--cue-work); background: color-mix(in srgb, var(--cue-work) 10%, transparent); color: var(--cue-work); }
     /* The technical background folds behind one collapsed Details. */
     .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }

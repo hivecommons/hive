@@ -2047,6 +2047,9 @@
     .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
     .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
     .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
+    /* Busy (Let hive decide gathering its preview) also sets aria-disabled, so this
+       compound rule sits after the disabled one and wins: the working colour, not faint/dashed. */
+    .ham-lead-act[aria-busy="true"][aria-disabled="true"] { cursor: progress; opacity: 1; border-style: solid; border-color: var(--cue-work); background: color-mix(in srgb, var(--cue-work) 10%, transparent); color: var(--cue-work); }
     /* The technical background folds behind one collapsed Details. */
     .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
@@ -6883,6 +6886,33 @@
        Presentation only — server authorization is unchanged. */
     body.display-mode #activity-monitor-section .ham-row-tools, body.display-mode #activity-monitor-selbar,
     body.display-mode .ham-decision-acts { display: none !important; }
+
+/* ---- display controls & playlists (#15929, #15932) ----------------------
+   Display mode only (body.display-mode is never set under kiosk, and kiosk
+   hides both anyway). The controls overlay is appended to the body by
+   js/tracker-popout.js, revealed by pointer movement or keyboard focus and
+   faded out after 3 s idle. The playlist bar shows the time left before the
+   next URL-defined view; under prefers-reduced-motion it is a static
+   "next in Ns" label instead. */
+    .ham-display-controls, .ham-playlist { display: none; }
+    body.kiosk-mode .ham-display-controls, body.kiosk-mode .ham-playlist { display: none !important; }
+    body.display-mode .ham-display-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); position: fixed; top: var(--sp-3); right: var(--sp-3); z-index: 9400; padding: var(--sp-2); border-radius: var(--r-lg); border: 1px solid var(--border); background: var(--panel); box-shadow: var(--shadow-raised); opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+    body.display-mode .ham-display-controls.is-visible { opacity: 1; pointer-events: auto; }
+    .ham-display-control { padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--panel); color: var(--text); font: inherit; font-size: var(--fs-xs); line-height: 1.2; white-space: nowrap; cursor: pointer; }
+    .ham-display-control:hover:not(:disabled), .ham-display-control:focus-visible { border-color: var(--blue); color: var(--blue); outline: none; }
+    .ham-display-control[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
+    .ham-display-control[data-state="denied"] { border-color: var(--amber); color: var(--amber); }
+    .ham-display-control:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ham-display-link { min-width: 24em; }
+    .ham-display-link[hidden] { display: none; }
+    body.display-mode .ham-playlist { display: block; position: fixed; top: 0; left: 0; right: 0; z-index: 9300; pointer-events: none; }
+    .ham-playlist-track { height: 3px; background: color-mix(in srgb, var(--blue) 15%, transparent); }
+    .ham-playlist-bar { display: block; height: 100%; background: var(--blue); transform-origin: left center; transform: scaleX(var(--ham-playlist-left, 1)); transition: transform 1s linear; }
+    .ham-playlist-next { display: none; position: fixed; right: var(--sp-3); bottom: var(--sp-3); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--panel); color: var(--muted); font-size: var(--fs-2xs); }
+    @media (prefers-reduced-motion: reduce) {
+      body.display-mode .ham-playlist-track { display: none; }
+      body.display-mode .ham-playlist-next { display: inline-block; }
+    }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -9028,6 +9058,19 @@
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-display-btn" id="activity-monitor-display" data-action="toggleStageTrackerDisplay" data-stop="1" aria-pressed="false" title="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)" aria-label="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)">📺</button>'
       + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
+    // Display controls (hivecommons/hive#15929): the overlay
+    // stageTrackerDisplayControlsInit() appends to the body in display mode
+    // only. Full screen and Keep awake are explicit clicks; their disabled /
+    // denied states are rendered by stageTrackerRenderDisplayControls().
+    // Full screen and Keep awake get their title from
+    // stageTrackerRenderDisplayControls (STAGE_TRACKER_DISPLAY_CONTROL_LABELS
+    // in tracker-popout.js) as soon as the overlay mounts, so it is not
+    // repeated here.
+    const STAGE_TRACKER_DISPLAY_CONTROLS_HTML = '<button type="button" class="ham-display-control" data-display-control="exit" data-action="stageTrackerDisplayExit" aria-label="Exit display" title="Leave display mode (Esc or d)">✕ Exit display</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="copy" data-action="stageTrackerCopyDisplayLink" aria-label="Copy display link" title="Copy a link that opens this display — view parameters only, never a token">🔗 Copy link</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="fullscreen" data-action="toggleStageTrackerFullscreen" aria-label="Full screen" aria-pressed="false">⛶ Full screen</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="wakelock" data-action="stageTrackerToggleWakeLock" aria-label="Keep screen awake" aria-pressed="false">☀ Keep awake</button>'
+      + '<input type="text" class="ham-input ham-display-link" id="activity-monitor-display-link" readonly aria-label="Display link" hidden>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
       'governor': { title: '🚦 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
@@ -15408,6 +15451,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     const STAGE_TRACKER_SHORT_SHA = 7;
     var _stageTracker = null;
+    // The item rows the last stage-tracker render drew (tracker-filter-render.js).
+    var _stageTrackerRows = null;
     var _stageTrackerSig = '';
     var _stageTrackerEtag = '';
     // Last poll outcome: '' while polls succeed, else a short reason ('HTTP
@@ -16772,11 +16817,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // " · Next move: hive @fixer — fixer commented · 3m ago", or, with
     // nobody on it, " · no one is working on this right now — <why>".
+    // A person's move with no stage_actor.why says why from the row's own
+    // reason, so the 👤 marker never leaves the question unanswered.
+    function stageTrackerHumanWhy(item, kind) {
+      if (kind !== 'human' && kind !== 'maintainer') return '';
+      return String(item.human_merge_reason_text || item.reason || '').trim();
+    }
     function stageTrackerActorTip(item) {
+      // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
+      const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';
       const sa = stageTrackerStageActor(item);
-      if (!sa) { const k = stageTrackerActorKind(item); return k ? ' · Next move: ' + k : ''; }
+      if (!sa) { const k = stageTrackerActorKind(item); const w = humanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
       if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
-      return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (sa.why ? ' — ' + sa.why : '');
+      const why = sa.why || humanWhy(item, sa.kind);
+      return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
     // Who holds the row: the payload's claimant {kind, login, agent, hive,
     // since, source} (hivecommons/hive#15422). The chevron gets one short
@@ -17114,8 +17168,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : ''));
-      const actorLine = stageTrackerActorTip(item);
-      if (actorLine) lines.push(actorLine.replace(/^ · /, ''));
+      let actorLine = stageTrackerActorTip(item).replace(/^ · /, '');
+      // The 035 next-move why is the caption again in lower case ("a human
+      // decision is owed — workflow path"): said once, the next-move line
+      // then names only who moves (hivecommons/hive#15773).
+      const whyAt = actorLine.indexOf(' — ');
+      if (whyAt > 0 && lines[1] && actorLine.slice(whyAt + 3).trim().toLowerCase() === String(lines[1]).trim().toLowerCase()) actorLine = actorLine.slice(0, whyAt);
+      if (actorLine) lines.push(actorLine);
       if (typeof stageTrackerNewLines === 'function') lines.push(...stageTrackerNewLines(item, nowMs));
       const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       if (blockedPR) lines.push(blockedPR.tip);
@@ -17666,6 +17725,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ctx = stageTrackerActionCtx(item.repo);
       if (!ctx) return '';
       ctx.nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      // The rows this render draws, so a covered issue can defer to its PR's row.
+      ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
       return stageTrackerLeadActionHtml(item, ctx, subRows);
     }
     // PR link, then the lineage chip (null = none), then the base pill.
@@ -17709,7 +17770,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
-          ${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}
+          ${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
         </div>`;
     }
 
@@ -18010,7 +18071,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}
-        </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
+        </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
       </div>`;
     }
 
@@ -19217,6 +19278,64 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return url.toString();
     }
     // tracker url view helpers end
+    // Display playlists (hivecommons/hive#15932): a display-mode URL may
+    // carry repeated `am.view` params, each a URL-encoded `am.*` query
+    // string, plus `interval=Ns|Nm` (10 s–1 h, default 60 s). The playlist
+    // lives entirely in the URL — there are no named presets anywhere. A
+    // view is today an `am.*` tracker filter; another view kind would be one
+    // more branch in stageTrackerPlaylistView.
+    // tracker display playlist helpers begin
+    const STAGE_TRACKER_PLAYLIST_PARAM = 'am.view';
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_PARAM = 'interval';
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_DEFAULT_MS = 60000;
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_MIN_MS = 10000;
+    const STAGE_TRACKER_PLAYLIST_INTERVAL_MAX_MS = 3600000;
+    // Pure: `interval` (`45s`, `5m`) in ms, clamped; anything else is the default.
+    function stageTrackerPlaylistIntervalMs(raw) {
+      const m = /^\s*(\d{1,7})\s*([sm])\s*$/i.exec(raw == null ? '' : String(raw));
+      if (!m) return STAGE_TRACKER_PLAYLIST_INTERVAL_DEFAULT_MS;
+      const ms = Number(m[1]) * (m[2].toLowerCase() === 'm' ? 60000 : 1000);
+      return Math.min(STAGE_TRACKER_PLAYLIST_INTERVAL_MAX_MS, Math.max(STAGE_TRACKER_PLAYLIST_INTERVAL_MIN_MS, ms));
+    }
+    // Pure: one decoded `am.view` value as { filter, group }, or null when it
+    // names no known `am.*` key (or nests another am.view) — such a view is
+    // skipped.
+    function stageTrackerPlaylistView(raw) {
+      let p;
+      try { p = new URLSearchParams(String(raw == null ? '' : raw).replace(/^\?/, '')); } catch { return null; }
+      const keys = Array.from(p.keys());
+      if (keys.indexOf(STAGE_TRACKER_PLAYLIST_PARAM) >= 0) return null;
+      const known = STAGE_TRACKER_URL_KEYS.concat(['group']).map(k => STAGE_TRACKER_URL_PREFIX + k);
+      if (!keys.some(k => known.indexOf(k) >= 0)) return null;
+      return stageTrackerFilterFromUrl('https://hive.invalid/?' + p.toString());
+    }
+    // Pure: { views: [{ filter, group }…], intervalMs } for a URL. Fewer than
+    // two views means the caller does not rotate.
+    function stageTrackerParsePlaylist(href) {
+      let url;
+      try { url = new URL(href); } catch { return { views: [], intervalMs: STAGE_TRACKER_PLAYLIST_INTERVAL_DEFAULT_MS }; }
+      const views = url.searchParams.getAll(STAGE_TRACKER_PLAYLIST_PARAM).map(stageTrackerPlaylistView).filter(Boolean);
+      return { views, intervalMs: stageTrackerPlaylistIntervalMs(url.searchParams.get(STAGE_TRACKER_PLAYLIST_INTERVAL_PARAM)) };
+    }
+    // Pure: which of n views is showing. Derived from wall-clock time (pass
+    // startMs 0), so a reload or an SSE reconnect lands on the same view.
+    function stageTrackerPlaylistIndex(startMs, nowMs, intervalMs, n) {
+      if (!(n >= 2) || !(intervalMs > 0)) return 0;
+      const k = Math.floor((Number(nowMs) - Number(startMs)) / intervalMs);
+      if (!Number.isFinite(k)) return 0;
+      return ((k % n) + n) % n;
+    }
+    // Pure: ms left before the next view.
+    function stageTrackerPlaylistRemainingMs(startMs, nowMs, intervalMs) {
+      if (!(intervalMs > 0)) return 0;
+      const e = (((Number(nowMs) - Number(startMs)) % intervalMs) + intervalMs) % intervalMs;
+      return Number.isFinite(e) ? intervalMs - e : 0;
+    }
+    // Pure: the reduced-motion label.
+    function stageTrackerPlaylistNextLabel(remainingMs) {
+      return 'next in ' + Math.max(0, Math.ceil((Number(remainingMs) || 0) / 1000)) + 's';
+    }
+    // tracker display playlist helpers end
     // The tab's URL view, read once. While it is set the filter and group
     // are session-only: saves stay in this object and never reach
     // localStorage, so two screens on one profile cannot clobber each other.
@@ -19808,6 +19927,40 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       root.hidden = !html;
       setIfChanged(root, html);
     }
+    let _stageTrackerExecution = null;
+    function stageTrackerExecutionSync(data, nowMs) {
+      const view = data && data.integration_execution;
+      const observed = view && Date.parse(view.observed_at);
+      const maxAge = view && Number(view.observation_age_seconds) * 1000;
+      _stageTrackerExecution = view && view.mode !== 'off' && Array.isArray(view.candidates)
+        ? Object.assign({}, view, {nowMs, maxAge, stale: !Number.isFinite(observed) || !(maxAge > 0) || nowMs - observed > maxAge})
+        : null;
+    }
+
+    function stageTrackerExecutionHtml(item) {
+      const view = _stageTrackerExecution;
+      if (!view || !item || item.kind !== 'pr' || !item.head || !item.base_ref) return '';
+      const candidate = view.candidates.find(entry => {
+        const members = entry.members || [];
+        const member = members[members.length - 1];
+        return member && String(entry.repo).toLowerCase() === String(item.repo).toLowerCase()
+          && Number(member.pr) === Number(item.number) && member.head === item.head
+          && entry.base === item.base_ref;
+      });
+      if (!candidate) return '';
+      const candidateAt = Date.parse(candidate.observed_at);
+      const stale = view.stale || !Number.isFinite(candidateAt) || view.nowMs - candidateAt > view.maxAge;
+      const state = stale ? 'unknown (stale observation)' : candidate.state || 'unknown';
+      const kind = candidate.kind === 'preparation' ? 'Candidate preparation' : 'Integration CI';
+      const members = (candidate.members || []).map(member => '#' + member.pr + '@' + String(member.head).slice(0, 8)).join(' → ');
+      const text = kind + ' ' + state + ' · ordered prefix ' + (candidate.members || []).length
+        + (state === 'passed' ? ' · live merge guards still required' : '')
+        + (view.mode === 'advisory' ? ' · advisory, no writer' : '');
+      const detail = text + ' · ' + members + ' · subject ' + candidate.subject_id
+        + ' · tested ' + (candidate.tested_commit || 'unknown') + ' · ' + (candidate.reason || '')
+        + ' · runtime ' + (view.runtime_version || 'unknown') + ' · source/image unknown';
+      return `<div class="cue-event" data-integration-subject="${esc(candidate.subject_id)}"><span class="cue-event-body" title="${esc(detail)}">${esc(text)}</span></div>`;
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -19874,6 +20027,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
         if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
         if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(null, [], nowMs, '');
+        if (typeof stageTrackerExecutionSync === 'function') stageTrackerExecutionSync(null, nowMs);
         stageTrackerSidebarCountsUnknown();
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
@@ -19902,8 +20056,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
         : stageTrackerPage(ordered, f);
       if (page.page !== f.page) f.page = page.page;
+      // The rows this render draws (this page, group headers aside), for
+      // stageTrackerPRListedOwnRow: a covered issue defers to its PR's row
+      // only when that row is actually on screen. Kept beside the payload,
+      // not on it — the payload object stays the server's.
+      _stageTrackerRows = page.rows.map(e => grouping ? e.item : e).filter(Boolean);
       if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(d, ordered, page.rows, stages, nowMs);
       if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(d, page.rows, nowMs, f.repo);
+      if (typeof stageTrackerExecutionSync === 'function') stageTrackerExecutionSync(d, nowMs);
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
@@ -20681,8 +20841,43 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // button — "Let hive decide" showed twice per item (hive#15320 →
     // #15647, hive#15338 → #15648). The ⋯ menu's "Decide PR #N…" stays on
     // the parent. subRows: the linked PRs drawn as sub-rows, or none.
+    // Pure: is the covering PR also a row of its own among rows, the rows
+    // the render draws (a top-level row, not a sub-row)? Then only that row
+    // carries the button. rows is ctx.rows at the call site — the drawn
+    // page (tracker-filter-render.js _stageTrackerRows), not the payload's
+    // items: a PR nested_under a listed issue is in items but is never its
+    // own row outside the Pull requests view (tracker-filter.js
+    // stageTrackerVisible), and a filter or the page may hide the PR while
+    // it shows the issue. With no rows given nothing is drawn, so nothing
+    // is "listed" and the chip is not shown.
+    function stageTrackerPRListedOwnRow(issue, t, rows) {
+      if (!Array.isArray(rows)) return false;
+      const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'pr', number: t.number });
+      return rows.some(it => it && stageTrackerItemKey(it) === key);
+    }
+    // Pure: the number of the other listed issue whose row draws the
+    // covering PR, or 0. The server nests a PR that closes several issues
+    // under the lowest one (stage_tracker_links.go NestedUnder → each
+    // issue's linked_prs[].drawn_under); the PR is then never a row of its
+    // own and the secondary issue draws no sub-row either (hivecommons/hive
+    // #15503 under #15502), so the decision button belongs to the row that
+    // draws the PR and this issue chips to it.
+    function stageTrackerPRDrawnUnderOther(issue, t, rows) {
+      if (!Array.isArray(rows) || !issue || !Array.isArray(issue.linked_prs)) return 0;
+      const lp = issue.linked_prs.find(x => x && Number(x.number) === Number(t.number) && (!x.repo || !t.repo || x.repo === t.repo));
+      const under = Number(lp && lp.drawn_under) || 0;
+      if (!under || under === (Number(issue.number) || 0)) return 0;
+      const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'issue', number: under });
+      return rows.some(it => it && stageTrackerItemKey(it) === key) ? under : 0;
+    }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
+      if (a && a.target && item.kind === 'issue' && a.target.kind === 'pr') {
+        const rows = ctx && ctx.rows;
+        if (stageTrackerPRListedOwnRow(item, a.target, rows)) return Object.assign({}, a, { passive: a.target.number });
+        const under = stageTrackerPRDrawnUnderOther(item, a.target, rows);
+        if (under) return Object.assign({}, a, { passive: a.target.number, passiveUnder: under });
+      }
       if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
@@ -20698,6 +20893,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
+      // The covering PR has its own row (or is drawn under another listed
+      // issue): the decision — whatever its lead (Let hive decide, Merge
+      // now, Adopt…) — is taken there, so this row shows a passive chip
+      // that names that lead rather than a second button.
+      if (a.passive) {
+        const where = a.passiveUnder ? 'the row of #' + Number(a.passiveUnder) + ', which draws the PR' : 'its row';
+        return `<span class="ham-badge" title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on ' + where)}">decision pending on #${Number(a.passive) || 0}</span>`;
+      }
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
@@ -21765,8 +21968,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // or null when cancelled or when the operator took the merge
     // alternative (which runs as its own row action with the chosen button
     // recorded on the ledger).
-    async function stageTrackerDelegatePreview(items) {
-      const plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan));
+    async function stageTrackerDelegatePreview(items, rows) {
+      // The plan gathers the PR live (seconds): the row caption and its Let
+      // hive decide button both read the preview's own caption ("Asking the
+      // hive…", one phrase from STAGE_TRACKER_ACTING_CAPTIONS, distinct from
+      // the confirmed action's "Hive deciding…") from the click until the
+      // preview can open. The pend is tagged with the button it busies: a
+      // confirmed action's pend (or any other ⋯ action on the row) leaves it alone.
+      const pend = stageTrackerSetPending([].concat(...items.map(it => stageTrackerPendingKeys(it, rows))).filter((k, i, a) => a.indexOf(k) === i), stageTrackerActingCaption('decide:delegate:preview'), undefined, 'decide:delegate');
+      let plans;
+      try { plans = await Promise.all(items.map(stageTrackerFetchDelegatePlan)); } finally { stageTrackerClearPending(pend); }
       const failed = plans.filter(pl => pl.error);
       if (failed.length) { showToast('Could not preview ' + failed.map(pl => pl.ref + ' (' + pl.error + ')').join(', '), 'error'); return null; }
       const picked = await stageTrackerDelegatePlanDialog(plans, stageTrackerSentinelPreface(items));
@@ -21777,7 +21988,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return { chosen: picked.chosen };
     }
-    async function stageTrackerActionPayload(items, id) {
+    async function stageTrackerActionPayload(items, id, rows) {
       const refs = items.map(stageTrackerRefOf).join(', ');
       const who = window._hiveUser || 'you';
       const prs = items.length > 0 && items.every(it => it.kind === 'pr');
@@ -21787,7 +21998,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'decide:delegate':
           // Preview first (hivecommons/hive#15126): nothing is written
           // until the operator picks a button.
-          return stageTrackerDelegatePreview(items);
+          return stageTrackerDelegatePreview(items, rows);
         case 'decide:delegate-all': {
           // Confirms as Let hive decide (same opt-out key), naming each PR.
           const prs = [].concat(...items.map(stageTrackerNestedOpenPRs));
@@ -21946,7 +22157,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
-      'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
+      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
@@ -22162,8 +22373,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       pend.caption = stageTrackerDecidedActing(result, item);
       stageTrackerPendingSync(document.getElementById('activity-monitor-panel'));
     }
-    function stageTrackerSetPending(keys, caption, now) {
-      const pend = { keys: keys.slice(), caption, key: '', state: null, decided: false, at: typeof now === 'number' ? now : Date.now() };
+    // busy: the data-ham-act of the row's lead button that reads busy while
+    // this entry is pending ('' — the default — busies no button).
+    function stageTrackerSetPending(keys, caption, now, busy) {
+      const pend = { keys: keys.slice(), caption, key: '', state: null, decided: false, at: typeof now === 'number' ? now : Date.now(), busy: busy || '' };
       _stageTrackerPending.push(pend);
       stageTrackerPendingSync(document.getElementById('activity-monitor-panel'));
       return pend;
@@ -22189,16 +22402,43 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
     function stageTrackerPendingExpire(d, now) { _stageTrackerPending = stageTrackerPendingLive(_stageTrackerPending, d, typeof now === 'number' ? now : Date.now()); }
+    // The row's lead button while a tagged pend (busyAct, its data-ham-act)
+    // waits: busy, spinner, the pend's own caption (the same phrase the row
+    // caption shows), not clickable again. The button's own aria-disabled /
+    // title are kept and put back when the pend clears, so a lead the row
+    // rendered disabled stays disabled.
+    function stageTrackerLeadBusySync(lead, busyAct, caption) {
+      if (!lead) return;
+      const on = !!busyAct && lead.getAttribute('data-ham-act') === busyAct;
+      const isBusy = lead.getAttribute('aria-busy') === 'true';
+      if (on && !isBusy) {
+        lead.setAttribute('data-ham-label', lead.textContent);
+        lead.setAttribute('data-ham-was-disabled', lead.getAttribute('aria-disabled') === 'true' ? 'true' : '');
+        lead.setAttribute('data-ham-title', lead.getAttribute('title') || '');
+        lead.setAttribute('aria-busy', 'true'); lead.setAttribute('aria-disabled', 'true'); lead.removeAttribute('title');
+        lead.textContent = '';
+        const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; lead.appendChild(sp);
+        lead.appendChild(document.createTextNode(' ' + String(caption || 'acting…')));
+      } else if (!on && isBusy) {
+        lead.removeAttribute('aria-busy');
+        if (lead.getAttribute('data-ham-was-disabled') === 'true') lead.setAttribute('aria-disabled', 'true'); else lead.removeAttribute('aria-disabled');
+        const title = lead.getAttribute('data-ham-title');
+        if (title) lead.setAttribute('title', title); else lead.removeAttribute('title');
+        lead.textContent = lead.getAttribute('data-ham-label') || '';
+        lead.removeAttribute('data-ham-label'); lead.removeAttribute('data-ham-was-disabled'); lead.removeAttribute('data-ham-title');
+      }
+    }
     // Mark rows / sub-rows acting; captions are real nodes so a kept row
     // keeps its caption and a re-rendered one gets it back.
     function stageTrackerPendingSync(el) {
       if (!el || typeof el.querySelectorAll !== 'function') return;
-      const want = {};
-      for (const p of _stageTrackerPending) for (const k of p.keys) want[k] = p.caption;
+      const want = {}, busy = {};
+      for (const p of _stageTrackerPending) for (const k of p.keys) { want[k] = p.caption; if (p.busy) busy[k] = p; }
       const nodes = Array.from(el.querySelectorAll('[data-ham-key], [data-ham-sub-key]'));
       for (const n of nodes) {
         const key = n.getAttribute('data-ham-sub-key') || n.getAttribute('data-ham-key');
         const cap = want[key];
+        stageTrackerLeadBusySync(n.querySelector(':scope > .ham-row-head .ham-lead-act[data-ham-act]'), busy[key] ? busy[key].busy : '', busy[key] ? busy[key].caption : '');
         const strip = n.querySelector(':scope > .ham-strip-row');
         // The caption lives inside the lit chevron (the pill), never as a
         // separate element beside the ✓ badge (#15126); a row without a
@@ -22292,7 +22532,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
-      const payload = await stageTrackerActionPayload(items, id);
+      const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
       const results = await stageTrackerRunActions(items, id, payload, rows);
       return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };
@@ -24766,12 +25006,301 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!stageTrackerDisplayHotkey(e, inTracker, typing, stageTrackerDisplayMode(), !!document.fullscreenElement)) return;
       if (stageTrackerDisplayOverlayOpen(document)) return;
       e.preventDefault();
-      toggleStageTrackerDisplay();
+      // Leaving goes through stageTrackerDisplayExit, like the overlay's
+      // Exit display control, so a held wake lock is released the same way.
+      if (stageTrackerDisplayMode()) stageTrackerDisplayExit(); else toggleStageTrackerDisplay();
     });
+
+    /* ---- Display controls (hivecommons/hive#15929) ------------------------
+       In display mode only, a small overlay (STAGE_TRACKER_DISPLAY_CONTROLS_HTML
+       in sections.js) appears on pointer movement or keyboard focus and hides
+       after 3 s idle. Each control is separate and explicit: Exit display,
+       Copy display link, Full screen (the existing
+       toggleStageTrackerFullscreen) and Keep screen awake. Full screen and
+       the wake lock are requested only from a click on their own control —
+       never on load or on entering display mode. Nothing is persisted: the
+       wake lock lives in memory and a reload is a new consent boundary. */
+    const STAGE_TRACKER_DISPLAY_IDLE_MS = 3000;
+    // Overlay titles that the header buttons also use live in the *_LABELS
+    // objects above; the rest are here so the overlay has one source of text.
+    const STAGE_TRACKER_DISPLAY_CONTROL_LABELS = {
+      fullscreenEnter: 'Fill the screen with the display (f, Esc exits)',
+      fullscreenExit: STAGE_TRACKER_FULLSCREEN_LABELS.exit.title,
+      fullscreenUnsupported: 'Full screen is not supported in this browser',
+      wakeUnsupported: { text: '☀ Keep awake', title: 'Keep screen awake is not supported in this browser' },
+      wakeOn: { text: '☀ Awake: on', title: 'The screen is kept awake — click to let it sleep' },
+      wakeDenied: { text: '☀ Awake: denied', title: 'The browser refused to keep the screen awake (%s) — click to ask again' },
+      wakeOff: { text: '☀ Keep awake', title: 'Keep the screen awake while this display is open (not remembered after a reload)' },
+    };
+    // tracker display controls helpers begin
+    // Pure: is the overlay showing, given the last pointer/focus activity?
+    function stageTrackerDisplayOverlayVisible(lastPointerMs, nowMs, idleMs) {
+      if (!(lastPointerMs > 0)) return false;
+      const d = nowMs - lastPointerMs;
+      return d >= 0 && d < idleMs;
+    }
+    // Pure: label and state of the Keep screen awake control — unsupported,
+    // denied (with the reason; never retried automatically), on or off.
+    function stageTrackerWakeLockState(supported, sentinel, lastError) {
+      const L = STAGE_TRACKER_DISPLAY_CONTROL_LABELS;
+      if (!supported) return { state: 'unsupported', text: L.wakeUnsupported.text, title: L.wakeUnsupported.title, disabled: true, pressed: false };
+      if (sentinel && !sentinel.released) return { state: 'on', text: L.wakeOn.text, title: L.wakeOn.title, disabled: false, pressed: true };
+      if (lastError) {
+        const reason = String((lastError && (lastError.message || lastError.name)) || lastError);
+        return { state: 'denied', text: L.wakeDenied.text, title: L.wakeDenied.title.replace('%s', reason), disabled: false, pressed: false };
+      }
+      return { state: 'off', text: L.wakeOff.text, title: L.wakeOff.title, disabled: false, pressed: false };
+    }
+    // Pure: can this document go full screen?
+    function stageTrackerFullscreenSupported(doc) {
+      return !!(doc && doc.fullscreenEnabled !== false && doc.documentElement && typeof doc.documentElement.requestFullscreen === 'function');
+    }
+    // Pure: the `am.*` query (no leading `?`) describing one view. A view
+    // that is all defaults still names `am.group`, so it stays a valid
+    // playlist entry on reload.
+    function stageTrackerViewQuery(filter, group) {
+      const view = stageTrackerViewUrl('https://hive.invalid/', filter, group);
+      const out = new URLSearchParams();
+      if (view) for (const [k, v] of new URL(view).searchParams) if (k.indexOf(STAGE_TRACKER_URL_PREFIX) === 0) out.append(k, v);
+      if (!Array.from(out.keys()).length) out.set(STAGE_TRACKER_URL_PREFIX + 'group', STAGE_TRACKER_GROUPS.indexOf(group) >= 0 ? group : STAGE_TRACKER_GROUP_DEFAULT);
+      return out.toString();
+    }
+    // Pure: a playlist interval in ms as the `interval` value (`45s`, `5m`).
+    function stageTrackerPlaylistIntervalValue(ms) {
+      const n = Number(ms) || STAGE_TRACKER_PLAYLIST_INTERVAL_DEFAULT_MS;
+      return n % 60000 === 0 ? (n / 60000) + 'm' : Math.round(n / 1000) + 's';
+    }
+    // Pure: the link Copy display link puts on the clipboard. Only view
+    // parameters ride along — display=1, am.* (or, given a parsed playlist,
+    // one am.view per accepted view plus interval) and theme — so no token,
+    // cookie or other query param can leak. Playlist views are re-serialised
+    // from the parsed { filter, group }, never echoed from the current URL.
+    function stageTrackerDisplayLinkUrl(href, filter, group, playlist) {
+      let src;
+      try { src = new URL(href); } catch { return ''; }
+      const out = new URL(src.origin + src.pathname);
+      out.searchParams.set(STAGE_TRACKER_DISPLAY_PARAM, '1');
+      if (playlist && Array.isArray(playlist.views) && playlist.views.length) {
+        for (const v of playlist.views) out.searchParams.append(STAGE_TRACKER_PLAYLIST_PARAM, stageTrackerViewQuery(v.filter, v.group));
+        out.searchParams.set(STAGE_TRACKER_PLAYLIST_INTERVAL_PARAM, stageTrackerPlaylistIntervalValue(playlist.intervalMs));
+      } else {
+        const view = stageTrackerViewUrl(href, filter, group);
+        if (!view) return '';
+        for (const [k, v] of new URL(view).searchParams) if (k.indexOf(STAGE_TRACKER_URL_PREFIX) === 0) out.searchParams.append(k, v);
+      }
+      const theme = src.searchParams.get('theme');
+      if (theme !== null) out.searchParams.set('theme', theme);
+      out.hash = STAGE_TRACKER_POPOUT_HASH;
+      return out.toString();
+    }
+    // tracker display controls helpers end
+    var _stageTrackerDisplayLastPointer = 0;
+    var _stageTrackerDisplayHideTimer = null;
+    var _stageTrackerWakeLock = null;
+    var _stageTrackerWakeLockError = null;
+    var _stageTrackerWakeLockWanted = false;
+    function stageTrackerDisplayControlsEl() {
+      return document.getElementById('activity-monitor-display-controls');
+    }
+    function stageTrackerDisplayControlsSync(nowMs) {
+      const root = stageTrackerDisplayControlsEl();
+      if (!root) return false;
+      const link = document.getElementById('activity-monitor-display-link');
+      const on = stageTrackerDisplayOverlayVisible(_stageTrackerDisplayLastPointer, nowMs === undefined ? Date.now() : nowMs, STAGE_TRACKER_DISPLAY_IDLE_MS) || !!(link && !link.hidden);
+      root.classList.toggle('is-visible', on);
+      return on;
+    }
+    function stageTrackerDisplayControlsPing() {
+      _stageTrackerDisplayLastPointer = Date.now();
+      stageTrackerDisplayControlsSync();
+      clearTimeout(_stageTrackerDisplayHideTimer);
+      _stageTrackerDisplayHideTimer = setTimeout(function() { stageTrackerDisplayControlsSync(); }, STAGE_TRACKER_DISPLAY_IDLE_MS + 50);
+    }
+    function stageTrackerWakeLockSupported() {
+      return typeof navigator !== 'undefined' && !!navigator.wakeLock && typeof navigator.wakeLock.request === 'function';
+    }
+    function stageTrackerRenderDisplayControls() {
+      const root = stageTrackerDisplayControlsEl();
+      if (!root) return;
+      const fs = root.querySelector('[data-display-control="fullscreen"]');
+      if (fs) {
+        const ok = stageTrackerFullscreenSupported(document);
+        const full = !!document.fullscreenElement;
+        fs.disabled = !ok;
+        const L = STAGE_TRACKER_DISPLAY_CONTROL_LABELS;
+        fs.title = ok ? (full ? L.fullscreenExit : L.fullscreenEnter) : L.fullscreenUnsupported;
+        fs.setAttribute('aria-pressed', full ? 'true' : 'false');
+      }
+      const wl = root.querySelector('[data-display-control="wakelock"]');
+      if (wl) {
+        const s = stageTrackerWakeLockState(stageTrackerWakeLockSupported(), _stageTrackerWakeLock, _stageTrackerWakeLockError);
+        wl.textContent = s.text;
+        wl.title = s.title;
+        wl.disabled = s.disabled;
+        wl.setAttribute('aria-pressed', s.pressed ? 'true' : 'false');
+        wl.setAttribute('data-state', s.state);
+      }
+    }
+    function stageTrackerWakeLockAcquire() {
+      let p;
+      try { p = navigator.wakeLock.request('screen'); } catch (e) { p = Promise.reject(e); }
+      return Promise.resolve(p).then(function(s) {
+        _stageTrackerWakeLock = s || null;
+        _stageTrackerWakeLockError = null;
+        if (s && typeof s.addEventListener === 'function') s.addEventListener('release', stageTrackerRenderDisplayControls);
+        stageTrackerRenderDisplayControls();
+        return true;
+      }, function(err) {
+        _stageTrackerWakeLock = null;
+        _stageTrackerWakeLockError = err || new Error('refused');
+        _stageTrackerWakeLockWanted = false;
+        stageTrackerRenderDisplayControls();
+        if (typeof showToast === 'function') showToast('Keep screen awake was refused: ' + ((err && (err.message || err.name)) || err || 'refused'), 'error');
+        return false;
+      });
+    }
+    function stageTrackerWakeLockRelease() {
+      _stageTrackerWakeLockWanted = false;
+      const s = _stageTrackerWakeLock;
+      _stageTrackerWakeLock = null;
+      let p;
+      try { p = s && typeof s.release === 'function' ? s.release() : undefined; } catch {}
+      return Promise.resolve(p).catch(function() {}).then(function() { stageTrackerRenderDisplayControls(); return false; });
+    }
+    // ☀ Keep screen awake: a click toggles the sentinel; nothing else
+    // requests one except re-acquiring after the tab was hidden, and only
+    // while the user still wants it on.
+    function stageTrackerToggleWakeLock() {
+      if (!stageTrackerWakeLockSupported()) { stageTrackerRenderDisplayControls(); return Promise.resolve(false); }
+      if (_stageTrackerWakeLock && !_stageTrackerWakeLock.released) return stageTrackerWakeLockRelease();
+      _stageTrackerWakeLockWanted = true;
+      return stageTrackerWakeLockAcquire();
+    }
+    function stageTrackerWakeLockOnVisible() {
+      stageTrackerRenderDisplayControls();
+      if (document.visibilityState !== 'visible' || !_stageTrackerWakeLockWanted || !stageTrackerWakeLockSupported()) return Promise.resolve(false);
+      if (_stageTrackerWakeLock && !_stageTrackerWakeLock.released) return Promise.resolve(true);
+      return stageTrackerWakeLockAcquire();
+    }
+    function stageTrackerDisplayExit() {
+      if (_stageTrackerWakeLock || _stageTrackerWakeLockWanted) stageTrackerWakeLockRelease();
+      return toggleStageTrackerDisplay();
+    }
+    function stageTrackerDisplayShowLink(url) {
+      const field = document.getElementById('activity-monitor-display-link');
+      if (!field) return;
+      field.value = url;
+      field.hidden = false;
+      stageTrackerDisplayControlsPing();
+      try { field.focus(); field.select(); } catch {}
+    }
+    // 🔗 Copy display link: the clipboard when it works, otherwise the link
+    // in a selectable field with a toast.
+    function stageTrackerCopyDisplayLink() {
+      const url = stageTrackerDisplayLinkUrl(window.location.href, _stageTrackerFilter, _stageTrackerGroup, _stageTrackerPlaylist);
+      if (!url) return Promise.resolve(false);
+      const fallback = function() {
+        stageTrackerDisplayShowLink(url);
+        if (typeof showToast === 'function') showToast('Could not copy to the clipboard — the display link is selected in the controls; copy it from there.', 'error');
+        return false;
+      };
+      const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+      if (!clip || typeof clip.writeText !== 'function') return Promise.resolve(fallback());
+      let p;
+      try { p = clip.writeText(url); } catch { return Promise.resolve(fallback()); }
+      return Promise.resolve(p).then(function() {
+        if (typeof showToast === 'function') showToast('Display link copied.', 'success');
+        return true;
+      }, fallback);
+    }
+    function stageTrackerDisplayControlsInit() {
+      if (!stageTrackerDisplayMode()) return null;
+      let root = stageTrackerDisplayControlsEl();
+      if (root) return root;
+      root = document.createElement('div');
+      root.id = 'activity-monitor-display-controls';
+      root.className = 'ham-display-controls';
+      root.setAttribute('role', 'toolbar');
+      root.setAttribute('aria-label', 'Display controls');
+      root.innerHTML = STAGE_TRACKER_DISPLAY_CONTROLS_HTML;
+      document.body.appendChild(root);
+      ['mousemove', 'pointerdown', 'focusin'].forEach(function(type) { document.addEventListener(type, stageTrackerDisplayControlsPing, true); });
+      const link = document.getElementById('activity-monitor-display-link');
+      if (link) link.addEventListener('blur', function() { link.hidden = true; stageTrackerDisplayControlsSync(); });
+      document.addEventListener('visibilitychange', stageTrackerWakeLockOnVisible);
+      document.addEventListener('fullscreenchange', stageTrackerRenderDisplayControls);
+      stageTrackerRenderDisplayControls();
+      return root;
+    }
+
+    /* ---- Display playlists (hivecommons/hive#15932) -----------------------
+       With two or more valid `am.view` params, display mode rotates the
+       in-memory tracker view (see the playlist helpers in
+       tracker-filter-state.js). The view index comes from wall-clock time,
+       so a reload or SSE reconnect resumes the right one; rotation never
+       navigates, never refetches and never writes localStorage. A thin bar
+       shows the time left — a static "next in Ns" label under
+       prefers-reduced-motion. Kiosk is untouched: display mode is off there. */
+    const STAGE_TRACKER_PLAYLIST_TICK_MS = 1000;
+    var _stageTrackerPlaylist = null;
+    var _stageTrackerPlaylistIndex = -1;
+    function stageTrackerPlaylistApply(i) {
+      const v = _stageTrackerPlaylist && _stageTrackerPlaylist.views[i];
+      if (!v) return;
+      _stageTrackerPlaylistIndex = i;
+      // The URL view is what a first fetch (or a refetch after a reconnect)
+      // reloads the filter from, so it follows the rotation too.
+      const view = stageTrackerUrlView();
+      if (view) { view.filter = Object.assign({}, v.filter); view.group = v.group; }
+      _stageTrackerFilter = stageTrackerNormalizeFilter(v.filter);
+      _stageTrackerFilter.page = 1;
+      _stageTrackerGroup = v.group;
+      if (_stageTracker) renderStageTracker();
+    }
+    function stageTrackerPlaylistRenderProgress(nowMs) {
+      const el = document.getElementById('activity-monitor-playlist');
+      const pl = _stageTrackerPlaylist;
+      if (!el || !pl) return;
+      const rem = stageTrackerPlaylistRemainingMs(0, nowMs, pl.intervalMs);
+      const bar = el.querySelector('.ham-playlist-bar');
+      if (bar) bar.style.setProperty('--ham-playlist-left', (rem / pl.intervalMs).toFixed(4));
+      const next = el.querySelector('.ham-playlist-next');
+      if (next) next.textContent = (_stageTrackerPlaylistIndex + 1) + '/' + pl.views.length + ' · ' + stageTrackerPlaylistNextLabel(rem);
+    }
+    function stageTrackerPlaylistTick(nowMs) {
+      const pl = _stageTrackerPlaylist;
+      if (!pl) return -1;
+      const now = nowMs === undefined ? Date.now() : nowMs;
+      const i = stageTrackerPlaylistIndex(0, now, pl.intervalMs, pl.views.length);
+      if (i !== _stageTrackerPlaylistIndex) stageTrackerPlaylistApply(i);
+      stageTrackerPlaylistRenderProgress(now);
+      return i;
+    }
+    function stageTrackerPlaylistInit() {
+      if (!stageTrackerDisplayMode()) return null;
+      const pl = stageTrackerParsePlaylist(window.location.href);
+      if (pl.views.length < 2) return null;
+      _stageTrackerPlaylist = pl;
+      _stageTrackerPlaylistIndex = -1;
+      const el = document.createElement('div');
+      el.id = 'activity-monitor-playlist';
+      el.className = 'ham-playlist';
+      el.setAttribute('aria-hidden', 'true');
+      el.innerHTML = '<div class="ham-playlist-track"><span class="ham-playlist-bar"></span></div><span class="ham-playlist-next"></span>';
+      document.body.appendChild(el);
+      stageTrackerPlaylistTick();
+      // The shared registry pauses the tick while the tab is hidden; the
+      // index is wall-clock maths, so resuming lands on the right view.
+      dashboardSetInterval('stage-tracker-playlist', stageTrackerPlaylistTick, STAGE_TRACKER_PLAYLIST_TICK_MS);
+      return pl;
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
       stageTrackerRenderFullscreenButton();
       stageTrackerRenderDisplayButton();
       stageTrackerPopoutSyncTitle();
+      stageTrackerDisplayControlsInit();
+      stageTrackerPlaylistInit();
     });
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
@@ -58436,6 +58965,9 @@ function burnAreaChart() {
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
       const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
+      const integrationExecution = io.execution || { mode: 'off' };
+      const integrationExecutionProfile = Object.assign({}, integrationExecution);
+      delete integrationExecutionProfile.mode;
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -59505,6 +60037,35 @@ function burnAreaChart() {
           ].map(path => yamlHint(path)).join(' ')} Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
           <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
           <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+          <div class="config-field"><label>Candidate execution (independent opt-in) ${yamlHint('integration_orchestration.execution.mode')} ${settingHelpMark('settings', 'features', 'Candidate execution', `Off does not enable a writer. Advisory cannot block or dispatch. Enforce requires exact enrolled repository/base profiles, complete real CI accounting, a designated executor and actual protected qualification. Revoke the old forge epoch before returning Hive authority to legacy flow. This is separate from authoring admission and native queue settings.`)}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="execution_mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(mode => `<option value="${esc(mode)}" ${(integrationExecution.mode || 'off') === mode ? 'selected' : ''}>${esc(mode)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Execution profile and bounded enrollment (JSON object) ${settingHelpMark('settings', 'features', 'Execution enrollment', `Explicit scopes, actual repository/actor/App installation/workflow IDs, policy and workflow-tree hashes, immutable authority epoch, isolated qualification ID, job/minute/member/attempt bounds and duration nanoseconds. No inferred actors, spare capacity, wildcard enrollment, automatic growth or failover. The mode selector, not this profile JSON, chooses execution mode.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="execution_json" data-arg-types="s,s,v">${esc(JSON.stringify(integrationExecutionProfile, null, 2))}</textarea>
+          </div>
+          <div class="config-help">Source, published image, running version, desired mode and effective writer are separate receipts. Unknown telemetry is not green or zero. Production requires a real one-member protected qualification and the same complete producer/actor profile. Native authority permits only ordinary Hive enqueue admission, never queue jumping or GitHub build-window control. All participating hives must be upgraded/enrolled or stopped; copied identity and automatic takeover are unsupported.</div>
+          <div class="config-help">${[
+            'integration_orchestration.execution.scopes[].repo', 'integration_orchestration.execution.scopes[].base',
+            'integration_orchestration.execution.scopes[].authority', 'integration_orchestration.execution.scopes[].repository_id',
+            'integration_orchestration.execution.scopes[].request_actor_id', 'integration_orchestration.execution.scopes[].candidate_actor_id',
+            'integration_orchestration.execution.scopes[].producer_app_id', 'integration_orchestration.execution.scopes[].promotion_app_id',
+            'integration_orchestration.execution.scopes[].promotion_installation_id', 'integration_orchestration.execution.scopes[].materializer_id',
+            'integration_orchestration.execution.scopes[].candidate_workflow_id', 'integration_orchestration.execution.scopes[].default_branch',
+            'integration_orchestration.execution.scopes[].policy', 'integration_orchestration.execution.scopes[].workflow_tree',
+            'integration_orchestration.execution.scopes[].required_jobs[]', 'integration_orchestration.execution.scopes[].executor_id',
+            'integration_orchestration.execution.scopes[].authority_ref', 'integration_orchestration.execution.scopes[].authority_commit',
+            'integration_orchestration.execution.scopes[].qualification_id', 'integration_orchestration.execution.scopes[].max_members',
+            'integration_orchestration.execution.scopes[].expected_jobs', 'integration_orchestration.execution.scopes[].expected_minutes',
+            'integration_orchestration.execution.scopes[].purpose', 'integration_orchestration.execution.scopes[].qualified_base',
+            'integration_orchestration.execution.max_active', 'integration_orchestration.execution.max_runner_minutes',
+            'integration_orchestration.execution.max_jobs', 'integration_orchestration.execution.max_attempts',
+            'integration_orchestration.execution.observation_age', 'integration_orchestration.execution.window',
+            'integration_orchestration.execution.cooldown'
+          ].map(path => yamlHint(path)).join(' ')}</div>
+          <button class="hv-btn btn-secondary btn" data-action="prepareIntegrationExecutionIdentity">Prepare local execution identity only</button>
+          <pre id="integration-execution-identity" class="config-help" aria-live="polite"></pre>
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
@@ -59521,6 +60082,20 @@ function burnAreaChart() {
           </div>
         </div>
         `)}`;
+    }
+    async function prepareIntegrationExecutionIdentity() {
+      const target = document.getElementById('integration-execution-identity');
+      if (!target) return;
+      target.textContent = 'Preparing create-only local identity; no runtime configuration or forge mutation…';
+      try {
+        const response = await fetch('/api/integration-orchestration/execution-identity', {
+          method: 'POST', headers: _inceptionAuthHeaders()
+        });
+        if (!response.ok) throw new Error(await saveErrorMessage(response));
+        target.textContent = JSON.stringify(await response.json(), null, 2);
+      } catch (error) {
+        target.textContent = 'Identity unavailable: ' + String(error.message || error);
+      }
     }
     function renderEventTriggersSection() {
       return `<div class="settings-subsection config-field" id="event-triggers-section" data-setting-key="triggers">
@@ -62627,6 +63202,18 @@ function burnAreaChart() {
             _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
           } else if (_configState.type === 'governor' && section === 'integration_orchestration') {
             const body = Object.assign({}, (_configState.data || {}).integration_orchestration || {}, values);
+            const previousExecution = ((_configState.data || {}).integration_orchestration || {}).execution || {mode: 'off'};
+            if (Object.prototype.hasOwnProperty.call(body, 'execution_json')) {
+              const profile = JSON.parse(body.execution_json);
+              if (!profile || Array.isArray(profile) || typeof profile !== 'object') throw new Error('Execution enrollment must be a JSON object');
+              body.execution = Object.assign({}, profile, {mode: previousExecution.mode || 'off'});
+              delete body.execution_json;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'execution_mode')) {
+              body.execution = Object.assign({}, body.execution || previousExecution, {mode: body.execution_mode});
+              delete body.execution_mode;
+            }
+            body.expected_execution = previousExecution;
             const integrationMinuteNanoseconds = 60 * 1e9;
             for (const key of ['lease_ttl', 'window', 'max_observation_age']) {
               if (Object.prototype.hasOwnProperty.call(body, key + '_minutes')) {

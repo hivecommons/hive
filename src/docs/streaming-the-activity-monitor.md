@@ -190,8 +190,44 @@ For an attended screen (a wall monitor or TV someone can walk up to), use
 **display mode** instead of kiosk: press **📺** on the Activity Monitor header,
 or open `/?display=1`. It uses the same tracker-only layout but keeps the
 cursor and your sound setting, hides every row action, and is left with
-**Esc** or **d**. It never requests full screen or a wake lock. `?kiosk=1`
-is unchanged and wins when both flags are present.
+**Esc** or **d**. Entering it never requests full screen or a wake lock.
+`?kiosk=1` is unchanged and wins when both flags are present.
+
+Moving the pointer, tapping, or tabbing to it reveals a small control overlay
+(top right) that hides again after 3 seconds idle. Each control is separate
+and acts only when clicked:
+
+| Control | What it does |
+|---|---|
+| **✕ Exit display** | Leaves display mode, the same as **Esc**. |
+| **🔗 Copy link** | Copies a link to this display: `display=1`, the current `am.*` view (or the playlist's `am.view` + `interval`) and `theme`, and nothing else — never a token or cookie. If the clipboard is unavailable or refused, the link is shown in a selectable field instead. |
+| **⛶ Full screen** | The same full screen as the header's ⛶ button. Disabled with a "not supported" tooltip where the browser has no Fullscreen API. |
+| **☀ Keep awake** | Asks the browser to keep the screen awake (Screen Wake Lock). Shows *on*, *off*, *denied* (with the browser's reason; it is not retried automatically) or is disabled where unsupported. While on, it is re-requested when the tab becomes visible again; it is released on exit and is not remembered after a reload. |
+
+None of these controls writes anything to local storage. Kiosk mode never
+shows the overlay.
+
+### Playlists
+
+A display can rotate between several views. Spell each view out as a
+URL-encoded `am.*` query string in a repeated `am.view` parameter, and set the
+time per view with `interval`:
+
+```text
+/?display=1&am.view=am.needsHuman%3D1&am.view=am.kind%3Dpr%26am.repo%3Dhivecommons%2Fhive&am.view=am.kind%3Dissue%26am.group%3Drepo&interval=2m
+```
+
+- `interval` is `Ns` or `Nm`, clamped to 10 seconds – 1 hour; the default is
+  60 seconds.
+- A view with no recognised `am.*` key is skipped. With fewer than two valid
+  views the display does not rotate.
+- The current view follows the wall clock, so a reload or a dropped
+  connection resumes on the same view. Rotation happens in memory only: it
+  does not navigate, refetch or write to local storage.
+- A thin bar at the top shows the time until the next view; with reduced
+  motion it is a static *next in Ns* label instead.
+- Playlists exist only in the URL. There are no named presets in `hive.yaml`,
+  and playlists apply only in display mode, never to `?kiosk=1`.
 
 Any Activity Monitor filter can be described in the URL with `am.*`
 parameters, so a display link reproduces the view in a fresh browser profile:

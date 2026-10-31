@@ -228,13 +228,46 @@ func (c *Engine) nativeQueue(repo string) nativeQueueTransport {
 // tryNativeQueue runs only after the lane's existing merge gates passed. A
 // queued PR is not a merged PR: no merged audit, issue closure or merge event.
 func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (string, error) {
+	if capture, ok := ctx.Value(integrationEligibilityContextKey{}).(*integrationEligibilityCapture); ok {
+		if pr.GetHead().GetSHA() != capture.head || pr.GetBase().GetRef() != capture.base ||
+			pr.GetBase().GetRepo().GetFullName() != capture.repo {
+			return "integration exact member identity changed", nil
+		}
+		capture.pr = pr
+		return integrationEligibilityCaptured, nil
+	}
+	requiredNative := false
+	if c.integrationExecution != nil {
+		decision, err := c.integrationExecution(ctx, claim.Repo, pr, c.IntegrationEligibility)
+		if err != nil {
+			return decision.Reason, err
+		}
+		switch decision.Authority {
+		case "hive", "hold":
+			if decision.Reason == "" {
+				decision.Reason = "integration execution owns destination; no direct fallback"
+			}
+			return decision.Reason, nil
+		case "native":
+			requiredNative = true
+		case "":
+		default:
+			return "integration execution authority unknown; no fallback", nil
+		}
+	}
+	direct := func() (string, error) {
+		if requiredNative {
+			return "integration native authority unavailable; no direct fallback", nil
+		}
+		return "", nil
+	}
 	t := c.nativeQueue(claim.Repo)
 	if t == nil || pr.GetNodeID() == "" || !c.nativeQueuePolicy().baseAllowed(claim.Repo, pr.GetBase().GetRef()) {
-		return "", nil
+		return direct()
 	}
 	key := nativeQueueProbeKey(claim.Repo, pr)
 	if enabled, ok := c.cachedNativeQueueProbe(key); ok && !enabled {
-		return "", nil
+		return direct()
 	}
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
 	if err != nil {
@@ -242,7 +275,7 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 	}
 	c.recordNativeQueueProbe(key, state.IsMergeQueueEnabled)
 	if !state.IsMergeQueueEnabled && !state.IsInMergeQueue {
-		return "", nil
+		return direct()
 	}
 	if state.HeadRefOid != claim.Inputs["expect_sha"] {
 		return "head-changed-since-eval", nil

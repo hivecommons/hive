@@ -1,0 +1,1 @@
+- Stage tracker: Let hive decide now shows the hive is working at once, covered issues no longer repeat their PR's button, and a person's move says why (#15773)

@@ -1,0 +1,1 @@
+- The RFC notice poll now remembers pull requests found not to be RFCs by head SHA, so unrelated busy PRs no longer have their files listed on every poll ([#15960](https://github.com/hivecommons/hive/issues/15960)).

@@ -1,4 +1,5 @@
 name: Prepare integration candidates
+run-name: Prepare integration ${{ inputs.request_key || github.event.client_payload.request_key || 'manual' }}
 
 on:
   repository_dispatch:
@@ -8,6 +9,10 @@ on:
       request:
         description: Bounded versioned request from an explicitly enrolled integration controller.
         required: true
+        type: string
+      request_key:
+        description: Optional canonical request digest for explicit controller reconciliation.
+        required: false
         type: string
 
 permissions:
@@ -39,12 +44,17 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           INTEGRATION_REQUEST: ${{ inputs.request || github.event.client_payload.request }}
+          INTEGRATION_REQUEST_KEY: ${{ inputs.request_key || github.event.client_payload.request_key }}
           GH_TOKEN: ${{ github.token }}
         with:
           retries: 0
           script: |
             const fs = require('node:fs');
-            const {canonical, gitRunner, prepare} = require('./.github/scripts/integration-materialize.cjs');
+            const {canonical, digest, gitRunner, prepare} = require('./.github/scripts/integration-materialize.cjs');
+            if (process.env.INTEGRATION_REQUEST_KEY &&
+                digest(canonical(JSON.parse(process.env.INTEGRATION_REQUEST))) !== process.env.INTEGRATION_REQUEST_KEY) {
+              throw new Error('Controller request key differs from the exact bounded request');
+            }
             const receipt = await prepare({
               github, context,
               requestText: process.env.INTEGRATION_REQUEST,
