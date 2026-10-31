@@ -1,0 +1,1 @@
+- Label mutations left `Unknown` or `Planned` in the effect ledger no longer fence retries forever when the reconciling label read keeps failing; after an hour the operation expires and the idempotent label write replays.

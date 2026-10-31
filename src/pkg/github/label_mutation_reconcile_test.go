@@ -18,7 +18,7 @@ import (
 // attempt begun and never acknowledged (a process that died between intent
 // and result, or a concurrent writer still mid-call — the "op:… is Planned"
 // behind hivecommons/hive#13579's failed claimed-by label).
-func plannedLabelOp(t *testing.T, b *mutation.Boundary, repo string, number string, inputs map[string]string) {
+func plannedLabelOp(t *testing.T, b *mutation.Boundary, repo string, number string, inputs map[string]string) string {
 	t.Helper()
 	subject := repo + "#label_mutation/" + number
 	mclaim := mutation.TaskClaim(repo, subject)
@@ -35,9 +35,11 @@ func plannedLabelOp(t *testing.T, b *mutation.Boundary, repo string, number stri
 		Kind:              "label_mutation",
 		Inputs:            all,
 	}
-	if _, err := b.Executor.Journal.Begin(e, 1, "crashed", time.Date(2026, 10, 23, 6, 0, 0, 0, time.UTC)); err != nil {
+	op, err := b.Executor.Journal.Begin(e, 1, "crashed", labelOpSeededAt)
+	if err != nil {
 		t.Fatalf("seed Planned op: %v", err)
 	}
+	return op.LogicalID
 }
 
 type labelMutationServer struct {
@@ -162,8 +164,11 @@ func TestRemoveLabel_PlannedOpReconcilesFromLabels(t *testing.T) {
 	}
 }
 
-// When the reconciling read itself fails nothing is expired blind: the
-// needs-reconciliation refusal stands.
+// labelOpSeededAt is when plannedLabelOp journals its attempt.
+var labelOpSeededAt = time.Date(2026, 10, 23, 6, 0, 0, 0, time.UTC)
+
+// When the reconciling read itself fails a young operation is not expired
+// blind: the needs-reconciliation refusal stands.
 func TestAddLabels_PlannedOpReadFailureKeepsRefusal(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/widgets/issues/7", func(w http.ResponseWriter, r *http.Request) {
@@ -173,10 +178,98 @@ func TestAddLabels_PlannedOpReadFailureKeepsRefusal(t *testing.T) {
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
 	b := replayTestBoundary(t)
+	b.Executor.Now = func() time.Time { return labelOpSeededAt.Add(time.Minute) }
 	c.SetMutationBoundary(b)
 	plannedLabelOp(t, b, "acme/widgets", "7", map[string]string{"labels": "hive/claimed-by-human"})
 	err := c.AddLabels(context.Background(), "acme/widgets", 7, []string{"hive/claimed-by-human"})
 	if err == nil || !strings.Contains(err.Error(), "reconcil") {
 		t.Fatalf("err = %v, want the reconciliation refusal to stand", err)
+	}
+}
+
+// An operation left Planned/Unknown whose reconciling read keeps failing must
+// not fence the label forever (hivecommons/hive#15944): once it has been
+// unresolved past effects.DefaultUnresolvedTTL it is expired to not-applied
+// and the idempotent label write replays; a younger one keeps the refusal.
+func TestLabelMutation_UnresolvedOpReadFailureExpiresPastTTL(t *testing.T) {
+	cases := []struct {
+		name      string
+		status    string
+		age       time.Duration
+		remove    bool
+		wantWrite bool
+	}{
+		{name: "unknown add past ttl replays", status: mutation.StatusUnknown, age: 83 * time.Minute, wantWrite: true},
+		{name: "planned add past ttl replays", status: mutation.StatusPlanned, age: 2 * time.Hour, wantWrite: true},
+		{name: "unknown remove past ttl replays", status: mutation.StatusUnknown, age: 83 * time.Minute, remove: true, wantWrite: true},
+		{name: "unknown add within ttl keeps refusal", status: mutation.StatusUnknown, age: 30 * time.Minute},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			gets, writes := 0, 0
+			mux := http.NewServeMux()
+			mux.HandleFunc("/repos/acme/widgets/issues/7", func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				gets++
+				mu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+			})
+			write := func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				writes++
+				mu.Unlock()
+				_ = json.NewEncoder(w).Encode([]map[string]string{})
+			}
+			mux.HandleFunc("/repos/acme/widgets/issues/7/labels", write)
+			mux.HandleFunc("/repos/acme/widgets/issues/7/labels/", write)
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
+			b := replayTestBoundary(t)
+			b.Executor.Now = func() time.Time { return labelOpSeededAt.Add(tc.age) }
+			c.SetMutationBoundary(b)
+
+			inputs := map[string]string{"labels": "hive/claimed-by-human"}
+			if tc.remove {
+				inputs = map[string]string{"remove_label": "stage/010-actionable"}
+			}
+			id := plannedLabelOp(t, b, "acme/widgets", "7", inputs)
+			if tc.status == mutation.StatusUnknown {
+				if _, err := b.Executor.Journal.RecordResult(id, 1, mutation.StatusUnknown, "", labelOpSeededAt); err != nil {
+					t.Fatalf("record Unknown: %v", err)
+				}
+			}
+
+			var err error
+			if tc.remove {
+				err = c.RemoveLabel(context.Background(), "acme/widgets", 7, "stage/010-actionable")
+			} else {
+				err = c.AddLabels(context.Background(), "acme/widgets", 7, []string{"hive/claimed-by-human"})
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if gets == 0 {
+				t.Fatalf("no reconciling read was attempted")
+			}
+			if tc.wantWrite {
+				if err != nil {
+					t.Fatalf("err = %v, want the expired operation to replay", err)
+				}
+				if writes != 1 {
+					t.Fatalf("writes = %d, want the label write to replay once", writes)
+				}
+				if op, ok := b.Executor.Journal.Get(id); !ok || op.Status != mutation.StatusApplied {
+					t.Fatalf("operation = %+v (found %v), want Applied after replay", op, ok)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "reconcil") {
+				t.Fatalf("err = %v, want the reconciliation refusal to stand", err)
+			}
+			if writes != 0 {
+				t.Fatalf("writes = %d, want no write while the refusal stands", writes)
+			}
+		})
 	}
 }

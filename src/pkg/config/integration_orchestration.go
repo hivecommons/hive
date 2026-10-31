@@ -29,18 +29,19 @@ const (
 // IntegrationOrchestrationConfig controls admission, never merge authority.
 // Scopes must name exact repository/base pairs; an empty list enrolls nothing.
 type IntegrationOrchestrationConfig struct {
-	Mode                   string              `yaml:"mode,omitempty" json:"mode"`
-	Scopes                 []IntegrationScope  `yaml:"scopes,omitempty" json:"scopes"`
-	LeaseTTL               time.Duration       `yaml:"lease_ttl,omitempty" json:"lease_ttl"`
-	Window                 time.Duration       `yaml:"window,omitempty" json:"window"`
-	MaxActive              int                 `yaml:"max_active,omitempty" json:"max_active"`
-	MaxRunnerMinutes       float64             `yaml:"max_runner_minutes,omitempty" json:"max_runner_minutes"`
-	MaxJobs                int                 `yaml:"max_jobs,omitempty" json:"max_jobs"`
-	MaxAttempts            int                 `yaml:"max_attempts,omitempty" json:"max_attempts"`
-	MaxObservationAge      time.Duration       `yaml:"max_observation_age,omitempty" json:"max_observation_age"`
-	AdmissionRunnerMinutes float64             `yaml:"admission_runner_minutes,omitempty" json:"admission_runner_minutes"`
-	AdmissionJobs          int                 `yaml:"admission_jobs,omitempty" json:"admission_jobs"`
-	Policies               []IntegrationPolicy `yaml:"policies,omitempty" json:"policies"`
+	Mode                   string                     `yaml:"mode,omitempty" json:"mode"`
+	Scopes                 []IntegrationScope         `yaml:"scopes,omitempty" json:"scopes"`
+	LeaseTTL               time.Duration              `yaml:"lease_ttl,omitempty" json:"lease_ttl"`
+	Window                 time.Duration              `yaml:"window,omitempty" json:"window"`
+	MaxActive              int                        `yaml:"max_active,omitempty" json:"max_active"`
+	MaxRunnerMinutes       float64                    `yaml:"max_runner_minutes,omitempty" json:"max_runner_minutes"`
+	MaxJobs                int                        `yaml:"max_jobs,omitempty" json:"max_jobs"`
+	MaxAttempts            int                        `yaml:"max_attempts,omitempty" json:"max_attempts"`
+	MaxObservationAge      time.Duration              `yaml:"max_observation_age,omitempty" json:"max_observation_age"`
+	AdmissionRunnerMinutes float64                    `yaml:"admission_runner_minutes,omitempty" json:"admission_runner_minutes"`
+	AdmissionJobs          int                        `yaml:"admission_jobs,omitempty" json:"admission_jobs"`
+	Policies               []IntegrationPolicy        `yaml:"policies,omitempty" json:"policies"`
+	Execution              IntegrationExecutionConfig `yaml:"execution,omitempty" json:"execution"`
 }
 
 // IntegrationPolicy pins an already-reviewed workflow blob and its exact jobs.
@@ -103,6 +104,23 @@ func (c IntegrationOrchestrationConfig) Effective() IntegrationOrchestrationConf
 
 func (c IntegrationOrchestrationConfig) Validate() error {
 	c = c.Effective()
+	if err := c.Execution.Validate(); err != nil {
+		return err
+	}
+	if c.Execution.Effective().Mode == IntegrationEnforce {
+		for _, execution := range c.Execution.Scopes {
+			observed := false
+			for _, authoring := range c.Scopes {
+				if strings.EqualFold(authoring.Repo, execution.Repo) && authoring.Base == execution.Base {
+					observed = true
+					break
+				}
+			}
+			if c.Mode == IntegrationOff || !observed {
+				return fmt.Errorf("enforced execution requires its exact destination's existing authoring/CI observer in advisory or enforce mode")
+			}
+		}
+	}
 	if len(c.Scopes) > MaxIntegrationScopes || len(c.Policies) > MaxIntegrationScopes || c.AdmissionJobs < 1 || c.AdmissionJobs > c.MaxJobs ||
 		math.IsNaN(c.AdmissionRunnerMinutes) || math.IsInf(c.AdmissionRunnerMinutes, 0) ||
 		c.AdmissionRunnerMinutes <= 0 || c.AdmissionRunnerMinutes > c.MaxRunnerMinutes {

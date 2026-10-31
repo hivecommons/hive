@@ -63,6 +63,9 @@ func integrationBranchBase(branch string, scopes []config.IntegrationScope, repo
 }
 
 func (s *Server) observeIntegrationWebhook(event, delivery string, body []byte, now time.Time) error {
+	if err := s.observeIntegrationExecutionWebhook(event, delivery, body, now); err != nil {
+		return err
+	}
 	cfg := s.integrationConfig()
 	if cfg.Mode == config.IntegrationOff {
 		return nil

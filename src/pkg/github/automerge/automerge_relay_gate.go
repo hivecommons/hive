@@ -62,6 +62,19 @@ func (c *Engine) RelayMergeRefusal(ctx context.Context, displayRepo string, numb
 	if err != nil {
 		return "", fmt.Errorf("%s#%d could not be fetched to check the lane policy (fail closed): %w", displayRepo, number, err)
 	}
+	if c.integrationExecution != nil {
+		decision, routeErr := c.integrationExecution(ctx, owner+"/"+repo, pr, nil)
+		if routeErr != nil {
+			return decision.Reason, routeErr
+		}
+		if decision.Authority != "" {
+			reason := decision.Reason
+			if reason == "" {
+				reason = "selected execution authority handles admission; relay cannot merge or jump the queue"
+			}
+			return reason, nil
+		}
+	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	if _, hiveAuthored := c.sweepLaneForAuthor(author); hiveAuthored {
 		return "", nil

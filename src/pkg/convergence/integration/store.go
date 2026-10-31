@@ -36,6 +36,8 @@ type Store struct {
 	integrated    map[string]IntegrationReceipt
 	poison        error
 	offset        int64
+	execution     *executionState
+	executionOnly bool
 }
 
 func (s *Store) HasEvent(id string) bool {
@@ -154,9 +156,19 @@ func (s *Store) ForFailure(repo, head string, suite, check int64) []Evidence {
 }
 
 func Open(path string) (*Store, error) {
+	return openStore(path, false)
+}
+
+// OpenExecution reuses the bounded fsync/replay journal but isolates v2
+// candidate execution from the v1 admission/evidence file for safe rollback.
+func OpenExecution(path string) (*Store, error) {
+	return openStore(path, true)
+}
+
+func openStore(path string, executionOnly bool) (*Store, error) {
 	s := &Store{path: path, seen: map[string]string{}, intents: map[string]Intent{},
 		evidence: map[string]Evidence{}, jobs: map[string]Job{}, coverage: map[string]Coverage{},
-		reservations: map[string]Reservation{}, memberChanges: map[string]Event{}, groupChanges: map[string]Event{}, integrated: map[string]IntegrationReceipt{}, drifts: map[string]Drift{}}
+		reservations: map[string]Reservation{}, memberChanges: map[string]Event{}, groupChanges: map[string]Event{}, integrated: map[string]IntegrationReceipt{}, drifts: map[string]Drift{}, executionOnly: executionOnly}
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return s, nil
@@ -188,13 +200,22 @@ func (s *Store) validate(e Event) error {
 		return fmt.Errorf("event identity reused with different content")
 	}
 	n := 0
-	for _, yes := range []bool{e.Intent != nil, e.Evidence != nil, e.Job != nil, e.Coverage != nil, e.Reservation != nil, e.Release != "", e.Invalidate != "", e.MemberChange != nil, e.Integrated != nil, e.GroupChange != nil, e.PolicySet != nil, e.Drift != nil} {
+	for _, yes := range []bool{e.Intent != nil, e.Evidence != nil, e.Job != nil, e.Coverage != nil, e.Reservation != nil, e.Release != "", e.Invalidate != "", e.MemberChange != nil, e.Integrated != nil, e.GroupChange != nil, e.PolicySet != nil, e.Drift != nil, e.Execution != nil} {
 		if yes {
 			n++
 		}
 	}
 	if n != 1 {
 		return fmt.Errorf("event must carry exactly one observation")
+	}
+	if e.Execution != nil {
+		if !s.executionOnly {
+			return fmt.Errorf("execution v2 requires its own journal partition")
+		}
+		return s.validateExecution(*e.Execution)
+	}
+	if s.executionOnly && e.Job == nil && e.Coverage == nil && e.Integrated == nil {
+		return fmt.Errorf("v1 admission/evidence cannot be written into execution v2")
 	}
 	if change := e.MemberChange; change != nil && (change.Repo == "" || change.PR <= 0) {
 		return fmt.Errorf("invalid member change")
@@ -304,6 +325,10 @@ func (s *Store) apply(e Event) {
 		return
 	}
 	s.seen[e.ID] = eventDigest(e)
+	if e.Execution != nil {
+		s.applyExecution(e)
+		return
+	}
 	if drift := e.Drift; drift != nil {
 		if previous, found := s.drifts[drift.Key]; !found || drift.ObservedAt.After(previous.ObservedAt) {
 			next := *drift

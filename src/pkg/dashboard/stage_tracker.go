@@ -41,12 +41,13 @@ type StageTrackerResponse struct {
 	// on every request served from memory until the TTL lapses.
 	Source string `json:"source"`
 	// CacheTTLSeconds is the effective dashboard.stage_tracker.cache_ttl_s.
-	CacheTTLSeconds   int64                          `json:"cache_ttl_s"`
-	HiveID            string                         `json:"hive_id,omitempty"`
-	Stages            []StageTrackerStage            `json:"stages"`
-	Items             []StageTrackerItem             `json:"items"`
-	BasePreparation   []StageTrackerPreparationQueue `json:"base_preparation,omitempty"`
-	IntegrationQueues []forgequeue.QueueObservation  `json:"integration_queues,omitempty"`
+	CacheTTLSeconds      int64                          `json:"cache_ttl_s"`
+	HiveID               string                         `json:"hive_id,omitempty"`
+	Stages               []StageTrackerStage            `json:"stages"`
+	Items                []StageTrackerItem             `json:"items"`
+	BasePreparation      []StageTrackerPreparationQueue `json:"base_preparation,omitempty"`
+	IntegrationQueues    []forgequeue.QueueObservation  `json:"integration_queues,omitempty"`
+	IntegrationExecution *IntegrationExecutionTracker   `json:"integration_execution,omitempty"`
 	// OpenIssues and OpenPRs count Items by kind. Items is the canonical
 	// open-items set (open_items.go), so these equal the Overview tile's
 	// total open issues and PRs; the SPA prints them in the section header

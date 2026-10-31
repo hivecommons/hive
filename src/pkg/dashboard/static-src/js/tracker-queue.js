@@ -148,5 +148,5 @@
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
       const pop = document.getElementById('activity-monitor-queue-pop');
-      if (pop && !pop.hidden) { hamQueueToggle(false); const chip = stageTrackerQueueChip(); if (chip && chip.focus) chip.focus(); }
+      if (pop && !pop.hidden) { e.preventDefault(); hamQueueToggle(false); const chip = stageTrackerQueueChip(); if (chip && chip.focus) chip.focus(); }
     });

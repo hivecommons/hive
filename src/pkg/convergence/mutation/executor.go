@@ -23,6 +23,10 @@ func JournalingEnabled(mode string) bool { return proof.RecordingEnabled(mode) }
 // reports, never withholds.
 func FencingEnabled(mode string) bool { return proof.EnforcementEnabled(mode) }
 
+// DefinitelyNotApplied distinguishes a confirmed pre-effect refusal from an
+// ambiguous transport failure. It does not infer non-application from absence.
+func DefinitelyNotApplied(err error) bool { return errors.Is(err, effects.ErrNotApplied) }
+
 // EffectFunc performs the one external effect and returns bounded provenance
 // of the applied result (e.g. the created PR URL). An error means the effect
 // outcome is UNCERTAIN — it may or may not have taken place externally — and

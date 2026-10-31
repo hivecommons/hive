@@ -145,6 +145,9 @@ type otelTransport struct{ inner http.RoundTripper }
 func otelWrap(inner http.RoundTripper) http.RoundTripper { return &otelTransport{inner: inner} }
 
 func (t *otelTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := integrationReadOnlyRequest(req); err != nil {
+		return nil, err
+	}
 	endpoint := restEndpointTemplate(req.URL.Path)
 	caller := unknownCaller
 	if v, ok := req.Context().Value(restCallerContextKey{}).(string); ok && strings.TrimSpace(v) != "" {

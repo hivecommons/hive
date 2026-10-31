@@ -8,40 +8,55 @@
    body.ham-fullscreen, which shares every rule below — the document rather
    than the section so the body-level toasts (waiting on you, merges) stay
    visible while full screen. */
-    body.popout-mode, body.ham-fullscreen { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
+    body.popout-mode, body.ham-fullscreen,
+    body.display-mode { padding: var(--sp-5) var(--sp-7) var(--sp-7) var(--sp-7); --navbar-sticky-height: 0px; }
     body.popout-mode .oc-sidebar, body.popout-mode .oc-sidebar-resize, body.popout-mode .oc-topbar,
     body.popout-mode #dash-notices, body.popout-mode #oc-agent-detail, body.popout-mode .hive-chat-fab,
     body.popout-mode .hive-chat-panel, body.popout-mode #welcome-overlay, body.popout-mode .nps-card,
     body.ham-fullscreen .oc-sidebar, body.ham-fullscreen .oc-sidebar-resize, body.ham-fullscreen .oc-topbar,
     body.ham-fullscreen #dash-notices, body.ham-fullscreen #oc-agent-detail, body.ham-fullscreen .hive-chat-fab,
-    body.ham-fullscreen .hive-chat-panel { display: none !important; }
+    body.ham-fullscreen .hive-chat-panel,
+    body.display-mode .oc-sidebar, body.display-mode .oc-sidebar-resize, body.display-mode .oc-topbar,
+    body.display-mode #dash-notices, body.display-mode #oc-agent-detail, body.display-mode .hive-chat-fab,
+    body.display-mode .hive-chat-panel, body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }
     /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
        display:grid!important with id specificity; beat it with (1,2,2). */
     html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
+    html body.display-mode #oc-topbar[id] { display: none !important; }
     body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
     body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
+    body.display-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }
     body.popout-mode #activity-monitor-section .dashboard-grip, body.popout-mode #activity-monitor-section .section-chevron,
-    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron { display: none !important; }
+    body.ham-fullscreen #activity-monitor-section .dashboard-grip, body.ham-fullscreen #activity-monitor-section .section-chevron,
+    body.display-mode #activity-monitor-section .dashboard-grip, body.display-mode #activity-monitor-section .section-chevron { display: none !important; }
     /* The header cannot collapse the only section on the page, but its
        gear, full-screen and return buttons must still take clicks. */
     body.popout-mode #activity-monitor-section .section-header-toggle,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle { pointer-events: none; }
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle,
+    body.display-mode #activity-monitor-section .section-header-toggle { pointer-events: none; }
     body.popout-mode #activity-monitor-section .section-header-toggle button,
     body.popout-mode #activity-monitor-section .section-header-toggle .config-info,
     body.ham-fullscreen #activity-monitor-section .section-header-toggle button,
-    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
+    body.ham-fullscreen #activity-monitor-section .section-header-toggle .config-info,
+    body.display-mode #activity-monitor-section .section-header-toggle button,
+    body.display-mode #activity-monitor-section .section-header-toggle .config-info { pointer-events: auto; }
     /* A collapsed state saved from the main window would leave an empty
        page with a header that cannot be clicked: always show the body. */
     body.popout-mode #activity-monitor-section .section-body.collapsed,
-    body.ham-fullscreen #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
+    body.ham-fullscreen #activity-monitor-section .section-body.collapsed,
+    body.display-mode #activity-monitor-section .section-body.collapsed { max-height: none !important; opacity: 1; pointer-events: auto; }
     body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-actions,
+    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-actions { display: inline-flex; }
     body.popout-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary,
-    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
-    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky { top: 0; }
-    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols { top: var(--ham-sticky-bar-h); }
+    body.ham-fullscreen #activity-monitor-section .dash-card.collapsed .dash-card-summary,
+    body.display-mode #activity-monitor-section .dash-card.collapsed .dash-card-summary { display: none; }
+    body.popout-mode .ham-sticky, body.ham-fullscreen .ham-sticky,
+    body.display-mode .ham-sticky { top: 0; }
+    body.popout-mode .ham-cols, body.ham-fullscreen .ham-cols,
+    body.display-mode .ham-cols { top: var(--ham-sticky-bar-h); }
 
-    /* Header tools: ⧉ pop out and ⛶ full screen sit beside the gear and
+    /* Header tools: ⧉ pop out, ⛶ full screen and 📺 display sit beside the gear and
        share its chip styling; the return link is a pop-out-only text pill. */
     .ham-header-tool { width: auto; min-width: 15px; padding: 0 var(--sp-1); font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; }
     .ham-header-tool[aria-pressed="true"] { color: var(--blue); border-color: var(--blue); }
@@ -52,3 +67,9 @@
        kiosk has no one to click. */
     body.popout-mode .ham-popout-btn, body.ham-fullscreen .ham-popout-btn,
     body.kiosk-mode .ham-header-tool, body.kiosk-mode .ham-popout-return { display: none !important; }
+    /* Display mode (#15925) is an attended wall view (?display=1, the 📺
+       button): same layout, but a wall offers no actions, so the row ⋯ and
+       select tools, the selection bar and the decision actions are hidden.
+       Presentation only — server authorization is unchanged. */
+    body.display-mode #activity-monitor-section .ham-row-tools, body.display-mode #activity-monitor-selbar,
+    body.display-mode .ham-decision-acts { display: none !important; }

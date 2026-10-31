@@ -79,6 +79,7 @@ js/tracker-filter-state.js
 js/nav-count-delta.js
 js/tracker-preparation.js
 js/tracker-native-queue.js
+js/tracker-integration-execution.js
 js/tracker-filter-render.js
 js/tracker-filter-fetch.js
 js/tracker-actions.js
@@ -124,6 +125,7 @@ js/config-agent.js
 js/config-governor.js
 js/config-watchdog-security.js
 js/config-features.js
+js/integration-execution-settings.js
 js/config-event-triggers.js
 js/config-sentinel.js
 js/compliance.js

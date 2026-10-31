@@ -2057,6 +2057,37 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
 	// here (see lateContributorNudgeSink).
 	autoMergeOpts.ContributorNudge = lateContributorNudgeSink{hub: func() *dashboard.ContributeWSHub { return b.dashSrv.ContributeHub() }}
+	autoMergeOpts.IntegrationExecution = func(ctx context.Context, repo string, pr *gh.PullRequest, gate automerge.IntegrationEligibilityGate) (automerge.IntegrationExecutionDecision, error) {
+		if b.dashSrv != nil {
+			return b.dashSrv.IntegrationExecutionRoute(ctx, repo, pr, gate)
+		}
+		execution := b.cfg.IntegrationOrchestration.Execution.Effective()
+		if execution.Mode == config.IntegrationEnforce {
+			if _, enrolled := execution.Scope(repo, pr.GetBase().GetRef()); enrolled {
+				return automerge.IntegrationExecutionDecision{Authority: "hold", Reason: "integration execution initializes before any selected-destination writer"}, nil
+			}
+		}
+		return automerge.IntegrationExecutionDecision{}, nil
+	}
+	autoMergeOpts.IntegrationAdmission = func(ctx context.Context, repo string, pr *gh.PullRequest) (string, error) {
+		if b.dashSrv != nil {
+			return b.dashSrv.IntegrationNativeAdmission(ctx, repo, pr)
+		}
+		return "", nil
+	}
+	autoMergeOpts.IntegrationFilesObserved = func(repo, head string, files []string) {
+		if b.dashSrv != nil {
+			b.dashSrv.IntegrationObserveFiles(repo, head, files)
+		}
+	}
+	autoMergeOpts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
+		q := b.cfg.AutoMerge.NativeMergeQueue
+		return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), Bases: q.BaseSet(),
+			SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
+	}
+	autoMergeOpts.IntegrationSelfAllowed = func() bool {
+		return b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(b.cfg.ACMMLevel)
+	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
 	// automerge_sweep.go): install the operator-declared
@@ -2231,6 +2262,20 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		return joinDone(relaysDone, sweepDone)
 	}, b.logger)
 	b.armRequestRelays(b.ghClient)
+	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
+		client := b.currentGitHubClient()
+		if client == nil {
+			return nil, "live normal-policy GitHub client unavailable", github.ErrNoGitHubClient
+		}
+		return automerge.New(client, autoMergeOpts).IntegrationEligibility(ctx, repo, base, number, head)
+	}
+	b.integrationPreparationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
+		client := b.currentGitHubClient()
+		if client == nil {
+			return nil, "live normal-policy GitHub client unavailable", github.ErrNoGitHubClient
+		}
+		return automerge.New(client, autoMergeOpts).IntegrationPreparationEligibility(ctx, repo, base, number, head)
+	}
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config
 	// (signing key + issuer + TTL) and attach it so each per-agent token refresh
@@ -2391,6 +2436,7 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
+	b.dashSrv.SetIntegrationExecutionEvaluators(b.integrationPreparationEligibility, b.integrationEligibility)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
 	b.dashSrv.SetHotspotSource(hotspotDashSource{store: hotspotStore()})

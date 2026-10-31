@@ -771,6 +771,18 @@
             _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
           } else if (_configState.type === 'governor' && section === 'integration_orchestration') {
             const body = Object.assign({}, (_configState.data || {}).integration_orchestration || {}, values);
+            const previousExecution = ((_configState.data || {}).integration_orchestration || {}).execution || {mode: 'off'};
+            if (Object.prototype.hasOwnProperty.call(body, 'execution_json')) {
+              const profile = JSON.parse(body.execution_json);
+              if (!profile || Array.isArray(profile) || typeof profile !== 'object') throw new Error('Execution enrollment must be a JSON object');
+              body.execution = Object.assign({}, profile, {mode: previousExecution.mode || 'off'});
+              delete body.execution_json;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'execution_mode')) {
+              body.execution = Object.assign({}, body.execution || previousExecution, {mode: body.execution_mode});
+              delete body.execution_mode;
+            }
+            body.expected_execution = previousExecution;
             const integrationMinuteNanoseconds = 60 * 1e9;
             for (const key of ['lease_ttl', 'window', 'max_observation_age']) {
               if (Object.prototype.hasOwnProperty.call(body, key + '_minutes')) {

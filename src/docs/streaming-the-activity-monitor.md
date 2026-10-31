@@ -184,6 +184,43 @@ dashboard section, and renders dark regardless of any stored theme
 (append `&theme=light` for a light stream). Do not point the streamer at a hive tracking private
 repositories without reviewing what the tracker would show.
 
+## Display mode and URL views
+
+For an attended screen (a wall monitor or TV someone can walk up to), use
+**display mode** instead of kiosk: press **📺** on the Activity Monitor header,
+or open `/?display=1`. It uses the same tracker-only layout but keeps the
+cursor and your sound setting, hides every row action, and is left with
+**Esc** or **d**. It never requests full screen or a wake lock. `?kiosk=1`
+is unchanged and wins when both flags are present.
+
+Any Activity Monitor filter can be described in the URL with `am.*`
+parameters, so a display link reproduces the view in a fresh browser profile:
+
+| Parameter | Values |
+|---|---|
+| `am.kind` | `pr`, `issue` (default all) |
+| `am.repo` | `owner/name` |
+| `am.q` | free text |
+| `am.labels` | comma-separated label names |
+| `am.needsHuman`, `am.onHold`, `am.attention` | `1` |
+| `am.age` | `1h`, `1d`, `1w`, `stale` |
+| `am.author` | `human`, `clanker`, `hive` |
+| `am.acted` | `awaiting`, `acted`, `stuck` |
+| `am.sort` | `furthest`, `waiting`, `newest`, `number` |
+| `am.dir` | `asc` (default `desc`) |
+| `am.group` | `repo` (default `none`) |
+
+Example: `/?display=1&am.kind=pr&am.repo=hivecommons/hive&am.group=repo#section-activity-monitor-section`.
+Unknown values fall back to the default. When any `am.*` parameter is present
+it wins over the browser's saved filter, and that tab never writes its filter
+or grouping back to local storage. Waiting on you is per user and stays on
+`?filter=waiting-on-you`.
+
+A link describes a view; it does not grant access. The viewer still signs in
+with their own access, and display mode grants no extra privileges. Do not
+put a display that tracks private repositories where people without access
+can see it without reviewing what the tracker would show.
+
 ## Quick manual test with OBS (no cluster)
 
 1. In OBS add a **Browser** source, 1920×1080, URL

@@ -949,6 +949,13 @@ func runEvalCycle(
 	if err := dashSrv.ReconcileIntegration(ctx); err != nil {
 		logger.Warn("integration observations incomplete", "error", err)
 	}
+	if cfg.IntegrationOrchestration.Execution.Effective().Mode != config.IntegrationOff {
+		go func() {
+			if err := dashSrv.ReconcileIntegrationExecution(ctx); err != nil {
+				logger.Warn("integration execution bounded reconciliation incomplete", "error", err)
+			}
+		}()
+	}
 	kickActionable = dashSrv.IntegrationKickAdmission(kickActionable)
 
 	sched.SetLastActionable(kickActionable)

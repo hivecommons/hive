@@ -157,8 +157,13 @@ func (c *Client) ReadIntegrationMaterializerObservation(ctx context.Context, exp
 		&run, jobs.Jobs, checks.CheckRuns, &proof); err != nil {
 		return out, err
 	}
-	if !proof.Passed || finalizer == nil || len(proof.CheckIDs) != 2 {
-		return out, fmt.Errorf("trusted materializer/finalizer did not succeed")
+	if finalizer == nil || len(proof.CheckIDs) != 2 || finalizer.GetStatus() != "completed" || finalizer.GetConclusion() != "success" {
+		return out, fmt.Errorf("trusted materializer cohort/finalizer incomplete")
+	}
+	finalizerProof := IntegrationWorkflowProof{}
+	if err := bindIntegrationWorkflowJobs(config.IntegrationPolicy{Jobs: []string{integrationMaterializerFinalizer}, AppID: expected.CheckAppID},
+		&run, jobs.Jobs, checks.CheckRuns, &finalizerProof); err != nil || !finalizerProof.Passed || len(finalizerProof.CheckIDs) != 1 {
+		return out, fmt.Errorf("actual isolated materializer finalizer did not succeed")
 	}
 	id, digest, err := c.integrationProducerArtifact(ctx, repo, &run, integrationMaterializerArtifact)
 	if err != nil {

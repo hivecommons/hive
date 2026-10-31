@@ -621,6 +621,9 @@ func (c *Engine) executeMergeEffectOnce(ctx context.Context, claim effects.Claim
 }
 
 func (c *Engine) reconcileOpenPRMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int) {
+	if integrationEligibilityProbe(ctx) {
+		return
+	}
 	if _, ok := c.mutation.(effects.Reconciler); !ok {
 		return
 	}

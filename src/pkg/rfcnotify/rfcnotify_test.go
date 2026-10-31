@@ -84,13 +84,13 @@ func TestFormat(t *testing.T) {
 		includeRepo bool
 		want        string
 	}{
-		{Event{KindOpened, is}, false, "RFC opened: #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062> (by @clubanderson)"},
-		{Event{KindOpened, Issue{Number: 1, Title: "RFC: x", URL: "u"}}, false, "RFC opened: #1 RFC: x - <u>"},
-		{Event{KindClosed, withReason(is, "completed")}, false, "RFC closed (completed): #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
-		{Event{KindClosed, withReason(is, "not_planned")}, true, "RFC closed (not planned): hivecommons/hive#12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
-		{Event{KindClosed, withReason(is, "")}, false, "RFC closed (completed): #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
-		{Event{KindReady, is}, true, "RFC ready to implement (hold removed): hivecommons/hive#12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
-		{Event{Kind("odd"), is}, false, "RFC odd: #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
+		{Event{Kind: KindOpened, Issue: is}, false, "RFC opened: #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062> (by @clubanderson)"},
+		{Event{Kind: KindOpened, Issue: Issue{Number: 1, Title: "RFC: x", URL: "u"}}, false, "RFC opened: #1 RFC: x - <u>"},
+		{Event{Kind: KindClosed, Issue: withReason(is, "completed")}, false, "RFC closed (completed): #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
+		{Event{Kind: KindClosed, Issue: withReason(is, "not_planned")}, true, "RFC closed (not planned): hivecommons/hive#12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
+		{Event{Kind: KindClosed, Issue: withReason(is, "")}, false, "RFC closed (completed): #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
+		{Event{Kind: KindReady, Issue: is}, true, "RFC ready to implement (hold removed): hivecommons/hive#12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
+		{Event{Kind: Kind("odd"), Issue: is}, false, "RFC odd: #12062 RFC: Evidence pipeline - <https://github.com/hivecommons/hive/issues/12062>"},
 	}
 	for _, c := range cases {
 		if got := Format(c.ev, c.includeRepo); got != c.want {

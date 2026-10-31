@@ -24,6 +24,14 @@ type Source interface {
 	ListUpdatedSince(ctx context.Context, since time.Time) ([]Issue, error)
 }
 
+// PRSource is an optional extension of Source that lists pull requests,
+// open, closed or merged, updated at or after since, with Issue.IsPR set.
+// The sweeper asks for them only in rich mode, so line mode stays
+// issues-only.
+type PRSource interface {
+	ListPRsUpdatedSince(ctx context.Context, since time.Time) ([]Issue, error)
+}
+
 // Poster sends one message to the configured channel.
 type Poster func(content string) error
 
@@ -160,6 +168,13 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 	issues, err := src.ListUpdatedSince(ctx, since)
 	if err != nil {
 		return res, fmt.Errorf("rfc notify: list since %s: %w", since.Format(time.RFC3339), err)
+	}
+	if ps, ok := src.(PRSource); ok && s.opts.Rich() {
+		prs, err := ps.ListPRsUpdatedSince(ctx, since)
+		if err != nil {
+			return res, fmt.Errorf("rfc notify: list pull requests since %s: %w", since.Format(time.RFC3339), err)
+		}
+		issues = append(issues, prs...)
 	}
 	// Diff against a copy first so a failed post leaves the state where
 	// the event will be seen again next poll.

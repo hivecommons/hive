@@ -235,6 +235,7 @@ type Event struct {
 	GroupChange       *GroupChange        `json:"group_change,omitempty"`
 	PolicySet         *PolicySet          `json:"policy_set,omitempty"`
 	Drift             *Drift              `json:"drift,omitempty"`
+	Execution         *ExecutionEvent     `json:"execution,omitempty"`
 }
 
 type GroupChange struct {
