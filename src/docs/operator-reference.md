@@ -893,6 +893,18 @@ the block, the lane records that no remaining lane action can satisfy it and pro
 the next pull request. Pending, missing or unreadable required checks still
 wait; an eligible pull request that returns joins the back of the lane.
 
+The lane's branch updates and merges pass the same writeback containment as
+every other write (`contributor_adopt`: L6 plus the opt-in label for an item
+the hive did not author), except on the explicitly requested paths (the `lgtm`
+queue, the `/hive merge` relay and the dashboard), which only an operator
+pause stops. A pull request that only an automerge sweep lane would merge,
+and whose writes containment refuses (for example a contributor PR without
+`hive-review` at L6), takes no lane place: the sweep logs
+`the sweep merge path cannot update or merge this pull request, so it takes
+no lane place: …` and the next eligible pull request goes ahead. A front whose
+sweep writes become refused leaves on that path's next call, and stays out
+until containment allows it again.
+
 ### The remaining window, and GitHub's up-to-date rule
 
 No GitHub merge API can be made conditional on the target branch's tip; they
