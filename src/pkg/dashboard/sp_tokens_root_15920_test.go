@@ -10,7 +10,8 @@ import (
 // links before the inline stylesheet, so the ~300 var(--sp-*) usages outside
 // .config-modal resolve. The copy inside .config-modal is a deliberate pin so a
 // hovered theme preview cannot resize the settings modal (#15920 was filed on
-// the false premise that the ramp was modal-only).
+// the false premise that the ramp was modal-only); that pin is asserted by
+// TestAppearanceThemeHoverCannotResizeSettingsModal in theme_ui_test.go.
 func TestSpacingRampSuppliedByTokensOnRoot(t *testing.T) {
 	tb, err := staticFS.ReadFile("static/tokens.css")
 	if err != nil {
@@ -34,15 +35,5 @@ func TestSpacingRampSuppliedByTokensOnRoot(t *testing.T) {
 	style := strings.Index(html, "<style>")
 	if link < 0 || style < 0 || link > style {
 		t.Fatalf("tokens.css link (%d) must precede the inline <style> (%d)", link, style)
-	}
-
-	modal := strings.Index(html, ".config-modal {\n")
-	if modal < 0 {
-		t.Fatal("missing .config-modal CSS block")
-	}
-	block := html[modal:]
-	block = block[:strings.Index(block, "} /* modal panel recipe */")]
-	if !strings.Contains(block, "--sp-8: 24px;") {
-		t.Fatal(".config-modal lost its --sp-* pin; theme hover could resize the settings modal")
 	}
 }
