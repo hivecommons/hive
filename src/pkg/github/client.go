@@ -4696,8 +4696,9 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	// Every merge path ends here, so this is where the merged head's evidence
 	// bundle gains its merge event and the PR gets its evidence pointer.
 	c.recordReviewEvidenceMerge(repo, number, method, sha, path, credit.Logins())
-	// A merge resolves this PR's blockers, not another PR's required checks.
-	c.clearMergeFailureAlertsForPR(repo, number)
+	// A merge resolves this PR's blockers and proven repository-level causes,
+	// not another PR's required checks or review/head-specific conditions.
+	c.clearMergeFailureAlertsAfterMerge(repo, number, method)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one

@@ -29,6 +29,7 @@ type mergeAlertEntry struct {
 	key    string
 	number int
 	head   string
+	method string
 }
 
 // mergeAlertRevalidateInterval bounds how often the merge-request watcher
@@ -48,7 +49,7 @@ func (c *Client) SetMergeFailureAlertSink(sink MergeFailureAlertSink) {
 	}
 }
 
-func (c *Client) raiseMergeFailureAlert(repo string, number int, errMsg string, head ...string) {
+func (c *Client) raiseMergeFailureAlert(repo string, number int, errMsg string, provenance ...string) {
 	alert, ok := classifyMergeFailureForOperator(repo, errMsg)
 	if !ok || c == nil {
 		return
@@ -68,8 +69,15 @@ func (c *Client) raiseMergeFailureAlert(repo string, number int, errMsg string, 
 		c.mergeAlertIDsByRepo[repoKey] = make(map[string]*mergeAlertEntry)
 	}
 	entry := &mergeAlertEntry{key: alert.key, number: number}
-	if len(head) > 0 {
-		entry.head = head[0]
+	if len(provenance) > 0 {
+		entry.head = provenance[0]
+	}
+	if alert.key == "merge-method" {
+		var requested string
+		if len(provenance) > 1 {
+			requested = provenance[1]
+		}
+		entry.method = mergeFailureMethod(errMsg, requested)
 	}
 	c.mergeAlertIDsByRepo[repoKey][fmt.Sprintf("%s/%d", id, number)] = entry
 
@@ -78,7 +86,7 @@ func (c *Client) raiseMergeFailureAlert(repo string, number int, errMsg string, 
 	sink.AddSystemAlert(id, "error", alert.message)
 }
 
-func (c *Client) clearMergeFailureAlertsForPR(repo string, number int) {
+func (c *Client) clearMergeFailureAlertsAfterMerge(repo string, number int, method string) {
 	if c == nil {
 		return
 	}
@@ -86,7 +94,11 @@ func (c *Client) clearMergeFailureAlertsForPR(repo string, number int) {
 	c.mergeAlertMu.Lock()
 	defer c.mergeAlertMu.Unlock()
 	for member, entry := range c.mergeAlertIDsByRepo[repoKey] {
-		if entry.number == number {
+		// An App merge proves repository write access, and a merge using the
+		// same method resolves that method's setting. Reviews, absent CI and
+		// approval-held runs on another PR/head are not proven by this merge.
+		if entry.number == number || entry.key == "app-permission" ||
+			(entry.key == "merge-method" && entry.method != "" && entry.method == method) {
 			c.clearMergeFailureAlertEntryLocked(repoKey, member, entry)
 		}
 	}
@@ -146,6 +158,19 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 			resolved = c.missingMergeChecksResolved(ctx, owner, name, pr,
 				splitCheckNames(strings.TrimPrefix(w.entry.key, "missing-checks:")))
 		}
+		if !resolved && w.entry.key == "merge-method" && w.entry.method != "" {
+			repository, _, rerr := c.client.Repositories.Get(ctx, owner, name)
+			if rerr == nil && repository != nil {
+				switch w.entry.method {
+				case "squash":
+					resolved = repository.GetAllowSquashMerge()
+				case "merge":
+					resolved = repository.GetAllowMergeCommit()
+				case "rebase":
+					resolved = repository.GetAllowRebaseMerge()
+				}
+			}
+		}
 		if !resolved && w.entry.key == "app-permission" {
 			// Positive evidence the App can act on the repo again: its
 			// check-runs read on the blocked head succeeds. A real merge
@@ -167,28 +192,28 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 			continue
 		}
 		c.mergeAlertMu.Lock()
-		cleared := c.clearMergeFailureAlertEntryLocked(w.repo, w.id, w.entry)
+		retired, cleared := c.clearMergeFailureAlertEntryLocked(w.repo, w.id, w.entry)
 		c.mergeAlertMu.Unlock()
-		if cleared {
-			c.logger.Info("merge alert cleared: blocking condition resolved",
+		if retired {
+			c.logger.Info("merge alert origin retired: blocking condition resolved",
 				slog.String("repo", w.repo), slog.Int("number", w.entry.number),
 				slog.String("key", w.entry.key), slog.String("origin_head", w.entry.head),
-				slog.String("current_head", pr.GetHead().GetSHA()))
+				slog.String("current_head", pr.GetHead().GetSHA()), slog.Bool("banner_retained", !cleared))
 		}
 	}
 }
 
 // The pointer is an observation token: a refusal raised during network reads
 // replaces it and must survive the old observation.
-func (c *Client) clearMergeFailureAlertEntryLocked(repoKey, member string, entry *mergeAlertEntry) bool {
+func (c *Client) clearMergeFailureAlertEntryLocked(repoKey, member string, entry *mergeAlertEntry) (retired, bannerCleared bool) {
 	entries := c.mergeAlertIDsByRepo[repoKey]
 	if entries[member] != entry {
-		return false
+		return false, false
 	}
 	delete(entries, member)
 	for _, other := range entries {
 		if other.key == entry.key {
-			return true
+			return true, false
 		}
 	}
 	if len(entries) == 0 {
@@ -197,7 +222,25 @@ func (c *Client) clearMergeFailureAlertEntryLocked(repoKey, member string, entry
 	if c.mergeAlertSink != nil {
 		c.mergeAlertSink.ClearSystemAlert(mergeFailureAlertID(repoKey, entry.key))
 	}
-	return true
+	return true, true
+}
+
+func mergeFailureMethod(message, requested string) string {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "squash"):
+		return "squash"
+	case strings.Contains(lower, "rebase"):
+		return "rebase"
+	case strings.Contains(lower, "merge commits"):
+		return "merge"
+	}
+	switch requested {
+	case "squash", "merge", "rebase":
+		return requested
+	default:
+		return ""
+	}
 }
 
 func mergeFailureAlertID(repo, key string) string {

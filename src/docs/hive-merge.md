@@ -176,7 +176,14 @@ or approve the PR, make a missing required check report, or enable/use an
 allowed merge method. Conflicts re-engage the fix loop instead of alerting, and
 rate limits are treated as transient. Each aggregate banner retains every
 originating PR; a successful merge or confirmed PR closure resolves only that
-PR's blocker, not another PR's alert with the same reason.
+PR's blocker, not another PR's head-specific alert with the same reason.
+Successful App merges still retire repository write-permission alerts and
+disallowed-method alerts when the successful merge used that same method.
+Method alerts also retire when a repository read positively confirms the
+originally refused method is now enabled. A different method's success cannot
+prove squash/rebase/merge settings, and unknown methods or failed reads retain
+the banner. Reviews, absent CI and approval-held runs remain PR/head-specific;
+another PR's successful merge does not prove those blockers resolved.
 
 The existing five-minute alert revalidation also retires a missing-required-check
 banner when every named check succeeds on the PR's exact current head. Check-run
