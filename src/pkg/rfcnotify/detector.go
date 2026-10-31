@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	// stateVersion guards the on-disk shape.
-	stateVersion = 1
+	// stateVersion guards the on-disk shape. Version 2 adds the per-RFC
+	// Discord mapping (issueRecord.MessageID and friends); a version 1 file
+	// loads unchanged because every new field is optional.
+	stateVersion = 2
 	// closedRetention is how long a closed issue's record is kept so a
 	// late re-read of the same close cannot post it twice.
 	closedRetention = 30 * 24 * time.Hour
@@ -31,6 +33,45 @@ type issueRecord struct {
 	LastSeen       time.Time `json:"last_seen"`
 	// PR marks an RFC document pull request.
 	PR bool `json:"pr,omitempty"`
+
+	// The fields below are the durable Discord mapping (threads mode). An
+	// RFC announced before threads existed carries none of them and is never
+	// back-filled with a thread.
+
+	// AnnounceState is "" (no announcement owned by this hive), StatePending
+	// (intent recorded, card not confirmed), StatePosted (card confirmed, no
+	// thread) or StateThreaded.
+	AnnounceState string `json:"announce_state,omitempty"`
+	// Nonce is the deterministic Discord nonce of the opened card.
+	Nonce string `json:"nonce,omitempty"`
+	// MessageID is the Discord message of the opened card.
+	MessageID string `json:"message_id,omitempty"`
+	// ThreadID is the Discord thread started on that message.
+	ThreadID string `json:"thread_id,omitempty"`
+	// OpenText and ThreadName are what a retry re-posts and re-creates with.
+	OpenText   string `json:"open_text,omitempty"`
+	ThreadName string `json:"thread_name,omitempty"`
+	// BacklinkPosted is set once the opt-in GitHub comment went out.
+	BacklinkPosted bool `json:"backlink_posted,omitempty"`
+	// PostTries, ThreadTries and BacklinkTries bound the retries of each step.
+	PostTries     int `json:"post_tries,omitempty"`
+	ThreadTries   int `json:"thread_tries,omitempty"`
+	BacklinkTries int `json:"backlink_tries,omitempty"`
+}
+
+// Values of issueRecord.AnnounceState.
+const (
+	StatePending  = "pending"
+	StatePosted   = "posted"
+	StateThreaded = "threaded"
+)
+
+// inherit carries the Discord mapping of the previous record over to a
+// record rebuilt from a fresh snapshot.
+func (r *issueRecord) inherit(prev *issueRecord) {
+	r.AnnounceState, r.Nonce, r.MessageID, r.ThreadID = prev.AnnounceState, prev.Nonce, prev.MessageID, prev.ThreadID
+	r.OpenText, r.ThreadName, r.BacklinkPosted = prev.OpenText, prev.ThreadName, prev.BacklinkPosted
+	r.PostTries, r.ThreadTries, r.BacklinkTries = prev.PostTries, prev.ThreadTries, prev.BacklinkTries
 }
 
 // State is the persisted detector memory.
@@ -72,6 +113,9 @@ func Load(path string) (*Detector, error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return nil, fmt.Errorf("parse rfc notify state: %w", err)
 	}
+	if st.Version > stateVersion {
+		return nil, fmt.Errorf("rfc notify state %s is version %d, newer than the supported %d", path, st.Version, stateVersion)
+	}
 	if st.Issues == nil {
 		st.Issues = map[string]*issueRecord{}
 	}
@@ -81,11 +125,14 @@ func Load(path string) (*Detector, error) {
 }
 
 // Save writes the state to path (0600, directory created as needed).
-func (d *Detector) Save(path string) error {
+func (d *Detector) Save(path string) error { return writeState(path, d.state) }
+
+// writeState persists st atomically.
+func writeState(path string, st State) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create rfc notify state dir: %w", err)
 	}
-	data, err := json.MarshalIndent(d.state, "", "  ")
+	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal rfc notify state: %w", err)
 	}
@@ -147,6 +194,9 @@ func (d *Detector) Observe(issues []Issue, now time.Time) []Event {
 		key := is.Key()
 		prev, known := d.state.Issues[key]
 		cur := recordOf(is, now)
+		if known {
+			cur.inherit(prev)
+		}
 		switch {
 		case is.IsPR:
 			if ev, ok := d.observePR(is, prev, known); ok {
@@ -249,14 +299,32 @@ func (d *Detector) prune(now time.Time) {
 }
 
 // clone copies the state so an Observe can be partially undone.
-func (d *Detector) clone() State {
-	out := d.state
-	out.Issues = make(map[string]*issueRecord, len(d.state.Issues))
-	for k, v := range d.state.Issues {
+func (d *Detector) clone() State { return cloneState(d.state) }
+
+func cloneState(st State) State {
+	out := st
+	out.Issues = make(map[string]*issueRecord, len(st.Issues))
+	for k, v := range st.Issues {
 		rec := *v
 		out.Issues[k] = &rec
 	}
 	return out
+}
+
+// checkpoint persists base with key's current record folded in. base is the
+// pre-poll state advanced only by what has been delivered so far (same
+// watermark as before the poll), so a crash mid-batch re-observes every
+// event not yet delivered while keeping the write-ahead intent and the
+// mapping of the ones that were.
+func (d *Detector) checkpoint(path string, base *State, key string) error {
+	if path == "" {
+		return nil
+	}
+	if rec, ok := d.state.Issues[key]; ok {
+		cp := *rec
+		base.Issues[key] = &cp
+	}
+	return writeState(path, *base)
 }
 
 // rollback restores the records of the issues behind unposted events to

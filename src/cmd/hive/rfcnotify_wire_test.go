@@ -43,7 +43,7 @@ func rfcNotifyConfig(token, channel string) *config.Config {
 
 func TestRunRFCNotifySweepDisabledIsNoOp(t *testing.T) {
 	src := &rfcNotifyFakeSource{open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "RFC: a", State: "open"}}}
-	state := &rfcNotifyState{newPoster: func(string, string) rfcnotify.Poster {
+	state := &rfcNotifyState{newPublisher: func(string, string) rfcnotify.Publisher {
 		t.Fatal("disabled notices must not build a poster")
 		return nil
 	}}
@@ -69,9 +69,9 @@ func TestRunRFCNotifySweepSeedsThenPosts(t *testing.T) {
 	var builtFor []string
 	state := &rfcNotifyState{
 		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
-		newPoster: func(token, channel string) rfcnotify.Poster {
+		newPublisher: func(token, channel string) rfcnotify.Publisher {
 			builtFor = append(builtFor, token+"@"+channel)
-			return func(s string) error { posted = append(posted, s); return nil }
+			return rfcnotify.Poster(func(s string) error { posted = append(posted, s); return nil })
 		},
 	}
 	held := rfcnotify.Issue{Repo: "hivecommons/hive", Number: 12062, Title: "[RFC]: Evidence pipeline", URL: "https://github.com/hivecommons/hive/issues/12062", State: "open", Labels: []string{"hold"}, CreatedAt: time.Now().Add(-time.Hour)}
@@ -112,8 +112,8 @@ func TestRunRFCNotifySweepIncludesRepoForMultiRepoHive(t *testing.T) {
 	var posted []string
 	state := &rfcNotifyState{
 		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
-		newPoster: func(string, string) rfcnotify.Poster {
-			return func(s string) error { posted = append(posted, s); return nil }
+		newPublisher: func(string, string) rfcnotify.Publisher {
+			return rfcnotify.Poster(func(s string) error { posted = append(posted, s); return nil })
 		},
 	}
 	cfg := rfcNotifyConfig("tok", "1")
@@ -159,8 +159,8 @@ func rfcNotifyRecorder(t *testing.T, posted *[]string) *rfcNotifyState {
 	t.Helper()
 	return &rfcNotifyState{
 		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
-		newPoster: func(string, string) rfcnotify.Poster {
-			return func(s string) error { *posted = append(*posted, s); return nil }
+		newPublisher: func(string, string) rfcnotify.Publisher {
+			return rfcnotify.Poster(func(s string) error { *posted = append(*posted, s); return nil })
 		},
 	}
 }
@@ -500,5 +500,173 @@ func TestRunRFCNotifySweepRFCPRs(t *testing.T) {
 	res := runRFCNotifySweep(ctx, src, 1, cfg, nil, state, logger)
 	if len(res.Events) != 1 || res.Events[0].Thread != "o/r#1" || posted[len(posted)-1] != "RFC doc accepted (RFC #1): #12 📝 proposal: threads - <https://x/12>" {
 		t.Fatalf("merge: %+v posted=%q", res, posted)
+	}
+}
+
+func TestRFCNotifyIssuesMapsBody(t *testing.T) {
+	snaps := []github.IssueSnapshot{
+		{
+			Repo:   "o/r",
+			Number: 42,
+			Title:  "RFC: Test",
+			Body:   "| Target | v5 |\n\n## Summary\nHello",
+		},
+	}
+	issues := rfcNotifyIssues(snaps)
+	if len(issues) != 1 {
+		t.Fatalf("len(issues) = %d, want 1", len(issues))
+	}
+	if issues[0].Body != snaps[0].Body {
+		t.Errorf("Body = %q, want %q", issues[0].Body, snaps[0].Body)
+	}
+}
+
+type testCardPublisher struct {
+	posted []string
+	cards  []rfcnotify.Embed
+}
+
+func (p *testCardPublisher) Post(content string) error {
+	p.posted = append(p.posted, content)
+	return nil
+}
+
+func (p *testCardPublisher) PostCard(content string, embed rfcnotify.Embed) (string, error) {
+	p.cards = append(p.cards, embed)
+	return "msg-id-1", nil
+}
+
+func TestRFCNotifyWireCardFormatPostsEmbed(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Discord: &config.DiscordConfig{
+				BotToken:     "tok",
+				RFCChannelID: "chan",
+				RFCFormat:    "card",
+				RFCAnnouncer: true,
+			},
+		},
+	}
+	pub := &testCardPublisher{}
+	state := &rfcNotifyState{
+		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
+		newPublisher: func(token, channel string) rfcnotify.Publisher {
+			return pub
+		},
+	}
+	src := &rfcNotifyFakeSource{
+		open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "Existing RFC", State: "open", Labels: []string{"rfc"}}},
+	}
+	ctx := context.Background()
+	runRFCNotifySweep(ctx, src, 1, cfg, nil, state, logger)
+
+	body := "| Field | Value |\n| --- | --- |\n| Target | v5 |\n| Status | Proposal |\n\n## Summary\nTest summary\n\n## Decisions for maintainers\n1. Question\n"
+	src.updated = []rfcnotify.Issue{
+		{Repo: "o/r", Number: 2, Title: "RFC: Rich Card", URL: "https://x/2", State: "open", CreatedAt: time.Now().Add(time.Hour), Body: body},
+	}
+	forcePoll(state)
+	runRFCNotifySweep(ctx, src, 1, cfg, nil, state, logger)
+
+	if len(pub.cards) != 1 {
+		t.Fatalf("cards = %d, want 1", len(pub.cards))
+	}
+	if pub.cards[0].Title != "#2 RFC: Rich Card" {
+		t.Errorf("card.Title = %q", pub.cards[0].Title)
+	}
+}
+
+// rfcNotifyFakeThreads records what threads mode sends to Discord.
+type rfcNotifyFakeThreads struct {
+	posts, echoes []string
+	threads       []string
+	sends         []string
+}
+
+func (f *rfcNotifyFakeThreads) Post(content, nonce string) (string, error) {
+	f.posts = append(f.posts, content+"|"+nonce)
+	return "m1", nil
+}
+
+func (f *rfcNotifyFakeThreads) StartThread(messageID, name string) (string, error) {
+	f.threads = append(f.threads, messageID+"|"+name)
+	return "t1", nil
+}
+
+func (f *rfcNotifyFakeThreads) Send(threadID, content string) error {
+	f.sends = append(f.sends, threadID+"|"+content)
+	return nil
+}
+
+func (f *rfcNotifyFakeThreads) Echo(content string) error {
+	f.echoes = append(f.echoes, content)
+	return nil
+}
+
+func (f *rfcNotifyFakeThreads) Recent(int) ([]rfcnotify.Message, error) { return nil, nil }
+
+func (f *rfcNotifyFakeThreads) ThreadURL(id string) (string, error) { return "https://d/" + id, nil }
+
+func TestRunRFCNotifySweepThreadsMode(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var lines []string
+	state := rfcNotifyRecorder(t, &lines)
+	fake := &rfcNotifyFakeThreads{}
+	var builtFor []string
+	state.newThreads = func(token, channel string) rfcnotify.Threads {
+		builtFor = append(builtFor, token+"@"+channel)
+		return fake
+	}
+	src := &rfcNotifyFakeSource{open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "RFC: a", URL: "u", State: "open", CreatedAt: time.Now().Add(-time.Hour)}}}
+	cfg := rfcNotifyConfig("tok", "42")
+	cfg.Notifications.Discord.RFCThreads = true
+	cfg.Notifications.Discord.RFCAnnouncer = true
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+
+	fresh := rfcnotify.Issue{Repo: "o/r", Number: 2, Title: "RFC: b", URL: "v", State: "open", CreatedAt: time.Now().Add(time.Hour)}
+	src.updated = []rfcnotify.Issue{fresh}
+	forcePoll(state)
+	res := runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if res.Threads != 1 || len(fake.posts) != 1 || len(fake.threads) != 1 || !strings.HasPrefix(fake.threads[0], "m1|#2 RFC: b") {
+		t.Fatalf("threads mode: %+v posts=%v threads=%v", res, fake.posts, fake.threads)
+	}
+	if len(lines) != 0 {
+		t.Fatalf("threads mode must not use the line poster: %v", lines)
+	}
+	if len(builtFor) != 1 || builtFor[0] != "tok@42" {
+		t.Fatalf("threads built for %v", builtFor)
+	}
+	// A channel change rebuilds the Discord surface for the new channel.
+	cfg.Notifications.Discord.RFCChannelID = "43"
+	forcePoll(state)
+	src.updated = nil
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if len(builtFor) != 2 || builtFor[1] != "tok@43" {
+		t.Fatalf("threads not rebuilt for the new channel: %v", builtFor)
+	}
+}
+
+func TestRunRFCNotifySweepThreadsNeedAnnouncer(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var lines []string
+	state := rfcNotifyRecorder(t, &lines)
+	fake := &rfcNotifyFakeThreads{}
+	state.newThreads = func(string, string) rfcnotify.Threads { return fake }
+	src := &rfcNotifyFakeSource{open: []rfcnotify.Issue{{Repo: "o/r", Number: 1, Title: "RFC: a", URL: "u", State: "open", CreatedAt: time.Now().Add(-time.Hour)}}}
+	cfg := rfcNotifyConfig("tok", "42")
+	cfg.Notifications.Discord.RFCThreads = true
+	runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	src.updated = []rfcnotify.Issue{{Repo: "o/r", Number: 2, Title: "RFC: b", URL: "v", State: "open", CreatedAt: time.Now().Add(time.Hour)}}
+	forcePoll(state)
+	res := runRFCNotifySweep(context.Background(), src, 1, cfg, nil, state, logger)
+	if res.Withheld != 1 || len(fake.posts)+len(fake.echoes)+len(fake.threads) != 0 || len(lines) != 0 {
+		t.Fatalf("a hive that is not the announcer must not call Discord: %+v %+v", res, fake)
+	}
+}
+
+func TestRFCNotifySourceCommentWithoutClient(t *testing.T) {
+	var c rfcnotify.Commenter = rfcNotifySource{}
+	if err := c.Comment(context.Background(), "o/r", 1, "Discussion thread: x"); !errors.Is(err, github.ErrNoGitHubClient) {
+		t.Fatalf("err = %v, want ErrNoGitHubClient", err)
 	}
 }

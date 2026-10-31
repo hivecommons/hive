@@ -999,6 +999,7 @@ type HubServer struct {
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger
+	activity             activityStore // per-hive activity digests, memory only (#15951); leaf lock
 	saveCh               chan struct{}
 	githubActivityFeed   *GitHubActivityFeed
 	githubActivityMu     sync.Mutex
@@ -1722,6 +1723,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
 	s.mux.HandleFunc("GET "+complianceRollupPath, s.requireAdmin(s.handleComplianceRollup))
 	s.mux.HandleFunc("GET "+evidencePath, s.requireAdmin(s.handleEvidence))
+	// Hub-wide activity (#15951): any signed-in user, scoped per hive inside
+	// the handler; read-only.
+	s.mux.HandleFunc("GET "+activityPath, s.requireAuth(s.handleHubActivity))
 	s.mux.HandleFunc("GET "+evidenceReportPath, s.requireAdmin(s.handleEvidenceReport))
 	s.mux.HandleFunc("GET /api/gh-rate-limits", s.requireAdmin(s.handleGHRateLimits))
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
@@ -2728,6 +2732,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	s.mu.Unlock()
 
+	// Activity digest (#15951): stored after s.mu is released (leaf lock),
+	// only once the beat is authenticated and accepted into the registry.
+	activityAck := s.activity.record(payload.HiveID, payload.Activity, time.Now().UTC())
+
 	// Timeline: record whatever changed on this beat. Nothing is written when
 	// nothing changed, which is the common case — at ~2 min per beat and 42
 	// hives, an event per beat would be pure noise.
@@ -2815,6 +2823,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		LatestSHA:  latestSHA,
 	}
 	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
+	resp.ActivityETag = activityAck
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic
