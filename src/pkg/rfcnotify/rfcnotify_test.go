@@ -41,6 +41,9 @@ func TestIsRFC(t *testing.T) {
 		"✨ RFC: Repo-targeted campaigns",
 		"[v6] RFC: something",
 		"rfc - lowercase works",
+		"📝 [v5 RFC] Reduce notification fatigue: actionable requests",
+		"[RFC v6] Proxy egress allowlist",
+		"[scanner] [v5 rfc] lowercase tag",
 	}
 	for _, title := range yes {
 		if !IsRFC(title, nil) {
@@ -54,6 +57,10 @@ func TestIsRFC(t *testing.T) {
 		"RFCs are great",
 		"RFC #123 follow-up",
 		"Fix the rfc parser",
+		"[RFC #13617] follow-up",
+		"[v6 RFC 11585] follow-up",
+		"[v6] Fix the [RFC] parser",
+		"[v5 RFCs] not one",
 	}
 	for _, title := range no {
 		if IsRFC(title, nil) {
