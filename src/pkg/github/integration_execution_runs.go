@@ -18,12 +18,25 @@ func (c *Client) ReadIntegrationExecutionRuns(ctx context.Context, repo string, 
 	if c == nil || c.client == nil || !integrationPromotionRepo(repo) || workflowID <= 0 || after.IsZero() {
 		return nil, fmt.Errorf("incomplete exact integration workflow discovery")
 	}
+	return c.readIntegrationExecutionRuns(ctx, fmt.Sprintf("repos/%s/actions/workflows/%d/runs?per_page=%d&created=%s",
+		repo, workflowID, integrationExecutionRunPage, url.QueryEscape(">="+after.UTC().Format(time.RFC3339))))
+}
+
+// ReadIntegrationExecutionCandidateRuns rechecks the entire exact-head cohort
+// before promotion, independently of an old successful run's archived receipt.
+func (c *Client) ReadIntegrationExecutionCandidateRuns(ctx context.Context, repo string, workflowID int64, head string) ([]*gh.WorkflowRun, error) {
+	if c == nil || c.client == nil || !integrationPromotionRepo(repo) || workflowID <= 0 || !integrationOID(head) {
+		return nil, fmt.Errorf("incomplete exact candidate workflow discovery")
+	}
+	return c.readIntegrationExecutionRuns(ctx, fmt.Sprintf("repos/%s/actions/workflows/%d/runs?per_page=%d&head_sha=%s",
+		repo, workflowID, integrationExecutionRunPage, head))
+}
+
+func (c *Client) readIntegrationExecutionRuns(ctx context.Context, path string) ([]*gh.WorkflowRun, error) {
 	var response struct {
 		Total int               `json:"total_count"`
 		Runs  []*gh.WorkflowRun `json:"workflow_runs"`
 	}
-	path := fmt.Sprintf("repos/%s/actions/workflows/%d/runs?per_page=%d&created=%s",
-		repo, workflowID, integrationExecutionRunPage, url.QueryEscape(">="+after.UTC().Format(time.RFC3339)))
 	if err := c.integrationCandidateRead(ctx, path, &response); err != nil {
 		return nil, err
 	}

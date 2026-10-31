@@ -16,7 +16,15 @@ import (
 // The front is a service owner, not an assertion that it caused the failure.
 func (s *Server) integrationFailureOwner(repo string, failure *github.WebhookCIFailure) (*github.CIFailurePR, *github.IntegrationFailureContext, string) {
 	cfg := s.integrationConfig()
-	if cfg.Mode != config.IntegrationEnforce || failure == nil || s.deps == nil || s.deps.GHClient == nil {
+	if failure == nil || s.deps == nil || s.deps.GHClient == nil {
+		return nil, nil, ""
+	}
+	if cfg.Execution.Effective().Mode == config.IntegrationEnforce {
+		if ref, evidence, head := s.executionFailureOwner(repo, failure); ref != nil {
+			return ref, evidence, head
+		}
+	}
+	if cfg.Mode != config.IntegrationEnforce {
 		return nil, nil, ""
 	}
 	enrolled := false
@@ -72,7 +80,8 @@ func (s *Server) integrationFailureOwner(repo string, failure *github.WebhookCIF
 }
 
 func (s *Server) integrationFailureIdentity(event string, body []byte, failure *github.WebhookCIFailure) error {
-	if failure == nil || s.integrationConfig().Mode != config.IntegrationEnforce || event != "check_run" && event != "check_suite" {
+	cfg := s.integrationConfig()
+	if failure == nil || cfg.Mode != config.IntegrationEnforce && cfg.Execution.Effective().Mode != config.IntegrationEnforce || event != "check_run" && event != "check_suite" {
 		return nil
 	}
 	var payload struct {

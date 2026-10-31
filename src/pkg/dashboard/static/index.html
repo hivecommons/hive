@@ -17674,7 +17674,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
-          ${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}
+          ${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
         </div>`;
     }
 
@@ -17975,7 +17975,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}
-        </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
+        </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
       </div>`;
     }
 
@@ -19704,6 +19704,40 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       root.hidden = !html;
       setIfChanged(root, html);
     }
+    let _stageTrackerExecution = null;
+    function stageTrackerExecutionSync(data, nowMs) {
+      const view = data && data.integration_execution;
+      const observed = view && Date.parse(view.observed_at);
+      const maxAge = view && Number(view.observation_age_seconds) * 1000;
+      _stageTrackerExecution = view && view.mode !== 'off' && Array.isArray(view.candidates)
+        ? Object.assign({}, view, {nowMs, maxAge, stale: !Number.isFinite(observed) || !(maxAge > 0) || nowMs - observed > maxAge})
+        : null;
+    }
+
+    function stageTrackerExecutionHtml(item) {
+      const view = _stageTrackerExecution;
+      if (!view || !item || item.kind !== 'pr' || !item.head) return '';
+      const candidate = view.candidates.find(entry => {
+        const members = entry.members || [];
+        const member = members[members.length - 1];
+        return member && String(entry.repo).toLowerCase() === String(item.repo).toLowerCase()
+          && Number(member.pr) === Number(item.number) && member.head === item.head
+          && (!item.base_ref || entry.base === item.base_ref);
+      });
+      if (!candidate) return '';
+      const candidateAt = Date.parse(candidate.observed_at);
+      const stale = view.stale || !Number.isFinite(candidateAt) || view.nowMs - candidateAt > view.maxAge;
+      const state = stale ? 'unknown (stale observation)' : candidate.state || 'unknown';
+      const kind = candidate.kind === 'preparation' ? 'Candidate preparation' : 'Integration CI';
+      const members = (candidate.members || []).map(member => '#' + member.pr + '@' + String(member.head).slice(0, 8)).join(' → ');
+      const text = kind + ' ' + state + ' · ordered prefix ' + (candidate.members || []).length
+        + (state === 'passed' ? ' · live merge guards still required' : '')
+        + (view.mode === 'advisory' ? ' · advisory, no writer' : '');
+      const detail = text + ' · ' + members + ' · subject ' + candidate.subject_id
+        + ' · tested ' + (candidate.tested_commit || 'unknown') + ' · ' + (candidate.reason || '')
+        + ' · runtime ' + (view.runtime_version || 'unknown') + ' · source/image unknown';
+      return `<div class="cue-event" data-integration-subject="${esc(candidate.subject_id)}"><span class="cue-event-body" title="${esc(detail)}">${esc(text)}</span></div>`;
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -19770,6 +19804,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
         if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(null, [], [], [], nowMs);
         if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(null, [], nowMs, '');
+        if (typeof stageTrackerExecutionSync === 'function') stageTrackerExecutionSync(null, nowMs);
         stageTrackerSidebarCountsUnknown();
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
@@ -19800,6 +19835,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (page.page !== f.page) f.page = page.page;
       if (typeof stageTrackerPreparationVisualSync === 'function') stageTrackerPreparationVisualSync(d, ordered, page.rows, stages, nowMs);
       if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(d, page.rows, nowMs, f.repo);
+      if (typeof stageTrackerExecutionSync === 'function') stageTrackerExecutionSync(d, nowMs);
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
@@ -58224,6 +58260,9 @@ function burnAreaChart() {
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
       const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
+      const integrationExecution = io.execution || { mode: 'off' };
+      const integrationExecutionProfile = Object.assign({}, integrationExecution);
+      delete integrationExecutionProfile.mode;
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -59293,6 +59332,35 @@ function burnAreaChart() {
           ].map(path => yamlHint(path)).join(' ')} Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
           <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
           <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+          <div class="config-field"><label>Candidate execution (independent opt-in) ${yamlHint('integration_orchestration.execution.mode')} ${settingHelpMark('settings', 'features', 'Candidate execution', `Off does not enable a writer. Advisory cannot block or dispatch. Enforce requires exact enrolled repository/base profiles, complete real CI accounting, a designated executor and actual protected qualification. Revoke the old forge epoch before returning Hive authority to legacy flow. This is separate from authoring admission and native queue settings.`)}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="execution_mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(mode => `<option value="${esc(mode)}" ${(integrationExecution.mode || 'off') === mode ? 'selected' : ''}>${esc(mode)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Execution profile and bounded enrollment (JSON object) ${settingHelpMark('settings', 'features', 'Execution enrollment', `Explicit scopes, actual repository/actor/App installation/workflow IDs, policy and workflow-tree hashes, immutable authority epoch, isolated qualification ID, job/minute/member/attempt bounds and duration nanoseconds. No inferred actors, spare capacity, wildcard enrollment, automatic growth or failover. The mode selector, not this profile JSON, chooses execution mode.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="execution_json" data-arg-types="s,s,v">${esc(JSON.stringify(integrationExecutionProfile, null, 2))}</textarea>
+          </div>
+          <div class="config-help">Source, published image, running version, desired mode and effective writer are separate receipts. Unknown telemetry is not green or zero. Production requires a real one-member protected qualification and the same complete producer/actor profile. Native authority permits only ordinary Hive enqueue admission, never queue jumping or GitHub build-window control. All participating hives must be upgraded/enrolled or stopped; copied identity and automatic takeover are unsupported.</div>
+          <div class="config-help">${[
+            'integration_orchestration.execution.scopes[].repo', 'integration_orchestration.execution.scopes[].base',
+            'integration_orchestration.execution.scopes[].authority', 'integration_orchestration.execution.scopes[].repository_id',
+            'integration_orchestration.execution.scopes[].request_actor_id', 'integration_orchestration.execution.scopes[].candidate_actor_id',
+            'integration_orchestration.execution.scopes[].producer_app_id', 'integration_orchestration.execution.scopes[].promotion_app_id',
+            'integration_orchestration.execution.scopes[].promotion_installation_id', 'integration_orchestration.execution.scopes[].materializer_id',
+            'integration_orchestration.execution.scopes[].candidate_workflow_id', 'integration_orchestration.execution.scopes[].default_branch',
+            'integration_orchestration.execution.scopes[].policy', 'integration_orchestration.execution.scopes[].workflow_tree',
+            'integration_orchestration.execution.scopes[].required_jobs[]', 'integration_orchestration.execution.scopes[].executor_id',
+            'integration_orchestration.execution.scopes[].authority_ref', 'integration_orchestration.execution.scopes[].authority_commit',
+            'integration_orchestration.execution.scopes[].qualification_id', 'integration_orchestration.execution.scopes[].max_members',
+            'integration_orchestration.execution.scopes[].expected_jobs', 'integration_orchestration.execution.scopes[].expected_minutes',
+            'integration_orchestration.execution.scopes[].purpose', 'integration_orchestration.execution.scopes[].qualified_base',
+            'integration_orchestration.execution.max_active', 'integration_orchestration.execution.max_runner_minutes',
+            'integration_orchestration.execution.max_jobs', 'integration_orchestration.execution.max_attempts',
+            'integration_orchestration.execution.observation_age', 'integration_orchestration.execution.window',
+            'integration_orchestration.execution.cooldown'
+          ].map(path => yamlHint(path)).join(' ')}</div>
+          <button class="hv-btn btn-secondary btn" data-action="prepareIntegrationExecutionIdentity">Prepare local execution identity only</button>
+          <pre id="integration-execution-identity" class="config-help" aria-live="polite"></pre>
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
@@ -59309,6 +59377,20 @@ function burnAreaChart() {
           </div>
         </div>
         `)}`;
+    }
+    async function prepareIntegrationExecutionIdentity() {
+      const target = document.getElementById('integration-execution-identity');
+      if (!target) return;
+      target.textContent = 'Preparing create-only local identity; no runtime configuration or forge mutation…';
+      try {
+        const response = await fetch('/api/integration-orchestration/execution-identity', {
+          method: 'POST', headers: _inceptionAuthHeaders()
+        });
+        if (!response.ok) throw new Error(await saveErrorMessage(response));
+        target.textContent = JSON.stringify(await response.json(), null, 2);
+      } catch (error) {
+        target.textContent = 'Identity unavailable: ' + String(error.message || error);
+      }
     }
     function renderEventTriggersSection() {
       return `<div class="settings-subsection config-field" id="event-triggers-section" data-setting-key="triggers">
@@ -62415,6 +62497,18 @@ function burnAreaChart() {
             _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
           } else if (_configState.type === 'governor' && section === 'integration_orchestration') {
             const body = Object.assign({}, (_configState.data || {}).integration_orchestration || {}, values);
+            const previousExecution = ((_configState.data || {}).integration_orchestration || {}).execution || {mode: 'off'};
+            if (Object.prototype.hasOwnProperty.call(body, 'execution_json')) {
+              const profile = JSON.parse(body.execution_json);
+              if (!profile || Array.isArray(profile) || typeof profile !== 'object') throw new Error('Execution enrollment must be a JSON object');
+              body.execution = Object.assign({}, profile, {mode: previousExecution.mode || 'off'});
+              delete body.execution_json;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'execution_mode')) {
+              body.execution = Object.assign({}, body.execution || previousExecution, {mode: body.execution_mode});
+              delete body.execution_mode;
+            }
+            body.expected_execution = previousExecution;
             const integrationMinuteNanoseconds = 60 * 1e9;
             for (const key of ['lease_ttl', 'window', 'max_observation_age']) {
               if (Object.prototype.hasOwnProperty.call(body, key + '_minutes')) {

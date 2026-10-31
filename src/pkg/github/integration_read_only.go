@@ -28,7 +28,8 @@ func integrationReadOnlyRequest(request *http.Request) error {
 	if guarded, _ := request.Context().Value(integrationReadOnlyKey{}).(bool); !guarded {
 		return nil
 	}
-	if request.Method == http.MethodGet || request.Method == http.MethodHead {
+	if (request.Method == http.MethodGet || request.Method == http.MethodHead) &&
+		!strings.HasSuffix(request.URL.Path, "/graphql") {
 		return nil
 	}
 	denied := fmt.Errorf("read-only integration lane probe refuses %s %s", request.Method, request.URL.Path)

@@ -539,3 +539,111 @@ deployed runtime, desired mode and effective writer are distinct facts.
 | Preserve documented promoted prefixes; invalidate changed dependent subjects | [Zuul speculative execution](https://zuul-ci.org/docs/zuul/latest/gating.html) and GitHub merge-group semantics; provider behavior is not Hive parity | Prefix identity stable across observer/lease generations; never recast A+B proof as B-only |
 | Fixed bounded admission before adaptation | Little's-law capacity accounting describes average WIP, not tail latency or fairness | Assigned-job wall minutes, shared-job dedup, unknown completeness, aging/fairness and explicit limits |
 | Trusted control, isolated technical jobs/finalizers | GitHub trigger/cache/OIDC contracts; provider receipts and protections still need isolated verification | No candidate checkout in privileged/finalizer jobs; exact job-bound identities, no skipped writer permissions, ambiguous claims never retried blindly |
+# Opt-in candidate execution controller
+
+The separate `integration_orchestration.execution` configuration defaults to
+**off**. Source delivery is not deployment, published-image verification,
+runtime enablement, protected-provider qualification, or a throughput receipt.
+The existing authoring layer and preparation/native queue authorities remain
+separate. No existing convergence flag enables this controller.
+
+The controller journals exact ordered recipes and their canonical work/DAG
+generations before preparation, observes the installed materializer and
+candidate workflows, archives verified producer signatures privately, and
+accounts actual assigned-runner jobs across run attempts. It discovers bounded
+workflow cohorts; absent, duplicated, truncated, stale, or unowned observations
+remain unknown. Duplicate deliveries and historical attempts consume accounting
+budget and are never treated as free. Shared physical jobs are deduplicated.
+Canceled execution counts; queued/skipped jobs are not execution. A restart
+retains job facts and signed evidence but rebuilds accounting completeness.
+
+Verified terminal receipts are reused only while actual discovery confirms the
+same completed run/attempt. Oldest-observed pending prefixes rotate through a
+bounded read budget without changing stored prefix order. A partially published
+recipe cannot become a wholly passed recipe: valid prefix receipts survive
+independently, and the unpublished tail remains rejected/unresolved.
+
+## Authority and promotion limits
+
+Hive authority supports an explicitly designated installation executor and
+observer-only enrolled peers. Its create-only private installation identity
+does not register or grant permissions. An immutable forge authority record,
+exact epoch, actual GitHub App installation, and identical reviewed producer
+profile are prerequisites. Copied identities/credentials, automatic takeover,
+TTL stealing, and independent legacy writers are not supported. A local
+filesystem lock is not cross-hive fencing.
+
+Preparation dispatch is durably journaled before the RPC. Confirmed non-applied
+refusals alone permit bounded retry after cooldown; unknown outcomes do not.
+Repository-dispatch/bootstrap overhead is **not exactly once**. This protocol
+does not authorize legacy Actions reruns or solve crash ambiguity for an RPC
+that cannot consume a fence. CI-reporting observations remain detection and
+owner-action-required, not recovery permission.
+
+Promotion uses only the exact tested prefix commit/tree, the exact current
+predecessor, and documented actually merged earlier prefixes. Fresh promotion
+rechecks unique candidate run/claim/latest attempt, canonical work/DAG/scope,
+the complete original merge lane, current heads/base, reviews/holds and provider
+policy. Its atomic mutation fences destination, author branch and authority
+epoch together. No copied green status, squash/rebase substitute, native
+fallback, or unsupported protection bypass is permitted.
+
+The initial supported provider profile is deliberately conservative. Resolved
+ruleset/classic protection and bypass metadata must be readable and supported;
+ambiguous permission/404 responses, native merge-queue rules on a Hive
+destination, or unsupported bypass/merge policy refuse qualification. A real
+one-member isolated protected probe must demonstrate the exact actor, technical
+context compatibility, no-op reference-fence behavior, actual CAS and exact PR
+merge acknowledgement. A configured qualification ID is not a receipt.
+Multi-member empirical scale remains a separate operator-approved experiment.
+
+Native authority uses only ordinary Hive enqueue admission and existing cached
+native observations. GitHub owns native promotion, group composition and build
+windows. Hive cannot jump the queue or control unsupported GitHub concurrency.
+
+## Configuration and safe rollback
+
+Settings → Features exposes an independent execution mode and a bounded profile
+JSON editor in the existing integration subsection. Explicit repository/base
+allowlists, actual actor/App/workflow IDs, policy/workflow hashes, executor/epoch
+and qualification pins, and validated member/job/minute/attempt/time bounds are
+required. Durations in that JSON editor are nanoseconds. Configuration updates
+compare `expected_execution` against the loaded profile; stale updates fail
+instead of silently replacing another owner's enrollment.
+
+**Advisory** may observe but cannot block, dispatch or promote. **Enforce** may
+use only authoritative permitted constraints and requires the parent authoring
+observer enrolled for every identical repository/base. Static finite budgets
+come first; missing telemetry freezes growth, not safety-network execution.
+This implementation does not automatically change live concurrency or enable
+an adaptive pilot.
+
+Before exclusive activation, operators must deploy a verified image, stop or
+upgrade/enroll every participating legacy writer, register one executor,
+install and verify the narrowly scoped App/workflow/producer policy, run the
+isolated protected qualification, and independently inspect actual source,
+image, runtime mode, effective writer, cohort completeness and fresh gates.
+No such live action follows automatically from merging source.
+
+Before releasing an enforced Hive scope to off/advisory or another authority,
+move its shared forge authority ref away from the old epoch and verify that
+revocation. The configuration endpoint requires a live revocation observation,
+cancels its bounded controller, and releases only this layer's scoped admission
+reservations. Unknown effects, signed evidence and mutation audit remain.
+An outage is not proof of revocation, and revocation does not deduplicate an
+already ambiguous preparation RPC. Operator handover must account for that
+explicit limitation before allowing another executor.
+
+The activity monitor adds bounded cached, archive-free captions to matching
+actual root/nested PR rows only. Exact repository, PR, full author head and base
+must match; a proof for A+B does not become A's proof. Captions distinguish stale
+unknown observations and technical success from live merge permission. Existing
+stages, sorting/filtering/tree, inline preparation rails and native queue region
+remain unchanged; there is no second gold/reference panel or new poller.
+
+There is **no claim of 5,000/day or a live candidate benchmark** from source CI,
+fixture timings, the pre-existing merge stream, or a disabled controller.
+Production measurement must separately report actual candidate/cohort identities,
+runner execution cost including cancellation/bootstrap, author-review versus
+integration receipts, outcomes/latency, and completeness over fixed windows.
+Published image and current runtime provenance remain unknown until measured.

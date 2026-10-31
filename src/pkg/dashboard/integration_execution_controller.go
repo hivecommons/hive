@@ -12,7 +12,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence/integration"
-	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -46,10 +46,14 @@ func (s *Server) ReconcileIntegrationExecution(ctx context.Context) error {
 	defer func() { s.integration.mu.Lock(); s.integration.executionReconciling = false; s.integration.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(ctx, integrationReconcileTimeout)
 	defer cancel()
+	s.integration.mu.Lock()
+	s.integration.executionCancel = cancel
+	s.integration.mu.Unlock()
 	store, err := s.integrationExecutionStore()
 	if err != nil {
 		return err
 	}
+	defer func() { s.refreshExecutionTracker(store, cfg, time.Now()) }()
 	if s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
 		return fmt.Errorf("integration execution observer has no live GitHub client")
 	}
@@ -70,7 +74,11 @@ func (s *Server) reconcileIntegrationExecutionScope(ctx context.Context, store *
 		EffectiveWriter: "observer", SourceVersion: "unknown", RuntimeVersion: versionHash, ObservedAt: now}
 	if scope.Authority == "native" {
 		status.Reason = "native selection unavailable/unobserved; no direct fallback or new poller"
-		if s.nativeQueueScopeAllowed(scope.Repo, scope.Base) && cfg.Mode == config.IntegrationEnforce {
+		s.nativeQueueTracker.mu.Lock()
+		observed, known := s.nativeQueueTracker.observations[nativeQueueScopeKey(scope.Repo, scope.Base)]
+		s.nativeQueueTracker.mu.Unlock()
+		fresh := known && !observed.Stale && observed.EntriesComplete && !observed.ObservedAt.IsZero() && now.Sub(observed.ObservedAt) <= cfg.ObservationAge
+		if fresh && s.nativeQueueScopeAllowed(scope.Repo, scope.Base) && cfg.Mode == config.IntegrationEnforce {
 			status.EffectiveWriter, status.Reason = "github-native", "GitHub owns promotion and build windows; designated Hive admission uses existing native observations"
 		}
 		coverage := integration.Coverage{Repo: scope.Repo, Base: scope.Base, From: now.Add(-cfg.Window - cfg.ObservationAge), Through: now,
@@ -372,7 +380,7 @@ func (s *Server) dispatchExecutionPreparation(ctx context.Context, store *integr
 	case dispatchErr == nil:
 		plan.State, plan.Reason = integration.Waiting, "transport accepted; actual materializer observation pending"
 		plan.DispatchOutcome = "accepted"
-	case errors.Is(dispatchErr, effects.ErrNotApplied):
+	case mutation.DefinitelyNotApplied(dispatchErr):
 		plan.State, plan.Reason = integration.Rejected, "definitely not applied; owner-first repair before bounded retry: "+dispatchErr.Error()
 		plan.DispatchOutcome = "not-applied"
 	default:

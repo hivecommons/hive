@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"fmt"
-	"github.com/hivecommons/hive/pkg/convergence/integration"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/convergence/integration"
+	"github.com/hivecommons/hive/pkg/forgestate"
 )
 
 func (s *Server) executionLiveWork(plan integration.ExecutionPlan, now time.Time) error {
@@ -11,6 +13,7 @@ func (s *Server) executionLiveWork(plan integration.ExecutionPlan, now time.Time
 	if err != nil {
 		return err
 	}
+
 	current := map[string]integration.Intent{}
 	for _, intent := range intents.Intents() {
 		current[intent.Key] = intent
@@ -33,4 +36,25 @@ func (s *Server) executionLiveWork(plan integration.ExecutionPlan, now time.Time
 		}
 	}
 	return nil
+}
+
+func (s *Server) executionPromotionWork(store *integration.Store, subject forgestate.IntegrationCandidateSubject, now time.Time) error {
+	index := len(subject.Members) - 1
+	if index < 0 {
+		return fmt.Errorf("promotion subject has no members")
+	}
+	for _, plan := range store.ExecutionSnapshot().Plans {
+		for _, prepared := range plan.Prepared {
+			if !prepared.SameCore(subject) || len(plan.WorkBindings) <= index || len(plan.Recipe.Members) <= index ||
+				plan.Recipe.Members[index] != subject.Members[index] {
+				continue
+			}
+			// Earlier members already have exact documented merged lineage.
+			// Only the member being promoted needs a live authoring claim/DAG.
+			plan.WorkBindings = []integration.ExecutionWorkBinding{plan.WorkBindings[index]}
+			plan.Recipe.Members = []forgestate.IntegrationCandidateMember{subject.Members[index]}
+			return s.executionLiveWork(plan, now)
+		}
+	}
+	return fmt.Errorf("current promotion member has no exact canonical work binding")
 }

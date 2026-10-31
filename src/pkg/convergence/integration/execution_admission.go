@@ -137,6 +137,9 @@ func (s *Store) PlanExecution(cfg config.IntegrationExecutionConfig, in Executio
 	state := s.executionData()
 	reserved, activeJobs, active := 0.0, 0, 0
 	for _, plan := range state.plans {
+		if plan.ReservationsReleased {
+			continue
+		}
 		if plan.State == Unknown || plan.State == Waiting || plan.State == Running {
 			// Bounds are global across the explicitly enrolled destinations, not
 			// independently reusable in every repository. Removed scopes retain

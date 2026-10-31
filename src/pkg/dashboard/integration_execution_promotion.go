@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,7 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence/integration"
-	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -121,7 +120,7 @@ func (s *Server) promoteExecutionReady(ctx context.Context, store *integration.S
 		switch {
 		case promoteErr == nil && result.Provenance == last.Commit:
 			promotion.State, promotion.Reason = "applied", "actual protected atomic destination+author-head+authority-epoch CAS acknowledged/reconciled"
-		case errors.Is(promoteErr, effects.ErrNotApplied):
+		case mutation.DefinitelyNotApplied(promoteErr):
 			promotion.State, promotion.Reason = "rejected", "live guard definitely refused before effect: "+promoteErr.Error()
 		default:
 			promotion.State, promotion.Reason = "unknown", "promotion outcome unknown; only exact fenced reconciliation permitted"
@@ -198,6 +197,18 @@ func (s *Server) executionPromotionGuard(ctx context.Context, store *integration
 	if !repository.GetAllowMergeCommit() {
 		return fmt.Errorf("repository disallows the exact tested merge-commit protocol; no squash/rebase substitution")
 	}
+	last := proof.Subject.Prefixes[len(proof.Subject.Prefixes)-1]
+	runs, err := s.deps.GHClient.ReadIntegrationExecutionCandidateRuns(ctx, scope.Repo, scope.CandidateWorkflowID, last.Commit)
+	if err != nil {
+		return err
+	}
+	if proof.Subject.Claim == nil {
+		return fmt.Errorf("candidate has no exact dispatch claim")
+	}
+	matches := executionRunsNamed(runs, "Integration "+proof.Subject.ID+" "+proof.Subject.Claim.Owner.Nonce)
+	if len(matches) != 1 || matches[0].GetID() != proof.RunID || matches[0].GetRunAttempt() != proof.Attempt {
+		return fmt.Errorf("exact candidate run/claim is absent, duplicated or superseded; no promotion")
+	}
 	refreshed, _, err := s.observeExecutionCandidate(ctx, store, scope, proof.Subject, proof.RunID, proof.Attempt, time.Now())
 	if err != nil {
 		return err
@@ -222,6 +233,9 @@ func (s *Server) executionPromotionGuard(ctx context.Context, store *integration
 		return fmt.Errorf("complete normal boot lane promotion evaluator unavailable")
 	}
 	member := proof.Subject.Members[len(proof.Subject.Members)-1]
+	if err := s.executionPromotionWork(store, proof.Subject, time.Now()); err != nil {
+		return err
+	}
 	evidence := automerge.IntegrationBaseEvidence{Repo: scope.Repo, Base: scope.Base, PR: member.PR,
 		Head: member.Head, ExpectedSHA: request.ExpectedSHA, TestedSHA: request.TestedSHA, SubjectID: proof.Subject.ID,
 		Verify: func(ctx context.Context) error {

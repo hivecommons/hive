@@ -56,26 +56,28 @@ func (r ExecutionRecipe) Validate() error {
 }
 
 type ExecutionPlan struct {
-	Recipe              ExecutionRecipe                          `json:"recipe"`
-	Generation          uint64                                   `json:"generation"`
-	CreatedAt           time.Time                                `json:"created_at"`
-	ObservedAt          time.Time                                `json:"observed_at"`
-	State               State                                    `json:"state"`
-	Reason              string                                   `json:"reason"`
-	Priority            int                                      `json:"priority"`
-	WorkKeys            []string                                 `json:"work_keys"`
-	ExecutorID          string                                   `json:"executor_id"`
-	AuthorityCommit     string                                   `json:"authority_commit"`
-	RequestDigest       string                                   `json:"request_digest,omitempty"`
-	MaterializerRunID   int64                                    `json:"materializer_run_id,omitempty"`
-	MaterializerAttempt int                                      `json:"materializer_attempt,omitempty"`
-	Prepared            []forgestate.IntegrationCandidateSubject `json:"prepared"`
-	MutationKey         string                                   `json:"mutation_key,omitempty"`
-	Attempt             int                                      `json:"attempt"`
-	AttemptAt           time.Time                                `json:"attempt_at"`
-	DispatchOutcome     string                                   `json:"dispatch_outcome,omitempty"`
-	WorkBindings        []ExecutionWorkBinding                   `json:"work_bindings"`
-	Materialization     *ExecutionArchive                        `json:"materialization,omitempty"`
+	Recipe               ExecutionRecipe                          `json:"recipe"`
+	Generation           uint64                                   `json:"generation"`
+	CreatedAt            time.Time                                `json:"created_at"`
+	ObservedAt           time.Time                                `json:"observed_at"`
+	State                State                                    `json:"state"`
+	Reason               string                                   `json:"reason"`
+	Priority             int                                      `json:"priority"`
+	WorkKeys             []string                                 `json:"work_keys"`
+	ExecutorID           string                                   `json:"executor_id"`
+	AuthorityCommit      string                                   `json:"authority_commit"`
+	RequestDigest        string                                   `json:"request_digest,omitempty"`
+	MaterializerRunID    int64                                    `json:"materializer_run_id,omitempty"`
+	MaterializerAttempt  int                                      `json:"materializer_attempt,omitempty"`
+	JobCompleteness      string                                   `json:"job_completeness,omitempty"`
+	Prepared             []forgestate.IntegrationCandidateSubject `json:"prepared"`
+	MutationKey          string                                   `json:"mutation_key,omitempty"`
+	Attempt              int                                      `json:"attempt"`
+	AttemptAt            time.Time                                `json:"attempt_at"`
+	DispatchOutcome      string                                   `json:"dispatch_outcome,omitempty"`
+	WorkBindings         []ExecutionWorkBinding                   `json:"work_bindings"`
+	ReservationsReleased bool                                     `json:"reservations_released"`
+	Materialization      *ExecutionArchive                        `json:"materialization,omitempty"`
 }
 
 type ExecutionWorkBinding struct {
@@ -124,6 +126,7 @@ type ExecutionProof struct {
 	EligibilityRevision uint64                                 `json:"eligibility_revision"`
 	InvalidatedBy       string                                 `json:"invalidated_by,omitempty"`
 	Reason              string                                 `json:"reason"`
+	JobCompleteness     string                                 `json:"job_completeness,omitempty"`
 }
 
 func (p ExecutionProof) Key() string {

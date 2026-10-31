@@ -39,7 +39,7 @@ func (s *Store) ResumeExecution(cfg config.IntegrationExecutionConfig, id string
 	active, jobs, reserved := len(plan.Recipe.Members), len(plan.Recipe.Members)*scope.ExpectedJobs,
 		float64(len(plan.Recipe.Members))*scope.ExpectedMinutes
 	for otherID, other := range state.plans {
-		if otherID == id || other.State != Unknown && other.State != Waiting && other.State != Running {
+		if otherID == id || other.ReservationsReleased || other.State != Unknown && other.State != Waiting && other.State != Running {
 			continue
 		}
 		profile, enrolled := cfg.Scope(other.Recipe.Repo, other.Recipe.Base)
@@ -60,6 +60,7 @@ func (s *Store) ResumeExecution(cfg config.IntegrationExecutionConfig, id string
 	plan.Generation++
 	plan.AttemptAt, plan.ObservedAt = now, now
 	plan.State, plan.Reason, plan.DispatchOutcome = Waiting, "bounded definitely-not-applied/unissued resume reserved", ""
+	plan.ReservationsReleased = false
 	plan.Materialization, plan.Prepared = nil, nil
 	plan.MaterializerRunID, plan.MaterializerAttempt = 0, 0
 	plan.RequestDigest, plan.MutationKey = "", ""

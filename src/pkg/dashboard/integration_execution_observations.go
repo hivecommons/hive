@@ -79,8 +79,12 @@ func (s *Server) observeExecutionPlans(ctx context.Context, store *integration.S
 	}{
 		{materializers, knownRequests}, {candidates, knownCandidates},
 	} {
+		counts := map[string]int{}
 		for _, run := range cohort.runs {
-			if !cohort.known[run.GetDisplayTitle()] {
+			counts[run.GetDisplayTitle()]++
+		}
+		for _, run := range cohort.runs {
+			if !cohort.known[run.GetDisplayTitle()] || counts[run.GetDisplayTitle()] != 1 {
 				complete, reason = false, "unowned/ambiguous installed producer run requires owner reconciliation"
 			}
 		}
@@ -98,54 +102,68 @@ func (s *Server) observeExecutionPlans(ctx context.Context, store *integration.S
 			complete, reason = false, "preparation has no unique actual run; no absence-based redispatch"
 			continue
 		}
-		if *budget <= 0 {
-			complete, reason = false, "bounded run observation budget exhausted"
-			break
-		}
-		*budget--
 		run := matches[0]
-		observed, err := s.deps.GHClient.ReadIntegrationMaterializerObservation(ctx, ghpkg.IntegrationMaterializerExpectation{
-			Request: executionPreparationRequest(plan), RequestDigest: plan.RequestDigest,
-			DefaultBranch: scope.DefaultBranch, EventName: "repository_dispatch", WorkflowTree: scope.WorkflowTree,
-			RepositoryID: scope.RepositoryID, ActorID: scope.RequestActorID, WorkflowID: scope.MaterializerID,
-			CheckAppID: scope.ProducerAppID, RunID: run.GetID(), Attempt: run.GetRunAttempt(),
-		}, s.integration.executionVerifier, now)
-		if jobErr := appendExecutionJobs(store, scope, run.GetHeadSHA(), "materializer", []string{plan.Recipe.ID()}, observed.Evidence, now); jobErr != nil {
-			return jobErr
-		}
-		if observed.Evidence.JobCompleteness != "complete" {
-			complete, reason = false, "actual bootstrap job cohort incomplete"
-		}
-		plan.Generation++
-		plan.ObservedAt, plan.MaterializerRunID, plan.MaterializerAttempt = now, run.GetID(), run.GetRunAttempt()
-		if err != nil {
-			plan.State, plan.Reason = integration.Unknown, "materializer provenance unresolved: "+err.Error()
-			complete, reason = false, plan.Reason
-		} else {
-			plan.State, plan.Reason = integration.State(observed.Evidence.State), observed.Evidence.Detail
-			if observed.Evidence.State == "passed" {
-				archive, archiveErr := executionArchive(scope, observed.Evidence, "materializer",
-					observed.Receipt.PreparedBy.SourceSHA, "refs/heads/"+scope.DefaultBranch, "repository_dispatch")
-				if archiveErr != nil {
-					return archiveErr
-				}
-				plan.Materialization, plan.Prepared = archive, []forgestate.IntegrationCandidateSubject{}
-				for _, prepared := range observed.Receipt.Prepared {
-					if prepared.Publication == "accepted" {
-						plan.Prepared = append(plan.Prepared, prepared.Subject)
+		if !executionTerminalMaterializer(plan, run) {
+			if *budget <= 0 {
+				complete, reason = false, "bounded run observation budget exhausted"
+				break
+			}
+			*budget--
+			observed, err := s.deps.GHClient.ReadIntegrationMaterializerObservation(ctx, ghpkg.IntegrationMaterializerExpectation{
+				Request: executionPreparationRequest(plan), RequestDigest: plan.RequestDigest,
+				DefaultBranch: scope.DefaultBranch, EventName: "repository_dispatch", WorkflowTree: scope.WorkflowTree,
+				RepositoryID: scope.RepositoryID, ActorID: scope.RequestActorID, WorkflowID: scope.MaterializerID,
+				CheckAppID: scope.ProducerAppID, RunID: run.GetID(), Attempt: run.GetRunAttempt(),
+			}, s.integration.executionVerifier, now)
+			if jobErr := appendExecutionJobs(store, scope, run.GetHeadSHA(), "materializer", []string{plan.Recipe.ID()}, observed.Evidence, now); jobErr != nil {
+				return jobErr
+			}
+			if observed.Evidence.JobCompleteness != "complete" {
+				complete, reason = false, "actual bootstrap job cohort incomplete"
+			}
+			s.rememberExecutionCost(scope.Repo, observed.Evidence, now)
+			plan.Generation++
+			plan.JobCompleteness = observed.Evidence.JobCompleteness
+			plan.ObservedAt, plan.MaterializerRunID, plan.MaterializerAttempt = now, run.GetID(), run.GetRunAttempt()
+			if err != nil {
+				plan.State, plan.Reason = integration.Unknown, "materializer provenance unresolved: "+err.Error()
+				complete, reason = false, plan.Reason
+			} else {
+				plan.State, plan.Reason = integration.State(observed.Evidence.State), observed.Evidence.Detail
+				if observed.Evidence.State == "passed" {
+					archive, archiveErr := executionArchive(scope, observed.Evidence, "materializer",
+						observed.Receipt.PreparedBy.SourceSHA, "refs/heads/"+scope.DefaultBranch, "repository_dispatch")
+					if archiveErr != nil {
+						return archiveErr
+					}
+					plan.Materialization, plan.Prepared = archive, []forgestate.IntegrationCandidateSubject{}
+					for _, prepared := range observed.Receipt.Prepared {
+						if prepared.Publication == "accepted" {
+							plan.Prepared = append(plan.Prepared, prepared.Subject)
+						}
+					}
+					plan.State, plan.Reason = integration.Waiting, "materialization verified; exact candidate workflows pending"
+					if len(plan.Prepared) == 0 {
+						plan.State, plan.Reason = integration.Rejected, "trusted materializer produced no accepted prefix"
 					}
 				}
-				plan.State, plan.Reason = integration.Waiting, "materialization verified; exact candidate workflows pending"
-				if len(plan.Prepared) == 0 {
-					plan.State, plan.Reason = integration.Rejected, "trusted materializer produced no accepted prefix"
-				}
+			}
+			if err := appendExecutionPlan(store, plan); err != nil {
+				return err
 			}
 		}
-		if err := appendExecutionPlan(store, plan); err != nil {
-			return err
-		}
 		allTerminal, allPassed := len(plan.Prepared) > 0, len(plan.Prepared) > 0
-		for _, subject := range plan.Prepared {
+		subjects := append([]forgestate.IntegrationCandidateSubject(nil), plan.Prepared...)
+		lastObserved := map[string]time.Time{}
+		for _, proof := range store.ExecutionSnapshot().Proofs {
+			if proof.ObservedAt.After(lastObserved[proof.Subject.ID]) {
+				lastObserved[proof.Subject.ID] = proof.ObservedAt
+			}
+		}
+		sort.SliceStable(subjects, func(i, j int) bool {
+			return lastObserved[subjects[i].ID].Before(lastObserved[subjects[j].ID])
+		})
+		for _, subject := range subjects {
 			if subject.Claim == nil {
 				complete, reason, allTerminal = false, "candidate has no verified initial claim", false
 				continue
@@ -155,12 +173,18 @@ func (s *Server) observeExecutionPlans(ctx context.Context, store *integration.S
 				complete, reason, allTerminal = false, "candidate run absent/duplicated; owner action required, no rerun", false
 				continue
 			}
+			run := matches[0]
+			proof, cached := store.ExecutionProof(subject.ID, run.GetID(), run.GetRunAttempt())
+			if cached && executionTerminalCandidate(proof, run) {
+				allTerminal = allTerminal && (proof.ObservedState == integration.Passed || proof.ObservedState == integration.Rejected)
+				allPassed = allPassed && proof.ObservedState == integration.Passed
+				continue
+			}
 			if *budget <= 0 {
 				complete, reason, allTerminal = false, "bounded candidate observation budget exhausted", false
 				break
 			}
 			*budget--
-			run := matches[0]
 			proof, cohortComplete, err := s.observeExecutionCandidate(ctx, store, scope, subject, run.GetID(), run.GetRunAttempt(), now)
 			if err != nil {
 				complete, reason = false, err.Error()
@@ -174,15 +198,22 @@ func (s *Server) observeExecutionPlans(ctx context.Context, store *integration.S
 			plan.State = integration.Running
 			if allTerminal {
 				plan.State = integration.Rejected
-				if allPassed {
+				if allPassed && len(plan.Prepared) == len(plan.Recipe.Members) {
 					plan.State = integration.Passed
 				}
 			}
 			plan.Reason = "actual exact-prefix technical workflow observations; author eligibility remains separate"
+			if allTerminal && len(plan.Prepared) != len(plan.Recipe.Members) {
+				plan.Reason = "only a strict prefix was published; recipe tail rejected, valid prefix receipts retained independently"
+			}
 			if err := appendExecutionPlan(store, plan); err != nil {
 				return err
 			}
 		}
+	}
+	allRuns := append(append([]*gh.WorkflowRun(nil), materializers...), candidates...)
+	if err := s.reconcileExecutionCostHistory(ctx, store, scope, allRuns, now, budget); err != nil {
+		complete, reason = false, err.Error()
 	}
 	coverage := integration.Coverage{Repo: scope.Repo, Base: scope.Base, From: from, Through: now,
 		Complete: complete, Source: "execution-owned-actions-cohort-v2", Reason: reason}
@@ -247,7 +278,8 @@ func (s *Server) observeExecutionCandidate(ctx context.Context, store *integrati
 		return integration.ExecutionProof{}, false, jobErr
 	}
 	proof := integration.ExecutionProof{Subject: subject, State: integration.State(observed.State), ObservedAt: now,
-		Source: "github-actions-oidc-v1", RunID: runID, Attempt: attempt, Reason: observed.Detail}
+		Source: "github-actions-oidc-v1", RunID: runID, Attempt: attempt, Reason: observed.Detail, JobCompleteness: observed.JobCompleteness}
+	s.rememberExecutionCost(scope.Repo, observed, now)
 	if err != nil {
 		proof.State, proof.Reason = integration.Unknown, err.Error()
 	}
