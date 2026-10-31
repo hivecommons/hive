@@ -1,0 +1,57 @@
+# INACTIVE: applying this overlay, creating twitch-stream-matrix, and scaling
+# above 0 are owner-only actions. First enable dashboard.matrix with an explicit
+# public repo allowlist and verify its author restriction and scrub/drop rules.
+# Destination: twitch.tv/hivecommonsmatrix; never use the hivecommons stream key.
+# A separate namespace and selectors isolate this instance from the main stream.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hive-stream-matrix
+namePrefix: matrix-
+resources:
+  - ../../k8s
+images:
+  - name: ghcr.io/hivecommons/hive-stream
+    newTag: v5-latest
+labels:
+  # Patch workload selectors explicitly below: includeSelectors would also
+  # rewrite the NetworkPolicy's dashboard destination selector (which stays hive).
+  - pairs:
+      app.kubernetes.io/name: hive-stream-matrix
+    includeTemplates: true
+replicas:
+  - name: hive-stream
+    count: 0
+patches:
+  - target:
+      kind: ConfigMap
+      name: hive-stream
+    patch: |-
+      - op: replace
+        path: /data/DASHBOARD_URL
+        value: http://hive.hive-hosted-hosted-available-oke-11-placeholder-r05x.svc.cluster.local:3002
+      - op: replace
+        path: /data/DASHBOARD_PATH
+        value: /?kiosk=1&view=matrix&sound=off
+      - op: replace
+        path: /data/STREAM_AUDIO
+        value: silent
+  - target:
+      kind: Deployment
+      name: hive-stream
+    patch: |-
+      - op: replace
+        path: /spec/selector/matchLabels/app.kubernetes.io~1name
+        value: hive-stream-matrix
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/1/secretRef/name
+        value: twitch-stream-matrix
+  - target:
+      kind: NetworkPolicy
+      name: hive-stream
+    patch: |-
+      - op: replace
+        path: /spec/podSelector/matchLabels/app.kubernetes.io~1name
+        value: hive-stream-matrix
+      - op: replace
+        path: /spec/egress/1/to/0/namespaceSelector/matchLabels/kubernetes.io~1metadata.name
+        value: hive-hosted-hosted-available-oke-11-placeholder-r05x

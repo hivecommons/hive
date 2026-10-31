@@ -4460,6 +4460,9 @@
     /* The author `display: block` above outranks the UA `[hidden] { display: none }`
        rule, so without this the portal stayed on screen after `portal.hidden = true`. */
     .config-tooltip-portal[hidden] { display: none; }
+    .contributor-online-tooltip { max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; overflow-wrap: anywhere; }
+    .contributor-online-ids { display: block; list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
+    .contributor-online-ids li { display: block; }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: none; }
     .section-help-mark { text-decoration: none; }
     .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }
@@ -7433,7 +7436,7 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
+      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count contributor-online-trigger" tabindex="0" role="link" aria-label="Contributors" data-keydown-action="ocNavigate" data-arg0="contributors-section" data-zero hidden>0/0</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Intelligence</div>
@@ -7504,7 +7507,6 @@
        block turns it on. Its id is registered in OVERLAY_SELECTOR so the
        existing installModalScrollLock() observer body-locks scroll for free. -->
   <div id="oc-drawer-backdrop"></div>
-
   <!-- Light top bar (hidden by default) -->
   <header id="oc-topbar" class="oc-topbar">
     <div class="oc-topbar-left">
@@ -16304,7 +16306,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPresenceOf(item) {
       const p = item && item.presence;
       if (!p || typeof p !== 'object' || !p.login) return null;
-      const humanAuthor = item.author_kind === 'human' && String(item.author || '').toLowerCase() === String(p.login).toLowerCase();
+      const humanAuthor = (item.author_kind === 'human' || item.adoption && item.adoption.blocked_by === 'author-is-person')
+        && String(item.author || '').toLowerCase() === String(p.login).toLowerCase();
       const kind = !humanAuthor && p.kind === 'clanker' ? 'clanker' : 'human';
       const state = kind === 'human' ? 'unknown' : STAGE_TRACKER_PRESENCE_STATES.indexOf(p.state) >= 0 ? p.state : 'unknown';
       return { login: String(p.login), state, kind, since: p.since || '', last_seen: kind === 'clanker' ? p.last_seen || '' : '', next: kind === 'clanker' && p.next === 'adopt' ? 'adopt' : 'wait', adopt_at: kind === 'clanker' ? p.adopt_at || '' : '' };
@@ -17255,6 +17258,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ak = item.author_kind || '';
       // Plain words for author_kind in hover text (hivecommons/hive#15394).
       const akPlain = { human: 'person', clanker: 'agent', hive: 'hive', bot: 'bot' };
+      // How the kind was read: author/<kind> label (said nothing), hive
+      // markers, or the author's contributor-hub profile (hivecommons/hive#16015).
+      const akSource = { inferred: ', inferred', registry: ', registered contributor' }[item.author_kind_source] || '';
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const sinceMs = Date.parse(item.stage_since || '');
       const trail = stageTrackerTrailText(item);
@@ -17262,7 +17268,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const lines = openHeld
         ? [stageTrackerHeadline(item) + (item.caption || item.reason ? ' · ' + (item.caption || item.reason) : '') + (item.repo ? ' · ' + item.repo : '')]
         : [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
-      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (' + (akPlain[ak] || ak) + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
+      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (' + (akPlain[ak] || ak) + akSource + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : ''));
@@ -17727,9 +17733,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The since column is an empty spacer here (same width as the strip
     // row's, which carries the time on step): a wrapped title must not float
     // the age away from the chevrons it describes.
-    function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml) {
+    function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml, prTargetKey) {
       const wide = !(prRefs && prRefs.length);
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
+      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr"${prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -17780,7 +17786,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // PRs under it (the superseded-by prompt pre-fills the one sibling).
     function stageTrackerLinkedPRItem(issue, lp) {
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x, issue)) : [];
-      return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+      const canonical = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/.exec(String(lp.url || ''));
+      return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
@@ -18196,12 +18203,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nowMs = Number(ctx.nowMs) || Date.now();
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
-      let prRefs = [], shown = item, range = null, subs = '', subRows = null;
+      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '';
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
+          const pr = stageTrackerLinkedPRItem(item, lp);
+          prTargetKey = stageTrackerItemKey(pr);
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
@@ -18261,7 +18270,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''), prTargetKey)}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
@@ -21331,10 +21340,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The row (or nested PR) an event happened on, as the items a menu acts
     // on: a selected row with company stands for the whole selection.
     function stageTrackerMenuTargets(target) {
-      const sub = target && target.closest ? target.closest('[data-ham-sub-key]') : null;
+      const sub = target && target.closest ? target.closest('[data-ham-sub-key], [data-ham-target-key]') : null;
       const row = target && target.closest ? target.closest('.ham-row[data-ham-key]') : null;
       if (!row && !sub) return null;
-      const key = sub ? sub.dataset.hamSubKey : row.dataset.hamKey;
+      const key = sub ? (sub.dataset.hamTargetKey || sub.dataset.hamSubKey) : row.dataset.hamKey;
       const list = row ? row.parentNode : sub.closest('#activity-monitor-panel');
       const keys = _stageTrackerSel.has(key) && _stageTrackerSel.size > 1 && list ? stageTrackerRowKeys(list).filter(k => _stageTrackerSel.has(k)) : [key];
       return { items: stageTrackerItemsForKeys(keys), restore: sub ? (sub.querySelector('.ham-kebab') || row) : row };
@@ -22861,6 +22870,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
       if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
     }
+    // A copy must identify the selected item, not its parent issue or a
+    // decision target. Keep the canonical URL (including its forge host).
+    function stageTrackerCopyLink(item) {
+      if (!item || (item.kind !== 'issue' && item.kind !== 'pr')) return '';
+      const url = String(item.url || '');
+      const m = /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/(issues|pull)\/(\d+)(?:[?#].*)?$/.exec(url);
+      return m && m[1] === (item.kind === 'pr' ? 'pull' : 'issues') && Number(m[2]) === Number(item.number) && Number(item.number) > 0 ? url : '';
+    }
     async function runRowAction(action, row) {
       let items = Array.isArray(row) ? row.slice() : (row ? [row] : []);
       const id = action;
@@ -22881,10 +22898,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return { toasts: [], pending: [] };
       }
       if (id === 'copy') {
-        const text = items.map(it => it.url).filter(Boolean).join('\n');
         try {
+          const links = items.map(stageTrackerCopyLink);
+          if (links.some(url => !url)) throw new Error('No matching GitHub link for the selected item — refresh the tracker and try again');
           if (!navigator.clipboard) throw new Error('clipboard unavailable');
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(links.join('\n'));
           showToast(items.length > 1 ? 'Copied ' + items.length + ' links' : 'Link copied', 'success');
         } catch (e) { showToast('Could not copy: ' + (e && e.message ? e.message : 'clipboard unavailable'), 'error'); }
         return { toasts: [], pending: [] };
@@ -23067,7 +23085,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // kind → { name, bytes (ArrayBuffer), buffer (AudioBuffer|null), failed }
     var _stageTrackerClips = { open: null, merge: null };
     var _stageTrackerSettingsReturnFocus = null;
-
     function stageTrackerPRKey(repo, number) { return (repo || '') + '/pr#' + (Number(number) || 0); }
     function stageTrackerItemKey(it) { return (it.repo || '') + '/' + (it.kind || '') + '#' + (Number(it.number) || 0); }
 
@@ -43018,8 +43035,21 @@ function burnAreaChart() {
       const totalCount = pool.registered;
       const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
       // Same two-part pill as Governor / Overview: "online/total".
-      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
+      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);
       navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
+      if (sidebarBadge) {
+        // Reuse the tooltip node across refreshes so the pill does not grow
+        // one hidden span per poll.
+        let tooltip = sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (!tooltip) {
+          tooltip = document.createElement('span');
+          tooltip.className = 'config-tooltip contributor-online-tooltip';
+          tooltip.hidden = true;
+          sidebarBadge.appendChild(tooltip);
+        }
+        tooltip.innerHTML = contributorsOnlineTooltip(pool);
+        if (_configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
+      }
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
         statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
@@ -43028,7 +43058,19 @@ function burnAreaChart() {
       }
     }
 
-    // contributorsOnlineTitle is the pill tooltip: "3 online · 12 registered
+    function contributorsOnlineTooltip(pool) {
+      const online = Number(pool.online) || 0;
+      const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
+      const ids = pool.online_ids;
+      if (!Array.isArray(ids) || ids.length !== online || ids.some(id => typeof id !== 'string' || !id)) {
+        return summary + '<div>Online ClankeR IDs unavailable</div>';
+      }
+      if (!ids.length) return summary + '<div>No ClankeRs online</div>';
+      return summary + '<div>Online ClankeRs</div><ul class="contributor-online-ids">' +
+        ids.map(id => '<li>' + esc(id) + '</li>').join('') + '</ul>';
+    }
+
+    // contributorsOnlineTitle is the presence summary: "3 online · 12 registered
     // (heartbeat within 15m)". The window is the hub's presence_window, the
     // same one the tracker's "(offline 13m)" caption is judged against.
     function contributorsOnlineTitle(online, total, window) {
@@ -45542,7 +45584,7 @@ function burnAreaChart() {
     }
 
     function configTooltipPointerOver(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { scheduleConfigTooltipOpen(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       // Pointer is over something else: a sibling, a modal overlay that now
@@ -45552,13 +45594,13 @@ function burnAreaChart() {
 
     function configTooltipPointerOut(target, relatedTarget) {
       if (configTooltipOwns(relatedTarget)) return;
-      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info')) return;
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info, .contributor-online-trigger')) return;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info || configTooltipOwns(target)) scheduleConfigTooltipHide();
     }
 
     function configTooltipFocusIn(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { positionConfigTooltip(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       if (configTooltipIsOpen()) hideConfigTooltip();
@@ -45574,7 +45616,7 @@ function burnAreaChart() {
     document.addEventListener('focusin', (e) => configTooltipFocusIn(e.target));
     document.addEventListener('focusout', (e) => configTooltipFocusOut(e.target, e.relatedTarget));
     document.addEventListener('click', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); });
-    window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true);
+    window.addEventListener('scroll', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); }, true);
     window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); });
 
     // ── Event delegation for actions with user-controlled data ──

@@ -149,14 +149,17 @@ test('rows without presence, or with a malformed one, render as before', () => {
 
 test('human presence stays unknown even if old payload carries agent heartbeat, offline age or adopt-at', () => {
   for (const state of ['online', 'offline']) {
-    const item = { ...human, presence: { ...human.presence, state, kind: 'clanker',
-      last_seen: iso(NOW - HOUR), next: 'adopt', adopt_at: iso(NOW + MIN) } };
-    const p = api.of(item);
-    assert.deepStrictEqual([p.state, p.kind, p.last_seen, p.next, p.adopt_at], ['unknown', 'human', '', 'wait', '']);
-    assert.ok(p.since, 'known wait timestamp is action history, not availability');
-    assert.match(api.tip(item, NOW), /human availability is unknown/);
-    assert.doesNotMatch(api.tip(item, NOW), /online|offline|last seen|adopt/);
-    assert.doesNotMatch(api.dot(item, NOW), /ham-presence-online|ham-presence-offline|ham-presence-dot/);
+    for (const author_kind of ['human', 'clanker']) {
+      const item = { ...human, author_kind, adoption: author_kind === 'clanker' ? { blocked_by: 'author-is-person' } : null,
+        presence: { ...human.presence, state, kind: 'clanker',
+          last_seen: iso(NOW - HOUR), next: 'adopt', adopt_at: iso(NOW + MIN) } };
+      const p = api.of(item);
+      assert.deepStrictEqual([p.state, p.kind, p.last_seen, p.next, p.adopt_at], ['unknown', 'human', '', 'wait', '']);
+      assert.ok(p.since, 'known wait timestamp is action history, not availability');
+      assert.match(api.tip(item, NOW), /human availability is unknown/);
+      assert.doesNotMatch(api.tip(item, NOW), /online|offline|last seen|adopt/);
+      assert.doesNotMatch(api.dot(item, NOW), /ham-presence-online|ham-presence-offline|ham-presence-dot/);
+    }
   }
 });
 

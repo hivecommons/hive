@@ -1,0 +1,1 @@
+- Tracker Copy link now copies the selected issue or PR's canonical URL, including PRs linked or nested under issues, instead of copying the parent issue link.

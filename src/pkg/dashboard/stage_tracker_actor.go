@@ -322,6 +322,9 @@ func stageTrackerDecisionWhy(it StageTrackerItem) string {
 // unknown author is StageActorNone.
 func stageTrackerAuthorStageActor(a *StageTrackerActor, it StageTrackerItem, stage stagelabels.Stage, workers map[string]stageTrackerWorker, now time.Time) *StageTrackerActor {
 	kind := stageTrackerAuthorActorKind(it.Author, it.AuthorKind)
+	if it.Adoption != nil && it.Adoption.BlockedBy == stagelabels.AdoptBlockedAuthorPerson {
+		kind = StageActorHuman
+	}
 	a.Kind, a.Login = kind, it.Author
 	switch kind {
 	case StageActorHive:

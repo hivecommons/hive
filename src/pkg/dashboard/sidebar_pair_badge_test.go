@@ -25,8 +25,9 @@ func TestSidebarPairBadgeWiring(t *testing.T) {
 		`if (data && data.actionableNow) setSidebarPairBadge(document.getElementById('governor-sidebar-badge'), issueCount, prCount, 'actionable: ' + issueCount + ' issues / ' + prCount + ' PRs')`,
 		// Contributors reads online/total off /api/status.contributorPool
 		// with the tracker's presence window in the tooltip (#15651).
-		`<span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>`,
-		`if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);`,
+		`<span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count contributor-online-trigger" tabindex="0" role="link" aria-label="Contributors" data-keydown-action="ocNavigate" data-arg0="contributors-section" data-zero hidden>0/0</span></a>`,
+		`setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);`,
+		`tooltip.innerHTML = contributorsOnlineTooltip(pool);`,
 		`function contributorsOnlineTitle(online, total, window)`,
 		`<span id="contributors-status-badge" class="contrib-status-badge" title="0 online · 0 registered"></span>`,
 	} {

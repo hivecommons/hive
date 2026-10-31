@@ -72,6 +72,12 @@ class FakeElement {
     while (n.parentNode) n = n.parentNode;
     return n.isRoot === true;
   }
+  get textContent() { return this._textContent || ''; }
+  set textContent(value) {
+    this._textContent = String(value);
+    for (const child of this.children) child.parentNode = null;
+    this.children = [];
+  }
   get classList() {
     const self = this;
     return {
@@ -86,8 +92,8 @@ class FakeElement {
     return false;
   }
   closest(selector) {
-    const cls = selector.replace(/^\./, '');
-    for (let n = this; n; n = n.parentNode) if (n.classList && n.classList.contains(cls)) return n;
+    const classes = selector.split(',').map(s => s.trim().replace(/^\./, ''));
+    for (let n = this; n; n = n.parentNode) if (n.classList && classes.some(cls => n.classList.contains(cls))) return n;
     return null;
   }
   querySelector(selector) {
@@ -157,8 +163,15 @@ function harness() {
     'let _configTooltipOpenTimer = 0;',
     'let _configTooltipCloseTimer = 0;',
     ...HELPER_FUNCTIONS.map(extractFunction),
+    ...['esc', 'sidebarPairBadgeText', 'setSidebarPairBadge', 'contributorsOnlineTitle', 'contributorsOnlineTooltip', 'updateContributorBadge'].map(extractFunction),
+    extractConst('NAV_COUNT_CUE_MS'),
+    'const _navCountDeltas = new Map();',
+    extractFunction('navCountDelta'),
+    'let _cachedContributors = [];',
+    'function refreshSectionCardShell() {} function setSectionSummary() {} function contributorsSectionSummary() {}',
     extractListeners(),
     ...HELPER_FUNCTIONS.map(n => `exports.${n} = ${n};`),
+    'exports.updateContributorBadge = updateContributorBadge;',
     'exports.openDelay = CONFIG_TOOLTIP_OPEN_DELAY_MS; exports.closeGrace = CONFIG_TOOLTIP_CLOSE_GRACE_MS;',
   ].join('\n');
   vm.runInNewContext(source, context);
@@ -316,6 +329,17 @@ test('clicking inside the popover does not hide it', () => {
   assert.equal(h.isOpen(), true);
 });
 
+test('scrolling a long online ID list keeps the tooltip open, page scrolling still dismisses it', () => {
+  const h = harness();
+  const pill = makeTrigger(h.root, 'contributors');
+  pill.className = 'contributor-online-trigger';
+  h.fire('document', 'focusin', pill);
+  h.fire('window', 'scroll', h.portal());
+  assert.equal(h.isOpen(), true);
+  h.fire('window', 'scroll', h.root);
+  assert.equal(h.isOpen(), false);
+});
+
 test('Escape dismissal and modal-open hooks are wired to the shared helper', () => {
   const dismiss = extractFunction('hiveDismissTopOverlay');
   assert.match(dismiss, /configTooltipIsOpen\(\)/);
@@ -328,4 +352,51 @@ test('Escape dismissal and modal-open hooks are wired to the shared helper', () 
 
 test('portal stylesheet hides the portal when the hidden attribute is set', () => {
   assert.match(indexHtml, /\.config-tooltip-portal\[hidden\] \{ display: none; \}/);
+});
+
+test('Contributors tooltip targets the count pill and supports focus without changing navigation or pill styling', () => {
+  const badge = indexHtml.match(/<span id="contributors-sidebar-badge"[^>]+>/)[0];
+  assert.match(badge, /class="badge-count oc-nav-count contributor-online-trigger"/);
+  assert.match(badge, /tabindex="0" role="link"/);
+  assert.match(badge, /data-keydown-action="ocNavigate" data-arg0="contributors-section"/);
+  assert.match(indexHtml, /data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥/);
+  assert.match(indexHtml, /\.contributor-online-ids li \{ display: block; \}/, 'one ID per line');
+
+  const h = harness();
+  const pill = new FakeElement('span', 'badge-count oc-nav-count contributor-online-trigger');
+  pill.id = 'contributors-sidebar-badge';
+  h.root.appendChild(pill);
+  h.api.updateContributorBadge({ online: 2, registered: 4, presence_window: '15m', online_ids: ['clanker-a', 'clanker-b'] });
+  assert.equal(pill.textContent, '2/4');
+  assert.equal(pill.getAttribute('title'), null, 'no duplicate browser-native title');
+  assert.match(pill.getAttribute('aria-label'), /2 online · 4 registered/);
+  h.fire('document', 'focusin', pill);
+  assert.equal(h.isOpen(), true);
+  assert.match(h.portal().innerHTML, /<li>clanker-a<\/li><li>clanker-b<\/li>/);
+
+  h.api.updateContributorBadge({ online: 1, registered: 4, online_ids: ['clanker-reconnected'] });
+  assert.equal(pill.textContent, '1/4');
+  assert.match(h.portal().innerHTML, /<li>clanker-reconnected<\/li>/);
+  assert.doesNotMatch(h.portal().innerHTML, /clanker-a|clanker-b/);
+
+  h.api.updateContributorBadge({ online: 0, registered: 4, online_ids: [] });
+  assert.equal(pill.textContent, '0/4');
+  assert.match(h.portal().innerHTML, /No ClankeRs online/);
+  h.api.hideConfigTooltip();
+  h.fire('document', 'mouseover', pill);
+  h.advance(h.api.openDelay);
+  assert.equal(h.isOpen(), true, 'same pill also opens on hover');
+});
+
+test('Contributors tooltip escapes IDs and distinguishes unavailable IDs from no online ClankeRs', () => {
+  const context = {};
+  vm.runInNewContext(['esc', 'contributorsOnlineTitle', 'contributorsOnlineTooltip'].map(extractFunction).join('\n'), context);
+  const html = context.contributorsOnlineTooltip({ online: 1, registered: 2, online_ids: ['<img src=x onerror="bad">&'] });
+  assert.match(html, /<li>&lt;img src=x onerror=&quot;bad&quot;&gt;&amp;<\/li>/);
+  assert.doesNotMatch(html, /<img/);
+  for (const pool of [{ online: 1, registered: 2 }, { online: 1, online_ids: [] }, { online: 1, online_ids: [''] }]) {
+    const tip = context.contributorsOnlineTooltip(pool);
+    assert.match(tip, /Online ClankeR IDs unavailable/);
+    assert.doesNotMatch(tip, /No ClankeRs online/);
+  }
 });

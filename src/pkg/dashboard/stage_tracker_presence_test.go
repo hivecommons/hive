@@ -25,18 +25,28 @@ func presenceOf(t *testing.T, s *Server, store *stagelabels.Store, status *Statu
 func TestStageTrackerHumanAvailabilityCannotComeFromAnAgentHeartbeat(t *testing.T) {
 	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	rec := stagelabels.Record{NudgeCount: 1, FirstNudgeAt: now.Add(-time.Hour), NudgeHead: "current"}
-	for _, online := range []bool{false, true} {
-		called := false
-		lookup := func(string) (automerge.ContributorPresence, bool) {
-			called = true
-			return automerge.ContributorPresence{Registered: true, Online: online, LastSeen: now}, true
-		}
-		it := StageTrackerItem{Kind: "pr", Author: "clubanderson", AuthorKind: authorKindHuman, Head: "current"}
-		p := stageTrackerPresenceFor(it, it.Author, stagelabels.ReturnedToContributor, rec, true, lookup,
-			stageTrackerAdoptionClock{Enabled: true}, now)
-		if called || p == nil || p.State != presenceStateUnknown || p.Kind != presenceKindHuman ||
-			p.LastSeen != nil || p.AdoptAt != nil || p.Next != presenceNextWait || p.Since == nil {
-			t.Fatalf("agent heartbeat became human availability or lost observed wait: called=%v presence=%+v", called, p)
+	for _, kind := range []string{authorKindHuman, authorKindClanker} {
+		for _, online := range []bool{false, true} {
+			called := false
+			lookup := func(string) (automerge.ContributorPresence, bool) {
+				called = true
+				return automerge.ContributorPresence{Registered: true, Online: online, LastSeen: now}, true
+			}
+			it := StageTrackerItem{Kind: "pr", Author: "clubanderson", AuthorKind: kind, Head: "current",
+				Stage: stagelabels.ReturnedToContributor.Number()}
+			if kind == authorKindClanker {
+				rec.AdoptBlockedHead, rec.AdoptBlockedBy = it.Head, stagelabels.AdoptBlockedAuthorPerson
+				it.Adoption = stageTrackerAdoption(it, rec, true, lookup, "", stageTrackerAdoptionClock{}, now)
+				if a := stageTrackerStageActor(it, nil, now); a.Kind != StageActorHuman || !stageTrackerNeedsHuman(it) {
+					t.Fatalf("registry clanker identity overrode current human ownership: %+v", a)
+				}
+			}
+			p := stageTrackerPresenceFor(it, it.Author, stagelabels.ReturnedToContributor, rec, true, lookup,
+				stageTrackerAdoptionClock{Enabled: true}, now)
+			if called || p == nil || p.State != presenceStateUnknown || p.Kind != presenceKindHuman ||
+				p.LastSeen != nil || p.AdoptAt != nil || p.Next != presenceNextWait || p.Since == nil {
+				t.Fatalf("agent heartbeat became human availability or lost observed wait: called=%v presence=%+v", called, p)
+			}
 		}
 	}
 }

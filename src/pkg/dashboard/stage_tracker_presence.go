@@ -172,9 +172,10 @@ func stageTrackerPresenceFor(it StageTrackerItem, login string, stage stagelabel
 		return nil
 	}
 	out := &StageTrackerPresence{Login: login, State: presenceStateUnknown, Kind: presenceKindHuman, Next: presenceNextWait}
+	humanOwner := it.AuthorKind == authorKindHuman || (hasRec && rec.AdoptionBlocked(it.Head) == stagelabels.AdoptBlockedAuthorPerson)
 	var p automerge.ContributorPresence
 	hasPresence := false
-	if presence != nil && it.AuthorKind != authorKindHuman {
+	if presence != nil && !humanOwner {
 		p, hasPresence = presence(login)
 	}
 	switch {
@@ -182,7 +183,7 @@ func stageTrackerPresenceFor(it StageTrackerItem, login string, stage stagelabel
 		out.State, out.Kind = presenceStateOnline, presenceKindClanker
 	case p.Registered:
 		out.State, out.Kind = presenceStateOffline, presenceKindClanker
-	case it.AuthorKind != "" && it.AuthorKind != authorKindHuman:
+	case !humanOwner && it.AuthorKind != "" && it.AuthorKind != authorKindHuman:
 		// A clanker's PR whose author has no profile here: another hive
 		// posted it. Adoption treats it as unregistered.
 		out.Kind = presenceKindClanker
@@ -205,7 +206,7 @@ func stageTrackerPresenceFor(it StageTrackerItem, login string, stage stagelabel
 	// clanker PR at 072 whose head has not moved since the nudge, not yet
 	// adopted, with nothing holding it — automerge.AutoAdoption, the
 	// sweep's own predicate.
-	if stage != stagelabels.ReturnedToContributor || !clock.Enabled || it.AuthorKind == authorKindHuman || out.Kind != presenceKindClanker {
+	if stage != stagelabels.ReturnedToContributor || !clock.Enabled || humanOwner || out.Kind != presenceKindClanker {
 		return out
 	}
 	head := it.Head

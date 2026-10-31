@@ -90,7 +90,7 @@ func TestHelpTooltipsUseBodyFixedPortal11269(t *testing.T) {
 		"portal.id = 'config-tooltip-portal'",
 		"document.body.appendChild(portal)",
 		"const rect = info.getBoundingClientRect()",
-		"window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true)",
+		"window.addEventListener('scroll', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); }, true)",
 		"window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); })",
 	} {
 		if !strings.Contains(html, want) {
