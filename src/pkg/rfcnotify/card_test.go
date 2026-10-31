@@ -82,14 +82,18 @@ A short summary of changes.
 - [X] Also completed checkbox decision
 - [ ] ~~Struck through checkbox decision~~
 3. Another open question
+4. [x] Completed numbered decision
+5) [X] Also completed numbered decision
+(6) [x] Completed parenthesized decision
+7. [ ] Open numbered checkbox
 `
 	meta := ParseRFC(body)
 	if meta.Target != "v6" {
 		t.Errorf("Target = %q, want v6", meta.Target)
 	}
-	// Items 1, checkbox open, item 3 = 3 open decisions
-	if meta.OpenDecisions != 3 {
-		t.Errorf("OpenDecisions = %d, want 3", meta.OpenDecisions)
+	// Items 1, checkbox open, item 3, item 7 = 4 open decisions
+	if meta.OpenDecisions != 4 {
+		t.Errorf("OpenDecisions = %d, want 4", meta.OpenDecisions)
 	}
 }
 
@@ -303,9 +307,10 @@ func TestCard_ColorsByState(t *testing.T) {
 }
 
 type recordPublisher struct {
-	posted []string
-	cards  []Embed
-	fail   bool
+	posted       []string
+	cards        []Embed
+	cardContents []string
+	fail         bool
 }
 
 func (p *recordPublisher) Post(content string) error {
@@ -321,6 +326,7 @@ func (p *recordPublisher) PostCard(content string, embed Embed) (string, error) 
 		return "", errors.New("card post error")
 	}
 	p.cards = append(p.cards, embed)
+	p.cardContents = append(p.cardContents, content)
 	return "msg-card-1", nil
 }
 
@@ -378,6 +384,9 @@ func TestSweeperCardFormat_PostsCardAndFallsBackOnMalformed(t *testing.T) {
 	// Card #2 should be posted as card embed
 	if len(pub.cards) != 1 {
 		t.Fatalf("len(pub.cards) = %d, want 1", len(pub.cards))
+	}
+	if !strings.HasPrefix(pub.cardContents[0], "RFC opened: #2 RFC: Well-formed - <https://x/2>") {
+		t.Errorf("card content = %q", pub.cardContents[0])
 	}
 	if pub.cards[0].Title != "#2 RFC: Well-formed" {
 		t.Errorf("card title = %q, want '#2 RFC: Well-formed'", pub.cards[0].Title)
@@ -447,5 +456,57 @@ func TestSweeperCardFormat_PostCardFailureRollsBack(t *testing.T) {
 	}
 	if len(res2.Posted) != 1 || len(pub.cards) != 1 {
 		t.Fatalf("retry should post card: posted=%d cards=%d", len(res2.Posted), len(pub.cards))
+	}
+}
+
+func TestSweeperCardFormat_PreservesTransitions(t *testing.T) {
+	fresh := rfc(2, "open")
+	fresh.CreatedAt = t0.Add(time.Second)
+	proposal := rfcPR(2, "📝 proposal: cards", t0.Add(time.Second))
+	for _, tc := range []struct {
+		name   string
+		before []Issue
+		after  Issue
+		prefix string
+	}{
+		{"opened", nil, fresh, "RFC opened: "},
+		{"ready", []Issue{rfc(2, "open", "hold")}, rfc(2, "open"), "RFC ready to implement (hold removed): "},
+		{"completed", []Issue{rfc(2, "open")}, withReason(rfc(2, "open"), "completed"), "RFC closed (completed): "},
+		{"not planned", []Issue{rfc(2, "open")}, withReason(rfc(2, "open"), "not_planned"), "RFC closed (not planned): "},
+		{"doc proposed", nil, proposal, "RFC doc proposed: "},
+		{"doc accepted", []Issue{rfc(1, "open")}, merged(proposal, t0.Add(time.Second)), "RFC doc accepted (RFC #1): "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, fallback := range []bool{false, true} {
+				now := t0
+				sw := NewSweeper(Options{Format: FormatCard, Announcer: true, IncludeRepo: true, Logger: quiet, Now: func() time.Time { return now }})
+				src := &fakeSource{open: tc.before}
+				pub := &recordPublisher{}
+				var publisher Publisher = pub
+				if fallback {
+					publisher = Poster(pub.Post)
+				}
+				if _, err := sw.Run(context.Background(), src, publisher); err != nil {
+					t.Fatal(err)
+				}
+				after := tc.after
+				after.Body = "Refs #1\n\n## Summary\nRFC summary."
+				src.updated = []Issue{after}
+				now = now.Add(DefaultInterval)
+				res, err := sw.Run(context.Background(), src, publisher)
+				if err != nil || len(res.Posted) != 1 {
+					t.Fatalf("fallback=%v: result=%+v err=%v", fallback, res, err)
+				}
+				contents := pub.cardContents
+				if fallback {
+					contents = pub.posted
+				} else if len(pub.cards) != 1 {
+					t.Fatalf("cards = %d, want 1", len(pub.cards))
+				}
+				if len(contents) != 1 || !strings.HasPrefix(contents[0], tc.prefix+"hivecommons/hive#2 ") || !strings.Contains(contents[0], "<"+after.URL+">") {
+					t.Fatalf("fallback=%v: content=%v, want transition %q, repo and URL", fallback, contents, tc.prefix)
+				}
+			}
+		})
 	}
 }

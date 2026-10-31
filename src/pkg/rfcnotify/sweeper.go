@@ -54,20 +54,6 @@ func (p Poster) PostCard(content string, embed Embed) (string, error) {
 	return "", p(embed.Title)
 }
 
-func toPublisher(post any) Publisher {
-	if post == nil {
-		return nil
-	}
-	switch p := post.(type) {
-	case Publisher:
-		return p
-	case func(content string) error:
-		return Poster(p)
-	default:
-		return nil
-	}
-}
-
 // Values for Options.Format.
 const (
 	FormatLine = "line"
@@ -171,9 +157,8 @@ func (s *Sweeper) Detector() *Detector { return s.det }
 // Run polls once if the interval has elapsed, posts each event, and saves
 // the state. A post failure stops the batch so the remaining events are
 // retried next time rather than reordered.
-func (s *Sweeper) Run(ctx context.Context, src Source, post any) (Result, error) {
+func (s *Sweeper) Run(ctx context.Context, src Source, pub Publisher) (Result, error) {
 	var res Result
-	pub := toPublisher(post)
 	if src == nil || pub == nil {
 		return res, fmt.Errorf("rfc notify: source and poster are required")
 	}
@@ -240,7 +225,7 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post any) (Result, error)
 				postErr = pub.Post(msg)
 			} else {
 				card := Card(ev, meta, s.opts.IncludeRepo)
-				_, postErr = pub.PostCard("", card)
+				_, postErr = pub.PostCard(msg, card)
 			}
 		} else {
 			postErr = pub.Post(msg)

@@ -48,6 +48,7 @@ var (
 	headingSummaryRE   = regexp.MustCompile(`(?i)^#{1,6}\s+(?:executive\s+)?summary\b`)
 	headingDecisionsRE = regexp.MustCompile(`(?i)^#{1,6}\s+decisions\s*(?:for\s+maintainers)?\b`)
 	genericHeadingRE   = regexp.MustCompile(`^#{1,6}\s+`)
+	numberedCheckboxRE = regexp.MustCompile(`(?i)^(?:\d+[\.\)]|\(\d+\))\s+\[x\]`)
 	numberedItemRE     = regexp.MustCompile(`^(?:\d+[\.\)]|\(\d+\))\s+\S+`)
 	rfcLinkRE          = regexp.MustCompile(`(?i)(?:[\w.-]+/[\w.-]+)?#\d+|https?://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+`)
 )
@@ -204,7 +205,7 @@ func isUncheckedCheckbox(line string) bool {
 }
 
 func isCheckedCheckbox(line string) bool {
-	return strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [X]") ||
+	return numberedCheckboxRE.MatchString(line) || strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [X]") ||
 		strings.HasPrefix(line, "* [x]") || strings.HasPrefix(line, "* [X]") ||
 		strings.HasPrefix(line, "+ [x]") || strings.HasPrefix(line, "+ [X]")
 }
