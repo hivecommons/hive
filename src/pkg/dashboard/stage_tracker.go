@@ -361,6 +361,9 @@ type StageTrackerItem struct {
 	// stalled, a handled regression, blocked-on-pr, 040 covered or a PR
 	// ready for auto-merge — the hive advances those (hivecommons/hive#15008).
 	NeedsHuman bool `json:"needs_human,omitempty"`
+	// HumanAttention is the current item's actionable human requirement,
+	// separate from an actor/claimant icon or optional delegation action.
+	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`
@@ -666,16 +669,17 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
-	Preparation *StageTrackerPreparation `json:"preparation,omitempty"`
-	BaseRef     string                   `json:"base_ref,omitempty"`
-	Number      int                      `json:"number"`
-	Title       string                   `json:"title,omitempty"`
-	URL         string                   `json:"url,omitempty"`
-	Author      string                   `json:"author,omitempty"`
-	AuthorKind  string                   `json:"author_kind,omitempty"`
-	Stage       int                      `json:"stage,omitempty"`
-	StageSince  *time.Time               `json:"stage_since,omitempty"`
-	Caption     string                   `json:"caption,omitempty"`
+	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
+	Preparation    *StageTrackerPreparation    `json:"preparation,omitempty"`
+	BaseRef        string                      `json:"base_ref,omitempty"`
+	Number         int                         `json:"number"`
+	Title          string                      `json:"title,omitempty"`
+	URL            string                      `json:"url,omitempty"`
+	Author         string                      `json:"author,omitempty"`
+	AuthorKind     string                      `json:"author_kind,omitempty"`
+	Stage          int                         `json:"stage,omitempty"`
+	StageSince     *time.Time                  `json:"stage_since,omitempty"`
+	Caption        string                      `json:"caption,omitempty"`
 	// NoteChangedAt mirrors the PR row's: when the caption last changed
 	// meaning.
 	NoteChangedAt *time.Time `json:"note_changed_at,omitempty"`

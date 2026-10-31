@@ -459,9 +459,12 @@ func stageTrackerResolveActors(items []StageTrackerItem) {
 			cp := *lead.StageActor
 			// The issue's chevron names the PR the person is wanted on.
 			if cp.Kind == StageActorHuman {
-				ask := "needs a person"
-				if pr := prs[it.Repo+"#"+strconv.Itoa(lead.Number)]; pr != nil {
+				ask := cp.HumanReason
+				if pr := prs[it.Repo+"#"+strconv.Itoa(lead.Number)]; ask == "" && pr != nil {
 					ask = stageTrackerHumanAsk(stageByNumber(pr.Stage))
+				}
+				if ask == "" {
+					ask = "needs a person"
 				}
 				cp.HumanReason = stageTrackerClipReason("#" + strconv.Itoa(lead.Number) + " " + ask)
 			}

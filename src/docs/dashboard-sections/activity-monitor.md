@@ -6,10 +6,25 @@ Part of [Dashboard sections explained](../dashboard-sections.md); see that page 
 
 A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next.
 
+Human requirements have visible **Needs human: …** text inside the corresponding
+row, with the actual PR number, requester and next mover when known. This is
+separate from its pipeline stage: a covered issue can still read **PR in
+progress** while a specific linked PR asks a person to act. Multiple-PR trees
+identify the asking PR rather than placing its siblings on hold; a PR drawn
+under another issue names that host. A missing reason explicitly says **Human
+decision required; reason unavailable** and links to the item.
+
+The person glyph is reserved for an exact-current requirement. Claim ownership
+and ordinary author work instead have explicit **Claimed by** / **Next move**
+context; **Let hive decide** can be an optional delegation action, not a status
+indicator. These lines do not change stages, sorting, reference-versus-closing
+links, preparation train styling, native queues, or live notes' tuck/reopen
+controls. Cleared decisions and mismatching PR heads lose the requirement.
+
 ### First use: find the next action
 
 1. Find an item by repository, number or title. Every open issue and PR in the watched repositories is represented, including held, draft, filtered, exempt and reporter-triage work. Being visible does not make it actionable.
-2. Read the lit step and its words, then the reason on the item's `#N` link or lit chevron. The word says where the work is; the actor icon says whose move it is.
+2. Read the lit step and the visible human/actor context beneath it. The word says where the work is; **Needs human** names the actual requirement, while **Next move** and **Claimed by** distinguish ordinary actor/claim ownership. Links and chevrons retain further detail.
 3. Use **🙋 Needs human** for work waiting on a person's action. Use **⏸ On hold** separately for work a maintainer deliberately paused. Neither filter grants permission to act.
 4. Open **⋯** (or right-click / Shift+F10) for the actions allowed in that state. Read the confirmation and the result toast; a queued decision is not proof the PR merged.
 
