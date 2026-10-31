@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,7 @@ type Bot struct {
 	mu             sync.RWMutex
 	logger         *slog.Logger
 	client         *http.Client
+	sleep          func(time.Duration)
 
 	msgQueue  chan msgItem
 	lastState *statusSnapshot
@@ -193,45 +195,154 @@ func (b *Bot) SendMessage(content string) error {
 	return b.SendMessageTo(b.channelID, content)
 }
 
+// Embed represents a Discord embed object.
+type Embed struct {
+	Title       string       `json:"title,omitempty"`
+	Description string       `json:"description,omitempty"`
+	URL         string       `json:"url,omitempty"`
+	Color       int          `json:"color,omitempty"`
+	Author      *EmbedAuthor `json:"author,omitempty"`
+	Fields      []EmbedField `json:"fields,omitempty"`
+	Footer      *EmbedFooter `json:"footer,omitempty"`
+	Timestamp   string       `json:"timestamp,omitempty"`
+}
+
+// EmbedAuthor is the author field of a Discord embed.
+type EmbedAuthor struct {
+	Name    string `json:"name,omitempty"`
+	URL     string `json:"url,omitempty"`
+	IconURL string `json:"icon_url,omitempty"`
+}
+
+// EmbedField is a name/value field within a Discord embed.
+type EmbedField struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Inline bool   `json:"inline,omitempty"`
+}
+
+// EmbedFooter is the footer field of a Discord embed.
+type EmbedFooter struct {
+	Text    string `json:"text"`
+	IconURL string `json:"icon_url,omitempty"`
+}
+
+const maxDiscordRetryAfter = 5 * time.Second
+
 // SendMessageTo posts content to an arbitrary channel the bot token can
 // write to, bypassing the status channel and the drain queue. It works on a
 // Bot that was never started, so a feature that only needs to post (RFC
 // lifecycle notices, pkg/rfcnotify) can share the token without running the
 // command loops.
 func (b *Bot) SendMessageTo(channelID, content string) error {
-	if strings.TrimSpace(channelID) == "" {
-		return fmt.Errorf("discord send: channel id not configured")
-	}
 	payload := map[string]any{
-		"content":          content,
-		"allowed_mentions": map[string]any{"parse": []string{}},
+		"content": content,
 	}
+	_, err := b.postMessage(channelID, payload)
+	return err
+}
+
+// SendEmbedTo posts an embed (and optional content) to an arbitrary channel
+// the bot token can write to. It always sets allowed_mentions: {parse: []} so
+// user text never pings roles, users or @everyone, and returns the created
+// message ID.
+func (b *Bot) SendEmbedTo(channelID, content string, embed Embed) (string, error) {
+	payload := map[string]any{
+		"embeds": []Embed{embed},
+	}
+	if content != "" {
+		payload["content"] = content
+	}
+	return b.postMessage(channelID, payload)
+}
+
+func (b *Bot) postMessage(channelID string, payload map[string]any) (string, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return "", fmt.Errorf("discord send: channel id not configured")
+	}
+	if payload == nil {
+		payload = make(map[string]any)
+	}
+	payload["allowed_mentions"] = map[string]any{"parse": []string{}}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
-	if err != nil {
-		return err
+
+	doRequest := func() (*http.Response, []byte, error) {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+		if err != nil {
+			return nil, nil, err
+		}
+
+		req.Header.Set("Authorization", "Bot "+b.token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := b.client.Do(req)
+		if err != nil {
+			return nil, nil, fmt.Errorf("discord send: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("discord read body: %w", err)
+		}
+		return resp, body, nil
 	}
 
-	req.Header.Set("Authorization", "Bot "+b.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := b.client.Do(req)
+	resp, body, err := doRequest()
 	if err != nil {
-		return fmt.Errorf("discord send: %w", err)
+		return "", err
 	}
-	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := parseDiscordRetryAfter(resp.Header.Get("Retry-After"), body)
+		if retryAfter <= 0 {
+			retryAfter = 100 * time.Millisecond
+		}
+		if retryAfter > maxDiscordRetryAfter {
+			retryAfter = maxDiscordRetryAfter
+		}
+		if b.sleep != nil {
+			b.sleep(retryAfter)
+		} else {
+			time.Sleep(retryAfter)
+		}
+		resp, body, err = doRequest()
+		if err != nil {
+			return "", err
+		}
+	}
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("discord API %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("discord API %d: %s", resp.StatusCode, string(body))
 	}
 
-	return nil
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &created); err == nil && created.ID != "" {
+		return created.ID, nil
+	}
+	return "", nil
+}
+
+func parseDiscordRetryAfter(header string, body []byte) time.Duration {
+	var rl struct {
+		RetryAfter float64 `json:"retry_after"`
+	}
+	if err := json.Unmarshal(body, &rl); err == nil && rl.RetryAfter > 0 {
+		return time.Duration(rl.RetryAfter * float64(time.Second))
+	}
+	if header = strings.TrimSpace(header); header != "" {
+		if f, err := strconv.ParseFloat(header, 64); err == nil && f > 0 {
+			return time.Duration(f * float64(time.Second))
+		}
+	}
+	return 0
 }
 
 func (b *Bot) enqueue(content string) {

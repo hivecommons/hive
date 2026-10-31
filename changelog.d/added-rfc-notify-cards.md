@@ -1,0 +1,1 @@
+- Render RFC lifecycle notices as Discord summary-card embeds when `rfc_format: card` is configured on the designated announcer.

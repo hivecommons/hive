@@ -69,7 +69,8 @@ type Issue struct {
 	// IsPR marks a pull request (an RFC document proposal). PRs share the
 	// repo#N key space with issues.
 	IsPR bool
-	// Body is the PR description, read for the linked RFC issue.
+	// Body is the issue or PR description, read for summary cards and
+	// linked RFC issues.
 	Body string
 	// Files are the PR's added or changed paths. Only filled when the
 	// title alone does not mark the PR as an RFC.

@@ -32,8 +32,43 @@ type PRSource interface {
 	ListPRsUpdatedSince(ctx context.Context, since time.Time) ([]Issue, error)
 }
 
+// Publisher sends messages or summary cards to the configured channel.
+type Publisher interface {
+	Post(content string) error
+	PostCard(content string, embed Embed) (string, error)
+}
+
 // Poster sends one message to the configured channel.
 type Poster func(content string) error
+
+// Post implements Publisher for Poster.
+func (p Poster) Post(content string) error {
+	return p(content)
+}
+
+// PostCard implements Publisher for Poster by falling back to Post.
+func (p Poster) PostCard(content string, embed Embed) (string, error) {
+	if content != "" {
+		return "", p(content)
+	}
+	return "", p(embed.Title)
+}
+
+func toPublisher(post any) Publisher {
+	if post == nil {
+		return nil
+	}
+	switch p := post.(type) {
+	case Publisher:
+		return p
+	case Poster:
+		return p
+	case func(content string) error:
+		return Poster(p)
+	default:
+		return nil
+	}
+}
 
 // Values for Options.Format.
 const (
@@ -55,8 +90,8 @@ type Options struct {
 	Slack time.Duration
 	// IncludeRepo prefixes issue numbers with their repo.
 	IncludeRepo bool
-	// Format is FormatLine (or empty, the default) or FormatCard. Card
-	// rendering is not implemented yet; FormatCard only turns on rich mode.
+	// Format is FormatLine (or empty, the default) or FormatCard. FormatCard
+	// renders transitions as Discord summary cards (embeds).
 	Format string
 	// Threads opts into one thread per RFC (rich mode).
 	Threads bool
@@ -138,9 +173,10 @@ func (s *Sweeper) Detector() *Detector { return s.det }
 // Run polls once if the interval has elapsed, posts each event, and saves
 // the state. A post failure stops the batch so the remaining events are
 // retried next time rather than reordered.
-func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, error) {
+func (s *Sweeper) Run(ctx context.Context, src Source, post any) (Result, error) {
 	var res Result
-	if src == nil || post == nil {
+	pub := toPublisher(post)
+	if src == nil || pub == nil {
 		return res, fmt.Errorf("rfc notify: source and poster are required")
 	}
 	now := s.opts.Now()
@@ -199,9 +235,21 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 			continue
 		}
 		msg := Format(ev, s.opts.IncludeRepo)
-		if err := post(msg); err != nil {
+		var postErr error
+		if s.opts.Format == FormatCard {
+			meta := ParseRFC(ev.Issue.Body)
+			if meta.Empty() {
+				postErr = pub.Post(msg)
+			} else {
+				card := Card(ev, meta, s.opts.IncludeRepo)
+				_, postErr = pub.PostCard("", card)
+			}
+		} else {
+			postErr = pub.Post(msg)
+		}
+		if postErr != nil {
 			res.Errors++
-			s.opts.Logger.Warn("rfc notify: post failed", "issue", ev.Issue.Key(), "kind", ev.Kind, "error", err)
+			s.opts.Logger.Warn("rfc notify: post failed", "issue", ev.Issue.Key(), "kind", ev.Kind, "error", postErr)
 			// Keep what was announced, forget what was not: replay the
 			// snapshot for the unposted issues on top of the old records.
 			s.det.rollback(before, events[i:])
