@@ -439,6 +439,7 @@ jobs:
           else
             IMG=hive-freshness-probe:local
             docker buildx build --load \
+              --platform "${{ matrix.platform }}" \
               -f src/Dockerfile \
               --build-arg BASE_REGISTRY="$BASE_REGISTRY" \
               --build-arg GIT_HASH="$EXPECTED_SHA" \
