@@ -135,7 +135,8 @@ test('Esc leaves display mode only when no popover or dialog is open: settings, 
   assert.strictEqual(api.stageTrackerDisplayOverlayOpen(doc([el({ style: { display: 'none' } })])), false, 'display:none');
   assert.strictEqual(api.stageTrackerDisplayOverlayOpen(doc([el({ hidden: true }), el()])), true, 'one open popover is enough');
   assert.strictEqual(api.stageTrackerDisplayOverlayOpen(null), false);
-  assert.ok(html.includes('if (stageTrackerDisplayOverlayOpen(document)) return;\n      e.preventDefault();\n      toggleStageTrackerDisplay();'), 'the Esc listener checks overlays before leaving');
+  assert.ok(html.includes('if (stageTrackerDisplayOverlayOpen(document)) return;\n      e.preventDefault();\n'), 'the Esc listener checks overlays before leaving');
+  assert.ok(html.includes('if (stageTrackerDisplayMode()) stageTrackerDisplayExit(); else toggleStageTrackerDisplay();'), 'the Esc listener leaves through stageTrackerDisplayExit like the overlay control');
   // The merged and queue popover closers also claim Esc so later listeners see defaultPrevented.
   assert.ok(html.includes("if (pop && !pop.hidden) { e.preventDefault(); hamMergedToggle(false);"), 'merged popover claims Esc');
   assert.ok(html.includes("if (pop && !pop.hidden) { e.preventDefault(); hamQueueToggle(false);"), 'queue popover claims Esc');
@@ -189,10 +190,12 @@ const controlsSrc = [
   constLine('STAGE_TRACKER_GROUP_KEY'), constLine('STAGE_TRACKER_GROUPS'), constLine('STAGE_TRACKER_GROUP_DEFAULT'),
   fnSrc('stageTrackerDefaultFilter'), fnSrc('stageTrackerNormalizeFilter'),
   between('tracker url view helpers begin', 'tracker url view helpers end'),
+  between('tracker display playlist helpers begin', 'tracker display playlist helpers end'),
   constLine('STAGE_TRACKER_POPOUT_HASH'), constLine('STAGE_TRACKER_DISPLAY_PARAM'),
   pick(/const STAGE_TRACKER_FULLSCREEN_LABELS = \{[\s\S]*?\n    \};\n/, 'FULLSCREEN_LABELS'),
   pick(/const STAGE_TRACKER_DISPLAY_CONTROLS_HTML = [\s\S]*? hidden>';\n/, 'DISPLAY_CONTROLS_HTML'),
   constLine('STAGE_TRACKER_DISPLAY_IDLE_MS'),
+  pick(/const STAGE_TRACKER_DISPLAY_CONTROL_LABELS = \{[\s\S]*?\n    \};\n/, 'DISPLAY_CONTROL_LABELS'),
   between('tracker display controls helpers begin', 'tracker display controls helpers end'),
   'var _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), { kind: "pr", repo: "hivecommons/hive", labels: ["bug"] });',
   'var _stageTrackerGroup = "repo";',
@@ -206,7 +209,7 @@ const controlsSrc = [
     'stageTrackerWakeLockSupported', 'stageTrackerRenderDisplayControls', 'stageTrackerWakeLockAcquire',
     'stageTrackerWakeLockRelease', 'stageTrackerToggleWakeLock', 'stageTrackerWakeLockOnVisible', 'stageTrackerDisplayExit',
     'stageTrackerDisplayShowLink', 'stageTrackerCopyDisplayLink', 'stageTrackerDisplayControlsInit'].map(fnSrc),
-  'return { stageTrackerDisplayOverlayVisible, stageTrackerWakeLockState, stageTrackerFullscreenSupported, stageTrackerDisplayLinkUrl, stageTrackerFilterFromUrl, stageTrackerDisplayControlsInit, stageTrackerDisplayControlsSync, stageTrackerToggleWakeLock, stageTrackerWakeLockOnVisible, stageTrackerCopyDisplayLink, stageTrackerDisplayExit, toggleStageTrackerFullscreen, filter: () => _stageTrackerFilter, setPlaylist: p => { _stageTrackerPlaylist = p; } };',
+  'return { stageTrackerDisplayOverlayVisible, stageTrackerWakeLockState, stageTrackerFullscreenSupported, stageTrackerDisplayLinkUrl, stageTrackerFilterFromUrl, stageTrackerParsePlaylist, stageTrackerDisplayControlsInit, stageTrackerDisplayControlsSync, stageTrackerToggleWakeLock, stageTrackerWakeLockOnVisible, stageTrackerCopyDisplayLink, stageTrackerDisplayExit, toggleStageTrackerFullscreen, filter: () => _stageTrackerFilter, setPlaylist: p => { _stageTrackerPlaylist = p; } };',
 ].join('\n');
 
 function ctlEl(id) {
@@ -457,13 +460,30 @@ test('Copy display link falls back to a selectable field when the clipboard is m
     assert.ok(env.toasts.some(([t, m]) => t === 'error' && /clipboard/.test(m)));
     assert.strictEqual(env.byId['activity-monitor-display-controls'].classList.contains('is-visible'), true, 'kept visible while the link shows');
   }
-  const pl = loadControls({ href: 'https://hive.example/?display=1&am.view=am.kind%3Dpr&am.view=am.kind%3Dissue&interval=30s&am.kind=pr&token=x' });
-  const link = pl.api.stageTrackerDisplayLinkUrl('https://hive.example/?display=1&am.view=am.kind%3Dpr&am.view=am.kind%3Dissue&interval=30s&token=x', pl.api.filter(), 'none', true);
+  const plHref = 'https://hive.example/?display=1&am.view=am.kind%3Dpr&am.view=am.kind%3Dissue&interval=30s&am.kind=pr&token=x';
+  const pl = loadControls({ href: plHref });
+  const link = pl.api.stageTrackerDisplayLinkUrl(plHref, pl.api.filter(), 'none', pl.api.stageTrackerParsePlaylist(plHref));
   const u = new URL(link);
   assert.deepStrictEqual(u.searchParams.getAll('am.view'), ['am.kind=pr', 'am.kind=issue']);
   assert.strictEqual(u.searchParams.get('interval'), '30s');
   assert.strictEqual(u.searchParams.get('token'), null);
-  assert.strictEqual(pl.api.stageTrackerDisplayLinkUrl('nope', {}, 'none', false), '');
+  assert.strictEqual(u.searchParams.get('am.kind'), null, 'the playlist link carries the views, not the current view');
+  // Views are re-serialised from the parsed playlist: a token nested inside
+  // an am.view value, an unknown key and a rejected view never ride along,
+  // and a whole-minute interval comes back as Nm.
+  const dirty = 'https://hive.example/?display=1&am.view=' + encodeURIComponent('am.kind=pr&token=s3cret&junk=1&am.group=repo') + '&am.view=' + encodeURIComponent('token=only') + '&am.view=' + encodeURIComponent('am.kind=issue&am.view=x') + '&am.view=' + encodeURIComponent('am.repo=hivecommons/hive') + '&interval=2m&token=x';
+  const clean = new URL(pl.api.stageTrackerDisplayLinkUrl(dirty, pl.api.filter(), 'none', pl.api.stageTrackerParsePlaylist(dirty)));
+  assert.deepStrictEqual(clean.searchParams.getAll('am.view'), ['am.kind=pr&am.group=repo', 'am.repo=hivecommons%2Fhive']);
+  assert.ok(!/token|junk/.test(clean.toString()), clean.toString());
+  assert.strictEqual(clean.searchParams.get('interval'), '2m');
+  assert.deepStrictEqual(pl.api.stageTrackerParsePlaylist(clean.toString()).views.map(x => [x.filter.kind, x.filter.repo, x.group]), [['pr', '', 'repo'], ['all', 'hivecommons/hive', 'none']]);
+  // An all-default view still names am.group so it survives a reload.
+  const dflt = 'https://hive.example/?display=1&am.view=' + encodeURIComponent('am.kind=pr') + '&am.view=' + encodeURIComponent('am.group=none');
+  const dl = new URL(pl.api.stageTrackerDisplayLinkUrl(dflt, pl.api.filter(), 'none', pl.api.stageTrackerParsePlaylist(dflt)));
+  assert.strictEqual(pl.api.stageTrackerParsePlaylist(dl.toString()).views.length, 2);
+  // With no parsed playlist the current view is used, whatever am.view said.
+  assert.deepStrictEqual(new URL(pl.api.stageTrackerDisplayLinkUrl(plHref, pl.api.filter(), 'none', null)).searchParams.getAll('am.view'), []);
+  assert.strictEqual(pl.api.stageTrackerDisplayLinkUrl('nope', {}, 'none', null), '');
 });
 
 test('Exit display drops display=1 like Esc and releases a held wake lock', async () => {

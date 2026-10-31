@@ -79,8 +79,11 @@ function load(href, display) {
     body: { appendChild(el) { appended.push(el); } },
   };
   const window = { location: { href, assign(u) { navigations.push(u); } }, hiveDisplayMode: () => display !== false };
-  const setInterval = (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; };
-  const api = new Function('window', 'document', 'localStorage', 'URL', 'URLSearchParams', 'setInterval', 'renders', src)(window, document, localStorage, URL, URLSearchParams, setInterval, renders);
+  // The shipped code registers its tick with the dashboard's shared
+  // dashboardSetInterval (paused while hidden), never a bare setInterval.
+  const dashboardSetInterval = (key, fn, ms) => { intervals.push({ key, fn, ms }); return { fn, ms, timer: intervals.length }; };
+  const setInterval = () => { throw new Error('bare setInterval is not allowed; use dashboardSetInterval'); };
+  const api = new Function('window', 'document', 'localStorage', 'URL', 'URLSearchParams', 'setInterval', 'dashboardSetInterval', 'renders', src)(window, document, localStorage, URL, URLSearchParams, setInterval, dashboardSetInterval, renders);
   return { api, writes, renders, navigations, intervals, appended };
 }
 
@@ -157,6 +160,12 @@ test('a two-view playlist alternates in memory at the interval, survives a refet
   assert.ok(pl && pl.views.length === 2);
   assert.strictEqual(env.intervals.length, 1, 'one ticker');
   assert.strictEqual(env.appended.length, 1, 'progress bar appended');
+  // Init ticks once at Date.now(), so which view it rendered depends on the
+  // wall clock: when it already showed view 0 the first explicit tick below
+  // is not a swap and renders nothing.
+  assert.strictEqual(env.renders.length, 1, 'init rendered the current view');
+  const initKind = env.renders[0].kind;
+  env.renders.length = 0;
   const t0 = 1000 * 10000; // a multiple of the interval → view 0
   assert.strictEqual(api.stageTrackerPlaylistTick(t0), 0);
   assert.strictEqual(api.filter().kind, 'pr');
@@ -173,7 +182,7 @@ test('a two-view playlist alternates in memory at the interval, survives a refet
   assert.strictEqual(api.stageTrackerPlaylistTick(t0 + 20000), 0);
   assert.strictEqual(api.filter().kind, 'pr');
   assert.strictEqual(api.stageTrackerPlaylistTick(t0 + 25000), 0, 'no swap mid-interval');
-  assert.deepStrictEqual(env.renders.map(r => r.kind), ['pr', 'issue', 'pr'], 're-rendered once per swap, from memory');
+  assert.deepStrictEqual(env.renders.map(r => r.kind), (initKind === 'pr' ? [] : ['pr']).concat(['issue', 'pr']), 're-rendered once per swap, from memory');
   assert.deepStrictEqual(env.writes, [], 'no localStorage writes');
   assert.deepStrictEqual(env.navigations, [], 'never navigates');
   const bar = env.appended[0].kids;

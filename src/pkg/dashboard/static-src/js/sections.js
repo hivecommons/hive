@@ -85,10 +85,14 @@
     // stageTrackerDisplayControlsInit() appends to the body in display mode
     // only. Full screen and Keep awake are explicit clicks; their disabled /
     // denied states are rendered by stageTrackerRenderDisplayControls().
+    // Full screen and Keep awake get their title from
+    // stageTrackerRenderDisplayControls (STAGE_TRACKER_DISPLAY_CONTROL_LABELS
+    // in tracker-popout.js) as soon as the overlay mounts, so it is not
+    // repeated here.
     const STAGE_TRACKER_DISPLAY_CONTROLS_HTML = '<button type="button" class="ham-display-control" data-display-control="exit" data-action="stageTrackerDisplayExit" aria-label="Exit display" title="Leave display mode (Esc or d)">✕ Exit display</button>'
       + '<button type="button" class="ham-display-control" data-display-control="copy" data-action="stageTrackerCopyDisplayLink" aria-label="Copy display link" title="Copy a link that opens this display — view parameters only, never a token">🔗 Copy link</button>'
-      + '<button type="button" class="ham-display-control" data-display-control="fullscreen" data-action="toggleStageTrackerFullscreen" aria-label="Full screen" aria-pressed="false" title="Fill the screen with the display (f, Esc exits)">⛶ Full screen</button>'
-      + '<button type="button" class="ham-display-control" data-display-control="wakelock" data-action="stageTrackerToggleWakeLock" aria-label="Keep screen awake" aria-pressed="false" title="Keep the screen awake while this display is open (not remembered after a reload)">☀ Keep awake</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="fullscreen" data-action="toggleStageTrackerFullscreen" aria-label="Full screen" aria-pressed="false">⛶ Full screen</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="wakelock" data-action="stageTrackerToggleWakeLock" aria-label="Keep screen awake" aria-pressed="false">☀ Keep awake</button>'
       + '<input type="text" class="ham-input ham-display-link" id="activity-monitor-display-link" readonly aria-label="Display link" hidden>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
