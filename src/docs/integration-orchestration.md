@@ -24,11 +24,19 @@ destinations without a compatible producer are unsupported, not bypassed.
 
 GitHub documents an actual compare-and-swap:
 [`updateRefs` with `RefUpdate.beforeOid`, `afterOid`, and `force:false`](https://docs.github.com/en/graphql/reference/git#updaterefs).
-All listed updates are atomic. The initial adapter updates one destination.
+All listed updates are atomic. The initial adapter updates one destination
+while conditionally keeping the same-repository author ref at its exact old
+head. If the author pushes before that transaction, neither ref update applies.
+This no-op comparison is not an author-branch rewrite or persistent lock.
+The provider must accept the conditional no-op under its actual rules; refusal
+blocks promotion and never removes the head fence. Fork heads cannot participate
+in the same repository transaction and are explicitly unsupported by this first
+promotion protocol, not silently trusted from a prior REST read.
 It does not use REST `UpdateRef(force:true)`, a read followed by a write, or the
 PR merge API's author-head fence as a destination fence. Its stable mutation
 claim binds protocol, repository/base, expected destination, tested commit/tree,
-author head, subject, policy and generation through the existing effects boundary.
+author head/repository/ref, subject, policy and generation through the existing
+effects boundary.
 `clientMutationId` binds acknowledgement; it is **not** provider idempotency.
 
 A durable boundary and non-nil live eligibility guard are mandatory. The
@@ -37,7 +45,8 @@ destination authority, exact complete trusted CI, review, trust, DCO, coverage,
 soak, release and hold checks. This callback is not yet a production wiring of
 those gates. Provider branch rules remain authoritative and rejection does not
 permit a fallback, force update or privilege expansion. Destination CAS does
-not atomically snapshot GitHub's independently mutable PR/review/hold fields:
+not atomically snapshot GitHub's independently mutable PR/review/hold fields
+other than the separately fenced same-repository source ref:
 their current freshness contract and any remaining race must be explicit, not
 misrepresented as a multi-resource transaction.
 

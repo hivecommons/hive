@@ -24,6 +24,8 @@ type IntegrationPromotion struct {
 	TestedSHA   string
 	TestedTree  string
 	AuthorHead  string
+	HeadRepo    string
+	HeadRef     string
 	SubjectID   string
 	Policy      string
 	Generation  uint64
@@ -37,10 +39,16 @@ type IntegrationPromotionGuard func(context.Context, IntegrationPromotion) error
 
 var ErrIntegrationDestinationChanged = errors.New("integration destination changed; reconcile the candidate before retrying")
 
+var ErrIntegrationHeadFenceUnavailable = errors.New("integration atomic author-head fencing requires a same-repository branch")
+
 func (p IntegrationPromotion) validate() error {
+	if !strings.EqualFold(p.HeadRepo, p.Repo) {
+		return ErrIntegrationHeadFenceUnavailable
+	}
 	parts := strings.Split(p.Repo, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" ||
 		strings.ContainsAny(p.Repo, " \t\r\n") || !integrationPromotionBranch(p.Base) ||
+		!integrationPromotionBranch(p.HeadRef) || p.HeadRef == p.Base ||
 		!integrationPromotionOID(p.ExpectedSHA) || !integrationPromotionOID(p.TestedSHA) ||
 		!integrationPromotionOID(p.TestedTree) || !integrationPromotionOID(p.AuthorHead) ||
 		p.ExpectedSHA == p.TestedSHA || p.ExpectedSHA == p.AuthorHead ||
@@ -105,6 +113,7 @@ func (p IntegrationPromotion) claim() effects.Claim {
 			"protocol": IntegrationPromotionProtocol, "expected_sha": p.ExpectedSHA,
 			"tested_sha": p.TestedSHA, "tested_tree": p.TestedTree,
 			"author_head": p.AuthorHead, "subject": p.SubjectID,
+			"head_repo": p.HeadRepo, "head_ref": p.HeadRef,
 			"policy": p.Policy, "generation": fmt.Sprint(p.Generation),
 		},
 	}
@@ -114,7 +123,8 @@ func (p IntegrationPromotion) claim() effects.Claim {
 // authority. Callers must explicitly opt in and supply a durable mutation
 // boundary and the live guard; no current automerge lane calls this method.
 //
-// GitHub's updateRefs is atomic and checks beforeOid server-side. REST UpdateRef,
+// GitHub's updateRefs atomically checks the destination and a no-op author-ref
+// fence server-side. Cross-repository fork refs cannot participate. REST UpdateRef,
 // a PR merge's expected author head, and createCommitOnBranch do not promote
 // this existing tested commit with a destination compare-and-swap.
 func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromotion, boundary effects.Boundary, guard IntegrationPromotionGuard) (effects.Result, error) {
@@ -165,6 +175,9 @@ func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromot
 			"refUpdates": []map[string]any{{
 				"name": "refs/heads/" + p.Base, "beforeOid": p.ExpectedSHA,
 				"afterOid": p.TestedSHA, "force": false,
+			}, {
+				"name": "refs/heads/" + p.HeadRef, "beforeOid": p.AuthorHead,
+				"afterOid": p.AuthorHead, "force": false,
 			}},
 		}}, &out)
 		if err != nil {

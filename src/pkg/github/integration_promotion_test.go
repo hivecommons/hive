@@ -56,6 +56,7 @@ func (j *integrationPromotionJournal) LookupApplied(context.Context, effects.Cla
 type integrationPromotionFixture struct {
 	request IntegrationPromotion
 	ref     string
+	headRef string
 	tree    string
 	parents []string
 	repoID  string
@@ -71,6 +72,7 @@ func integrationPromotionRequest() IntegrationPromotion {
 		Repo: "o/r", Base: "v5", ExpectedSHA: strings.Repeat("a", 40),
 		TestedSHA: strings.Repeat("b", 40), TestedTree: strings.Repeat("c", 40),
 		AuthorHead: strings.Repeat("d", 40), SubjectID: "subject-1",
+		HeadRepo: "o/r", HeadRef: "feature/member-1",
 		Policy: "policy-1", Generation: 1,
 	}
 }
@@ -79,6 +81,7 @@ func promotionFixture() *integrationPromotionFixture {
 	p := integrationPromotionRequest()
 	return &integrationPromotionFixture{
 		request: p, ref: p.ExpectedSHA, tree: p.TestedTree,
+		headRef: p.AuthorHead,
 		parents: []string{p.ExpectedSHA, p.AuthorHead}, repoID: "R_repository",
 	}
 }
@@ -126,7 +129,7 @@ func (f *integrationPromotionFixture) server(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte(f.reply))
 				return
 			}
-			if f.ref != f.request.ExpectedSHA {
+			if f.ref != f.request.ExpectedSHA || f.headRef != f.request.AuthorHead {
 				_, _ = w.Write([]byte(`{"errors":[{"type":"UNPROCESSABLE","message":"beforeOid mismatch"}]}`))
 				return
 			}
@@ -167,8 +170,8 @@ func TestIntegrationPromotionExactCASAndJournalReplay(t *testing.T) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	updates, ok := f.input["refUpdates"].([]any)
-	if !ok || len(updates) != 1 {
-		t.Fatalf("not a single bounded CAS: %#v", f.input)
+	if !ok || len(updates) != 2 {
+		t.Fatalf("not a bounded destination/head CAS: %#v", f.input)
 	}
 	update, ok := updates[0].(map[string]any)
 	if !ok || update["beforeOid"] != f.request.ExpectedSHA ||
@@ -176,8 +179,15 @@ func TestIntegrationPromotionExactCASAndJournalReplay(t *testing.T) {
 		update["name"] != "refs/heads/v5" || f.input["repositoryId"] != "R_repository" {
 		t.Fatalf("unsafe provider mutation: %#v", f.input)
 	}
+	head, ok := updates[1].(map[string]any)
+	if !ok || head["name"] != "refs/heads/"+f.request.HeadRef ||
+		head["beforeOid"] != f.request.AuthorHead || head["afterOid"] != f.request.AuthorHead || head["force"] != false {
+		t.Fatalf("missing atomic author-head fence: %#v", f.input)
+	}
 	if journal.claim.Kind != effects.KindBranchUpdate || journal.claim.Actor != "integration-aware" ||
 		journal.claim.Inputs["subject"] != f.request.SubjectID ||
+		journal.claim.Inputs["head_repo"] != f.request.HeadRepo ||
+		journal.claim.Inputs["head_ref"] != f.request.HeadRef ||
 		journal.claim.Inputs["protocol"] != IntegrationPromotionProtocol {
 		t.Fatalf("missing mutation provenance: %+v", journal.claim)
 	}
@@ -258,6 +268,28 @@ func TestIntegrationPromotionDestinationMovesAfterLiveGuard(t *testing.T) {
 	}
 }
 
+func TestIntegrationPromotionAuthorHeadMovesAfterLiveGuard(t *testing.T) {
+	f := promotionFixture()
+	server := f.server(t)
+	defer server.Close()
+	journal := new(integrationPromotionJournal)
+	_, err := testClient(t, server.URL).PromoteIntegrationStep(context.Background(), f.request, journal,
+		func(context.Context, IntegrationPromotion) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.headRef = strings.Repeat("e", 40)
+			return nil
+		})
+	if err == nil || !journal.unresolved || f.writes.Load() != 1 {
+		t.Fatalf("author head race was not refused: err=%v unresolved=%v", err, journal.unresolved)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ref != f.request.ExpectedSHA {
+		t.Fatal("moved author head did not atomically prevent destination promotion")
+	}
+}
+
 func TestIntegrationPromotionReconcilesWithoutBlindTTLRetry(t *testing.T) {
 	for _, state := range []string{"applied", "not-applied", "changed", "unavailable", "journal-failed"} {
 		t.Run(state, func(t *testing.T) {
@@ -297,6 +329,11 @@ func TestIntegrationPromotionReconcilesWithoutBlindTTLRetry(t *testing.T) {
 }
 
 func TestIntegrationPromotionInvalidRequestsHaveNoEffects(t *testing.T) {
+	fork := integrationPromotionRequest()
+	fork.HeadRepo = "fork/r"
+	if !errors.Is(fork.validate(), ErrIntegrationHeadFenceUnavailable) {
+		t.Fatal("fork head lost its explicit unsupported atomic-fence reason")
+	}
 	for _, branch := range []string{"", "@", "/v5", "v5/", "v5.", "v5..next", ".hidden", "a/.hidden", "a.lock", "a//b", "v5@{1}", "a b", "a\x01b", "a\x7fb"} {
 		if integrationPromotionBranch(branch) {
 			t.Errorf("accepted invalid branch %q", branch)
@@ -308,6 +345,9 @@ func TestIntegrationPromotionInvalidRequestsHaveNoEffects(t *testing.T) {
 	for _, change := range []func(*IntegrationPromotion){
 		func(p *IntegrationPromotion) { p.Repo = "r" },
 		func(p *IntegrationPromotion) { p.Base = "" },
+		func(p *IntegrationPromotion) { p.HeadRepo = "fork/r" },
+		func(p *IntegrationPromotion) { p.HeadRef = p.Base },
+		func(p *IntegrationPromotion) { p.HeadRef = "" },
 		func(p *IntegrationPromotion) { p.ExpectedSHA = strings.Repeat("0", 40) },
 		func(p *IntegrationPromotion) { p.TestedSHA = strings.Repeat("B", 40) },
 		func(p *IntegrationPromotion) { p.TestedTree = "short" },
