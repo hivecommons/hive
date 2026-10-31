@@ -317,6 +317,17 @@ async function main() {
       for (const theme of themes) {
         await send('Page.navigate', { url: `file://${process.cwd()}/src/pkg/dashboard/static/index.html` });
         await sleep(PAGE_SETTLE_MS);
+        // Absolute production URLs cannot load from file://. Use the same
+        // checked-in sidecars rather than silently testing without tokens.
+        await evaluate(`Promise.all(${JSON.stringify(['tokens.css', 'components.css'].map(name => ({
+          name, url: `file://${process.cwd()}/src/pkg/dashboard/static/${name}`,
+        })))}.map(({name, url}) => new Promise((resolve, reject) => {
+          const link = document.querySelector('link[href="/' + name + '"]');
+          if (!link) return reject(new Error('Missing production stylesheet ' + name));
+          link.onload = () => resolve(true);
+          link.onerror = () => reject(new Error('Cannot load production stylesheet ' + name));
+          link.href = url;
+        })))`);
         await evaluate(setThemeJS(theme));
 
         const sectionIDs = await evaluate(collapseAllJS);
@@ -329,6 +340,7 @@ async function main() {
         states.push({ name: 'terminal', run: async () => { await evaluate(collapseAllJS); return evaluate(terminalJS); } });
         states.push({ name: 'preparation-rail', run: async () => {
           await evaluate(collapseAllJS);
+          if (!await evaluate(expandOneJS('activity-monitor-section'))) throw new Error('Cannot expand actual Activity Monitor');
           const result = await evaluate('(' + preparationRailLayoutFixture.toString() + ')()');
           preparationRailReport.push({ viewport: vp.name, theme, ...result });
           if (result.failures.length) throw new Error('Preparation rail layout: ' + result.failures.join('; '));

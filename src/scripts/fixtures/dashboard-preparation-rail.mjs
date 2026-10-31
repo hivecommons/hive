@@ -73,7 +73,9 @@ export function preparationRailLayoutFixture() {
     const issue = { kind: 'issue', repo, number: 500, stage: 40, title: 'Preserved mixed issue tree',
       linked_prs: [unrelated, nestedOwner, nestedWaiter] };
     const nested = append([issue], nestedOwner, [nestedWaiter]);
-    document.body.appendChild(host);
+    const panel = document.getElementById('activity-monitor-panel');
+    if (!panel) throw new Error('Actual Activity Monitor panel is missing');
+    panel.appendChild(host);
     inspect(roots, '.ham-row.ham-preparation-member', 'root reverse-FIFO rows', 3);
     check(roots.querySelector('.ham-preparation-member')?.dataset.hamKey === stageTrackerItemKey(owner), 'verified front is first despite scrambled source sort');
     inspect(nested, '.ham-sub.ham-preparation-member', 'nested PRs with expanded captions', 2);
