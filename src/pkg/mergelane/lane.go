@@ -303,6 +303,51 @@ func (l *Lane) Release(repo, branch string, pr int, reason string) error {
 	return nil
 }
 
+// releaseGoneFront reads the front PR pr of repo/branch and, when it can no
+// longer merge into branch (prShape: closed, merged outside the lane, a draft
+// or retargeted), ends the front with that reason and promotes the oldest
+// waiter. Only the front's own merge path runs a round, and the sweeps list
+// open PRs only, so without this such a front held the lane until its
+// timeout, and up to MaxFrontTimeoutExtensions more when its checks were last
+// seen pending. An open front, or one that cannot be read, is left alone. It
+// returns the exit reason, empty when the front stayed.
+func (l *Lane) releaseGoneFront(ctx context.Context, repo, branch string, pr int) (string, error) {
+	unlock := l.lockLane(repo, branch)
+	defer unlock()
+	rec, _, err := l.Snapshot(repo, branch)
+	if err != nil || rec.Front == nil || rec.Front.PR != pr {
+		return "", err
+	}
+	epoch := rec.Front.Epoch
+	p, err := l.opts.GitHub.PullRequest(ctx, repo, pr)
+	if err != nil {
+		return "", fmt.Errorf("mergelane: reading front PR #%d of %s: %w", pr, laneKey(repo, branch), err)
+	}
+	reason := prShape(p, branch)
+	if reason == "" {
+		return "", nil
+	}
+	reason = "front check: " + reason
+	now := l.opts.Now()
+	var ev []Event
+	left := false
+	err = l.opts.Store.update(func(lanes map[string]*Record) error {
+		rec := lane(lanes, repo, branch)
+		if rec.Front == nil || rec.Front.PR != pr || rec.Front.Epoch != epoch {
+			return nil
+		}
+		l.exitLocked(rec, now, p.Head, "", reason, &ev)
+		l.promoteLocked(rec, now, &ev)
+		left = true
+		return nil
+	})
+	l.emit(ev)
+	if err != nil || !left {
+		return "", err
+	}
+	return reason, nil
+}
+
 // Advance runs one round of the front PR's validation: validate → update →
 // wait → final live re-check → pinned merge → post-merge verify. A caller
 // that is not at the front gets ReasonNotAtFront and nothing is read or

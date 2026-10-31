@@ -488,7 +488,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 				unresolvedRequiresHuman = true
 			}
 		}
-		if reportRequiresRiskEscalation(r) {
+		if reportRequiresRiskEscalation(r, opts) {
 			riskEscalation = true
 		}
 		if r.RedundantOf > 0 && agg.RedundantOf == 0 {
@@ -612,6 +612,13 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			agg.Reasons = []string{"self-authored non-risk requires_human recorded as advisory"}
 			return agg
 		}
+		if agg.DecisionFinding == "" {
+			// The 085 comment prints it after "the review found:", and
+			// Normalize reads it as the reason the hold stays a person's.
+			if finding, ok := selfAuthoredSensitivePathAskAcross(reports, opts); ok {
+				agg.DecisionFinding = finding
+			}
+		}
 		agg.Verdict = VerdictRequiresHuman
 		agg.RequiresHuman = true
 		return agg
@@ -654,6 +661,12 @@ func (a Aggregate) Normalize() Aggregate {
 		return a
 	}
 	if FixCycleCapReached(a) {
+		return a
+	}
+	if strings.TrimSpace(a.DecisionFinding) != "" {
+		// The aggregate recorded what makes the hold a person's (a
+		// sensitive-path ask on the hive's own PR); a re-read must not
+		// hand it to the fixer.
 		return a
 	}
 	if aggregateRequiresRiskEscalation(a) || (!aggregateHasConcreteRemediation(a) && !aggregateHasBlockingPerspective(a)) {
@@ -781,7 +794,7 @@ func selfAuthoredRequiresHumanReportIsResolvable(r PerspectiveReport, opts Aggre
 	if !r.HiveAuthored || strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
 		return false
 	}
-	if r.Verdict != VerdictRequiresHuman || reportRequiresRiskEscalation(r) {
+	if r.Verdict != VerdictRequiresHuman || reportRequiresRiskEscalation(r, opts) {
 		return false
 	}
 	if r.DecisionRequested {
@@ -819,9 +832,12 @@ func reportHasConcreteRemediation(r PerspectiveReport) bool {
 	return false
 }
 
-func reportRequiresRiskEscalation(r PerspectiveReport) bool {
+func reportRequiresRiskEscalation(r PerspectiveReport, opts AggregateOptions) bool {
 	tightening := r.PermissionsTighteningOnly
 	if _, risk := DecisionQuestionRiskClassFor(r.DecisionQuestion, tightening); risk || r.DecisionRiskHigh {
+		return true
+	}
+	if _, onPath := selfAuthoredSensitivePathAsk(r, opts); onPath {
 		return true
 	}
 	if containsRiskEscalationTermFor(r.Summary, tightening) {
@@ -833,6 +849,45 @@ func reportRequiresRiskEscalation(r PerspectiveReport) bool {
 		}
 	}
 	return false
+}
+
+// selfAuthoredSensitivePathAsk is the sensitive-paths risk class applied to
+// what a hive-authored review asks a person about, not only to how the
+// question is worded. A requires_human or decision-requested report whose
+// in-scope finding sits on a sensitive path (sentinel.DefaultSensitivePaths
+// plus `security.sensitive_paths`) stays a person's decision under the
+// resolve policy, as a question naming the path already does.
+//
+// Seen on projectbluefin/bonedigger#106: the reviewer asked a maintainer to
+// "apply the `pr-validate.yml` + `BASELINE` hunks from the PR body", with
+// the finding on `.github/workflows/pr-validate.yml`. The wording named no
+// risk class, so the ask was resolved to changes_requested and the PR sat at
+// stage/070-fixing through six fix attempts that never pushed, then wore
+// stage/stalled on and off until a maintainer applied the hunk 38h later;
+// nobody was asked.
+//
+// A report that asks for changes is not covered: the fixer is still the one
+// to try it. The permissions-tightening carve-out (hivecommons/hive#13068)
+// applies here as it does to the question.
+func selfAuthoredSensitivePathAsk(r PerspectiveReport, opts AggregateOptions) (string, bool) {
+	if !r.HiveAuthored || r.PermissionsTighteningOnly || strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
+		return "", false
+	}
+	if r.Verdict != VerdictRequiresHuman && !r.DecisionRequested {
+		return "", false
+	}
+	return sensitivePathFinding(r, SecuritySensitivePaths(opts.SensitivePaths))
+}
+
+// selfAuthoredSensitivePathAskAcross returns the first report's
+// selfAuthoredSensitivePathAsk finding.
+func selfAuthoredSensitivePathAskAcross(reports []PerspectiveReport, opts AggregateOptions) (string, bool) {
+	for _, r := range reports {
+		if finding, ok := selfAuthoredSensitivePathAsk(r, opts); ok {
+			return finding, true
+		}
+	}
+	return "", false
 }
 
 // ConcreteRemediationText reports whether review prose names an actionable
