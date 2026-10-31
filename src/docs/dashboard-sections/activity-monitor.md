@@ -80,6 +80,8 @@ At 090 the row explains why: `· workflow files`, `· tests removed`, `· manual
 
 ### Pairing, rows and counts
 
+A verified merge from the canonical merge ledger is terminal whether Hive, a maintainer or another bot performed it. The last known root or linked PR model reaches **Merged** during the existing short terminal/pin window, even without an earlier queue observation. The comment names the actual recorded merger; an unknown actor stays unknown. This does not invent an earlier queue/admission state or close a merely related issue. A stale open refresh cannot undo a verified merge, and repeated delivery or later actor enrichment does not replay the merge or restart its window. Terminal visibility does not re-enable closed-PR actions.
+
 - With no covering PR, an issue has a full strip lit at Open, Actionable or Claimed.
 - With exactly one covering PR, issue and PR share one continuous strip; early issue steps are passed and the PR supplies the current stage, chip, tooltip and age.
 - With several covering PRs, the issue's own strip stops at Claimed, with no current step lit. Indented PR sub-rows begin under *PR in progress*, each with its own stage and age, furthest along first.

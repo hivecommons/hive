@@ -77,6 +77,7 @@
     // under the issue (merged, closed, filtered) has nothing left to say
     // and is not drawn.
     function stageTrackerLinkedSupersededGone(lp, issue) {
+      if (lp && lp.terminal_merge === true && Number(lp.stage) === STAGE_TRACKER_TERMINAL) return false;
       return !!lp && String(lp.state || '') === 'closed' && !stageTrackerLinkedSuperseder(lp, issue);
     }
     function stageTrackerCoveringPR(item) {
