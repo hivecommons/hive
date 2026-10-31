@@ -39,6 +39,7 @@ func TestStageTrackerSentinelNoticePreservesActualReviewerDecision(t *testing.T)
 	}
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+stageTrackerRowsFixtureJS+
+		jsFunc(t, html, "stageTrackerSentinelPreface")+
 		"\nconst notice = "+string(payload)+";\n"+`
 assert.strictEqual(stageTrackerSentinelInLane(notice), false);
 assert.strictEqual(stageTrackerSentinelAsSuffix({...notice, stage:71}), false);
@@ -46,6 +47,9 @@ assert.ok(stageTrackerSentinelTip(notice).includes('Informational security notic
 assert.ok(!stageTrackerSentinelTip({...notice, sentinel_reason:''}).includes('must review before merge'));
 const own = stageTrackerRowHtml(notice, stages, ctx);
 assert.ok(!text(own).includes('Sentinel alert'), text(own));
+assert.ok(!own.includes('aria-label="Sentinel alert'), own);
+assert.ok(own.includes('ham-sentinel-notice'), own);
+assert.strictEqual(stageTrackerSentinelPreface([notice]), '', 'informational notice is not an approval danger preface');
 assert.ok(!text(own).includes('Needs @clubanderson'), text(own));
 assert.ok(own.includes('@hanthor'), own);
 const linked = stageTrackerLinkedPRItem({repo:notice.repo, number:500}, notice);
