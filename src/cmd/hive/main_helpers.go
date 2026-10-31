@@ -482,6 +482,25 @@ func maintainHeldPRMergeability(
 	}
 }
 
+// heldPRUpdateStopAnnounced remembers, for the life of the process, each
+// held-PR update stop the guard already warned about and each person-facing
+// note it already posted. The ledger carries both across restarts, but its
+// entry can be dropped and re-snapshotted between passes (a hold that lifts
+// and returns), losing the stop and the note together — without this the
+// guard re-warned, and could re-post the note, every pass
+// (hivecommons/hive#16103). Bounded by the held PRs a process sees.
+var heldPRUpdateStopAnnounced sync.Map
+
+func heldPRUpdateStopWarnKey(repo string, pr github.PullRequest, reason string) string {
+	return fmt.Sprintf("warn|%s#%d|%s|%s|%s", repo, pr.Number, pr.HeadSHA, pr.BaseSHA, reason)
+}
+
+// heldPRUpdateStopNoteKey mirrors the ledger's UpdateStopNoted identity: the
+// note is per head and reason, not per base.
+func heldPRUpdateStopNoteKey(repo string, pr github.PullRequest, reason string) string {
+	return fmt.Sprintf("note|%s#%d|%s|%s", repo, pr.Number, pr.HeadSHA, reason)
+}
+
 // stopHeldPRUpdate records that the guard stops updating pr's head on its
 // base for reason and tells a person once. err is GitHub's refusal, nil when
 // the guard stopped without asking.
@@ -492,12 +511,20 @@ func stopHeldPRUpdate(ctx context.Context, writer forge.IssueWriter, store *hold
 	if err != nil {
 		args = append(args, "error", err)
 	}
-	logger.Warn("hold guard: stopped keeping held PR mergeable until its head or base moves", args...)
+	// The ledger entry can be dropped and re-snapshotted between passes (a
+	// hold that lifts and returns), losing the stop; the process remembers
+	// each (PR, head, base, reason) it already announced.
+	if _, seen := heldPRUpdateStopAnnounced.LoadOrStore(heldPRUpdateStopWarnKey(repo, pr, reason), struct{}{}); seen {
+		logger.Debug("hold guard: held PR update still stopped until its head or base moves", args...)
+	} else {
+		logger.Warn("hold guard: stopped keeping held PR mergeable until its head or base moves", args...)
+	}
 	noteHeldPRUpdateStopped(ctx, writer, store, repo, pr, reason, logger)
 }
 
 // noteHeldPRUpdateStopped posts the person-facing note for a stopped update
-// once per head and reason, retrying a failed post on later passes. A
+// once per head and reason (ledger and process memory), retrying a failed
+// post on later passes. A
 // conflict keeps the conflict notice (dirty only, as before); GitHub calling
 // a "behind" branch current is a stale state, not something to act on.
 // maintainHeldPRMergeability checks KindHoldGateNotice before reaching here.
@@ -524,7 +551,14 @@ func noteHeldPRUpdateStopped(ctx context.Context, writer forge.IssueWriter, stor
 		store.MarkConflictNoted(repo, pr.Number)
 		return
 	}
+	// Dedupe on the ledger first, then on process memory: the same ledger
+	// loss that repeats the WARN above would otherwise repeat this note.
+	noteKey := heldPRUpdateStopNoteKey(repo, pr, reason)
 	if rec.UpdateStopNoted(pr.HeadSHA, reason) {
+		heldPRUpdateStopAnnounced.Store(noteKey, struct{}{})
+		return
+	}
+	if _, noted := heldPRUpdateStopAnnounced.Load(noteKey); noted {
 		return
 	}
 	if err := writer.CreateIssueComment(ctx, pr.Repo, pr.Number, holdguard.UpdateStoppedCommentBody(reason)); err != nil { // writeback:gated
@@ -533,6 +567,7 @@ func noteHeldPRUpdateStopped(ctx context.Context, writer forge.IssueWriter, stor
 		return
 	}
 	store.MarkUpdateStopNoted(repo, pr.Number, pr.HeadSHA, reason)
+	heldPRUpdateStopAnnounced.Store(noteKey, struct{}{})
 }
 
 // intentConfigFromCfg maps config.IntentConfig onto the intent package's
