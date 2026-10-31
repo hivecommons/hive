@@ -259,8 +259,264 @@
       e.preventDefault();
       toggleStageTrackerDisplay();
     });
+
+    /* ---- Display controls (hivecommons/hive#15929) ------------------------
+       In display mode only, a small overlay (STAGE_TRACKER_DISPLAY_CONTROLS_HTML
+       in sections.js) appears on pointer movement or keyboard focus and hides
+       after 3 s idle. Each control is separate and explicit: Exit display,
+       Copy display link, Full screen (the existing
+       toggleStageTrackerFullscreen) and Keep screen awake. Full screen and
+       the wake lock are requested only from a click on their own control —
+       never on load or on entering display mode. Nothing is persisted: the
+       wake lock lives in memory and a reload is a new consent boundary. */
+    const STAGE_TRACKER_DISPLAY_IDLE_MS = 3000;
+    // tracker display controls helpers begin
+    // Pure: is the overlay showing, given the last pointer/focus activity?
+    function stageTrackerDisplayOverlayVisible(lastPointerMs, nowMs, idleMs) {
+      if (!(lastPointerMs > 0)) return false;
+      const d = nowMs - lastPointerMs;
+      return d >= 0 && d < idleMs;
+    }
+    // Pure: label and state of the Keep screen awake control — unsupported,
+    // denied (with the reason; never retried automatically), on or off.
+    function stageTrackerWakeLockState(supported, sentinel, lastError) {
+      if (!supported) return { state: 'unsupported', text: '☀ Keep awake', title: 'Keep screen awake is not supported in this browser', disabled: true, pressed: false };
+      if (sentinel && !sentinel.released) return { state: 'on', text: '☀ Awake: on', title: 'The screen is kept awake — click to let it sleep', disabled: false, pressed: true };
+      if (lastError) {
+        const reason = String((lastError && (lastError.message || lastError.name)) || lastError);
+        return { state: 'denied', text: '☀ Awake: denied', title: 'The browser refused to keep the screen awake (' + reason + ') — click to ask again', disabled: false, pressed: false };
+      }
+      return { state: 'off', text: '☀ Keep awake', title: 'Keep the screen awake while this display is open (not remembered after a reload)', disabled: false, pressed: false };
+    }
+    // Pure: can this document go full screen?
+    function stageTrackerFullscreenSupported(doc) {
+      return !!(doc && doc.fullscreenEnabled !== false && doc.documentElement && typeof doc.documentElement.requestFullscreen === 'function');
+    }
+    // Pure: the link Copy display link puts on the clipboard. Only view
+    // parameters ride along — display=1, am.* (or the playlist's am.view +
+    // interval) and theme — so no token, cookie or other query param can leak.
+    function stageTrackerDisplayLinkUrl(href, filter, group, playlist) {
+      let src;
+      try { src = new URL(href); } catch { return ''; }
+      const out = new URL(src.origin + src.pathname);
+      out.searchParams.set(STAGE_TRACKER_DISPLAY_PARAM, '1');
+      if (playlist) {
+        for (const v of src.searchParams.getAll('am.view')) out.searchParams.append('am.view', v);
+        const iv = src.searchParams.get('interval');
+        if (iv !== null) out.searchParams.set('interval', iv);
+      } else {
+        const view = stageTrackerViewUrl(href, filter, group);
+        if (!view) return '';
+        for (const [k, v] of new URL(view).searchParams) if (k.indexOf('am.') === 0) out.searchParams.append(k, v);
+      }
+      const theme = src.searchParams.get('theme');
+      if (theme !== null) out.searchParams.set('theme', theme);
+      out.hash = STAGE_TRACKER_POPOUT_HASH;
+      return out.toString();
+    }
+    // tracker display controls helpers end
+    var _stageTrackerDisplayLastPointer = 0;
+    var _stageTrackerDisplayHideTimer = null;
+    var _stageTrackerWakeLock = null;
+    var _stageTrackerWakeLockError = null;
+    var _stageTrackerWakeLockWanted = false;
+    function stageTrackerDisplayControlsEl() {
+      return document.getElementById('activity-monitor-display-controls');
+    }
+    function stageTrackerDisplayControlsSync(nowMs) {
+      const root = stageTrackerDisplayControlsEl();
+      if (!root) return false;
+      const link = document.getElementById('activity-monitor-display-link');
+      const on = stageTrackerDisplayOverlayVisible(_stageTrackerDisplayLastPointer, nowMs === undefined ? Date.now() : nowMs, STAGE_TRACKER_DISPLAY_IDLE_MS) || !!(link && !link.hidden);
+      root.classList.toggle('is-visible', on);
+      return on;
+    }
+    function stageTrackerDisplayControlsPing() {
+      _stageTrackerDisplayLastPointer = Date.now();
+      stageTrackerDisplayControlsSync();
+      clearTimeout(_stageTrackerDisplayHideTimer);
+      _stageTrackerDisplayHideTimer = setTimeout(function() { stageTrackerDisplayControlsSync(); }, STAGE_TRACKER_DISPLAY_IDLE_MS + 50);
+    }
+    function stageTrackerWakeLockSupported() {
+      return typeof navigator !== 'undefined' && !!navigator.wakeLock && typeof navigator.wakeLock.request === 'function';
+    }
+    function stageTrackerRenderDisplayControls() {
+      const root = stageTrackerDisplayControlsEl();
+      if (!root) return;
+      const fs = root.querySelector('[data-display-control="fullscreen"]');
+      if (fs) {
+        const ok = stageTrackerFullscreenSupported(document);
+        const full = !!document.fullscreenElement;
+        fs.disabled = !ok;
+        fs.title = ok ? (full ? 'Exit full screen (Esc or f)' : 'Fill the screen with the display (f, Esc exits)') : 'Full screen is not supported in this browser';
+        fs.setAttribute('aria-pressed', full ? 'true' : 'false');
+      }
+      const wl = root.querySelector('[data-display-control="wakelock"]');
+      if (wl) {
+        const s = stageTrackerWakeLockState(stageTrackerWakeLockSupported(), _stageTrackerWakeLock, _stageTrackerWakeLockError);
+        wl.textContent = s.text;
+        wl.title = s.title;
+        wl.disabled = s.disabled;
+        wl.setAttribute('aria-pressed', s.pressed ? 'true' : 'false');
+        wl.setAttribute('data-state', s.state);
+      }
+    }
+    function stageTrackerWakeLockAcquire() {
+      let p;
+      try { p = navigator.wakeLock.request('screen'); } catch (e) { p = Promise.reject(e); }
+      return Promise.resolve(p).then(function(s) {
+        _stageTrackerWakeLock = s || null;
+        _stageTrackerWakeLockError = null;
+        if (s && typeof s.addEventListener === 'function') s.addEventListener('release', stageTrackerRenderDisplayControls);
+        stageTrackerRenderDisplayControls();
+        return true;
+      }, function(err) {
+        _stageTrackerWakeLock = null;
+        _stageTrackerWakeLockError = err || new Error('refused');
+        _stageTrackerWakeLockWanted = false;
+        stageTrackerRenderDisplayControls();
+        if (typeof showToast === 'function') showToast('Keep screen awake was refused: ' + ((err && (err.message || err.name)) || err || 'refused'), 'error');
+        return false;
+      });
+    }
+    function stageTrackerWakeLockRelease() {
+      _stageTrackerWakeLockWanted = false;
+      const s = _stageTrackerWakeLock;
+      _stageTrackerWakeLock = null;
+      let p;
+      try { p = s && typeof s.release === 'function' ? s.release() : undefined; } catch {}
+      return Promise.resolve(p).catch(function() {}).then(function() { stageTrackerRenderDisplayControls(); return false; });
+    }
+    // ☀ Keep screen awake: a click toggles the sentinel; nothing else
+    // requests one except re-acquiring after the tab was hidden, and only
+    // while the user still wants it on.
+    function stageTrackerToggleWakeLock() {
+      if (!stageTrackerWakeLockSupported()) { stageTrackerRenderDisplayControls(); return Promise.resolve(false); }
+      if (_stageTrackerWakeLock && !_stageTrackerWakeLock.released) return stageTrackerWakeLockRelease();
+      _stageTrackerWakeLockWanted = true;
+      return stageTrackerWakeLockAcquire();
+    }
+    function stageTrackerWakeLockOnVisible() {
+      stageTrackerRenderDisplayControls();
+      if (document.visibilityState !== 'visible' || !_stageTrackerWakeLockWanted || !stageTrackerWakeLockSupported()) return Promise.resolve(false);
+      if (_stageTrackerWakeLock && !_stageTrackerWakeLock.released) return Promise.resolve(true);
+      return stageTrackerWakeLockAcquire();
+    }
+    function stageTrackerDisplayExit() {
+      if (_stageTrackerWakeLock || _stageTrackerWakeLockWanted) stageTrackerWakeLockRelease();
+      return toggleStageTrackerDisplay();
+    }
+    function stageTrackerDisplayShowLink(url) {
+      const field = document.getElementById('activity-monitor-display-link');
+      if (!field) return;
+      field.value = url;
+      field.hidden = false;
+      stageTrackerDisplayControlsPing();
+      try { field.focus(); field.select(); } catch {}
+    }
+    // 🔗 Copy display link: the clipboard when it works, otherwise the link
+    // in a selectable field with a toast.
+    function stageTrackerCopyDisplayLink() {
+      const url = stageTrackerDisplayLinkUrl(window.location.href, _stageTrackerFilter, _stageTrackerGroup, !!_stageTrackerPlaylist);
+      if (!url) return Promise.resolve(false);
+      const fallback = function() {
+        stageTrackerDisplayShowLink(url);
+        if (typeof showToast === 'function') showToast('Could not copy to the clipboard — the display link is selected in the controls; copy it from there.', 'error');
+        return false;
+      };
+      const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+      if (!clip || typeof clip.writeText !== 'function') return Promise.resolve(fallback());
+      let p;
+      try { p = clip.writeText(url); } catch { return Promise.resolve(fallback()); }
+      return Promise.resolve(p).then(function() {
+        if (typeof showToast === 'function') showToast('Display link copied.', 'success');
+        return true;
+      }, fallback);
+    }
+    function stageTrackerDisplayControlsInit() {
+      if (!stageTrackerDisplayMode()) return null;
+      let root = stageTrackerDisplayControlsEl();
+      if (root) return root;
+      root = document.createElement('div');
+      root.id = 'activity-monitor-display-controls';
+      root.className = 'ham-display-controls';
+      root.setAttribute('role', 'toolbar');
+      root.setAttribute('aria-label', 'Display controls');
+      root.innerHTML = STAGE_TRACKER_DISPLAY_CONTROLS_HTML;
+      document.body.appendChild(root);
+      ['mousemove', 'pointerdown', 'focusin'].forEach(function(type) { document.addEventListener(type, stageTrackerDisplayControlsPing, true); });
+      const link = document.getElementById('activity-monitor-display-link');
+      if (link) link.addEventListener('blur', function() { link.hidden = true; stageTrackerDisplayControlsSync(); });
+      document.addEventListener('visibilitychange', stageTrackerWakeLockOnVisible);
+      document.addEventListener('fullscreenchange', stageTrackerRenderDisplayControls);
+      stageTrackerRenderDisplayControls();
+      return root;
+    }
+
+    /* ---- Display playlists (hivecommons/hive#15932) -----------------------
+       With two or more valid `am.view` params, display mode rotates the
+       in-memory tracker view (see the playlist helpers in
+       tracker-filter-state.js). The view index comes from wall-clock time,
+       so a reload or SSE reconnect resumes the right one; rotation never
+       navigates, never refetches and never writes localStorage. A thin bar
+       shows the time left — a static "next in Ns" label under
+       prefers-reduced-motion. Kiosk is untouched: display mode is off there. */
+    const STAGE_TRACKER_PLAYLIST_TICK_MS = 1000;
+    var _stageTrackerPlaylist = null;
+    var _stageTrackerPlaylistIndex = -1;
+    function stageTrackerPlaylistApply(i) {
+      const v = _stageTrackerPlaylist && _stageTrackerPlaylist.views[i];
+      if (!v) return;
+      _stageTrackerPlaylistIndex = i;
+      // The URL view is what a first fetch (or a refetch after a reconnect)
+      // reloads the filter from, so it follows the rotation too.
+      const view = stageTrackerUrlView();
+      if (view) { view.filter = Object.assign({}, v.filter); view.group = v.group; }
+      _stageTrackerFilter = stageTrackerNormalizeFilter(v.filter);
+      _stageTrackerFilter.page = 1;
+      _stageTrackerGroup = v.group;
+      if (_stageTracker) renderStageTracker();
+    }
+    function stageTrackerPlaylistRenderProgress(nowMs) {
+      const el = document.getElementById('activity-monitor-playlist');
+      const pl = _stageTrackerPlaylist;
+      if (!el || !pl) return;
+      const rem = stageTrackerPlaylistRemainingMs(0, nowMs, pl.intervalMs);
+      const bar = el.querySelector('.ham-playlist-bar');
+      if (bar) bar.style.setProperty('--ham-playlist-left', (rem / pl.intervalMs).toFixed(4));
+      const next = el.querySelector('.ham-playlist-next');
+      if (next) next.textContent = (_stageTrackerPlaylistIndex + 1) + '/' + pl.views.length + ' · ' + stageTrackerPlaylistNextLabel(rem);
+    }
+    function stageTrackerPlaylistTick(nowMs) {
+      const pl = _stageTrackerPlaylist;
+      if (!pl) return -1;
+      const now = nowMs === undefined ? Date.now() : nowMs;
+      const i = stageTrackerPlaylistIndex(0, now, pl.intervalMs, pl.views.length);
+      if (i !== _stageTrackerPlaylistIndex) stageTrackerPlaylistApply(i);
+      stageTrackerPlaylistRenderProgress(now);
+      return i;
+    }
+    function stageTrackerPlaylistInit() {
+      if (!stageTrackerDisplayMode()) return null;
+      const pl = stageTrackerParsePlaylist(window.location.href);
+      if (pl.views.length < 2) return null;
+      _stageTrackerPlaylist = pl;
+      _stageTrackerPlaylistIndex = -1;
+      const el = document.createElement('div');
+      el.id = 'activity-monitor-playlist';
+      el.className = 'ham-playlist';
+      el.setAttribute('aria-hidden', 'true');
+      el.innerHTML = '<div class="ham-playlist-track"><span class="ham-playlist-bar"></span></div><span class="ham-playlist-next"></span>';
+      document.body.appendChild(el);
+      stageTrackerPlaylistTick();
+      setInterval(function() { stageTrackerPlaylistTick(); }, STAGE_TRACKER_PLAYLIST_TICK_MS);
+      return pl;
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
       stageTrackerRenderFullscreenButton();
       stageTrackerRenderDisplayButton();
       stageTrackerPopoutSyncTitle();
+      stageTrackerDisplayControlsInit();
+      stageTrackerPlaylistInit();
     });
