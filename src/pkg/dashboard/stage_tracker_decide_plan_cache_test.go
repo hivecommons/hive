@@ -170,7 +170,7 @@ func TestStageTrackerNoHumanMarkerWithoutReason(t *testing.T) {
 	if want := stageTrackerClipReason(stageTrackerDecisionWhy(pr)); pr.StageActor.HumanReason != want || want == "" {
 		t.Errorf("085 human_reason = %q", pr.StageActor.HumanReason)
 	}
-	merge := StageTrackerItem{Repo: "o/r", Kind: "pr", Number: 15760, Stage: trackerNumberReadyForHuman, Reason: "workflow-files"}
+	merge := StageTrackerItem{Repo: "o/r", Kind: "pr", Number: 15760, Stage: trackerNumberReadyForHuman, Reason: "contributor-lane:workflow-path"}
 	merge.HumanMergeReason, _, _ = stageTrackerHumanMergeReason(merge.Reason)
 	if a := stageTrackerStageActor(merge, nil, now); a.HumanReason != "workflow files" {
 		t.Errorf("090 human_reason = %q (code %q)", a.HumanReason, merge.HumanMergeReason)
