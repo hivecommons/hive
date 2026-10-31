@@ -47,12 +47,15 @@ func TestTrackerRowSharedAssetCompat(t *testing.T) {
 }
 
 // TestTrackerRowRequiredGlobalsDefinedBySpoke pins that the spoke page defines
-// every STAGE_TRACKER_* constant the shared row asset reads, so the list the
-// hub asserts against stays tied to the values the spoke serves.
+// every STAGE_TRACKER_* constant the shared row asset reads with exactly the
+// value trackerrow.RequiredGlobals carries (hivecommons/hive#16068), so the
+// list the hub asserts against is the one the spoke serves.
 func TestTrackerRowRequiredGlobalsDefinedBySpoke(t *testing.T) {
 	html := indexHTML(t)
-	for _, name := range trackerrow.RequiredGlobals {
-		jsConstLine(t, html, name)
+	for _, g := range trackerrow.RequiredGlobals {
+		if got := strings.TrimSpace(jsConstLine(t, html, g.Name)); got != g.Decl() {
+			t.Errorf("spoke declares %q, trackerrow.RequiredGlobals pins %q; edit both together", got, g.Decl())
+		}
 	}
 }
 
