@@ -951,6 +951,17 @@
       const k = String(b.key || '').match(/\/pr#(\d+)$/);
       return k && Number(k[1]) > 0 ? k[1] : '';
     }
+    // Event identity only: never borrow the currently selected/primary repo.
+    // Keep an explicit short audit repo when no canonical identity is carried.
+    function stageTrackerMergeBannerRepo(b) {
+      if (!b) return '';
+      const repo = String(b.repo || (b.pr && b.pr.repo) || '');
+      if (repo.indexOf('/') > 0) return repo;
+      const key = String(b.key || '').match(/^(.+)\/pr#\d+$/);
+      if (key) return key[1];
+      const url = String(b.url || (b.pr && b.pr.url) || '').match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/);
+      return url ? url[1] : repo;
+    }
     function stageTrackerMergeBannerText(b, nowMs) {
       const d = new Date(b.at || nowMs);
       const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -970,9 +981,11 @@
       if (!document.body) return null;
       let box = document.getElementById('merge-banners');
       if (!box) { box = document.createElement('div'); box.id = 'merge-banners'; box.className = 'merge-banners'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
-      const recent = ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergedIdent(e.repo, e.number) === stageTrackerMergedIdent(b.repo, b.number));
-      const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b);
+      const repo = stageTrackerMergeBannerRepo(b);
+      const recent = repo ? ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergeBannerRepo(e).toLowerCase() === repo.toLowerCase() && stageTrackerMergeBannerNumber(e) === stageTrackerMergeBannerNumber(b)) : null;
+      const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b, { repo });
       const num = stageTrackerMergeBannerNumber(info);
+      const repoChip = stageTrackerRepoChipHtml(repo, { repoChips: { primary: stageTrackerPrimaryRepo(), active: _stageTrackerFilter.repo } });
       // A live merge the ledger has not listed yet still links: the key carries owner/name.
       if (!info.url && info.repo && info.repo.indexOf('/') > 0 && num && !info.preview) info.url = `https://github.com/${info.repo}/pull/${num}`;
       const t = stageTrackerMergeBannerText(info, Date.now());
@@ -980,7 +993,7 @@
       el.className = 'merge-banner';
       el.setAttribute('role', 'status');
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
       toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
