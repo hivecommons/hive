@@ -1,1 +1,1 @@
-- Prepare Integration-aware candidate CI with default-false reusable technical workflows, isolated read-only execution and job-bound producer identity verification; this source support does not activate candidate execution or replace required CI/review policy.
+- Add a default-disabled trusted integration-candidate materializer, create-only initial-dispatch ownership and isolated job-bound CI receipt workflows derived from read-only validation profiles; no execution controller, runtime activation or required CI/review replacement is enabled.

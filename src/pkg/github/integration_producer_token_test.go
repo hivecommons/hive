@@ -39,7 +39,7 @@ func producerIdentityFixture(t *testing.T) (*rsa.PrivateKey, IntegrationProducer
 	issued := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
 	binding := IntegrationProducerBinding{
 		Repo: "owner/repo", RepositoryID: 1, ActorID: 2, RunID: 3, RunAttempt: 1, FinalizerCheckRunID: 4,
-		WorkflowPath: ".github/workflows/integration-candidate-validation.yml",
+		WorkflowPath: ".github/workflows/integration-candidate.yml",
 		WorkflowSHA:  strings.Repeat("a", 40), SubjectID: strings.Repeat("b", integrationProducerDigestBytes),
 		PayloadSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(producerIdentityPayload))),
 		JobStartedAt:  issued.Add(-time.Minute), JobCompletedAt: issued.Add(time.Minute), ObservedAt: issued.Add(time.Hour),
@@ -75,6 +75,42 @@ func TestIntegrationProducerAuthenticatesExactHistoricalFinalizer(t *testing.T) 
 		if err != nil || identity.FinalizerCheckRunID != binding.FinalizerCheckRunID ||
 			identity.PayloadSHA256 != binding.PayloadSHA256 || identity.KeyID != "github-key" {
 			t.Fatalf("exact historical producer: %+v %v", identity, err)
+		}
+	}
+}
+
+func TestIntegrationMaterializerHasDistinctRoleRefAndInstalledTransport(t *testing.T) {
+	key, candidate, claims := producerIdentityFixture(t)
+	candidate.WorkflowPath = ".github/workflows/integration-candidate-prepare.yml"
+	binding := IntegrationMaterializerBinding{
+		IntegrationProducerBinding: candidate, DefaultBranch: "v5", EventName: "repository_dispatch",
+	}
+	claims["aud"] = integrationMaterializerAudience + binding.PayloadSHA256
+	claims["ref"], claims["ref_type"] = "refs/heads/v5", "branch"
+	claims["sub"] = "repo:owner/repo:ref:refs/heads/v5"
+	claims["workflow_ref"] = binding.Repo + "/" + binding.WorkflowPath + "@refs/heads/v5"
+	verifier := NewIntegrationProducerVerifier()
+	verifier.keys, verifier.refreshedAt = map[string]*rsa.PublicKey{"github-key": &key.PublicKey}, time.Now()
+	for _, event := range []string{"workflow_dispatch", "repository_dispatch"} {
+		binding.EventName, claims["event_name"] = event, event
+		raw := signProducerToken(t, key, claims)
+		got, err := verifier.VerifyMaterializer(context.Background(), raw, []byte(producerIdentityPayload), binding)
+		if err != nil || got.Role != "materializer" {
+			t.Fatalf("installed %s materializer: %+v %v", event, got, err)
+		}
+		if _, err := verifier.Verify(context.Background(), raw, []byte(producerIdentityPayload), candidate); err == nil {
+			t.Fatal("materialization identity became candidate CI identity")
+		}
+	}
+	for _, bad := range []IntegrationMaterializerBinding{
+		{IntegrationProducerBinding: candidate, DefaultBranch: "v5", EventName: "pull_request"},
+		{IntegrationProducerBinding: candidate, DefaultBranch: "../v5", EventName: "repository_dispatch"},
+		{IntegrationProducerBinding: candidate, DefaultBranch: "v6", EventName: "repository_dispatch"},
+		{IntegrationProducerBinding: candidate, DefaultBranch: "v5.lock", EventName: "repository_dispatch"},
+		{IntegrationProducerBinding: candidate, DefaultBranch: "v5", EventName: "workflow_dispatch"},
+	} {
+		if _, err := verifier.VerifyMaterializer(context.Background(), signProducerToken(t, key, claims), []byte(producerIdentityPayload), bad); err == nil {
+			t.Fatalf("unsupported/ref-mismatched materializer accepted: %+v", bad)
 		}
 	}
 }

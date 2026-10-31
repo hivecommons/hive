@@ -146,6 +146,10 @@ jobs:
           python3 -m pip install --user -q --break-system-packages pyyaml \
             || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
 
+      - name: Check readonly candidate CI generation
+        working-directory: .
+        run: python3 .github/scripts/generate-integration-ci.py --check
+
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
       # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
@@ -905,6 +909,10 @@ jobs:
       - name: Commons web page tests
         working-directory: .
         run: node --test src/pkg/hivectl/commands/*.test.js
+
+      - name: Integration candidate materializer contracts
+        working-directory: .
+        run: node --test .github/scripts/integration-materialize.test.cjs
 
       # bin/contributor-relay.js used to carry the source under a misleading
       # .sh name (kubestellar/hive#6429), which needed a copy trick for

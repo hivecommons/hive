@@ -14,14 +14,16 @@ import (
 )
 
 const (
-	integrationProducerIssuer      = "https://token.actions.githubusercontent.com"
-	integrationProducerAudience    = "hive-integration-producer-v1/"
-	integrationProducerRefPrefix   = "refs/tags/hive-integration/"
-	integrationProducerMaxToken    = 16 << 10
-	integrationProducerMaxPayload  = 256 << 10
-	integrationProducerClockSkew   = 2 * time.Minute
-	integrationProducerMaxLifetime = time.Hour
-	integrationProducerDigestBytes = 64
+	integrationProducerIssuer           = "https://token.actions.githubusercontent.com"
+	integrationProducerAudience         = "hive-integration-producer-v1/"
+	integrationMaterializerAudience     = "hive-integration-materializer-v1/"
+	integrationProducerRefPrefix        = "refs/tags/hive-integration/"
+	integrationProducerMaxToken         = 16 << 10
+	integrationProducerMaxPayload       = 256 << 10
+	integrationProducerClockSkew        = 2 * time.Minute
+	integrationProducerMaxLifetime      = time.Hour
+	integrationProducerDigestBytes      = 64
+	integrationProducerMaxDefaultBranch = 255
 )
 
 // IntegrationProducerBinding must come from the enrolled policy, exact
@@ -45,6 +47,7 @@ type IntegrationProducerBinding struct {
 // IntegrationProducerIdentity authenticates a manifest's producer only. It is
 // not passing CI, current eligibility, promotion permission or a capacity grant.
 type IntegrationProducerIdentity struct {
+	Role                string
 	Issuer              string
 	KeyID               string
 	IssuedAt            time.Time
@@ -52,6 +55,19 @@ type IntegrationProducerIdentity struct {
 	RunAttempt          int64
 	FinalizerCheckRunID int64
 	PayloadSHA256       string
+}
+
+// IntegrationMaterializerBinding describes the independently observed trusted
+// default-branch finalizer. SubjectID is the exact preparation request digest.
+// EventName is the explicitly installed transport, never an API-error fallback.
+type IntegrationMaterializerBinding struct {
+	IntegrationProducerBinding
+	DefaultBranch string
+	EventName     string
+}
+
+type integrationProducerProfile struct {
+	role, audience, ref, refType, event string
 }
 
 type integrationProducerClaims struct {
@@ -110,6 +126,35 @@ func integrationProducerID(raw json.RawMessage, expected int64) bool {
 // inside the independently observed finalizer interval. Live eligibility and
 // evidence freshness must still be checked separately before any promotion.
 func (v *IntegrationProducerVerifier) Verify(ctx context.Context, raw string, payload []byte, binding IntegrationProducerBinding) (IntegrationProducerIdentity, error) {
+	return v.verify(ctx, raw, payload, binding, integrationProducerProfile{
+		role: "candidate", audience: integrationProducerAudience,
+		ref: integrationProducerRefPrefix + binding.SubjectID, refType: "tag", event: "workflow_dispatch",
+	})
+}
+
+// VerifyMaterializer authenticates a trusted materialization receipt, not
+// candidate CI success, shared mutation ownership or promotion permission.
+func (v *IntegrationProducerVerifier) VerifyMaterializer(ctx context.Context, raw string, payload []byte, binding IntegrationMaterializerBinding) (IntegrationProducerIdentity, error) {
+	branch := binding.DefaultBranch
+	if branch == "" || branch == "@" || len(branch) > integrationProducerMaxDefaultBranch || strings.Contains(branch, "..") ||
+		strings.Contains(branch, "@{") || strings.ContainsAny(branch, "\x00\x7f ~^:?*[\\\t\r\n") {
+		return IntegrationProducerIdentity{}, fmt.Errorf("authoritative materializer default branch unavailable")
+	}
+	for _, part := range strings.Split(branch, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return IntegrationProducerIdentity{}, fmt.Errorf("authoritative materializer default branch invalid")
+		}
+	}
+	if binding.EventName != "workflow_dispatch" && binding.EventName != "repository_dispatch" {
+		return IntegrationProducerIdentity{}, fmt.Errorf("materializer transport is not explicitly supported")
+	}
+	return v.verify(ctx, raw, payload, binding.IntegrationProducerBinding, integrationProducerProfile{
+		role: "materializer", audience: integrationMaterializerAudience,
+		ref: "refs/heads/" + branch, refType: "branch", event: binding.EventName,
+	})
+}
+
+func (v *IntegrationProducerVerifier) verify(ctx context.Context, raw string, payload []byte, binding IntegrationProducerBinding, profile integrationProducerProfile) (IntegrationProducerIdentity, error) {
 	if err := binding.validate(); err != nil {
 		return IntegrationProducerIdentity{}, err
 	}
@@ -139,16 +184,15 @@ func (v *IntegrationProducerVerifier) Verify(ctx context.Context, raw string, pa
 	if token == nil || !token.Valid {
 		return IntegrationProducerIdentity{}, fmt.Errorf("integration producer signature unavailable")
 	}
-	ref := integrationProducerRefPrefix + binding.SubjectID
 	if claims.Issuer != integrationProducerIssuer || len(claims.Audience) != 1 ||
-		claims.Audience[0] != integrationProducerAudience+binding.PayloadSHA256 ||
+		claims.Audience[0] != profile.audience+binding.PayloadSHA256 ||
 		claims.Repository != binding.Repo || !integrationProducerID(claims.RepositoryID, binding.RepositoryID) ||
 		!integrationProducerID(claims.ActorID, binding.ActorID) || !integrationProducerID(claims.RunID, binding.RunID) ||
 		!integrationProducerID(claims.RunAttempt, binding.RunAttempt) ||
 		!integrationProducerID(claims.CheckRunID, binding.FinalizerCheckRunID) ||
-		claims.WorkflowRef != binding.Repo+"/"+binding.WorkflowPath+"@"+ref ||
-		claims.WorkflowSHA != binding.WorkflowSHA || claims.Ref != ref || claims.RefType != "tag" ||
-		claims.EventName != "workflow_dispatch" || claims.RunnerEnvironment != "github-hosted" || claims.Environment != "" {
+		claims.WorkflowRef != binding.Repo+"/"+binding.WorkflowPath+"@"+profile.ref ||
+		claims.WorkflowSHA != binding.WorkflowSHA || claims.Ref != profile.ref || claims.RefType != profile.refType ||
+		claims.EventName != profile.event || claims.RunnerEnvironment != "github-hosted" || claims.Environment != "" {
 		return IntegrationProducerIdentity{}, fmt.Errorf("integration producer identity does not match the authoritative candidate finalizer")
 	}
 	if claims.IssuedAt == nil || claims.NotBefore == nil || claims.ExpiresAt == nil ||
@@ -161,6 +205,7 @@ func (v *IntegrationProducerVerifier) Verify(ctx context.Context, raw string, pa
 		return IntegrationProducerIdentity{}, fmt.Errorf("integration producer issuance is outside the authoritative finalizer interval")
 	}
 	return IntegrationProducerIdentity{
+		Role:   profile.role,
 		Issuer: claims.Issuer, KeyID: keyID, IssuedAt: claims.IssuedAt.Time,
 		RunID: binding.RunID, RunAttempt: binding.RunAttempt, FinalizerCheckRunID: binding.FinalizerCheckRunID,
 		PayloadSHA256: binding.PayloadSHA256,
