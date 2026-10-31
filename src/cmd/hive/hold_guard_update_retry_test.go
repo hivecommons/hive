@@ -442,7 +442,15 @@ func TestStopHeldPRUpdateMemoryBoundedPerPR(t *testing.T) {
 		t.Fatalf("warned %d times, want %d (once per base, not per repeat)", n, bases)
 	}
 	entries := 0
-	heldPRUpdateStopAnnounced.Range(func(_, _ any) bool { entries++; return true })
+	heldPRUpdateStopAnnounced.Range(func(key, _ any) bool {
+		k, _ := key.(string)
+		if k == heldPRUpdateStopKey("acme/widgets", pr) {
+			entries++
+		} else if strings.HasPrefix(k, "acme/widgets#9018") {
+			t.Errorf("unexpected extra memory key %q for the PR", k)
+		}
+		return true
+	})
 	if entries != 1 {
 		t.Fatalf("process memory holds %d entries for one PR, want 1", entries)
 	}
