@@ -58,7 +58,8 @@ Global flags go before the subcommand:
 `logs -f` follows the agent's ring buffer; it is available in remote mode
 only, where the server streams it. An explicit `-n N` replays the last N
 buffered lines before following (`-n 0` shows only new lines); without `-n`
-the server replays its whole follow window.
+the server replays its whole follow window. Note that `-f` always reads the
+ring buffer, so `-buffer` is implied and redundant with `-f`.
 
 Exit codes: 0 ok, 1 runtime error, 2 usage.
 

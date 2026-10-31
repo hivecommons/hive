@@ -359,6 +359,7 @@ func TestRemoteErrors(t *testing.T) {
 		{[]string{"--server", socket, "--token", "tok", "logs", "-h"}, ExitOK, ""},
 		{[]string{"--server", socket, "--token", "tok", "logs", "-buffer", "-full", "fixer"}, ExitUsage, "exclusive"},
 		{[]string{"--server", socket, "--token", "tok", "logs", "-f", "-json", "fixer"}, ExitUsage, "exclusive"},
+		{[]string{"--server", socket, "--token", "tok", "logs", "-buffer", "-f", "lost"}, ExitError, "agent lost not found"}, // -buffer with -f is accepted and takes the follow path
 		{[]string{"--server", socket, "--token", "tok", "kick", "fixer"}, ExitUsage, "usage: crux kick"},
 		{[]string{"--server", socket, "--token", "tok", "kick", "-h"}, ExitOK, ""},
 		{[]string{"--server", socket, "--token", "tok", "kick", "fixer", "  "}, ExitUsage, "empty"},
@@ -416,5 +417,27 @@ func TestRemoteAgainstRealServe(t *testing.T) {
 	client = newHarness(t)
 	if code := client.run("--server", socket, "ps"); code != ExitError || !strings.Contains(client.stderr.String(), "bearer token") {
 		t.Fatalf("no token: %d %q", code, client.stderr)
+	}
+}
+
+// TestLogsBufferFollowHelp verifies that logs -f help text documents that
+// it always reads the ring buffer and that -buffer is implied/redundant.
+func TestLogsBufferFollowHelp(t *testing.T) {
+	t.Setenv(config.ServerEnvVar, "")
+	t.Setenv(config.ServeTokenEnvVar, "")
+	f := &fakeAPI{token: "tok"}
+	socket := startFakeAPI(t, f)
+
+	h := newHarness(t)
+	if code := h.run("--server", socket, "--token", "tok", "logs", "-h"); code != ExitOK {
+		t.Fatalf("logs -h: %d %s", code, h.stderr)
+	}
+	// subFlags sends flag usage to Stderr, so -h help lands there.
+	helpText := h.stderr.String()
+	if !strings.Contains(helpText, "redundant") && !strings.Contains(helpText, "implied") {
+		t.Fatalf("logs -h does not mention -buffer is redundant/implied with -f:\n%s", helpText)
+	}
+	if !strings.Contains(helpText, "ring buffer") || !strings.Contains(helpText, "always") {
+		t.Fatalf("logs -h does not mention -f always reads the ring buffer:\n%s", helpText)
 	}
 }

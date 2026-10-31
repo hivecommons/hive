@@ -876,6 +876,12 @@ func IsGitHubUpstreamUnavailable(s string) bool {
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// A moved held branch requires fresh review: this is the hold guard
+	// enforcing merge safety, not a runtime defect (#16100). Match only the
+	// successful refusal; provenance, comment and re-hold failures stay reportable.
+	if strings.TrimSpace(m) == "hold guard: branch moved while hold-gated — blocking auto-merge, requiring fresh review" {
+		return true
+	}
 	// A CI gate refusal is the merge safety policy working as designed, even
 	// when a required check remains unsuccessful across repeated polls (#14364).
 	// Keep the operator warning, but do not turn it into a runtime defect.

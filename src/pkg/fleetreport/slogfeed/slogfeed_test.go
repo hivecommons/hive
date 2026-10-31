@@ -701,6 +701,41 @@ func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #16100: branch drift is an expected safety refusal, even when an own-only
+// write-back gate leaves the snapshot in place and it repeats every poll.
+func TestHoldGuardDriftLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "hold guard: branch moved while hold-gated — blocking auto-merge, requiring fresh review"
+	for i := 0; i < 20; i++ {
+		logger.Warn(msg, "repo", "o/r", "pr", 509,
+			"recorded_head", "49cef2e430cdd0b83fabe235c84fce35a6a7c35e",
+			"current_head", "2e709797e6a28d874e0b94413a9b3f712304fb9b",
+			"new_commits", 1, "new_authors", "contributor")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected safety refusal produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 20 {
+		t.Errorf("wrapped handler saw %d records, want 20", n)
+	}
+	if !strings.Contains(out.String(), msg) {
+		t.Error("hold guard warning missing from local logs")
+	}
+
+	// Do not blanket-suppress the guard: failures to verify provenance or
+	// explain/reapply the hold still need fleet visibility.
+	for _, failure := range []string{
+		"hold guard: could not read gate-lift provenance; treating moved head as drift",
+		"hold guard: drift comment failed; will retry next pass",
+		"hold guard: re-applying hold label failed; will retry next pass",
+	} {
+		logger.Warn(failure, "error", "unexpected failure")
+	}
+	if len(*seen) != 3 {
+		t.Fatalf("hold guard failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #15906: the per-head review cap suppressing a duplicate comment is expected.
 func TestReviewCommentCappedLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)

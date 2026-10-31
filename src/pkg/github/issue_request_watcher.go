@@ -1382,7 +1382,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// of one decomposition share a title stem ("<RFC>: child A/B") as readily
 	// as they share a path (#16065).
 	if err == nil && scan.subject != nil && req.SkipSharedPathFold &&
-		!issueshape.SameTitle(scan.subject.GetTitle(), title) {
+		!exactIssueTitleMatch(scan.subject.GetTitle(), title) {
 		scan.subject = nil
 	}
 	if err != nil {
@@ -1592,6 +1592,12 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 // fenced behind one ambiguous failure.
 const issueCreateUnknownTTL = time.Hour
 
+// exactIssueTitleMatch reports whether candidate is the same finding title as
+// title, so the scan's exact-match gate and the DAG guard cannot drift.
+func exactIssueTitleMatch(candidate, title string) bool {
+	return candidate == title || issueshape.SameTitle(candidate, title) || reviewBacklogTitlesEqual(candidate, title)
+}
+
 // reconcileIssueCreate resolves an issue create the mutation journal holds as
 // unresolved — an earlier attempt at the SAME logical operation errored
 // ambiguously (network, 5xx) or was never acknowledged — from authoritative
@@ -1626,7 +1632,7 @@ func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boun
 		return effects.Execute(ctx, boundary, claim, create)
 	}
 	state := effects.ExternalState{}
-	if existing := found.subject; existing != nil && (!exactTitle || issueshape.SameTitle(existing.GetTitle(), title)) {
+	if existing := found.subject; existing != nil && (!exactTitle || exactIssueTitleMatch(existing.GetTitle(), title)) {
 		state = effects.ExternalState{Applied: true, Provenance: existing.GetHTMLURL()}
 	}
 	if recErr := effects.Reconcile(ctx, boundary, claim, state); recErr != nil {
@@ -1887,7 +1893,7 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body st
 			// Exact match ignores the leading `[<agent>]` tag so an issue
 			// filed before titles carried the filer still dedupes its
 			// prefixed re-filing instead of gaining a twin.
-			if candidate == title || issueshape.SameTitle(candidate, title) || reviewBacklogTitlesEqual(candidate, title) {
+			if exactIssueTitleMatch(candidate, title) {
 				return openIssueMatches{subject: is}, nil
 			}
 			// Pages arrive newest-first, so overwriting leaves the oldest
