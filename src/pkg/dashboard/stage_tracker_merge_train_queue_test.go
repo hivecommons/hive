@@ -199,6 +199,41 @@ func TestStageTrackerMergeTrainStallLogHourly(t *testing.T) {
 	}
 }
 
+// One stuck head logs once per hour even when its members carry different
+// planner fronts (train IDs) across or within builds (hivecommons/hive#16107:
+// nine lines in ten minutes for one head).
+func TestStageTrackerMergeTrainStallLogHourlyPerHead(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	now := time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
+	mt := func(id string, front int) *StageTrackerMergeTrain {
+		return &StageTrackerMergeTrain{ID: id, Front: front, Size: 41, HeadNumber: 1750, HeadState: mergeTrainHeadReady, HeadReason: "approved and green; merges on hive's next pass", Stalled: true, StalledS: 98 * 60}
+	}
+	var log mergeTrainMemory
+	builds := [][]StageTrackerItem{
+		{
+			{Repo: "tuna-os/gtk-office-suite", Kind: "pr", Number: 1751, MergeTrain: mt("main#1748", 1748)},
+			{Repo: "tuna-os/gtk-office-suite", Kind: "pr", Number: 1752, MergeTrain: mt("main#1750", 1750)},
+		},
+		{{Repo: "tuna-os/gtk-office-suite", Kind: "pr", Number: 1753, MergeTrain: mt("main#1749", 1749)}},
+		{{Repo: "tuna-os/gtk-office-suite", Kind: "pr", Number: 1751, MergeTrain: mt("main#1748", 1748)}},
+	}
+	for n, items := range builds {
+		stageTrackerMergeTrainStallWarnings(&log, items, now.Add(time.Duration(n)*time.Minute))
+	}
+	if n := strings.Count(buf.String(), "merge train stalled"); n != 1 {
+		t.Fatalf("lines for one stuck head across train IDs = %d, want 1:\n%s", n, buf.String())
+	}
+	// A different repo's head with the same number is its own stall.
+	stageTrackerMergeTrainStallWarnings(&log, []StageTrackerItem{{Repo: "tuna-os/other", Kind: "pr", Number: 1751, MergeTrain: mt("main#1748", 1748)}}, now.Add(5*time.Minute))
+	if n := strings.Count(buf.String(), "merge train stalled"); n != 2 {
+		t.Fatalf("another repo's stall must log: %d", n)
+	}
+}
+
 // TestStageTrackerMergeQueueChipNode: a train member's chip reads its queue
 // position and nothing else — the same label whether or not the merge
 // sweep is running (the sweep is the spinning glyph and a tooltip line) —

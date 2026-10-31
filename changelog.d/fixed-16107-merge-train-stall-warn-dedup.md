@@ -1,0 +1,1 @@
+- The "merge train stalled" log line now repeats at most once per hour per stuck head PR, instead of once per planner train ID, so one stalled head no longer floods the log or files a repeated-error self-report ([#16107](https://github.com/hivecommons/hive/issues/16107)).
