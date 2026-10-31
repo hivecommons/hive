@@ -5,6 +5,160 @@ and GitHub's native queue. It is not a merge engine and does not activate either
 authority. Every existing CI, review, trust, DCO, coverage, soak, hold and
 current-base guard remains authoritative. Nothing deploys automatically.
 
+## Experimental execution: protocol foundation, not an activated engine
+
+The existing authoring layer above remains distinct from future Hive-owned
+candidate execution. Neither `mode: enforce` nor upgrading Hive authorizes a
+new destination writer. There is currently **no installed Hive candidate
+producer, execution controller, execution opt-in, or tracker execution region**.
+The low-level promotion protocol described here does not claim those pieces
+exist. OFF and ADVISORY do not call it; no existing merge lane calls it.
+
+The first protocol is `integration-first-parent-v1`, intentionally limited to
+preserving-history merge commits on GitHub. For a tested step `S`, its ordered
+parents must be exactly `[expected destination, exact author head]`; its commit
+OID and tree must equal the recorded tested OIDs. Promotion moves the destination
+to **that existing commit**, not a newly generated squash/rebase/merge result
+and not a merely similar tree. Linear-history-only or mandatory-signature
+destinations without a compatible producer are unsupported, not bypassed.
+
+GitHub documents an actual compare-and-swap:
+[`updateRefs` with `RefUpdate.beforeOid`, `afterOid`, and `force:false`](https://docs.github.com/en/graphql/reference/git#updaterefs).
+All listed updates are atomic. The initial adapter updates one destination
+while conditionally keeping the same-repository author ref at its exact old
+head. If the author pushes before that transaction, neither ref update applies.
+This no-op comparison is not an author-branch rewrite or persistent lock.
+The provider must accept the conditional no-op under its actual rules; refusal
+blocks promotion and never removes the head fence. Fork heads cannot participate
+in the same repository transaction and are explicitly unsupported by this first
+promotion protocol, not silently trusted from a prior REST read.
+It does not use REST `UpdateRef(force:true)`, a read followed by a write, or the
+PR merge API's author-head fence as a destination fence. Its stable mutation
+claim binds protocol, repository/base, expected destination, tested commit/tree,
+author head/repository/ref, subject, policy and generation through the existing
+effects boundary.
+`clientMutationId` binds acknowledgement; it is **not** provider idempotency.
+The resolved repository identity must also match the enrolled name: a redirect
+after a repository rename/transfer is not authority to write a different scope.
+
+A durable boundary and non-nil live eligibility guard are mandatory. The
+transport refuses a no-op boundary. The future controller must supply exclusive
+destination authority, exact complete trusted CI, review, trust, DCO, coverage,
+soak, release and hold checks. This callback is not yet a production wiring of
+those gates. Provider branch rules remain authoritative and rejection does not
+permit a fallback, force update or privilege expansion. Destination CAS does
+not atomically snapshot GitHub's independently mutable PR/review/hold fields
+other than the separately fenced same-repository source ref:
+their current freshness contract and any remaining race must be explicit, not
+misrepresented as a multi-resource transaction.
+
+The explicit `ExecuteJournaled` boundary contract refuses OFF/missing
+persistence, freezes the effective mode once, syncs the journal intent before
+the external effect and syncs its result before acknowledgment. Ordinary
+`Execute` retains its existing OFF passthrough behavior; method availability
+alone never establishes that journaling is active. The new sync requirement is
+limited to explicitly journal-required operations, not added to legacy writes.
+
+An ambiguous mutation is reconciled, never called successful from a timeout.
+The exact tested destination proves application; the unchanged expected
+destination permits only the same fenced retry. A different/unreadable
+destination remains an explicit unresolved condition. There is no blind
+TTL-expiry retry and no proof transfer to a changed head. A destination that
+advanced after an ambiguous acknowledgement needs further authoritative
+lineage reconciliation; the transport does not guess that it was promoted.
+
+### Execution feasibility gates
+
+Before any future execution opt-in can pass server validation:
+
+1. A versioned trusted CI producer must be installed and verified on the trusted
+   base. Existing `v2-ci.yml` has no dispatch trigger; existing `v2-tests.yml`
+   manual runs are not candidate attestations and include scheduled/manual
+   soft-failure behavior. Merely dispatching either does not supply combined
+   validation. The current direct-path artifact consumer is single-PR/event
+   bound and cannot be relabeled as a multi-member producer.
+2. The actual installation must already have the permissions required by the
+   chosen trigger. Hive normally has Actions read and Checks read. A direct
+   workflow dispatch needs Actions write; it is not silently requested. A
+   repository-dispatch control plane is a separate API/provenance design, not
+   an interchangeable claim that an Actions-read App can dispatch workflows.
+3. Candidate publication must not trigger unreviewed privileged `push`
+   workflows. Untrusted candidate code must run with read-only credentials,
+   no repository secrets, no privileged runner access and isolated disposable
+   execution. A successful trusted finalizer, exact run/attempt/job binding
+   and immutable artifact identity are necessary; an artifact name alone
+   does not establish its producer.
+4. Every actual required context must have a genuine candidate-aware producer.
+   Author-head DCO/review receipts remain separate; copying their green
+   statuses onto a combined commit is forbidden. Required-context/provider
+   incompatibility blocks promotion rather than changing branch rules.
+5. Native-config-selected repositories are reserved to the native authority
+   unless a narrower **landed** selection contract proves otherwise. Native
+   detection errors are unknown, not permission for a Hive writer. Existing
+   default-branch preparation and its tracker reference rail are unchanged.
+6. Accounting must cover the entire candidate attempt cohort. The current
+   ledger size and bounded historical pagination limits remain real scale
+   blockers; missing history is neither zero cost nor growth permission.
+
+### Parallel architecture and evidence criteria
+
+The execution target is parallel speculative prefixes from the outset:
+`B -> S(A) -> S(A,B) -> S(A,B,C)`, with CI on each exact step allowed to
+overlap. The one-step transport proves a protocol, **not** performance
+completion. Passing later prefixes never authorizes a rejected predecessor.
+This first transport also serializes destination advances: at two seconds per
+advance, a 32-member ready prefix could add roughly 64 seconds for its last
+member. A future single-CAS contiguous-prefix protocol needs its own verified
+first-parent lineage, passing proof for every required step, and live guards
+for every not-yet-promoted member; this adapter does not pretend to support it.
+Removing A invalidates A-dependent subjects and rebuilds B against the actual
+destination; an A+B receipt cannot validate B alone. Other destinations and
+new legally formed independent subjects can proceed within their own budgets.
+Disjoint paths are not a semantic independence proof.
+
+The implementation sequence is trusted producer/permission/protection
+feasibility; durable candidate identities and parallel bounded dispatch;
+live-gated exact promotion and recovery; opt-in cached execution diagnostics;
+and comparative benchmarks. Existing authoring admission and preparation are
+reused, not replaced. This sequence is an engineering decomposition, not a
+claim that the strategy is optimal or already implemented.
+
+The evidence behind these choices is deliberately qualified:
+
+| Decision | Source/result and limitation | Required comparison or regression |
+| --- | --- | --- |
+| Parallel prefixes and scoped predecessor rebuilds | [GitHub's documented native behavior](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue) and [Zuul dependent gating](https://zuul-ci.org/docs/zuul/latest/gating.html) test ordered speculative prefixes. This is a production design baseline, not Hive parity evidence. | A fails after A+B passes; rebuild B-only; preserve an exactly promoted prefix; prohibit old evidence resurrection. |
+| No fixed batch-fill delay initially | [FSE 2023 parallel batch testing](https://arxiv.org/html/2308.13129), sections 2–6: historical simulation, nonlinear capacity effects, fixed batching can worsen latency when resources are plentiful. It assumes no merge conflicts and excludes compile time. | Idle arrivals, burst arrivals, full compile/setup time, text and semantic conflicts, and p50/p95 rather than averages alone. |
+| Bounded adaptive window only after measured static operation | Zuul describes additive growth, failure shrink and per-destination windows. The paper's historical gains do not establish Hive's useful concurrency. | Sweep fixed windows first; measure wasted runner-minutes, failure recovery and marginal latency benefit; freeze growth on incomplete telemetry. |
+| No test skipping, prediction or assumed content equivalence | The paper's batching/failure model is not a proof about a different combined Git subject. [Tide](https://docs.prow.k8s.io/docs/components/core/tide/) also requires current-base evidence and exposes missing requirements. | Changed base/member/order/policy, rerun attempts, cold restart, duplicate and reordered events, missing producers and authoritative live holds. |
+
+Proposed orchestration budgets are **hypotheses requiring benchmark approval**:
+durable event-to-controller action p95 at most 250 ms on an idle process;
+provider dispatch acceptance p95 at most 2 s excluding runner queueing; final
+CI evidence received to promotion request p95 at most 2 s once every live gate
+is satisfied; and idle eligible-to-dispatch p95 at most 3 s. Measure monotonic
+internal spans and provider request spans separately; do not subtract slow
+API calls, delayed event delivery, reviewer wait, runner wait or serial holds
+from reported end-to-end latency.
+
+Compare identical workloads, CI definitions, runner type/count, cache state,
+retry policy and failure distributions against GitHub's documented parallel
+baseline. Report eligible-to-CI-start, complete-CI-to-promotion and end-to-end
+p50/p95, integrations/minute, actual runner-minutes/successful integration,
+invalidated/canceled execution and recovery. No safety-network job is canceled
+to make the comparison look better. Native merge-size limits do not batch
+native CI builds. A simulator and correctness CI are not a production benchmark.
+
+The stated 5,000/day target is about 3.47 integrations/minute **aggregate**,
+not an achieved result or a single-repository promise. Little's law requires
+about 35 in-flight candidates if mean CI is ten minutes at that rate, before
+waste and headroom. Forty runner-minutes per successful integration at 70%
+utilization needs about 199 simultaneous runner slots before speculative waste.
+A non-overlapping 30-second per-destination hold caps that destination at two
+integrations/minute regardless of controller speed. Reviewer availability,
+API budgets, storage, policy holds and runner capacity must appear in the
+capacity report rather than being hidden behind a fast dispatch measurement.
+
 ## Configuration and rollback
 
 ```yaml
