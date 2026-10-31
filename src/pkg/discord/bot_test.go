@@ -55,9 +55,11 @@ func newTestBot(ts *httptest.Server, channelID string) *Bot {
 		AllowedUsers: []string{"uid", "u1"},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	b.client = &http.Client{
-		Transport: &redirectTransport{target: ts.URL},
-		Timeout:   httpTimeoutS * time.Second,
+	if ts != nil {
+		b.client = &http.Client{
+			Transport: &redirectTransport{target: ts.URL},
+			Timeout:   httpTimeoutS * time.Second,
+		}
 	}
 
 	return b
@@ -1116,5 +1118,143 @@ func TestSendMessageTo_SuppressesMentions(t *testing.T) {
 	}
 	if got.AllowedMentions.Parse == nil || len(got.AllowedMentions.Parse) != 0 {
 		t.Errorf("allowed_mentions.parse = %#v, want empty non-nil", got.AllowedMentions.Parse)
+	}
+}
+
+func TestSendEmbedTo_PayloadAndAllowedMentions(t *testing.T) {
+	var body []byte
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id": "msg-embed-987"}`))
+	}))
+	defer ts.Close()
+
+	b := newTestBot(ts, "status-channel")
+	embed := Embed{
+		Title:       "#15869 RFC: Richer RFC publishing @everyone <@&999>",
+		Description: "A summary with @here",
+		URL:         "https://github.com/hivecommons/hive/issues/15869",
+		Color:       0x95a5a6,
+		Author:      &EmbedAuthor{Name: "hanthor"},
+		Fields: []EmbedField{
+			{Name: "Target", Value: "v5", Inline: true},
+			{Name: "Status", Value: "Proposal, not accepted", Inline: true},
+		},
+	}
+
+	msgID, err := b.SendEmbedTo("rfc-channel", "RFC notice: @everyone", embed)
+	if err != nil {
+		t.Fatalf("SendEmbedTo failed: %v", err)
+	}
+	if msgID != "msg-embed-987" {
+		t.Errorf("msgID = %q, want msg-embed-987", msgID)
+	}
+	if !strings.HasSuffix(gotPath, "/channels/rfc-channel/messages") {
+		t.Errorf("path = %q, want rfc-channel", gotPath)
+	}
+
+	var got struct {
+		Content         string  `json:"content"`
+		Embeds          []Embed `json:"embeds"`
+		AllowedMentions struct {
+			Parse []string `json:"parse"`
+		} `json:"allowed_mentions"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got.Content != "RFC notice: @everyone" {
+		t.Errorf("content = %q", got.Content)
+	}
+	if len(got.Embeds) != 1 {
+		t.Fatalf("len(embeds) = %d, want 1", len(got.Embeds))
+	}
+	if got.Embeds[0].Title != embed.Title {
+		t.Errorf("embed.Title = %q, want %q", got.Embeds[0].Title, embed.Title)
+	}
+	if got.Embeds[0].Color != 0x95a5a6 {
+		t.Errorf("embed.Color = %x, want 0x95a5a6", got.Embeds[0].Color)
+	}
+	if !strings.Contains(string(body), `"allowed_mentions":{"parse":[]}`) {
+		t.Errorf("allowed_mentions.parse must be an empty array, body: %s", body)
+	}
+	if got.AllowedMentions.Parse == nil || len(got.AllowedMentions.Parse) != 0 {
+		t.Errorf("allowed_mentions.parse = %#v, want empty non-nil", got.AllowedMentions.Parse)
+	}
+}
+
+func TestSendEmbedTo_EmptyChannelFails(t *testing.T) {
+	b := newTestBot(nil, "chan")
+	if _, err := b.SendEmbedTo("  ", "", Embed{Title: "t"}); err == nil {
+		t.Fatal("expected error on empty channel")
+	}
+}
+
+func TestSendEmbedTo_RateLimit429RetrySuccess(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "0.01")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"message": "rate limited", "retry_after": 0.01}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id": "msg-after-retry"}`))
+	}))
+	defer ts.Close()
+
+	b := newTestBot(ts, "status")
+	var slept time.Duration
+	prev := rateLimitSleep
+	rateLimitSleep = func(d time.Duration) { slept += d }
+	t.Cleanup(func() { rateLimitSleep = prev })
+
+	msgID, err := b.SendEmbedTo("rfc-chan", "", Embed{Title: "RFC"})
+	if err != nil {
+		t.Fatalf("expected retry to succeed: %v", err)
+	}
+	if msgID != "msg-after-retry" {
+		t.Errorf("msgID = %q, want msg-after-retry", msgID)
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2", attempts)
+	}
+	if slept <= 0 {
+		t.Errorf("expected sleep on 429, slept = %v", slept)
+	}
+}
+
+func TestSendEmbedTo_RateLimit429RetryPersistentFailure(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message": "persistent rate limit", "retry_after": 0.01}`))
+	}))
+	defer ts.Close()
+
+	b := newTestBot(ts, "status")
+	prev := rateLimitSleep
+	rateLimitSleep = func(time.Duration) {}
+	t.Cleanup(func() { rateLimitSleep = prev })
+
+	_, err := b.SendEmbedTo("rfc-chan", "", Embed{Title: "RFC"})
+	if err == nil {
+		t.Fatal("expected error after persistent 429")
+	}
+	if attempts != maxRateLimitRetries+1 {
+		t.Errorf("attempts = %d, want %d (bounded retries)", attempts, maxRateLimitRetries+1)
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("err = %v, want 429", err)
 	}
 }

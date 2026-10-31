@@ -182,7 +182,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `github` | PAT or GitHub App credentials and forge URLs. | Use one auth method. |
 | `notifications` | ntfy, Slack, and Discord webhooks. | All optional; see [notifications.md](../notifications.md). |
 | `notifications.discord.rfc_channel_id` | empty (off). | Discord channel that receives RFC lifecycle notices (RFC issue opened, closed, or taken off hold and, in rich mode, RFC documents proposed or merged as pull requests) through `notifications.discord.bot_token`. Env override `HIVE_DISCORD_RFC_CHANNEL_ID`; see [RFC lifecycle notices](../notifications.md#rfc-lifecycle-notices-discord-bot). |
-| `notifications.discord.rfc_format` | empty (= `line`). | RFC notice format: `line` or `card` (rich mode; rendering lands later). Unknown values fail validation. See [rich mode](../notifications.md#rich-mode-the-designated-announcer-and-private-repositories). |
+| `notifications.discord.rfc_format` | empty (= `line`). | RFC notice format: `line` or `card` (rich mode). `card` posts the transition text plus a Discord summary-card embed (with `rfc_threads: true` the post is plain text, no embed); malformed bodies fall back to the line, and a Discord 429 is retried (bounded) before the post counts as an error. Unknown values fail validation. See [rich mode](../notifications.md#rich-mode-the-designated-announcer-and-private-repositories). |
 | `notifications.discord.rfc_threads` | `false`. | Rich mode: one Discord thread per RFC. |
 | `notifications.discord.rfc_announcer` | `false`. | This hive is the designated announcer for `rfc_channel_id`; rich mode posts nothing without it. |
 | `notifications.discord.rfc_backlink_comment` | `false`. | Parsed only; a later change comments the thread link on the RFC. |

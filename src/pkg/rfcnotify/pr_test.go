@@ -153,10 +153,10 @@ func TestSweeperRFCPRsRichModeOnly(t *testing.T) {
 	// Line mode never asks for pull requests.
 	src := &prFakeSource{}
 	line := NewSweeper(Options{Logger: quiet, Now: clock, Interval: time.Minute})
-	_, _ = line.Run(ctx, src, post)
+	_, _ = line.Run(ctx, src, Poster(post))
 	now = now.Add(2 * time.Minute)
 	src.prs = []Issue{rfcPR(5, "📝 proposal: x", now.Add(-time.Second))}
-	if res, err := line.Run(ctx, src, post); err != nil || src.prPolls != 0 || len(res.Posted) != 0 {
+	if res, err := line.Run(ctx, src, Poster(post)); err != nil || src.prPolls != 0 || len(res.Posted) != 0 {
 		t.Fatalf("line mode: %+v err=%v prPolls=%d", res, err, src.prPolls)
 	}
 
@@ -164,17 +164,17 @@ func TestSweeperRFCPRsRichModeOnly(t *testing.T) {
 	now = t0
 	src = &prFakeSource{}
 	rich := NewSweeper(Options{Logger: quiet, Now: clock, Interval: time.Minute, Format: FormatCard, Announcer: true})
-	_, _ = rich.Run(ctx, src, post)
+	_, _ = rich.Run(ctx, src, Poster(post))
 	now = now.Add(2 * time.Minute)
 	priv := rfcPR(6, "📝 proposal: secret", now.Add(-time.Second))
 	priv.Repo, priv.Private = "o/private", true
 	src.prs = []Issue{rfcPR(5, "📝 proposal: x", now.Add(-time.Second)), priv}
-	res, err := rich.Run(ctx, src, post)
+	res, err := rich.Run(ctx, src, Poster(post))
 	if err != nil || src.prPolls != 1 || len(posted) != 1 || !strings.HasPrefix(posted[0], "RFC doc proposed: #5 📝 proposal: x") || res.Withheld != 1 {
 		t.Fatalf("rich mode: %+v err=%v posted=%v", res, err, posted)
 	}
 	now = now.Add(2 * time.Minute)
-	if res, _ := rich.Run(ctx, src, post); len(res.Posted) != 0 || len(posted) != 1 {
+	if res, _ := rich.Run(ctx, src, Poster(post)); len(res.Posted) != 0 || len(posted) != 1 {
 		t.Fatalf("second poll re-announced: %+v", res)
 	}
 }

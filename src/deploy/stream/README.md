@@ -13,6 +13,7 @@ Twitch stream. Operator guide, Twitch-side setup, and troubleshooting:
 | `docker-compose.yaml`, `.env.example` | Run the same image from a laptop. |
 | `k8s/` | Kustomize base: Namespace `hive-stream`, ConfigMap, Deployment (1 replica, non-root, 512 Mi `/dev/shm`, 1–3 CPU / 3–6 Gi), NetworkPolicy (DNS, dashboard Service, public RTMP/HTTPS only). `secret.yaml` is a **template** and is not in the kustomization. |
 | `overlays/hive-hosted/` | hive's own hosted spoke on `hive-oke`. |
+| `overlays/hive-hosted-matrix/` | Inactive, silent Matrix instance for `twitch.tv/hivecommonsmatrix`: separate namespace and identity, `twitch-stream-matrix` secret reference, zero replicas; owner-only activation. |
 
 ## Environment
 
