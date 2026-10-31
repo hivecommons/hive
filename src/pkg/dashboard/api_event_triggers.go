@@ -15,7 +15,7 @@ import (
 )
 
 type eventTriggerPreset struct {
-	Index int    `json:"index"`
+	Index *int   `json:"index"`
 	Kind  string `json:"kind"`
 	Repo  string `json:"repo"`
 }
@@ -90,7 +90,7 @@ func (s *Server) handleEventTriggersPut(w http.ResponseWriter, r *http.Request) 
 	rules := *body.Rules
 	if body.Preset != nil {
 		p := body.Preset
-		if p.Index < 0 || p.Index >= len(rules) || (p.Kind != celtrigger.KindIssueOpened && p.Kind != celtrigger.KindPROpened) {
+		if p.Index == nil || *p.Index < 0 || *p.Index >= len(rules) || (p.Kind != celtrigger.KindIssueOpened && p.Kind != celtrigger.KindPROpened) {
 			jsonError(w, "invalid first-seen event preset", http.StatusBadRequest)
 			return
 		}
@@ -105,7 +105,7 @@ func (s *Server) handleEventTriggersPut(w http.ResponseWriter, r *http.Request) 
 			jsonError(w, "select one repository managed by this hive; a preset cannot use all repositories or a wildcard", http.StatusBadRequest)
 			return
 		}
-		rules[p.Index].Expr = fmt.Sprintf("event.kind == %q && event.repo == %q", p.Kind, p.Repo)
+		rules[*p.Index].Expr = fmt.Sprintf("event.kind == %q && event.repo == %q", p.Kind, p.Repo)
 	}
 	current := cfg.TriggerRulesSnapshot()
 	if version != config.TriggerRulesVersion(current) {

@@ -56,7 +56,8 @@ func TestEventTriggersPresetPersistenceAndPreservation(t *testing.T) {
 		t.Fatalf("must retain configured event.repo spelling: %v", repo)
 	}
 	rules := append(cfg.TriggerRulesSnapshot(), config.TriggerRule{Name: "scanner-first-seen", Agent: "scanner", Expr: "overwritten by scoped preset", Priority: 29})
-	body, err := json.Marshal(map[string]any{"rules": rules, "preset": eventTriggerPreset{Index: 1, Kind: "issue.opened", Repo: "repo1"}})
+	presetIndex := 1
+	body, err := json.Marshal(map[string]any{"rules": rules, "preset": eventTriggerPreset{Index: &presetIndex, Kind: "issue.opened", Repo: "repo1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +134,9 @@ func TestEventTriggersRejectInvalidAndUnpersistedRules(t *testing.T) {
 		{"wildcard repo", `{"rules":[{"name":"r","agent":"scanner","expr":"true"}],"preset":{"index":0,"kind":"issue.opened","repo":"*"}}`, "one repository"},
 		{"wrong repo spelling", `{"rules":[{"name":"r","agent":"scanner","expr":"true"}],"preset":{"index":0,"kind":"issue.opened","repo":"myorg/repo1"}}`, "one repository"},
 		{"unsupported preset", `{"rules":[{"name":"r","agent":"scanner","expr":"true"}],"preset":{"index":0,"kind":"issue.labeled","repo":"repo1"}}`, "invalid first-seen"},
+		{"missing preset index", `{"rules":[{"name":"r","agent":"scanner","expr":"true"}],"preset":{"kind":"issue.opened","repo":"repo1"}}`, "invalid first-seen"},
+		{"negative preset index", `{"rules":[],"preset":{"index":-1,"kind":"issue.opened","repo":"repo1"}}`, "invalid first-seen"},
+		{"outside preset index", `{"rules":[],"preset":{"index":0,"kind":"issue.opened","repo":"repo1"}}`, "invalid first-seen"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := putEventTriggers(s, tc.body, version)
