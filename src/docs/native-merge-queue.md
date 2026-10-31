@@ -64,6 +64,58 @@ attest that prerequisites are satisfied. Follow the pilot rollout below first.
 Disabling does not drain existing GitHub queue entries: drain or withdraw them
 before rollback. Trust/review/hold/CI/soak and attribution gates remain intact.
 
+## Activity Tracker: observed operation, not a second merge engine
+
+When enabled, **Activity Tracker → Forge-owned merge queues → GitHub merge
+queue** is a separate region beside the preparation rail, outside actual
+pipeline rows. It displays provider-observed entry positions, exact PR heads,
+provider states and enqueue ages. Readiness/preparation, native admission,
+candidate testing and an actual merged receipt are different states.
+Linked issue/PR trees are not reparented or duplicated into pipeline rows;
+references say whether that exact repository/PR/head/base is on the page,
+outside its filters/page, or absent/changed. Repository filtering applies to
+the native rail; its references are not silently dropped by row pagination.
+
+Candidate cards identify actual `merge_group` synthetic refs and SHAs from
+authenticated events or Actions runs. **Membership is unknown** unless a signed
+event base, the live queue chain, every exact member head's ancestry and a final
+unchanged synthetic-ref read all agree. FIFO positions and PR numbers embedded
+in ref names are never membership proof. Several observed candidates can appear
+in parallel. The CI drilldown reads only the candidate SHA, including required
+check names, status, conclusion, producer binding and available job links; it
+never substitutes green PR-head checks. Classic protection and applicable rules
+must both be readable before required policy is known. Missing/pending/skipped
+checks or unreadable policy are never portrayed as passing.
+
+The provider-neutral `forgequeue.Observation` contract is read-only and carries
+no admission or merge authority. The GitHub adapter feeds an in-memory cache
+from the existing governor cycle, at most once per three minutes, rotating
+across two scopes per pass with one 45-second background budget. Each scope
+reads at most 100 entries and 100 workflow runs; at most four recent candidate
+cards and eight member ancestry checks per card are observed. Larger/incomplete
+cohorts explicitly report partial coverage rather than implied completeness.
+There are no per-render or per-PR observation pollers; OFF performs no
+observation API reads. Evidence older than six minutes is explicitly stale;
+failed refreshes retain older evidence with unavailable/stale diagnostics.
+More than two configured scopes can therefore be stale while rotation catches
+up. Observations need App installation read access to queues, Actions,
+checks/statuses, contents and branch policy (including Administration read for
+classic protection). Verify those permissions explicitly; enqueue permissions
+alone do not establish this visibility. Unavailable authentication
+or permissions are reported, not silently substituted with configured checks.
+
+Authenticated `merge_group` deliveries retain candidate identities and
+`destroyed` receipts. Complete consecutive entry snapshots can establish an entry's
+removal, **not its reason**. Only an authenticated merged-PR delivery for a
+previously observed exact queued/member head records a merged receipt and its
+actual merge SHA. Failed required CI is shown on that candidate; moved/expired
+refs do not prove failure, rebuild or merge. No rebuild reason, percentage or ETA
+is invented. The last 32 lifecycle receipts and 16 event hints are memory-bounded,
+not an exhaustive durable audit: missed deliveries and restart gaps remain
+explicit. Configure delivery of `merge_group` and `pull_request` events to the
+existing authenticated webhook endpoint for full event evidence; discovery
+without a signed group base intentionally leaves member mapping unknown.
+
 ## How it works
 
 Automerge sweeps detect a PR's target queue with GraphQL

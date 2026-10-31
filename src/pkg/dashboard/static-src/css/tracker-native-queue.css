@@ -1,0 +1,8 @@
+    .nq-rail { margin: 12px 0; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px; overflow-wrap: anywhere; }
+    .nq-rail h3, .nq-rail h4, .nq-rail h5 { margin: 8px 0; }
+    .nq-muted { color: var(--text-secondary); font-size: var(--fs-sm); }
+    .nq-scope { margin-top: 12px; border-top: 1px solid var(--border-color); }
+    .nq-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+    .nq-candidate { padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; min-width: 0; }
+    .nq-entries, .nq-candidate ul { padding-left: 24px; }
+    .nq-rail li { margin: 6px 0; }
