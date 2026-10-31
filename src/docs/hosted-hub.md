@@ -163,6 +163,12 @@ Key signals:
   (hive owner vs hub operator) are listed in the
   [fleet drift signals reference](fleet-drift-signals.md).
 
+For the open issues and pull requests the hives you can see are working on,
+open **📡 Fleet activity** (next to **🔬 Evidence**) or
+<https://hive.hivecommons.dev/activity>. It is a read-only board that refreshes
+every 15 seconds and says which hives are stale or not reporting. See
+[Hub Fleet activity page](hub-fleet-activity.md).
+
 ## Common problems and fixes
 
 | Symptom | Likely cause | Fix |
