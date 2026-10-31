@@ -34,7 +34,7 @@ const rfcNotPRCacheMax = 512
 // poster, built once from the config that enabled them.
 type rfcNotifyState struct {
 	sweeper *rfcnotify.Sweeper
-	post    rfcnotify.Poster
+	pub     rfcnotify.Publisher
 	// channel the poster was built for; a config change rebuilds it.
 	channel string
 	// gates the sweeper was built with; a config change rebuilds it.
@@ -53,9 +53,9 @@ type rfcNotifyState struct {
 	// statePath is rfcNotifyStatePath in production; tests point it at a
 	// temp dir.
 	statePath string
-	// newPoster builds the Discord poster; nil means discordRFCPoster.
-	// Tests inject a recorder.
-	newPoster func(token, channel string) rfcnotify.Poster
+	// newPublisher builds the Discord publisher; nil builds botPublisher.
+	// Tests inject a recorder (rfcnotify.Poster satisfies Publisher).
+	newPublisher func(token, channel string) rfcnotify.Publisher
 	// threads is the Discord surface of threads mode, built for channel;
 	// newThreads builds it (nil means discordRFCThreads). Tests inject a fake.
 	threads    rfcnotify.Threads
@@ -111,10 +111,6 @@ func (s *rfcNotifyState) ensure(cfg *config.Config, repos int, logger *slog.Logg
 	if !ok {
 		return false
 	}
-	newPoster := s.newPoster
-	if newPoster == nil {
-		newPoster = discordRFCPoster(logger)
-	}
 	gates := rfcNotifyGatesFor(cfg, repos)
 	if s.sweeper == nil || s.gates != gates {
 		s.sweeper = rfcnotify.NewSweeper(rfcnotify.Options{
@@ -129,8 +125,13 @@ func (s *rfcNotifyState) ensure(cfg *config.Config, repos int, logger *slog.Logg
 		})
 		s.gates = gates
 	}
-	if s.post == nil || s.channel != channel {
-		s.post = newPoster(token, channel)
+	if s.pub == nil || s.channel != channel {
+		if s.newPublisher != nil {
+			s.pub = s.newPublisher(token, channel)
+		} else {
+			bot := discord.NewBot(discord.Config{Token: token}, logger)
+			s.pub = botPublisher{bot: bot, channel: channel}
+		}
 		s.channel = channel
 		s.threads = nil
 	}
@@ -147,17 +148,22 @@ func (s *rfcNotifyState) ensure(cfg *config.Config, repos int, logger *slog.Logg
 	return true
 }
 
-// discordRFCPoster posts through the bot token to the RFC channel without
-// starting the command bot.
-func discordRFCPoster(logger *slog.Logger) func(token, channel string) rfcnotify.Poster {
-	return func(token, channel string) rfcnotify.Poster {
-		bot := discord.NewBot(discord.Config{Token: token}, logger)
-		return func(content string) error { return bot.SendMessageTo(channel, content) }
-	}
+// botPublisher adapts discord.Bot to rfcnotify.Publisher.
+type botPublisher struct {
+	bot     *discord.Bot
+	channel string
+}
+
+func (p botPublisher) Post(content string) error {
+	return p.bot.SendMessageTo(p.channel, content)
+}
+
+func (p botPublisher) PostCard(content string, embed rfcnotify.Embed) (string, error) {
+	return p.bot.SendEmbedTo(p.channel, content, embed)
 }
 
 // discordRFCThreads builds the threads-mode Discord surface for the RFC
-// channel. It posts through the bot token like discordRFCPoster, without
+// channel. It posts through the bot token like botPublisher, without
 // starting the command bot.
 func discordRFCThreads(logger *slog.Logger) func(token, channel string) rfcnotify.Threads {
 	return func(token, channel string) rfcnotify.Threads {
@@ -421,6 +427,7 @@ func rfcNotifyIssues(snaps []github.IssueSnapshot) []rfcnotify.Issue {
 		out = append(out, rfcnotify.Issue{
 			Repo: s.Repo, Number: s.Number, Title: s.Title, URL: s.URL, Author: s.Author,
 			State: s.State, StateReason: s.StateReason, Labels: s.Labels, CreatedAt: s.CreatedAt,
+			Body: s.Body,
 		})
 	}
 	return out
@@ -437,7 +444,7 @@ func runRFCNotifySweep(ctx context.Context, src rfcnotify.Source, repos int, cfg
 	if src == nil || state == nil || !state.ensure(cfg, repos, logger) {
 		return rfcnotify.Result{}
 	}
-	res, err := state.sweeper.Run(ctx, src, state.post)
+	res, err := state.sweeper.Run(ctx, src, state.pub)
 	if err != nil {
 		logger.Warn("rfc notify sweep failed", "error", err)
 		return res

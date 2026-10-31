@@ -137,10 +137,10 @@ func (r *threadRig) restart() { r.sw = r.newSweeper() }
 func (r *threadRig) run() Result {
 	r.t.Helper()
 	r.now = r.now.Add(DefaultInterval)
-	res, err := r.sw.Run(context.Background(), r.src, func(string) error {
+	res, err := r.sw.Run(context.Background(), r.src, Poster(func(string) error {
 		r.t.Fatal("line poster used in threads mode")
 		return nil
-	})
+	}))
 	if err != nil {
 		r.t.Fatalf("Run: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestThreads_BacklinkNeedsACommenterSource(t *testing.T) {
 	r := newThreadRig(t, Options{Announcer: true, Backlink: true})
 	r.openRFC(3)
 	r.now = r.now.Add(DefaultInterval)
-	if _, err := r.sw.Run(context.Background(), r.src.fakeSource, noopPost); err != nil {
+	if _, err := r.sw.Run(context.Background(), r.src.fakeSource, Poster(noopPost)); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.src.comments) != 0 {

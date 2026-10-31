@@ -218,6 +218,38 @@ func (b *Bot) SendMessage(content string) error {
 	return b.SendMessageTo(b.channelID, content)
 }
 
+// Embed represents a Discord embed object.
+type Embed struct {
+	Title       string       `json:"title,omitempty"`
+	Description string       `json:"description,omitempty"`
+	URL         string       `json:"url,omitempty"`
+	Color       int          `json:"color,omitempty"`
+	Author      *EmbedAuthor `json:"author,omitempty"`
+	Fields      []EmbedField `json:"fields,omitempty"`
+	Footer      *EmbedFooter `json:"footer,omitempty"`
+	Timestamp   string       `json:"timestamp,omitempty"`
+}
+
+// EmbedAuthor is the author field of a Discord embed.
+type EmbedAuthor struct {
+	Name    string `json:"name,omitempty"`
+	URL     string `json:"url,omitempty"`
+	IconURL string `json:"icon_url,omitempty"`
+}
+
+// EmbedField is a name/value field within a Discord embed.
+type EmbedField struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Inline bool   `json:"inline,omitempty"`
+}
+
+// EmbedFooter is the footer field of a Discord embed.
+type EmbedFooter struct {
+	Text    string `json:"text"`
+	IconURL string `json:"icon_url,omitempty"`
+}
+
 // SendMessageTo posts content to an arbitrary channel the bot token can
 // write to, bypassing the status channel and the drain queue. It works on a
 // Bot that was never started, so a feature that only needs to post (RFC
@@ -236,6 +268,27 @@ func messagePayload(content string) map[string]any {
 		"content":          content,
 		"allowed_mentions": map[string]any{"parse": []string{}},
 	}
+}
+
+// SendEmbedTo posts an embed (and optional content) to an arbitrary channel
+// the bot token can write to. Like SendMessageTo it never pings anyone, and
+// it returns the created message ID.
+func (b *Bot) SendEmbedTo(channelID, content string, embed Embed) (string, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return "", fmt.Errorf("discord send: channel id not configured")
+	}
+	payload := messagePayload(content)
+	if content == "" {
+		delete(payload, "content")
+	}
+	payload["embeds"] = []Embed{embed}
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := b.do(http.MethodPost, fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID), payload, &msg); err != nil {
+		return "", err
+	}
+	return msg.ID, nil
 }
 
 // PostMessageNonce posts content to channelID with a Discord nonce and

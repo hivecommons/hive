@@ -184,6 +184,55 @@ dashboard section, and renders dark regardless of any stored theme
 (append `&theme=light` for a light stream). Do not point the streamer at a hive tracking private
 repositories without reviewing what the tracker would show.
 
+The main `twitch.tv/hivecommons` stream never shows Matrix; it remains the
+full-screen Activity Monitor.
+
+## Matrix mode (separate channel)
+
+Matrix is an experimental, default-off code display for a separate channel,
+[`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).
+It shows pushed added lines only, from positively identified hive identities,
+on public repositories explicitly allowlisted in `dashboard.matrix.repos`.
+Private patches, unverified authors and excluded paths are never shown. Lines
+touched by scrubbing are dropped entirely rather than displayed with redactions;
+the built-in secret/path filters and `dashboard.matrix.exclude_paths` apply.
+Dashboard authentication alone does not make a code stream safe for public
+Twitch broadcasting: the public allowlist, author restriction and scrub/drop
+rules are required.
+
+[`overlays/hive-hosted-matrix/`](../deploy/stream/overlays/hive-hosted-matrix/kustomization.yaml)
+reuses the streamer image and base as a separate instance. It renders Deployment,
+ConfigMap and NetworkPolicy `matrix-hive-stream` in namespace `hive-stream-matrix`,
+with separate pod selectors and secret references scoped to that namespace.
+It opens `/?kiosk=1&view=matrix&sound=off` and sets `STREAM_AUDIO=silent`.
+Its independent process and deployment isolate restarts and failures from the
+existing stream. The `hive-hosted` overlay and `twitch.tv/hivecommons` are
+unaffected.
+
+**Keep this broadcast OFF until the owner authorizes it and provisions the
+channel.** The overlay has `replicas: 0`; applying it starts no streamer.
+Channel availability alone does not authorize activation. The owner must:
+
+1. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
+   and verify the Matrix display and its author restriction and scrub/drop rules
+   before any broadcast. An empty allowlist captures nothing.
+2. Provision `hivecommonsmatrix` independently, create namespace
+   `hive-stream-matrix`, and create the out-of-band
+   `twitch-stream-matrix` Secret there with its
+   `TWITCH_STREAM_KEY`. Provision a separate `dashboard-token` Secret there
+   for the dashboard source. Never reuse the main channel's `twitch-stream`
+   Secret, or put key values in source, issues or documentation.
+3. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
+   zero only after authorization and readiness checks. Applying the overlay,
+   creating the Twitch Secret and scaling up are all owner-only actions;
+   this configuration does not authorize deployment or activation.
+
+Review the manifests without applying them:
+
+```sh
+kubectl kustomize src/deploy/stream/overlays/hive-hosted-matrix
+```
+
 ## Display mode and URL views
 
 For an attended screen (a wall monitor or TV someone can walk up to), use

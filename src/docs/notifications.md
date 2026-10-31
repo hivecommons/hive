@@ -210,7 +210,7 @@ These keys sit next to `rfc_channel_id`. All of them default off, and with none 
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `rfc_format` | `""` (= `line`) | `line` posts one line per transition. `card` selects rich mode; card rendering lands in a later change. Any other value is a config error. |
+| `rfc_format` | `""` (= `line`) | `line` posts one line per transition. `card` posts the transition text (including a linked RFC for accepted documents) alongside a Discord summary card (embed; with `rfc_threads: true` the post is plain text and the embed renders only when threads are off) with target, status, scrubbed summary, open-decision count and colour by state (held grey, needs-decision amber, ready green, closed completed blue, closed not-planned dark); malformed bodies fall back to the line. Card posts share the bounded `429` retry of every Discord call (see *Rate limits and failures* under [Threads](#one-thread-per-rfc-rfc_threads)). Any other value is a config error. |
 | `rfc_threads` | `false` | Rich mode: one Discord thread per RFC in the existing text channel (see [Threads](#one-thread-per-rfc-rfc_threads)). Needs `rfc_announcer`. |
 | `rfc_announcer` | `false` | Marks this hive as the one designated announcer for `rfc_channel_id`. Rich mode posts only from the announcer. |
 | `rfc_backlink_comment` | `false` | With `rfc_threads`, comments `Discussion thread: <url>` on the RFC once, after the thread exists. |

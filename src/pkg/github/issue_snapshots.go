@@ -19,6 +19,8 @@ type IssueSnapshot struct {
 	Title  string
 	URL    string
 	Author string
+	// Body is the issue's markdown description.
+	Body string
 	// State is "open" or "closed".
 	State string
 	// StateReason is GitHub's state_reason: "completed", "not_planned",
@@ -87,6 +89,7 @@ func issueSnapshotFrom(repo string, issue *gh.Issue) IssueSnapshot {
 		Title:       issue.GetTitle(),
 		URL:         issue.GetHTMLURL(),
 		Author:      safeGetLogin(issue.GetUser()),
+		Body:        issue.GetBody(),
 		State:       strings.ToLower(issue.GetState()),
 		StateReason: strings.ToLower(issue.GetStateReason()),
 		Labels:      issueLabelNames(issue.Labels),
