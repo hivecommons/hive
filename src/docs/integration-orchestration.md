@@ -41,6 +41,13 @@ not atomically snapshot GitHub's independently mutable PR/review/hold fields:
 their current freshness contract and any remaining race must be explicit, not
 misrepresented as a multi-resource transaction.
 
+The explicit `ExecuteJournaled` boundary contract refuses OFF/missing
+persistence, freezes the effective mode once, syncs the journal intent before
+the external effect and syncs its result before acknowledgment. Ordinary
+`Execute` retains its existing OFF passthrough behavior; method availability
+alone never establishes that journaling is active. The new sync requirement is
+limited to explicitly journal-required operations, not added to legacy writes.
+
 An ambiguous mutation is reconciled, never called successful from a timeout.
 The exact tested destination proves application; the unchanged expected
 destination permits only the same fenced retry. A different/unreadable
@@ -88,6 +95,11 @@ The execution target is parallel speculative prefixes from the outset:
 `B -> S(A) -> S(A,B) -> S(A,B,C)`, with CI on each exact step allowed to
 overlap. The one-step transport proves a protocol, **not** performance
 completion. Passing later prefixes never authorizes a rejected predecessor.
+This first transport also serializes destination advances: at two seconds per
+advance, a 32-member ready prefix could add roughly 64 seconds for its last
+member. A future single-CAS contiguous-prefix protocol needs its own verified
+first-parent lineage, passing proof for every required step, and live guards
+for every not-yet-promoted member; this adapter does not pretend to support it.
 Removing A invalidates A-dependent subjects and rebuilds B against the actual
 destination; an A+B receipt cannot validate B alone. Other destinations and
 new legally formed independent subjects can proceed within their own budgets.

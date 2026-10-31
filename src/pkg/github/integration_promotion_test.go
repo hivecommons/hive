@@ -22,6 +22,10 @@ type integrationPromotionJournal struct {
 	claim      effects.Claim
 }
 
+func (j *integrationPromotionJournal) ExecuteJournaled(ctx context.Context, claim effects.Claim, apply func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	return j.Execute(ctx, claim, apply)
+}
+
 func (j *integrationPromotionJournal) Execute(ctx context.Context, claim effects.Claim, apply func(context.Context) (effects.Result, error)) (effects.Result, error) {
 	j.claim = claim
 	if j.unresolved {

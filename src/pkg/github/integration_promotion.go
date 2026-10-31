@@ -67,7 +67,8 @@ func integrationPromotionJournaled(boundary effects.Boundary) bool {
 		default:
 			_, reconciles := boundary.(effects.Reconciler)
 			_, looksUp := boundary.(effects.Lookup)
-			return reconciles && looksUp
+			_, requiresJournal := boundary.(effects.JournaledBoundary)
+			return reconciles && looksUp && requiresJournal
 		}
 	}
 }
@@ -174,7 +175,11 @@ func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromot
 		}
 		return effects.Result{Provenance: p.TestedSHA}, nil
 	}
-	out, err := effects.Execute(ctx, boundary, claim, apply)
+	journaled, ok := boundary.(effects.JournaledBoundary)
+	if !ok {
+		return effects.Result{}, fmt.Errorf("integration promotion requires journaled execution")
+	}
+	out, err := journaled.ExecuteJournaled(ctx, claim, apply)
 	if !errors.Is(err, effects.ErrNeedsReconciliation) {
 		return out, err
 	}
@@ -198,5 +203,5 @@ func (c *Client) PromoteIntegrationStep(ctx context.Context, p IntegrationPromot
 	if err := effects.Reconcile(ctx, boundary, claim, state); err != nil {
 		return out, err
 	}
-	return effects.Execute(ctx, boundary, claim, apply)
+	return journaled.ExecuteJournaled(ctx, claim, apply)
 }
