@@ -252,17 +252,27 @@ func TestRFCNotifyVisibilityCacheFailsClosed(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	if state.repoPrivate(ctx, nil, "o/pub") || state.repoPrivate(ctx, nil, "o/pub") || calls["o/pub"] != 1 {
+	for i := 0; i < 2; i++ {
+		if priv, err := state.repoPrivate(ctx, nil, "o/pub"); priv || err != nil {
+			t.Fatalf("public repo = %v, %v", priv, err)
+		}
+	}
+	if calls["o/pub"] != 1 {
 		t.Fatalf("public repo not cached: calls=%v", calls)
 	}
-	if !state.repoPrivate(ctx, nil, "o/priv") {
+	if priv, err := state.repoPrivate(ctx, nil, "o/priv"); !priv || err != nil {
 		t.Fatal("private repo must be private")
 	}
-	if !state.repoPrivate(ctx, nil, "o/err") || !state.repoPrivate(ctx, nil, "o/err") || calls["o/err"] != 2 {
-		t.Fatalf("failed lookup must fail closed and retry: calls=%v", calls)
+	for i := 0; i < 2; i++ {
+		if priv, err := state.repoPrivate(ctx, nil, "o/err"); !priv || err == nil {
+			t.Fatalf("failed lookup must fail closed with an error: %v, %v", priv, err)
+		}
+	}
+	if calls["o/err"] != 2 {
+		t.Fatalf("failed lookup must retry: calls=%v", calls)
 	}
 	now = now.Add(rfcRepoVisibilityTTL)
-	state.repoPrivate(ctx, nil, "o/pub")
+	_, _ = state.repoPrivate(ctx, nil, "o/pub")
 	if calls["o/pub"] != 2 {
 		t.Fatalf("visibility not refreshed after the TTL: calls=%v", calls)
 	}

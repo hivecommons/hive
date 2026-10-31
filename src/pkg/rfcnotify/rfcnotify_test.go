@@ -575,3 +575,24 @@ func TestSweeperPrivateGate(t *testing.T) {
 		t.Fatalf("include_private: %+v %v", res, posted)
 	}
 }
+
+func TestSweeperUnknownVisibilityRetriesNextPoll(t *testing.T) {
+	unknown := func(is Issue) Issue { is.Private, is.VisibilityUnknown = true, true; return is }
+	src := &fakeSource{}
+	sw, tick := gateSweeper(t, Options{}, src)
+	tick()
+	src.updated = []Issue{unknown(withReason(rfc(1, "open"), "completed")), withReason(rfc(2, "open"), "completed")}
+	var posted []string
+	post := func(s string) error { posted = append(posted, s); return nil }
+	res, err := sw.Run(context.Background(), src, post)
+	if err != nil || res.Unresolved != 1 || res.Withheld != 0 || len(posted) != 1 || !strings.Contains(posted[0], "#2 ") {
+		t.Fatalf("unknown run: %+v %v %v", res, err, posted)
+	}
+	// Visibility now resolves public: the dropped transition is announced.
+	src.updated = []Issue{withReason(rfc(1, "open"), "completed")}
+	tick()
+	posted = nil
+	if res, _ := sw.Run(context.Background(), src, post); len(posted) != 1 || res.Unresolved != 0 {
+		t.Fatalf("retry: %+v %v", res, posted)
+	}
+}

@@ -83,6 +83,9 @@ type Result struct {
 	// rich mode without the announcer). Their state still advances, so
 	// they are never replayed later.
 	Withheld int
+	// Unresolved counts events whose repository visibility could not be
+	// determined; they stay unannounced and are retried on the next poll.
+	Unresolved int
 }
 
 // Sweeper owns the detector and its cadence.
@@ -169,6 +172,12 @@ func (s *Sweeper) Run(ctx context.Context, src Source, post Poster) (Result, err
 		return res, s.save()
 	}
 	for i, ev := range events {
+		if ev.Issue.VisibilityUnknown && !s.opts.IncludePrivate {
+			res.Unresolved++
+			s.opts.Logger.Debug("rfc notify: repository visibility unknown; retrying next poll", "issue", ev.Issue.Key(), "kind", ev.Kind)
+			s.det.rollback(before, events[i:i+1])
+			continue
+		}
 		if ev.Issue.Private && !s.opts.IncludePrivate {
 			res.Withheld++
 			s.opts.Logger.Debug("rfc notify: private repository; not posting", "issue", ev.Issue.Key(), "kind", ev.Kind)

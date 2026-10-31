@@ -138,14 +138,15 @@ type rfcRepoVisibility struct {
 
 // repoPrivate reports whether repo is private, from the cache when the
 // entry is younger than rfcRepoVisibilityTTL. A failed lookup counts as
-// private (fail closed) and is retried on the next call.
-func (s *rfcNotifyState) repoPrivate(ctx context.Context, c *github.Client, repo string) bool {
+// private (fail closed) with a non-nil error, and is retried on the next
+// call.
+func (s *rfcNotifyState) repoPrivate(ctx context.Context, c *github.Client, repo string) (bool, error) {
 	now := time.Now
 	if s.now != nil {
 		now = s.now
 	}
 	if v, ok := s.visibility[repo]; ok && now().Sub(v.at) < rfcRepoVisibilityTTL {
-		return v.private
+		return v.private, nil
 	}
 	lookup := s.lookupPrivate
 	if lookup == nil {
@@ -153,13 +154,13 @@ func (s *rfcNotifyState) repoPrivate(ctx context.Context, c *github.Client, repo
 	}
 	private, err := lookup(ctx, repo)
 	if err != nil {
-		return true
+		return true, err
 	}
 	if s.visibility == nil {
 		s.visibility = map[string]rfcRepoVisibility{}
 	}
 	s.visibility[repo] = rfcRepoVisibility{private: private, at: now()}
-	return private
+	return private, nil
 }
 
 // githubRepoPrivate resolves an "owner/name" repo's visibility. Anything
@@ -215,7 +216,13 @@ func (s rfcNotifySource) markPrivate(ctx context.Context, issues []rfcnotify.Iss
 		if !rfcnotify.IsRFC(issues[i].Title, issues[i].Labels) {
 			continue
 		}
-		issues[i].Private = s.state == nil || s.state.repoPrivate(ctx, s.c, issues[i].Repo)
+		if s.state == nil {
+			issues[i].Private = true
+			continue
+		}
+		private, err := s.state.repoPrivate(ctx, s.c, issues[i].Repo)
+		issues[i].Private = private
+		issues[i].VisibilityUnknown = err != nil
 	}
 	return issues
 }
@@ -255,8 +262,8 @@ func runRFCNotifySweep(ctx context.Context, src rfcnotify.Source, repos int, cfg
 			dashSrv.AuditLogRecord("system", "rfc-notify", fmt.Sprintf("channel=%s %s", state.channel, res.Posted[i]), "", ev.Issue.Repo, ev.Issue.Number)
 		}
 	}
-	if len(res.Posted) > 0 || res.Errors > 0 || res.Withheld > 0 {
-		logger.Info("rfc notify sweep", "posted", len(res.Posted), "errors", res.Errors, "withheld", res.Withheld)
+	if len(res.Posted) > 0 || res.Errors > 0 || res.Withheld > 0 || res.Unresolved > 0 {
+		logger.Info("rfc notify sweep", "posted", len(res.Posted), "errors", res.Errors, "withheld", res.Withheld, "unresolved", res.Unresolved)
 	}
 	return res
 }
