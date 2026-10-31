@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -417,5 +418,40 @@ func TestStopHeldPRUpdateFreshStoreForgetsAnnouncedStops(t *testing.T) {
 		if len(writer.comments) != 1 {
 			t.Fatalf("store %d: posted %d notes, want 1", i, len(writer.comments))
 		}
+	}
+}
+
+// Process memory holds one entry per held PR however often its base moves,
+// while a moved base still re-warns and a repeated tuple does not
+// (hivecommons/hive#16106).
+func TestStopHeldPRUpdateMemoryBoundedPerPR(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	store := newTestHoldGuardStore(t)
+	writer := &fakeIssueWriter{}
+	pr := github.PullRequest{Repo: "widgets", Number: 9018, HeadSHA: "bound-h1", MergeableState: "dirty", FromFork: true}
+	store.Snapshot("acme/widgets", pr.Number, pr.HeadSHA, nil)
+	const bases = 5
+	for i := 0; i < bases; i++ {
+		pr.BaseSHA = fmt.Sprintf("bound-b%d", i)
+		for j := 0; j < 2; j++ {
+			stopHeldPRUpdate(context.Background(), writer, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+		}
+	}
+	if n := strings.Count(buf.String(), "stopped keeping held PR mergeable"); n != bases {
+		t.Fatalf("warned %d times, want %d (once per base, not per repeat)", n, bases)
+	}
+	entries := 0
+	heldPRUpdateStopAnnounced.Range(func(key, _ any) bool {
+		k, _ := key.(string)
+		if k == heldPRUpdateStopKey("acme/widgets", pr) {
+			entries++
+		} else if strings.HasPrefix(k, "acme/widgets#9018") {
+			t.Errorf("unexpected extra memory key %q for the PR", k)
+		}
+		return true
+	})
+	if entries != 1 {
+		t.Fatalf("process memory holds %d entries for one PR, want 1", entries)
 	}
 }

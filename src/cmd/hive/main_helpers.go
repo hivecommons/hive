@@ -482,23 +482,30 @@ func maintainHeldPRMergeability(
 	}
 }
 
-// heldPRUpdateStopAnnounced remembers, for the life of the process, each
-// held-PR update stop the guard already warned about and each person-facing
-// note it already posted. The ledger carries both across restarts, but its
+// heldPRUpdateStopAnnounced remembers, for the life of the process, the
+// held-PR update stop the guard last warned about and the person-facing note
+// it last posted, per PR. The ledger carries both across restarts, but its
 // entry can be dropped and re-snapshotted between passes (a hold that lifts
 // and returns), losing the stop and the note together — without this the
 // guard re-warned, and could re-post the note, every pass
-// (hivecommons/hive#16103). Bounded by the held PRs a process sees.
+// (hivecommons/hive#16103). Keyed on repo#pr with the last announced tuple as
+// the value, so each held PR holds exactly one entry however often its head or
+// base moves (hivecommons/hive#16106).
 var heldPRUpdateStopAnnounced sync.Map
 
-func heldPRUpdateStopWarnKey(repo string, pr github.PullRequest, reason string) string {
-	return fmt.Sprintf("warn|%s#%d|%s|%s|%s", repo, pr.Number, pr.HeadSHA, pr.BaseSHA, reason)
+type heldPRUpdateStopState struct {
+	warnHead, warnBase, warnReason string
+	noteHead, noteReason           string
 }
 
-// heldPRUpdateStopNoteKey mirrors the ledger's UpdateStopNoted identity: the
-// note is per head and reason, not per base.
-func heldPRUpdateStopNoteKey(repo string, pr github.PullRequest, reason string) string {
-	return fmt.Sprintf("note|%s#%d|%s|%s", repo, pr.Number, pr.HeadSHA, reason)
+func heldPRUpdateStopKey(repo string, pr github.PullRequest) string {
+	return fmt.Sprintf("%s#%d", repo, pr.Number)
+}
+
+func loadHeldPRUpdateStopState(key string) heldPRUpdateStopState {
+	v, _ := heldPRUpdateStopAnnounced.Load(key)
+	st, _ := v.(heldPRUpdateStopState)
+	return st
 }
 
 // stopHeldPRUpdate records that the guard stops updating pr's head on its
@@ -514,9 +521,13 @@ func stopHeldPRUpdate(ctx context.Context, writer forge.IssueWriter, store *hold
 	// The ledger entry can be dropped and re-snapshotted between passes (a
 	// hold that lifts and returns), losing the stop; the process remembers
 	// each (PR, head, base, reason) it already announced.
-	if _, seen := heldPRUpdateStopAnnounced.LoadOrStore(heldPRUpdateStopWarnKey(repo, pr, reason), struct{}{}); seen {
+	stopKey := heldPRUpdateStopKey(repo, pr)
+	st := loadHeldPRUpdateStopState(stopKey)
+	if st.warnHead == pr.HeadSHA && st.warnBase == pr.BaseSHA && st.warnReason == reason {
 		logger.Debug("hold guard: held PR update still stopped until its head or base moves", args...)
 	} else {
+		st.warnHead, st.warnBase, st.warnReason = pr.HeadSHA, pr.BaseSHA, reason
+		heldPRUpdateStopAnnounced.Store(stopKey, st)
 		logger.Warn("hold guard: stopped keeping held PR mergeable until its head or base moves", args...)
 	}
 	noteHeldPRUpdateStopped(ctx, writer, store, repo, pr, reason, logger)
@@ -553,12 +564,17 @@ func noteHeldPRUpdateStopped(ctx context.Context, writer forge.IssueWriter, stor
 	}
 	// Dedupe on the ledger first, then on process memory: the same ledger
 	// loss that repeats the WARN above would otherwise repeat this note.
-	noteKey := heldPRUpdateStopNoteKey(repo, pr, reason)
+	stopKey := heldPRUpdateStopKey(repo, pr)
+	recordNoted := func() {
+		st := loadHeldPRUpdateStopState(stopKey)
+		st.noteHead, st.noteReason = pr.HeadSHA, reason
+		heldPRUpdateStopAnnounced.Store(stopKey, st)
+	}
 	if rec.UpdateStopNoted(pr.HeadSHA, reason) {
-		heldPRUpdateStopAnnounced.Store(noteKey, struct{}{})
+		recordNoted()
 		return
 	}
-	if _, noted := heldPRUpdateStopAnnounced.Load(noteKey); noted {
+	if st := loadHeldPRUpdateStopState(stopKey); st.noteHead == pr.HeadSHA && st.noteReason == reason {
 		return
 	}
 	if err := writer.CreateIssueComment(ctx, pr.Repo, pr.Number, holdguard.UpdateStoppedCommentBody(reason)); err != nil { // writeback:gated
@@ -567,7 +583,7 @@ func noteHeldPRUpdateStopped(ctx context.Context, writer forge.IssueWriter, stor
 		return
 	}
 	store.MarkUpdateStopNoted(repo, pr.Number, pr.HeadSHA, reason)
-	heldPRUpdateStopAnnounced.Store(noteKey, struct{}{})
+	recordNoted()
 }
 
 // intentConfigFromCfg maps config.IntentConfig onto the intent package's
