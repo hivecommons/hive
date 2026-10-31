@@ -757,7 +757,18 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if d.Active {
 			issueDecisionDowngrade = d
 		}
-		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: req.NoConsolidateReason == ""})
+		// A declared parent/blocked-by makes the request a distinct DAG node;
+		// never fold it into a sibling that merely cites the same path (#16065).
+		dagSkipReason := ""
+		if req.Parent > 0 {
+			dagSkipReason = "parent"
+		} else if len(req.BlockedBy) > 0 {
+			dagSkipReason = "blocked_by"
+		}
+		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: req.NoConsolidateReason == "", SkipSharedPathFold: dagSkipReason != ""})
+		if req.NoConsolidateReason == "" && dagSkipReason != "" {
+			resp.ConsolidationSkippedReason = dagSkipReason
+		}
 		if req.NoConsolidateReason != "" {
 			resp.ConsolidationSkippedReason = req.NoConsolidateReason
 			c.logger.Info("issue-request watcher: consolidation skipped at the caller's request",
@@ -1199,6 +1210,10 @@ type CreateIssueRequest struct {
 	// ConsolidateOpen turns on open-twin consolidation: a finding over the
 	// same files as an open hive-filed issue is folded into it (#9376).
 	ConsolidateOpen bool
+	// SkipSharedPathFold suppresses the file-set and same-component folds
+	// (#16065) for a request that declares DAG placement (--parent or
+	// --blocked-by). The exact-title and rejected-twin gates still apply.
+	SkipSharedPathFold bool
 	// FoldMatch, when set, narrows ConsolidateOpen: a file-set or
 	// same-component twin is folded into only when FoldMatch accepts its
 	// title and body. Sharing a file is not sharing a problem; a refused twin
@@ -1375,6 +1390,9 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		fileSetTwin = scan.fileSet
 		componentTwin, componentPath, componentCount = scan.component, scan.componentPath, scan.componentCount
 		openComponent, openComponentOldest = scan.componentCounts, scan.componentOldest
+		if req.SkipSharedPathFold {
+			fileSetTwin, componentTwin, openComponent = nil, nil, nil
+		}
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an

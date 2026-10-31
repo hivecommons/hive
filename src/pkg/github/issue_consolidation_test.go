@@ -539,6 +539,54 @@ func TestIssueRequestWatcher_FoldsSameComponentStream(t *testing.T) {
 	}
 }
 
+// The #16065 failure: a child declaring --parent/--blocked-by was folded into
+// a sibling child citing the same file. A declared DAG placement is a distinct
+// node, so the request files its own issue and reports why it skipped the fold.
+func TestIssueRequestWatcher_DAGPlacementSkipsSharedPathFold(t *testing.T) {
+	cases := []struct {
+		name       string
+		parent     int
+		blockedBy  []int
+		wantReason string
+	}{
+		{"parent", 15965, nil, "parent"},
+		{"blocked_by", 0, []int{16063}, "blocked_by"},
+		{"parent wins over blocked_by", 15965, []int{16063}, "parent"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{}
+			srv := consolidationMockServer(t, []openTwin{
+				{number: 63, author: testBot, title: "[scanner] child A", body: "src/docs/shared.md and src/a.go"},
+				{number: 61, author: testBot, title: "[scanner] child B", body: "src/docs/shared.md and src/b.go"},
+			}, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+				Repo: "o/r", Agent: "scanner",
+				Title:     "[scanner] child C",
+				Body:      "src/docs/shared.md and src/c.go",
+				Parent:    tc.parent,
+				BlockedBy: tc.blockedBy,
+			})
+			if m.created != 1 {
+				t.Fatalf("created %d issues, want a new issue instead of a fold", m.created)
+			}
+			if len(m.commentedOn) != 0 {
+				t.Errorf("comments posted on %v, want none on siblings", m.commentedOn)
+			}
+			if !res.OK || res.Consolidated {
+				t.Errorf("result = %+v, want ok and not consolidated", res)
+			}
+			if res.ConsolidationSkippedReason != tc.wantReason {
+				t.Errorf("consolidation_skipped_reason = %q, want %q", res.ConsolidationSkippedReason, tc.wantReason)
+			}
+		})
+	}
+}
+
 // The #14360 failure: a scanner code-change finding on a Windows module was
 // folded into an outreach issue parked on a maintainer decision (an admin
 // topics edit that merely cites the module), where no PR would ever pick it
