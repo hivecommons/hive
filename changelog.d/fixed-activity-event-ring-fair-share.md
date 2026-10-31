@@ -1,0 +1,1 @@
+- The fleet-wide activity event ring now evicts the oldest event of the hive holding the most events, so one spoke can no longer evict every other hive's events ([#16050](https://github.com/hivecommons/hive/issues/16050)).
