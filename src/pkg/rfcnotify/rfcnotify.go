@@ -6,8 +6,9 @@
 // webhook to see the change.
 //
 // An issue is an RFC when it carries the `rfc` label or its title is
-// prefixed with RFC (`RFC: ...`, `[RFC] ...`, `📝 RFC: ...`), which is the
-// convention hivecommons/hive uses (for example #12062).
+// prefixed with RFC (`RFC: ...`, `[RFC] ...`, `📝 RFC: ...`) or with a
+// leading bracketed tag that names it (`📝 [v5 RFC] ...`), which are the
+// conventions hivecommons/hive uses (for example #12062 and #16075).
 //
 // In rich mode an RFC document proposed as a pull request is tracked too:
 // a PR is an RFC when its title starts with `📝 proposal:` or `📝 RFC`, or
@@ -141,7 +142,34 @@ type Event struct {
 // parenthetical "(RFC #13617)" later in the title do not match.
 var rfcTitleRE = regexp.MustCompile(`(?i)^(?:[^\p{L}\p{N}]*(?:\[[^\]]*\])?)*\s*\[?RFC\b`)
 
-// IsRFC reports whether the issue is an RFC by label or title prefix.
+// leadingTagsRE matches the run of leading emoji, punctuation and
+// bracketed tags of a title, capturing each tag's contents via tagRE.
+var (
+	leadingTagsRE = regexp.MustCompile(`^(?:[^\p{L}\p{N}\[]*\[[^\]]*\])+`)
+	tagRE         = regexp.MustCompile(`\[([^\]]*)\]`)
+)
+
+// rfcTag reports whether one of the title's leading bracketed tags names
+// it an RFC, as in "📝 [v5 RFC] ..." or "[RFC v6] ...". "[RFC #123]"
+// references an RFC rather than being one.
+func rfcTag(title string) bool {
+	for _, m := range tagRE.FindAllStringSubmatch(leadingTagsRE.FindString(title), -1) {
+		words := strings.FieldsFunc(m[1], func(r rune) bool { return unicode.IsSpace(r) || r == ':' || r == ',' || r == '/' })
+		for i, w := range words {
+			if !strings.EqualFold(w, "RFC") {
+				continue
+			}
+			if i+1 < len(words) && (strings.HasPrefix(words[i+1], "#") || unicode.IsDigit([]rune(words[i+1])[0])) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// IsRFC reports whether the issue is an RFC by label, title prefix or
+// leading title tag.
 func IsRFC(title string, labels []string) bool {
 	for _, l := range labels {
 		if strings.EqualFold(strings.TrimSpace(l), RFCLabel) {
@@ -149,6 +177,9 @@ func IsRFC(title string, labels []string) bool {
 		}
 	}
 	title = strings.TrimSpace(title)
+	if rfcTag(title) {
+		return true
+	}
 	loc := rfcTitleRE.FindStringIndex(title)
 	if loc == nil {
 		return false
