@@ -639,6 +639,31 @@ func TestIssueRequestWatcher_DAGPlacementSkipsSharedPathFold(t *testing.T) {
 		}
 	})
 
+	// The scan's exact-title gate also accepts a review-backlog title that
+	// differs only by the leading agent tag (#16074); a DAG node keeps it.
+	t.Run("review-backlog title twin still reuses", func(t *testing.T) {
+		m := &consolidationMock{}
+		srv := consolidationMockServer(t, []openTwin{
+			{number: 64, author: testBot, title: "[reviewer] Review backlog (security): token logged", body: "src/auth/token.go"},
+		}, m)
+		defer srv.Close()
+		c := issueTestClient(t, srv.URL)
+		c.appBotLogin = testBot
+
+		_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+			Repo: "o/r", Agent: "scanner",
+			Title:  "Review backlog (security): token logged",
+			Body:   "src/auth/token.go",
+			Parent: 15965,
+		})
+		if m.created != 0 || len(m.commentedOn) != 0 {
+			t.Fatalf("created=%d comments=%v, want #64 reused silently", m.created, m.commentedOn)
+		}
+		if !res.OK || !res.AlreadyExisted || res.Number != 64 || res.ConsolidationSkippedReason != "" {
+			t.Errorf("result = %+v, want already_existed naming #64 with no skipped reason", res)
+		}
+	})
+
 	// The exact-title gate is unchanged (#16065 keeps it): a retried create
 	// reuses the issue it itself filed, and the result reports the reuse
 	// rather than a skipped fold.

@@ -1382,7 +1382,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// of one decomposition share a title stem ("<RFC>: child A/B") as readily
 	// as they share a path (#16065).
 	if err == nil && scan.subject != nil && req.SkipSharedPathFold &&
-		!issueshape.SameTitle(scan.subject.GetTitle(), title) {
+		!exactIssueTitleMatch(scan.subject.GetTitle(), title) {
 		scan.subject = nil
 	}
 	if err != nil {
@@ -1607,6 +1607,12 @@ const issueCreateUnknownTTL = time.Hour
 // so the watcher counts the attempt and gives up after
 // issueReconcileMaxAttempts).
 //
+// exactIssueTitleMatch reports whether candidate is the same finding title as
+// title, so the scan's exact-match gate and the DAG guard cannot drift.
+func exactIssueTitleMatch(candidate, title string) bool {
+	return candidate == title || issueshape.SameTitle(candidate, title) || reviewBacklogTitlesEqual(candidate, title)
+}
+
 // exactTitle mirrors CreateIssueRequest.SkipSharedPathFold (#16065): a
 // declared DAG node counts only an exact-title twin as evidence that the
 // earlier attempt applied, since a canonical-stem sibling is a different
@@ -1887,7 +1893,7 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body st
 			// Exact match ignores the leading `[<agent>]` tag so an issue
 			// filed before titles carried the filer still dedupes its
 			// prefixed re-filing instead of gaining a twin.
-			if candidate == title || issueshape.SameTitle(candidate, title) || reviewBacklogTitlesEqual(candidate, title) {
+			if exactIssueTitleMatch(candidate, title) {
 				return openIssueMatches{subject: is}, nil
 			}
 			// Pages arrive newest-first, so overwriting leaves the oldest
