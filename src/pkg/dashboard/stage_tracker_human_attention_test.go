@@ -115,8 +115,11 @@ func TestStageTrackerHumanAttentionTracksOnlyTheCurrentCoveringPR(t *testing.T) 
 	if items[0].LinkedPRs[1].HumanAttention != nil {
 		t.Fatal("unrelated child inherited another PR/RFC's decision")
 	}
-	if !strings.Contains(items[0].StageActor.HumanReason, "compatibility") {
-		t.Fatalf("specific covering reason replaced by generic ask: %+v", items[0].StageActor)
+	if !strings.Contains(items[0].LinkedPRs[0].StageActor.HumanReason, "compatibility") {
+		t.Fatalf("specific external PR reason replaced by generic ask: %+v", items[0].LinkedPRs[0].StageActor)
+	}
+	if items[0].StageActor.Kind != StageActorNone {
+		t.Fatalf("external PR wrongly replaced the locally drawn sibling's actor: %+v", items[0].StageActor)
 	}
 	// A stale link must lose the old proof instead of acquiring the new head.
 	items[1].Head = "new-head"
