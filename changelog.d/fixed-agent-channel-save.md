@@ -1,0 +1,1 @@
+- Agent Channels now offers only supported kick channels, explains GitHub issue triggering through CEL rules and signed webhooks, and shows actionable save errors without retaining rejected edits; signed issue-opened deliveries now wake the existing governor/CEL evaluation path.
