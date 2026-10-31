@@ -71,11 +71,14 @@ js/tracker-words-core.js
 js/tracker-words-stage.js
 js/tracker-words-gate.js
 js/tracker-words.js
+js/tracker-row-anchor.js
 js/tracker-row.js
 js/tracker-row-strip.js
 js/tracker-row-acted.js
 js/tracker-human-attention.js
 js/tracker-row-layout.js
+js/tracker-row-title.js
+js/tracker-row-render.js
 js/tracker-motion.js
 js/tracker-filter.js
 js/tracker-filter-state.js
