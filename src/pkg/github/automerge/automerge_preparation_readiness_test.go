@@ -103,6 +103,45 @@ func TestPreparationReadinessDistinguishesObservedPendingFromMissing(t *testing.
 	}
 }
 
+func TestPreparationReadinessRequiresSupportedLaneAndReviewEvidence(t *testing.T) {
+	api, c, _ := readinessFixture(t, false)
+	ctx := context.Background()
+	if ready, known := c.preparationReadiness(ctx, "acme", "widget", api.prs[2], stageLaneSelf); !ready || !known {
+		t.Fatalf("missing positive control: ready=%v known=%v", ready, known)
+	}
+	if ready, known := c.preparationReadiness(ctx, "acme", "widget", api.prs[2], stageLaneContributor); ready || known {
+		t.Fatalf("unsupported lane admitted: ready=%v known=%v", ready, known)
+	}
+	c.reviewGate.Verdict = nil
+	if ready, known := c.preparationReadiness(ctx, "acme", "widget", api.prs[2], stageLaneSelf); ready || known {
+		t.Fatalf("missing review provider admitted: ready=%v known=%v", ready, known)
+	}
+}
+
+func TestPreparationFilesRejectsUnknownAndMissingPaths(t *testing.T) {
+	for _, invalid := range []string{"unknown-count", "empty-path", "missing-files"} {
+		t.Run(invalid, func(t *testing.T) {
+			api, srv := newPreparationAPI(t)
+			c := preparationEngine(srv.URL, NewBasePreparationStore(""))
+			ctx := context.Background()
+			if files, err := c.preparationFiles(ctx, "acme", "widget", api.prs[2]); err != nil || len(files) != 1 || files[0] != "file2.go" {
+				t.Fatalf("missing complete-path positive control: %v %v", files, err)
+			}
+			switch invalid {
+			case "unknown-count":
+				api.prs[2].ChangedFiles = nil
+			case "empty-path":
+				api.files[2][0].Filename = gh.Ptr("")
+			case "missing-files":
+				api.files[2] = nil
+			}
+			if files, err := c.preparationFiles(ctx, "acme", "widget", api.prs[2]); err == nil || files != nil {
+				t.Fatalf("incomplete path evidence accepted: %v %v", files, err)
+			}
+		})
+	}
+}
+
 func TestPreparationAndBootUseTheSameDestinationDirectory(t *testing.T) {
 	if got := destinationDirectory(New(nil, Options{})); got != DefaultDestinationMergeDirectory() {
 		t.Fatalf("default sweep=%q boot/relay=%q", got, DefaultDestinationMergeDirectory())
