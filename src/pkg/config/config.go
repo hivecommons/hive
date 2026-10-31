@@ -4248,6 +4248,33 @@ type SlackConfig struct {
 // DiscordRFCChannelIDEnvVar overrides notifications.discord.rfc_channel_id.
 const DiscordRFCChannelIDEnvVar = "HIVE_DISCORD_RFC_CHANNEL_ID"
 
+// Values for notifications.discord.rfc_format.
+const (
+	// RFCFormatLine posts one line per RFC transition (the default).
+	RFCFormatLine = "line"
+	// RFCFormatCard posts a rich card per RFC; it requires rfc_announcer.
+	RFCFormatCard = "card"
+)
+
+// RFCFormatValid reports whether RFCFormat names a known format (or is
+// unset).
+func (d DiscordConfig) RFCFormatValid() bool {
+	switch strings.ToLower(strings.TrimSpace(d.RFCFormat)) {
+	case "", RFCFormatLine, RFCFormatCard:
+		return true
+	}
+	return false
+}
+
+// RFCFormatMode returns the effective RFC format: RFCFormatCard when set,
+// otherwise RFCFormatLine.
+func (d DiscordConfig) RFCFormatMode() string {
+	if strings.EqualFold(strings.TrimSpace(d.RFCFormat), RFCFormatCard) {
+		return RFCFormatCard
+	}
+	return RFCFormatLine
+}
+
 type DiscordConfig struct {
 	Webhook        string `yaml:"webhook"`
 	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
@@ -4262,6 +4289,26 @@ type DiscordConfig struct {
 	// Empty (the default) disables the notices. The env var
 	// HIVE_DISCORD_RFC_CHANNEL_ID overrides it.
 	RFCChannelID string `yaml:"rfc_channel_id,omitempty" json:"rfc_channel_id,omitempty"`
+	// RFCFormat picks how RFC notices render: "" or "line" (the default,
+	// one line per transition) or "card". Card rendering lands later; today
+	// "card" only switches on the rich-mode announcer gate.
+	RFCFormat string `yaml:"rfc_format,omitempty" json:"rfc_format,omitempty"`
+	// RFCThreads opts into one Discord thread per RFC (rich mode). Off by
+	// default.
+	RFCThreads bool `yaml:"rfc_threads,omitempty" json:"rfc_threads,omitempty"`
+	// RFCAnnouncer designates this hive as the one announcer for
+	// RFCChannelID. A rich mode (RFCFormat "card" or RFCThreads) posts
+	// nothing without it, so several hives sharing a channel do not race.
+	// Line mode ignores it.
+	RFCAnnouncer bool `yaml:"rfc_announcer,omitempty" json:"rfc_announcer,omitempty"`
+	// RFCBacklinkComment opts into a GitHub comment on the RFC linking its
+	// Discord thread. Parsed now; the behaviour lands with threads.
+	RFCBacklinkComment bool `yaml:"rfc_backlink_comment,omitempty" json:"rfc_backlink_comment,omitempty"`
+	// RFCIncludePrivate authorizes posting RFCs from private repositories
+	// (titles and links) to RFCChannelID. Off by default: a private-repo
+	// RFC, or one whose visibility cannot be resolved, is not posted in
+	// any mode.
+	RFCIncludePrivate bool `yaml:"rfc_include_private,omitempty" json:"rfc_include_private,omitempty"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel
