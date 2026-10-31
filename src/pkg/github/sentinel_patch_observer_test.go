@@ -102,10 +102,13 @@ func TestSentinelPatchObserverNotCalledOnFetchFailure(t *testing.T) {
 		t.Fatalf("res=%+v obs=%d", res, len(obs.got))
 	}
 
-	// Incomplete list (reported > returned) is not observed either.
+	// Incomplete list (reported > returned) is not observed either. The
+	// head must change: the sweep records head3 as seen before the file
+	// fetch, so re-sweeping the same head would be skipped, not re-fetched.
 	f.mu.Lock()
 	f.filesStatus = 0
 	f.prs[0]["changed_files"] = 3
+	f.prs[0]["head"] = map[string]string{"sha": "head3b"}
 	f.mu.Unlock()
 	res, _ = c.SweepSentinel(context.Background(), opts)
 	if len(res.Errors) != 1 || len(obs.got) != 0 {
