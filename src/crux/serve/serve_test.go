@@ -774,6 +774,58 @@ func TestFollowLogsStreamsNewLines(t *testing.T) {
 	}
 }
 
+// followRecords opens a follow stream for fixer with the given query and
+// returns its first count records.
+func followRecords(t *testing.T, s *served, query string, count int) []string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, "http://crux"+api.LogsPath("fixer")+"?"+query, nil)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("follow %s: %d", query, resp.StatusCode)
+	}
+	return readStream(t, resp, count)
+}
+
+func TestFollowLogsHonoursLinesForTheInitialReplay(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"n trims the replay", "follow=1&n=2", []string{
+			api.EventLog + `|{"agent":"fixer","lines":["c","d"]}`,
+			api.EventLog + `|{"agent":"fixer","lines":["e"]}`,
+		}},
+		{"n=0 replays nothing", "follow=1&n=0", []string{
+			api.EventLog + `|{"agent":"fixer","lines":["e"]}`,
+		}},
+		{"n above the buffer replays it all", "follow=1&n=500", []string{
+			api.EventLog + `|{"agent":"fixer","lines":["a","b","c","d"]}`,
+			api.EventLog + `|{"agent":"fixer","lines":["e"]}`,
+		}},
+		{"no n replays the whole window", "follow=1", []string{
+			api.EventLog + `|{"agent":"fixer","lines":["a","b","c","d"]}`,
+			api.EventLog + `|{"agent":"fixer","lines":["e"]}`,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := startServer(t, "", false)
+			s.rt.add("fixer", "f1", crux.StateRunning)
+			// The replay is cut from the first window; later polls still
+			// diff against all of it, so only "e" is new.
+			s.rt.buffer["fixer"] = [][]string{{"a", "b", "c", "d"}, {"c", "d", "e"}}
+			got := followRecords(t, s, tc.query, len(tc.want))
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("follow records:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
+			}
+		})
+	}
+}
+
 func TestFollowEndsWithAStateRecordWhenOutputFails(t *testing.T) {
 	s := startServer(t, "", false)
 	s.rt.add("fixer", "f1", crux.StateRunning)
