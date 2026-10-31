@@ -212,7 +212,7 @@
     .ham-preparation-head .ham-train-chip { white-space: normal; }
     .ham-preparation-head .ham-preparation-help { background: none; border-color: var(--ham-train-accent); color: var(--muted); }
     .ham-preparation-help::before { content: '?'; }
-    .config-info.ham-preparation-node { position: absolute; left: calc(var(--sp-2) - 2px); top: calc(50% - var(--sp-2)); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
+    .config-info.ham-preparation-node { position: absolute; left: calc(var(--sp-2) - 2px); top: 50%; transform: translateY(-50%); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
     .ham-row.ham-preparation-member > .ham-strip-row > .ham-preparation-node { left: calc(var(--sp-2) - var(--sp-5) - 2px); }
     .ham-preparation-node::before { content: none; }
     .ham-preparation-node::after { content: ''; position: absolute; left: 1px; top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }

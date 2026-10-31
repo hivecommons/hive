@@ -54,7 +54,10 @@ export function preparationRailLayoutFixture() {
       if (node && strip) {
         const dot = getComputedStyle(node, '::after'), hit = node.getBoundingClientRect(), anchor = strip.getBoundingClientRect();
         const center = hit.top + Number.parseFloat(dot.top) + Number.parseFloat(dot.height) / 2;
-        check(Math.abs(center - (anchor.top + anchor.height / 2)) < 1, name + ': dot stays on item anchor, not comment midpoint');
+        lines[i].dot = { top: dot.top, height: dot.height, hitTop: hit.top, hitHeight: hit.height,
+          center, anchorTop: anchor.top, anchorHeight: anchor.height, transform: dot.transform };
+        check(Math.abs(center - (anchor.top + anchor.height / 2)) < 1,
+          name + ': dot stays on item anchor, not comment midpoint: ' + JSON.stringify(lines[i].dot));
       } else check(false, name + ': actual member dot belongs to its strip anchor');
       const caption = members[i].querySelector('.ham-preparation-comment');
       check(caption && caption.getBoundingClientRect().height > 0, name + ': real expanded caption');
