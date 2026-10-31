@@ -50,8 +50,8 @@ func TestStageTrackerNeedsHuman(t *testing.T) {
 		items = append(items, c.it)
 	}
 	nh, oh := stageTrackerHumanCounts(items)
-	if nh != 9 || oh != 2 {
-		t.Fatalf("counts = (%d, %d), want (9, 2)", nh, oh)
+	if nh != 10 || oh != 2 {
+		t.Fatalf("counts = (%d, %d), want (10, 2)", nh, oh)
 	}
 	for i, c := range cases {
 		if items[i].NeedsHuman != c.needsHuman || items[i].OnHold != c.hold {
