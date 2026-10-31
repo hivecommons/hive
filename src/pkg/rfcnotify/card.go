@@ -296,14 +296,14 @@ func Card(e Event, meta RFCMeta, includeRepo bool) Embed {
 	if meta.Target != "" {
 		fields = append(fields, discord.EmbedField{
 			Name:   "Target",
-			Value:  truncateRunes(meta.Target, MaxFieldValueRunes),
+			Value:  truncateRunes(logscrub.ScrubString(meta.Target), MaxFieldValueRunes),
 			Inline: true,
 		})
 	}
 	if meta.Status != "" {
 		fields = append(fields, discord.EmbedField{
 			Name:   "Status",
-			Value:  truncateRunes(meta.Status, MaxFieldValueRunes),
+			Value:  truncateRunes(logscrub.ScrubString(meta.Status), MaxFieldValueRunes),
 			Inline: true,
 		})
 	}
@@ -317,7 +317,7 @@ func Card(e Event, meta RFCMeta, includeRepo bool) Embed {
 	if len(meta.RelatedRFCLinks) > 0 {
 		fields = append(fields, discord.EmbedField{
 			Name:   "Related",
-			Value:  truncateRunes(strings.Join(meta.RelatedRFCLinks, ", "), MaxFieldValueRunes),
+			Value:  truncateRunes(logscrub.ScrubString(strings.Join(meta.RelatedRFCLinks, ", ")), MaxFieldValueRunes),
 			Inline: false,
 		})
 	}

@@ -187,6 +187,28 @@ func TestCard_FieldsAndMentionsSafety(t *testing.T) {
 	}
 }
 
+func TestCard_FieldScrubbing(t *testing.T) {
+	fakeToken := "ghp_" + strings.Repeat("b", 36)
+	ev := Event{
+		Issue: Issue{
+			Number: 42,
+			Title:  "RFC: Test Title",
+			URL:    "https://example.com/42",
+		},
+	}
+	meta := RFCMeta{
+		Target:          "target with " + fakeToken,
+		Status:          "status with " + fakeToken,
+		RelatedRFCLinks: []string{"related with " + fakeToken},
+	}
+	card := Card(ev, meta, false)
+	for _, f := range card.Fields {
+		if strings.Contains(f.Value, fakeToken) {
+			t.Errorf("field %s contains unscrubbed token: %q", f.Name, f.Value)
+		}
+	}
+}
+
 func TestCard_ColorsByState(t *testing.T) {
 	cases := []struct {
 		name      string
