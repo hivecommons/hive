@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || reviewCommentCapped(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -234,6 +234,14 @@ func hubHeartbeatUnavailable(r slog.Record) bool {
 		return true
 	})
 	return match
+}
+
+// reviewCommentCapped reports whether r is the review-request watcher noting
+// that the per-head review cap suppressed a duplicate comment while the
+// verdict was still recorded. That is the cap working as designed, not a
+// runtime defect (hivecommons/hive#15906); the WARN stays in local logs.
+func reviewCommentCapped(r slog.Record) bool {
+	return strings.TrimSpace(r.Message) == "review-request watcher: comment suppressed by per-head cap, verdict recorded"
 }
 
 // Classifier errors stay in local logs only: transport errors can expose the

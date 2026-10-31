@@ -224,16 +224,21 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 }
 
 // stageTrackerAdoptionNeverHedge qualifies the auto-adopt countdown under
-// maintainer_policy: never. The engine has not read the author's repository
+// maintainer_policy: never and ask. The engine has not read the author's repository
 // permission yet (it only does so once due), so a maintainer's head never
 // reaches the promised moment at all and the row cannot promise adoption for
 // every author the way it does under adopt (hivecommons/hive#15692). lead is
 // the conjunction that joins the clause to the text before it.
 func stageTrackerAdoptionNeverHedge(a StageTrackerAdoption, lead string) string {
-	if a.Policy != config.AdoptionMaintainerPolicyNever {
-		return ""
+	switch a.Policy {
+	case config.AdoptionMaintainerPolicyNever:
+		return lead + " the author maintains this repository"
+	case config.AdoptionMaintainerPolicyAsk:
+		// ask reads the permission at the same due moment and then asks
+		// the maintainer instead of adopting (hivecommons/hive#15742).
+		return lead + " the author maintains this repository, then it asks"
 	}
-	return lead + " the author maintains this repository"
+	return ""
 }
 
 // stageTrackerAdoptionOfflineFor renders " 26h" for the time the author's
