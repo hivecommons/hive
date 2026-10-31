@@ -11,6 +11,7 @@ github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
 github.com/hivecommons/hive/crux/kubejob
+github.com/hivecommons/hive/crux/logscrub
 github.com/hivecommons/hive/crux/paneclass
 github.com/hivecommons/hive/crux/sandbox
 github.com/hivecommons/hive/crux/skillreg
