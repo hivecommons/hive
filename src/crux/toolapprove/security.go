@@ -114,16 +114,24 @@ var (
 	// name the whole home directory. Split flags (-r -f) and surrounding
 	// single or double quotes are accepted too. Names such as /.cache or
 	// ~/.cache are not matched. The fork bomb likewise needs no word boundary.
-	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?((/+\.{0,2})+\*?|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,2})+\*?)?)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
+	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?(` + rmRootTargetPattern + `)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
 	// shellSeparatorRe splits a command line into the simple commands that
 	// isDestructiveRm inspects one at a time.
 	shellSeparatorRe = regexp.MustCompile(`[;&|\n]+`)
-	// rmRootTargetRe is the set of paths whose recursive removal wipes the
-	// filesystem root or the home directory: /, //, /., *, /*, $HOME, ${HOME}
-	// and ~, the last three optionally followed by / or /*.
-	rmRootTargetRe = regexp.MustCompile(`^(/+\.?|/*\*|(\$HOME|\$\{HOME\}|~)(/\*?)?)$`)
+	// rmRootTargetRe anchors rmRootTargetPattern so isDestructiveRm can test
+	// a single argv token; it shares the target set with destructiveCmdRe so
+	// the two detectors cannot drift apart.
+	rmRootTargetRe = regexp.MustCompile(`^(` + rmRootTargetPattern + `)$`)
 )
+
+// rmRootTargetPattern is the set of paths whose recursive removal wipes the
+// filesystem root or the home directory: one or more components made only of
+// slashes and an optional . or .. (/, //, /., /.., /./, /../), optionally
+// followed by *; a bare * or /*; and $HOME, ${HOME} or ~ optionally carrying
+// the same suffix. Names such as /.cache, ~/.cache or /... are not matched.
+// Both destructiveCmdRe and rmRootTargetRe are built from it.
+const rmRootTargetPattern = `(/+\.{0,2})+\*?|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,2})+\*?)?`
 
 // isDestructiveRm reports whether cmd contains a recursive rm whose target is
 // the filesystem root or the home directory. Unlike destructiveCmdRe it reads
