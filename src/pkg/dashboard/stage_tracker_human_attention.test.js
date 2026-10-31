@@ -168,21 +168,6 @@ test('strip uses the person glyph only for a current requirement; claimant and s
     STAGE_TRACKER_PRE_MERGE_SOAK: 95, STAGE_TRACKER_READY_FOR_HUMAN_MERGE: 90,
   });
 
-  test('operator approval plus current changes-requested shows the real blocker on PR and covered issue, not readiness', () => {
-    const c = load(), child = { ...pr(15977), stage: 72, author_kind: 'clanker', human_attention: null,
-      stage_actor: { kind: 'clanker' }, decided: { effect: 'none', word: 'Review changes requested', head: 'current-15977',
-        current_blocker: "Review changes requested on the current head · waiting on @thatguywob's contributor agent to address the review" } };
-    const item = issue([child]);
-    const html = c.stageTrackerRowHtml(item, [], { nowMs: 1 });
-    assert.match(html, /data-stage="72"/);
-    assert.match(html, /PR #15977 — Current blocker: Review changes requested on the current head/);
-    assert.match(html, /operator approval recorded separately, not review approval or merge readiness/);
-    assert.doesNotMatch(html, /Approved · merge queue|Needs human:|data-stage="80"/);
-    child.head = 'new-head';
-    assert.doesNotMatch(c.stageTrackerHumanContextHtml(child, [], 1), /Review changes requested on the current head/);
-    child.decided = null;
-    assert.doesNotMatch(c.stageTrackerHumanContextHtml(child, [], 1), /Current blocker:/);
-  });
   vm.runInContext(fn('tracker-row-strip', 'stageTrackerStripItems'), c);
   item.stage = 40;
   assert.match(c.stageTrackerStripItems(item, [], null, 1, {}), /data-kind="human"/);
@@ -195,4 +180,23 @@ test('strip uses the person glyph only for a current requirement; claimant and s
   item.stage_actor = { kind: 'none' };
   html = c.stageTrackerStripItems(item, [], null, 1, {});
   assert.doesNotMatch(html, /data-kind="human"/);
+});
+
+test('operator approval plus current changes-requested shows the real blocker on PR and covered issue, not readiness', () => {
+  const c = load(), child = { ...pr(15977), stage: 72, author_kind: 'clanker', human_attention: null,
+    stage_actor: { kind: 'clanker' }, decided: { effect: 'none', word: 'Review changes requested', head: 'current-15977',
+      current_blocker: "Review changes requested on the current head · waiting on @thatguywob's contributor agent to address the review" } };
+  const item = issue([child]);
+  const html = c.stageTrackerRowHtml(item, [], { nowMs: 1 });
+  assert.match(html, /data-stage="72"/);
+  assert.match(html, /PR #15977 — Current blocker: Review changes requested on the current head/);
+  assert.match(html, /operator approval recorded separately, not review approval or merge readiness/);
+  assert.doesNotMatch(html, /Approved · merge queue|Needs human:|data-stage="80"/);
+  for (const mutate of [
+    it => { it.head = 'new-head'; }, it => { it.decided = null; }, it => { it.state = 'closed'; },
+    it => { it.modifiers = ['draft']; }, it => { it.modifiers = ['hold']; }, it => { it.stage = 100; },
+  ]) {
+    const changed = plain(child); mutate(changed);
+    assert.doesNotMatch(c.stageTrackerHumanContextHtml(changed, [], 1), /Current blocker: Review changes requested/);
+  }
 });

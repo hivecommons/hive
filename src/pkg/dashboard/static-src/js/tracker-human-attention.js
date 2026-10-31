@@ -2,7 +2,7 @@
     // Only the finished server snapshot supplies human_attention; its identity
     // must still match the PR this row actually represents.
     function stageTrackerHumanAttentionOf(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed'
+      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
         || item.superseded_by || item.adopted_by) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
@@ -21,7 +21,7 @@
       return parts.join(' · ');
     }
     function stageTrackerHumanRequirementText(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || item.superseded_by || item.adopted_by ||
+      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
         (item.modifiers || []).some(m => m === 'draft' || m === 'hold' || m === 'merged')) return '';
       const human = stageTrackerHumanAttentionLine(item);
       const d = item && item.decided;

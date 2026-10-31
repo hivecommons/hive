@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
