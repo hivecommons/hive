@@ -232,7 +232,16 @@ jobs:
       # v0.25.0, which does not COMPILE under Go 1.25 ("invalid array length").
       # The failure looks like a scan failure but is a build failure in the
       # tool itself — do not downgrade to "fix" a finding.
+      - name: Restore pinned gosec binary
+        id: gosec-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/hive-ci-tools/gosec
+          key: hive-gosec-${{ runner.os }}-${{ runner.arch }}-v2.29.0-${{ hashFiles('src/go.mod') }}
       - name: Install gosec
+        if: steps.gosec-cache.outputs.cache-hit != 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/hive-ci-tools
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
 
       # -exclude-generated: generated files are not hand-maintained, so a
@@ -255,7 +264,11 @@ jobs:
       - name: Scan
         working-directory: src
         continue-on-error: true
-        run: gosec -exclude-generated ./... ./crux/...
+        # Unlike go test/vet, gosec recursively discovers nested modules.
+        # Listing ./crux/... too scans every Crux directory twice.
+        # Its default concurrency is host NumCPU, not the runner's CPU quota;
+        # each worker also launches a Go package loader. Bound that fanout.
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency "${HIVE_CI_GOSEC_CONCURRENCY:-2}" -exclude-generated ./...'
 
   golangci-lint:
     needs: required-context-scope
