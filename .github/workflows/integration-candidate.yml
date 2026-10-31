@@ -185,7 +185,7 @@ jobs:
         run=false
         while IFS= read -r path; do
           case "$path" in
-            CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*)
+            CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*|.github/integration-candidate.template.yml)
               run=true
               ;;
           esac

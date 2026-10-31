@@ -73,6 +73,10 @@ contexts unbound to a specific App; that user-credential observation is not
 proof that the live installation App can promote. Any additional required
 image/architecture or producer contract must be genuinely qualified, not
 inferred from a check name. Execution remains OFF until separately authorized.
+The composed DAG includes prerequisite/matrix jobs beyond the eleven context
+names. Qualification must measure that actual fanout and assigned-runner cost
+against explicitly configured admission bounds; eleven names are not an
+eleven-job capacity or throughput claim.
 
 ## Exact protected-promotion protocol
 

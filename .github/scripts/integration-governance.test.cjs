@@ -85,7 +85,13 @@ test('real pinned helpers enforce each original member and reject missing signof
   fs.mkdirSync(workspace);
   try {
     fs.mkdirSync(path.join(workspace, '.github'));
-    fs.cpSync(path.join(root, 'src/scripts'), path.join(workspace, 'src/scripts'), {recursive: true});
+    const scripts = cp.execFileSync('git', ['ls-files', '-z', 'src/scripts'], {cwd: root, encoding: 'utf8'});
+    for (const file of scripts.split('\0').filter(Boolean)) {
+      const source = path.join(root, file), target = path.join(workspace, file);
+      fs.mkdirSync(path.dirname(target), {recursive: true});
+      fs.copyFileSync(source, target);
+      fs.chmodSync(target, fs.statSync(source).mode);
+    }
     fs.writeFileSync(path.join(workspace, '.github/trusted'), 'trusted closure\n');
     git('init', '--initial-branch=base');
     git('config', 'user.name', 'Fixture Author');

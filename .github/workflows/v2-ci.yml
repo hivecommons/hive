@@ -23,7 +23,7 @@ on:
     # src/**, so this is the same rule applied to the docs outside src/.
     # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
     # release PRs touch only these; the required contexts must report — #10795
-    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/**', '.github/workflows/**']
+    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/**', '.github/workflows/**', '.github/integration-candidate.template.yml']
   pull_request:
     branches: [v4, v5, v6]
     # Required contexts from this workflow must appear on every PR head. Keep
@@ -108,7 +108,7 @@ jobs:
           run=false
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*)
+              CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*|.github/integration-candidate.template.yml)
                 run=true
                 ;;
             esac
