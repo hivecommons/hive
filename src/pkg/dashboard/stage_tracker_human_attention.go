@@ -37,10 +37,16 @@ func stageTrackerHumanAttention(it StageTrackerItem) *StageTrackerHumanAttention
 	if a.Reason == "" {
 		a.Reason = strings.TrimSpace(it.HumanMergeReasonText)
 	}
+	if a.Reason == "" {
+		a.Reason = stageTrackerDecisionWhy(it)
+	}
 	if actor := it.StageActor; actor != nil && actor.Kind == StageActorHuman {
 		a.Owner = actor.Login
 		if a.Reason == "" {
-			a.Reason = strings.TrimSpace(actor.Why)
+			switch stageByNumber(it.Stage) {
+			case stagelabels.TriageNeeded, stagelabels.PossiblyExisting, stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor:
+				a.Reason = strings.TrimSpace(actor.Why)
+			}
 		}
 	}
 	if a.Reason == "" {

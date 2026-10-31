@@ -21,6 +21,8 @@ func TestStageTrackerHumanAttentionIsARequirementNotAnAffordance(t *testing.T) {
 		{"required review decision", StageTrackerItem{Kind: "pr", Stage: trackerNumberNeedsDecision, DecisionNeeded: &StageTrackerDecision{Question: "Confirm the compatibility break", AskedBy: "a reviewer"}}, true},
 		{"required issue decision", StageTrackerItem{Kind: "issue", Stage: trackerNumberIssueDecision}, true},
 		{"unknown reason", StageTrackerItem{Kind: "pr", Stage: trackerNumberNeedsDecision}, true},
+		{"unknown reason with generic actor", StageTrackerItem{Kind: "pr", Stage: trackerNumberNeedsDecision,
+			StageActor: &StageTrackerActor{Kind: StageActorHuman, Why: "a human decision is owed"}}, true},
 		{"held", StageTrackerItem{Kind: "pr", Stage: trackerNumberNeedsDecision, Modifiers: []string{modHold}}, false},
 		{"draft", StageTrackerItem{Kind: "pr", Stage: trackerNumberNeedsDecision, Modifiers: []string{modDraft}}, false},
 		{"merged stale label", StageTrackerItem{Kind: "pr", Stage: stagelabels.MergeQueue.Number(), Modifiers: []string{modNeedsHuman}}, false},
@@ -41,7 +43,7 @@ func TestStageTrackerHumanAttentionIsARequirementNotAnAffordance(t *testing.T) {
 			if got.Number != tt.item.Number || got.Head != tt.item.Head || got.Kind != tt.item.Kind {
 				t.Fatalf("wrong identity: %+v", got)
 			}
-			if tt.name == "unknown reason" && got.Reason != "Human decision required; reason unavailable" {
+			if strings.HasPrefix(tt.name, "unknown reason") && got.Reason != "Human decision required; reason unavailable" {
 				t.Fatalf("unknown reason fabricated: %+v", got)
 			}
 			if tt.item.DecisionNeeded != nil && (got.Reason != tt.item.DecisionNeeded.Question || got.AskedBy != "a reviewer") {
