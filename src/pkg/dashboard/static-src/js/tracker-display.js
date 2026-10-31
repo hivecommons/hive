@@ -214,7 +214,9 @@
         const id = typeof _stageTrackerPopoutHiveId === 'string' ? _stageTrackerPopoutHiveId : '';
         if (hive && hive.textContent !== id) hive.textContent = id;
         const clock = head.querySelector('.ham-display-clock');
-        const time = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const time = typeof formatDashboardTime === 'function'
+          ? formatDashboardTime(now, { hour: '2-digit', minute: '2-digit' }, '')
+          : '';
         if (clock && clock.textContent !== time) clock.textContent = time;
         const dot = head.querySelector('.ham-display-dot');
         if (dot) dot.title = st.stale ? stageTrackerDisplayStaleText(st, now) : 'Live';
