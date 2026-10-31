@@ -262,7 +262,14 @@ func startServer(t *testing.T, token string, tcp bool) *served {
 
 func startServerPolling(t *testing.T, token string, tcp bool, poll time.Duration) *served {
 	t.Helper()
-	rt := newFakeRuntime()
+	fake := newFakeRuntime()
+	return startServerRuntime(t, fake, fake, token, tcp, poll)
+}
+
+// startServerRuntime serves rt, which must be backed by fake so tests can
+// still drive the canned state through served.rt.
+func startServerRuntime(t *testing.T, fake *fakeRuntime, rt crux.Runtime, token string, tcp bool, poll time.Duration) *served {
+	t.Helper()
 	srv := New(rt)
 	srv.Token = token
 	srv.PollInterval = poll
@@ -275,7 +282,7 @@ func startServerPolling(t *testing.T, token string, tcp bool, poll time.Duration
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &served{t: t, rt: rt, srv: srv, socket: cfg.Socket, client: unixClient(cfg.Socket), cancel: cancel, done: make(chan error, 1)}
+	s := &served{t: t, rt: fake, srv: srv, socket: cfg.Socket, client: unixClient(cfg.Socket), cancel: cancel, done: make(chan error, 1)}
 	if ls.TCP != nil {
 		s.tcp = "http://" + ls.TCP.Addr().String()
 	}
@@ -823,6 +830,98 @@ func TestFollowLogsHonoursLinesForTheInitialReplay(t *testing.T) {
 				t.Fatalf("follow records:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
 			}
 		})
+	}
+}
+
+// seqRuntime is a fakeRuntime that also reads a real ring buffer by
+// position, so followLogs takes its offset branch. Before each poll after
+// the first it appends the next entry of script, standing in for output
+// that arrives between ticks.
+type seqRuntime struct {
+	*fakeRuntime
+	buf    *crux.RingBuffer
+	script [][]string
+
+	seqMu sync.Mutex
+	calls int
+}
+
+func (s *seqRuntime) GetBufferSince(_ string, seq uint64) ([]string, uint64, error) {
+	s.seqMu.Lock()
+	defer s.seqMu.Unlock()
+	if s.calls > 0 && s.calls <= len(s.script) {
+		for _, l := range s.script[s.calls-1] {
+			s.buf.Write(l)
+		}
+	}
+	s.calls++
+	lines, next := s.buf.Since(seq)
+	return lines, next, nil
+}
+
+func logRecord(lines ...string) string {
+	b, _ := json.Marshal(api.LogChunk{Agent: "fixer", Lines: lines})
+	return api.EventLog + "|" + string(b)
+}
+
+func startSeqServer(t *testing.T, initial []string, script ...[]string) *served {
+	t.Helper()
+	buf := crux.NewRingBuffer(2000)
+	for _, l := range initial {
+		buf.Write(l)
+	}
+	fake := newFakeRuntime()
+	fake.add("fixer", "f1", crux.StateRunning)
+	rt := &seqRuntime{fakeRuntime: fake, buf: buf, script: script}
+	return startServerRuntime(t, fake, rt, "", false, 10*time.Millisecond)
+}
+
+func TestFollowLogsByOffsetHonoursLinesForTheInitialReplay(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"n trims the replay", "follow=1&n=2", []string{logRecord("c", "d"), logRecord("e")}},
+		{"n=0 replays nothing", "follow=1&n=0", []string{logRecord("e")}},
+		{"n above the buffer replays it all", "follow=1&n=500", []string{logRecord("a", "b", "c", "d"), logRecord("e")}},
+		{"no n replays the whole window", "follow=1", []string{logRecord("a", "b", "c", "d"), logRecord("e")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := startSeqServer(t, []string{"a", "b", "c", "d"}, []string{"e"})
+			got := followRecords(t, s, tc.query, len(tc.want))
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("follow records:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
+			}
+		})
+	}
+}
+
+func TestFollowLogsByOffsetStreamsRepeatedLines(t *testing.T) {
+	// A window diff would see these as already-seen "x" lines and drop them.
+	repeats := make([]string, followWindow)
+	for i := range repeats {
+		repeats[i] = "x"
+	}
+	s := startSeqServer(t, []string{"x", "x"}, repeats, []string{"x"})
+	got := followRecords(t, s, "follow=1", 3)
+	want := []string{logRecord("x", "x"), logRecord(repeats...), logRecord("x")}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("follow records:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestFollowLogsByOffsetStreamsBurstsLargerThanTheWindow(t *testing.T) {
+	burst := make([]string, 3*followWindow)
+	for i := range burst {
+		burst[i] = fmt.Sprintf("l%d", i)
+	}
+	s := startSeqServer(t, []string{"first"}, burst)
+	got := followRecords(t, s, "follow=1", 2)
+	want := []string{logRecord("first"), logRecord(burst...)}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("follow records: %d, first %.80q, want %d records", len(got), got, len(want))
 	}
 }
 
