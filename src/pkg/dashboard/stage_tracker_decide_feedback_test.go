@@ -161,6 +161,31 @@ a = stageTrackerLeadActionOnRow(issue2, ctx);
 assert.strictEqual(a.id, 'decide:merge-now', JSON.stringify(a)); assert.strictEqual(a.passive, 15647);
 h = stageTrackerLeadActionHtml(issue2, ctx);
 assert.ok(h.includes('Merge now lives on its row') && !h.includes('Let hive decide lives'), 'the chip names the lead it stands in for: ' + h);
+// hivecommons/hive#15503 under #15502, both covered by PR #15759: the
+// server nests the PR under the lowest issue (drawn_under: 15502 on both
+// issues' linked_prs), so the PR is never its own row and #15503 draws no
+// sub-row — the button is #15502's, #15503 chips to that row.
+const shared = Object.assign({}, asking, { number: 15759, url: 'https://github.com/o/r/pull/15759', drawn_under: 15502 });
+const primary = Object.assign({}, issue, { number: 15502, linked_prs: [shared] });
+const secondary = Object.assign({}, issue, { number: 15503, linked_prs: [shared] });
+const sharedRow = Object.assign({ repo: 'o/r', kind: 'pr', nested_under: 15502 }, shared);
+_stageTracker = { items: [primary, secondary, sharedRow] }; ctx.rows = [primary, secondary];
+assert.strictEqual(stageTrackerPRDrawnUnderOther(secondary, { kind: 'pr', number: 15759 }, ctx.rows), 15502);
+assert.strictEqual(stageTrackerPRDrawnUnderOther(primary, { kind: 'pr', number: 15759 }, ctx.rows), 0, 'the drawing issue defers to nobody');
+assert.strictEqual(stageTrackerPRDrawnUnderOther(secondary, { kind: 'pr', number: 15759 }, [secondary]), 0, '#15502 not drawn: #15503 keeps the button');
+a = stageTrackerLeadActionOnRow(primary, ctx);
+assert.strictEqual(a.id, 'decide:delegate'); assert.ok(!a.passive, '#15502 draws the PR and carries the one button: ' + JSON.stringify(a));
+assert.strictEqual(buttons(stageTrackerLeadActionHtml(primary, ctx)), 1);
+a = stageTrackerLeadActionOnRow(secondary, ctx);
+assert.strictEqual(a.passive, 15759, JSON.stringify(a)); assert.strictEqual(a.passiveUnder, 15502);
+h = stageTrackerLeadActionHtml(secondary, ctx);
+assert.strictEqual(buttons(h), 0, 'no second Let hive decide on #15503: ' + h);
+assert.ok(h.includes('decision pending on #15759') && h.includes('Let hive decide lives on the row of #15502, which draws the PR'), h);
+// #15502 filtered off the page: #15503 is the only row that can carry it.
+ctx.rows = [secondary];
+a = stageTrackerLeadActionOnRow(secondary, ctx);
+assert.ok(a && !a.passive, JSON.stringify(a));
+assert.strictEqual(buttons(stageTrackerLeadActionHtml(secondary, ctx)), 1);
 _stageTracker = null;
 `)
 }
@@ -175,7 +200,8 @@ func TestStageTrackerHumanChevronSaysWhyJS(t *testing.T) {
 	for _, want := range []string{
 		"_stageTrackerRows = page.rows.map(e => grouping ? e.item : e).filter(Boolean);",
 		"ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;",
-		"stageTrackerPRListedOwnRow(item, a.target, ctx && ctx.rows)",
+		"stageTrackerPRListedOwnRow(item, a.target, rows)",
+		"stageTrackerPRDrawnUnderOther(item, a.target, rows)",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
@@ -184,6 +210,30 @@ func TestStageTrackerHumanChevronSaysWhyJS(t *testing.T) {
 	if strings.Contains(html, "_stageTracker.rows") {
 		t.Error("the drawn rows must not be stashed on the server payload")
 	}
+}
+
+// The row hover says the reason once: the 035 caption ("A human decision
+// is owed — workflow path") and the next-move why (the same clause, lower
+// case) both land in stageTrackerTooltip, so the next-move line keeps only
+// who moves when its why is the caption again. The chevron hover (no
+// caption line) still carries the full why.
+func TestStageTrackerTooltipSaysDecisionReasonOnceJS(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+stageTrackerRowsFixtureJS+`
+const since = new Date(now - 3600000).toISOString();
+const pr = { repo: 'o/r', kind: 'pr', number: 15759, title: 'Fix it', url: 'https://x/15759', author: 'hive', author_kind: 'hive', stage: 35, stage_since: since, reason: 'contributor-lane:workflow-path', modifiers: ['needs-decision'],
+  caption: 'A human decision is owed — workflow path', stage_actor: { kind: 'human', login: '', since, why: 'a human decision is owed — workflow path' } };
+let tip = stageTrackerTooltip(pr, now).split('\n');
+assert.strictEqual(tip.filter(l => /human decision is owed/i.test(l)).length, 1, 'the reason reads once: ' + tip.join(' | '));
+assert.ok(tip.includes('A human decision is owed — workflow path'), tip.join(' | '));
+assert.ok(tip.includes('Next move: human'), 'the next-move line keeps who moves: ' + tip.join(' | '));
+// The chevron hover has no caption line, so the why stays whole there.
+assert.ok(stageTrackerActorTip(pr).includes('Next move: human — a human decision is owed — workflow path'), stageTrackerActorTip(pr));
+// A why that is not the caption is kept (090: the caption says the reason, the why says who moves).
+const merge = Object.assign({}, pr, { stage: 90, caption: 'Ready to merge — a maintainer merges it', stage_actor: { kind: 'human', login: 'octo', since, why: 'a maintainer merges it' } });
+tip = stageTrackerTooltip(merge, now).split('\n');
+assert.ok(tip.includes('Next move: human @octo — a maintainer merges it'), tip.join(' | '));
+`)
 }
 
 // The server's stage_actor.why on a 085 row says why the person is wanted

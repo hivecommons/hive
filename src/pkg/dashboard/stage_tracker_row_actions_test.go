@@ -97,6 +97,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMaintainerMoved"),
 		jsFunc(t, html, "stageTrackerDevWarn"),
 		jsFunc(t, html, "stageTrackerPRListedOwnRow"),
+		jsFunc(t, html, "stageTrackerPRDrawnUnderOther"),
 		jsFunc(t, html, "stageTrackerLeadActionOnRow"),
 		jsFunc(t, html, "stageTrackerLeadActionHtml"),
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
@@ -189,7 +190,7 @@ function hamStubEl(tag) {
   const el = { tagName: tag, className: '', textContent: '', children: [], attrs: {}, parentNode: null, _listeners: {},
     classList: { add(c) { if (!el.className.split(' ').includes(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(' ').filter(x => x && x !== c).join(' '); }, contains(c) { return el.className.split(' ').includes(c); } },
     appendChild(c) { c.parentNode = el; el.children.push(c); return c; }, prepend(c) { c.parentNode = el; el.children.unshift(c); },
-    setAttribute(k, v) { el.attrs[k] = String(v); }, getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; }, removeAttribute(k) { delete el.attrs[k]; }, dataset: {},
+    setAttribute(k, v) { el.attrs[k] = String(v); }, getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; }, removeAttribute(k) { delete el.attrs[k]; },
     addEventListener(n, fn) { el._listeners[n] = fn; }, remove() { if (el.parentNode) el.parentNode.children = el.parentNode.children.filter(c => c !== el); el.parentNode = null; },
     get lastChild() { return el.children[el.children.length - 1] || null; },
     querySelector(sel) {

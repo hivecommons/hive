@@ -504,9 +504,29 @@
       const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'pr', number: t.number });
       return rows.some(it => it && stageTrackerItemKey(it) === key);
     }
+    // Pure: the number of the other listed issue whose row draws the
+    // covering PR, or 0. The server nests a PR that closes several issues
+    // under the lowest one (stage_tracker_links.go NestedUnder → each
+    // issue's linked_prs[].drawn_under); the PR is then never a row of its
+    // own and the secondary issue draws no sub-row either (hivecommons/hive
+    // #15503 under #15502), so the decision button belongs to the row that
+    // draws the PR and this issue chips to it.
+    function stageTrackerPRDrawnUnderOther(issue, t, rows) {
+      if (!Array.isArray(rows) || !issue || !Array.isArray(issue.linked_prs)) return 0;
+      const lp = issue.linked_prs.find(x => x && Number(x.number) === Number(t.number) && (!x.repo || !t.repo || x.repo === t.repo));
+      const under = Number(lp && lp.drawn_under) || 0;
+      if (!under || under === (Number(issue.number) || 0)) return 0;
+      const key = stageTrackerItemKey({ repo: t.repo || issue.repo, kind: 'issue', number: under });
+      return rows.some(it => it && stageTrackerItemKey(it) === key) ? under : 0;
+    }
     function stageTrackerLeadActionOnRow(item, ctx, subRows) {
       const a = stageTrackerLeadAction(item, ctx);
-      if (a && a.target && item.kind === 'issue' && a.target.kind === 'pr' && stageTrackerPRListedOwnRow(item, a.target, ctx && ctx.rows)) return Object.assign({}, a, { passive: a.target.number });
+      if (a && a.target && item.kind === 'issue' && a.target.kind === 'pr') {
+        const rows = ctx && ctx.rows;
+        if (stageTrackerPRListedOwnRow(item, a.target, rows)) return Object.assign({}, a, { passive: a.target.number });
+        const under = stageTrackerPRDrawnUnderOther(item, a.target, rows);
+        if (under) return Object.assign({}, a, { passive: a.target.number, passiveUnder: under });
+      }
       if (!a || !a.target || !Array.isArray(subRows) || !subRows.length || item.kind !== 'issue') return a;
       const t = a.target;
       if (t.kind !== 'pr') return a;
@@ -522,10 +542,14 @@
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
       const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
       if (!a) return '';
-      // The covering PR has its own row: the decision — whatever its lead
-      // (Let hive decide, Merge now, Adopt…) — is taken there, so this row
-      // shows a passive chip that names that lead rather than a second button.
-      if (a.passive) return `<span class="ham-badge" title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on its row')}">decision pending on #${Number(a.passive) || 0}</span>`;
+      // The covering PR has its own row (or is drawn under another listed
+      // issue): the decision — whatever its lead (Let hive decide, Merge
+      // now, Adopt…) — is taken there, so this row shows a passive chip
+      // that names that lead rather than a second button.
+      if (a.passive) {
+        const where = a.passiveUnder ? 'the row of #' + Number(a.passiveUnder) + ', which draws the PR' : 'its row';
+        return `<span class="ham-badge" title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on ' + where)}">decision pending on #${Number(a.passive) || 0}</span>`;
+      }
       const label = String(a.label || a.id);
       const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
@@ -2037,18 +2061,20 @@
       const on = !!busyAct && lead.getAttribute('data-ham-act') === busyAct;
       const isBusy = lead.getAttribute('aria-busy') === 'true';
       if (on && !isBusy) {
-        lead.dataset.hamLabel = lead.textContent;
-        lead.dataset.hamWasDisabled = lead.getAttribute('aria-disabled') === 'true' ? 'true' : '';
-        lead.dataset.hamTitle = lead.getAttribute('title') || '';
+        lead.setAttribute('data-ham-label', lead.textContent);
+        lead.setAttribute('data-ham-was-disabled', lead.getAttribute('aria-disabled') === 'true' ? 'true' : '');
+        lead.setAttribute('data-ham-title', lead.getAttribute('title') || '');
         lead.setAttribute('aria-busy', 'true'); lead.setAttribute('aria-disabled', 'true'); lead.removeAttribute('title');
         lead.textContent = '';
         const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; lead.appendChild(sp);
         lead.appendChild(document.createTextNode(' ' + String(caption || 'acting…')));
       } else if (!on && isBusy) {
         lead.removeAttribute('aria-busy');
-        if (lead.dataset.hamWasDisabled === 'true') lead.setAttribute('aria-disabled', 'true'); else lead.removeAttribute('aria-disabled');
-        if (lead.dataset.hamTitle) lead.setAttribute('title', lead.dataset.hamTitle); else lead.removeAttribute('title');
-        lead.textContent = lead.dataset.hamLabel || '';
+        if (lead.getAttribute('data-ham-was-disabled') === 'true') lead.setAttribute('aria-disabled', 'true'); else lead.removeAttribute('aria-disabled');
+        const title = lead.getAttribute('data-ham-title');
+        if (title) lead.setAttribute('title', title); else lead.removeAttribute('title');
+        lead.textContent = lead.getAttribute('data-ham-label') || '';
+        lead.removeAttribute('data-ham-label'); lead.removeAttribute('data-ham-was-disabled'); lead.removeAttribute('data-ham-title');
       }
     }
     // Mark rows / sub-rows acting; captions are real nodes so a kept row
