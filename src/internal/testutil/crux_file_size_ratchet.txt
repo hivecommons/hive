@@ -30,5 +30,4 @@
 997 proxy/rules.go
 911 pushbroker/pushbroker.go
 1082 serve/families.go
-833 serve/serve.go
 976 watchdog/reconciler.go
