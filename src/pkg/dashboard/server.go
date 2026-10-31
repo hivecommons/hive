@@ -118,8 +118,9 @@ type Server struct {
 
 	// matrix is the dashboard.matrix line source (matrix_source.go); nil
 	// until MatrixObserver is called with an active config.
-	matrixMu sync.Mutex
-	matrix   *matrixSource
+	matrixMu    sync.Mutex
+	matrix      *matrixSource
+	matrixNudge matrixLinesNudger
 
 	port       int
 	authToken  string
