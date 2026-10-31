@@ -184,6 +184,56 @@ listing. Reported minutes per merged PR are an observed-window aggregate, not a
 claim that every individual change's eventual cost is known. Unfinished execution
 and unattributed jobs remain explicit.
 
+## Candidate producer trust boundary
+
+The reusable technical workflows accept a typed `integration_candidate` input
+that defaults to false. False preserves ordinary PR, push and native
+`merge_group` behavior. Candidate calls require an explicitly dispatched
+`refs/tags/hive-integration/` ref, run on disposable GitHub-hosted runners with
+read-only technical-job permissions, do not persist checkout credentials, and
+retain full test/coverage requirements without manual-run toolchain soft failure.
+Their distinct concurrency groups do not cancel another reusable technical
+workflow in the same caller run. Candidate code never runs in issue/release
+writers; no repository secrets may be inherited by a candidate caller.
+
+These call seams and the producer verifier are source support, not an installed
+producer, execution controller, runtime opt-in, protection migration or
+execution-readiness claim. Existing authoring enforce mode does not activate
+them. The current eleven-context destination contract still needs genuine
+candidate-aware producers; author-head green statuses must not be copied.
+
+The producer identity protocol uses
+[GitHub OIDC claims](https://docs.github.com/en/actions/reference/security/oidc)
+including the actual finalizer `check_run_id`, run/attempt, repository/actor
+identities, workflow SHA/ref and hosted runner environment. A custom audience
+binds the SHA-256 digest of the exact payload bytes. Only the trusted finalizer
+may obtain signing identity; untrusted technical jobs receive no such
+permission. Verification uses only GitHub's fixed issuer/public signing keys,
+without installation credentials or token-selected key URLs. Refreshes are
+bounded/coalesced, and no cache mutex spans remote I/O. Missing issuer keys or
+claims are unknown, not passing validation.
+
+A signed producer identity is not proof that all CI passed. The consumer must
+separately establish exact subject/tree/ordered-head membership, installed
+reviewed workflow/action closure, real successful finalizer and required
+technical jobs, immutable artifact identity/digest and complete observations.
+Signed issuance must fall within the independently observed finalizer interval;
+a historical attestation is not a currently valid bearer login or live
+promotion authorization. Rotation/durable verification history and the actual
+isolated provider execution remain required lifecycle work.
+
+Executing untrusted candidate code from a default-ref dispatch can expose that
+ref's Actions-cache namespace even with a read-only GitHub token. The intended
+producer therefore requires controlled immutable candidate refs and verified
+trusted definitions, not an arbitrary author workflow. Publication with a
+trusted control workflow's `GITHUB_TOKEN` suppresses push-triggered workflows;
+[GitHub documents explicit dispatch and certain approval-required PR-event
+exceptions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+The installation's trigger permissions, controlled-ref protections and real
+candidate-required-context compatibility must be verified before opt-in. This
+feature does not grant those permissions, change protections or install a live
+pilot.
+
 The append-only journal uses local cross-process fencing, suffix replay and
 fsync; no remote reads occur under its lock. Replay is bounded to 256 MiB,
 100,000 records and 1 MiB per record. At a bound or corruption, new observations

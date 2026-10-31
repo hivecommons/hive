@@ -1,0 +1,1 @@
+- Prepare Integration-aware candidate CI with default-false reusable technical workflows, isolated read-only execution and job-bound producer identity verification; this source support does not activate candidate execution or replace required CI/review policy.
