@@ -34,3 +34,31 @@ func (c *Client) UpsertPRStatusSection(ctx context.Context, repo string, number 
 	}
 	return res.Created, nil
 }
+
+// PostNoteOrFold delivers a hive note on repo#number. In quiet mode
+// (github.notifications.mode) it rewrites section key of the item's status
+// comment, so the only comment ever created is the status comment itself;
+// in normal mode it posts body as a comment of its own, as the hive always
+// did. The returned bool reports whether a new comment was created.
+func (c *Client) PostNoteOrFold(ctx context.Context, repo string, number int, key, body string) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	if !c.notificationsQuiet() {
+		return true, c.CreateIssueComment(ctx, repo, number, body)
+	}
+	created, err := c.UpsertPRStatusSection(ctx, repo, number, key, body)
+	if err == nil && !created {
+		c.noteCommentSuppressed()
+	}
+	return created, err
+}
+
+// PostClaimNote posts a contributor's `<!-- hive:claim … -->` comment body
+// through PostNoteOrFold under prstatus.KeyClaim: claim readers scan every
+// hive comment body for the marker, so a status section carries it as
+// well as a comment of its own did.
+func (c *Client) PostClaimNote(ctx context.Context, repo string, number int, body string) error {
+	_, err := c.PostNoteOrFold(ctx, repo, number, prstatus.KeyClaim, body)
+	return err
+}
