@@ -2,6 +2,7 @@ package hubactivity
 
 import (
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -65,12 +66,12 @@ type Snapshot struct {
 // sequence number).
 func NormalizeEvent(e Event) (Event, bool) {
 	out := e
-	out.Type = oneOf(cleanToken(e.Type), allowedEventTypes)
+	out.Type = oneOf(strings.ToLower(cleanToken(e.Type)), allowedEventTypes)
 	out.Repo = cleanToken(e.Repo)
 	if out.Type == "" || e.Seq == 0 || !repoPattern.MatchString(out.Repo) || e.Number <= 0 || e.Number > maxCount {
 		return Event{}, false
 	}
-	out.Kind = oneOf(cleanToken(e.Kind), allowedKinds)
+	out.Kind = oneOf(strings.ToLower(cleanToken(e.Kind)), allowedKinds)
 	out.Title = cleanText(e.Title, MaxTitleRunes)
 	out.From = slug(e.From)
 	out.Stage = slug(e.Stage)
