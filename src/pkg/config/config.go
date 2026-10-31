@@ -4444,6 +4444,9 @@ type HubConfig struct {
 	// dashboard_urls. Upgrade/config delivery is unaffected. See
 	// docs/telemetry.md and HeartbeatOmitClasses.
 	HeartbeatOmit []string `yaml:"heartbeat_omit,omitempty" json:"heartbeat_omit,omitempty"`
+	// Activity configures the bounded activity digest published to the hub
+	// with the heartbeat (#15963). See HubActivityConfig and ActivityEnabled.
+	Activity HubActivityConfig `yaml:"activity,omitempty" json:"activity,omitempty"`
 	// ContributeWallEnabled opts a hive into the public contributor wall on
 	// /contribute. Default false so no deployment gets a public posting surface
 	// without an operator decision.

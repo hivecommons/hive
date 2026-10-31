@@ -38,7 +38,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `POST` | `/api/shared-agent-pool/leases` | Hub handler-specific | Acquire or renew a shared CLI session lease | `pkg/hub/server.go:1708` |
 | `PUT` | `/api/shared-agent-pool/leases` | Hub handler-specific | Renew an active shared CLI session lease | `pkg/hub/server.go:1709` |
 | `DELETE` | `/api/shared-agent-pool/leases` | Hub handler-specific | Release a shared CLI session lease | `pkg/hub/server.go:1710` |
-| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1711` |
+| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat. A request carrying `X-Hive-Activity-Update` is an activity-only update ([#15963](https://github.com/hivecommons/hive/issues/15963)): body `{"activity_update":{"hive_id","activity"}}`, the same per-hive bearer, accepted only for a hive already in the registry (`404` otherwise); it replaces the in-memory activity digest and nothing else, and the signed response carries `ok` and `activity_etag` | `pkg/hub/server.go:1711` |
 | `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1712` |
 | `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1720` |
 | `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1721` |
