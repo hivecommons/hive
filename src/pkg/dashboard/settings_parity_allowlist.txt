@@ -297,6 +297,9 @@ hooks[].on # TODO #11854
 hooks[].params.<key> # TODO #11854
 hooks[].rate_limit_per_minute # TODO #11854
 hooks[].when # TODO #11854
+hub.activity.enabled # spoke activity digest publish; yaml-only, see telemetry.md (#15963)
+hub.activity.max_items # spoke activity digest cap; yaml-only, see telemetry.md (#15963)
+hub.activity.share_private # spoke activity digest private-repo opt-in; yaml-only, see telemetry.md (#15963)
 hub.contribute_allow_labels[] # TODO #11854
 hub.contribute_allow_models[] # TODO #11854
 hub.contribute_delegatable_roles[] # TODO #11854

@@ -476,7 +476,7 @@ assert.ok(rows[2].pinned);
 tick(0);
 const r1 = panel.children[0];
 assert.ok(r1.classList.contains('cue-merged'), 'row glows: ' + r1.className);
-assert.ok(r1.children.some(c => c.classList.contains('cue-event') && /merged #1 · by hive/.test(c.textContent)), 'the event line says what happened');
+assert.ok(r1.children.some(c => c.classList.contains('cue-event') && /merged #1/.test(c.textContent) && !/by hive/.test(c.textContent)), 'unknown merger is not attributed to hive');
 assert.strictEqual(flights().length, 1, 'one glyph in flight'); assert.strictEqual(flights()[0].textContent, '🐝', 'the default glyph is the bee');
 assert.strictEqual(flights()[0].style.props['--cue-dx'], (530 - 310) + 'px'); assert.strictEqual(flights()[0].style.props['--cue-dy'], (20 - 410) + 'px', 'the chip is in view: the flight ends on it');
 assert.strictEqual(flights()[0].style.props['--cue-end-opacity'], '0.25');
@@ -595,7 +595,7 @@ assert.strictEqual(odoText(n), '1', 'the server already counts it: held back unt
 tick(0);
 const issueRow = panel.children[0];
 assert.ok(issueRow.classList.contains('cue-merged'), 'issue row glows: ' + issueRow.className);
-assert.ok(issueRow.children.some(c => c.classList.contains('cue-event') && /merged #14822 · by hive/.test(c.textContent)), 'event line names the merged PR');
+assert.ok(issueRow.children.some(c => c.classList.contains('cue-event') && /merged #14822/.test(c.textContent) && !/by hive/.test(c.textContent)), 'event line names the merged PR without inventing its merger');
 assert.strictEqual(flights().length, 1, 'a glyph is in flight');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
 assert.strictEqual(flights().length, 0); assert.strictEqual(odoText(n), '2', 'count bumped on landing'); assert.deepStrictEqual(zaps, [1]);

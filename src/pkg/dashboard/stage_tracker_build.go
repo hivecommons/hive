@@ -403,6 +403,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// is offline says what that means for it.
 		it.Caption = stageTrackerOfflineAuthorCaption(it.Caption, it.Presence, it.Stage, adoptionClock, now)
 		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
+		it.SentinelNotice = it.SentinelAlert && !slices.ContainsFunc(pr.Labels, func(label string) bool {
+			return strings.EqualFold(strings.TrimSpace(label), sentinelLabel)
+		})
 		// The sentinel chip is a merge-gate pill too (the trusted-author
 		// notice and the real alert alike): sentinel_alert stays truthful
 		// for the gate word and the Decide… preface, but before the gate
@@ -809,9 +812,18 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 // came from (stageTrackerSource*Name; "" with a nil body when the build
 // failed or ctx ended while waiting on an in-flight build).
 func (s *Server) stageTrackerPayloadSource(ctx context.Context, status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, source string) {
+	return s.stageTrackerPayloadFrom(ctx, status, now, true)
+}
+
+// stageTrackerPayloadFrom is stageTrackerPayloadSource; markServed false
+// reads the tracker without counting as a client that asked for it, so an
+// in-process reader (the hub activity digest) adds no SSE nudges.
+func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayload, now time.Time, markServed bool) (body []byte, etag string, generatedAt time.Time, source string) {
 	ttl := s.stageTrackerCacheTTL()
 	s.stageTrackerCacheMu.Lock()
-	s.stageTrackerServed = true
+	if markServed {
+		s.stageTrackerServed = true
+	}
 	c := s.stageTrackerCache
 	if len(c.body) > 0 && !c.stale && now.Sub(c.generatedAt) < ttl {
 		s.stageTrackerCacheMu.Unlock()
@@ -911,6 +923,7 @@ func (s *Server) invalidateStageTrackerCache() (served bool) {
 	s.stageTrackerGen++
 	served = s.stageTrackerServed
 	s.stageTrackerCacheMu.Unlock()
+	s.notifyStageTrackerPublish()
 	return served
 }
 

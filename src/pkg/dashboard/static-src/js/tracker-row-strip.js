@@ -133,8 +133,9 @@
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
       const actor = active.cap ? '' : stageTrackerActorTip(item);
+      const by = active.cap && item.terminal_merge && typeof stageTrackerMergedByText === 'function' ? stageTrackerMergedByText(item.merged_by) : '';
       const regressed = stageTrackerRegressionText(item, Date.now());
-      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
+      const text = active.short + (by ? ' ' + by : '') + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
       return `<p class="ham-current-stage">${esc(text)}</p>`;
     }
 
@@ -286,7 +287,8 @@
     }
     function stageTrackerSentinelChipHtml(item) {
       if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item) || stageTrackerSentinelAsSuffix(item) || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
-      return `<span class="ham-badge ham-badge-sentinel" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc('Sentinel alert — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
+      const label = item.sentinel_notice ? 'Informational security notice' : 'Sentinel alert';
+      return `<span class="ham-badge ham-badge-sentinel${item.sentinel_notice ? ' ham-sentinel-notice' : ''}" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc(label + ' — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
     }
 
     // Pure: the hold pill text from the row's `hold` provenance ('' when the

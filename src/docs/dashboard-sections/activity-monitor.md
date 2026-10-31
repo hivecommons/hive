@@ -80,6 +80,10 @@ At 090 the row explains why: `· workflow files`, `· tests removed`, `· manual
 
 ### Pairing, rows and counts
 
+A verified merge from the canonical merge ledger is terminal whether Hive, a maintainer or another bot performed it. The last known root or linked PR model reaches **Merged** during the existing short terminal/pin window, even without an earlier queue observation. The comment names the actual recorded merger; an unknown actor stays unknown. This does not invent an earlier queue/admission state or close a merely related issue. A stale open refresh cannot undo a verified merge, and repeated delivery or later actor enrichment does not replay the merge or restart its window. Terminal visibility does not re-enable closed-PR actions.
+
+A failing external PR without a recorded Hive stage actor remains **CI failing · author-owned** when its PR author is known, **CI failing · owner recorded** for an observed claimant, or **CI failing · owner unknown** otherwise. Its work activity is unknown; missing internal worker evidence is not evidence that nobody is working. Inline and nested rows use the PR author or claimant, not the related issue's filer or holder. Explicit unclaimed Hive/bot routing and real CI failures remain unchanged.
+
 - With no covering PR, an issue has a full strip lit at Open, Actionable or Claimed.
 - With exactly one covering PR, issue and PR share one continuous strip; early issue steps are passed and the PR supplies the current stage, chip, tooltip and age.
 - With several covering PRs, the issue's own strip stops at Claimed, with no current step lit. Indented PR sub-rows begin under *PR in progress*, each with its own stage and age, furthest along first.
@@ -96,6 +100,8 @@ The header reports the filtered row count and how many need attention; paginatio
 **The counter beside the section name.** The left-menu counter and the header lead (`37 rows (33 issues + 4 PRs on their own row) · 3 need attention`) count *rows* of the default view, not items: every open issue is a row; a pull request is its own row only when it is not drawn under a listed issue. The Overview counter (`33/13`) prints the same open set as issues/PRs, so the two differ by exactly the pull requests that share their issue's row (`9 PRs shown on their issue's row` in the tooltip). The header and tooltip also name the PRs sharing issue rows. Filters and the kind tabs narrow the list and the `showing X–Y of N` line, never the counter.
 
 ### How you'll know something is waiting on you
+
+A verified trusted-author security notice without the live blocking sentinel label is informational, not the reason a human must act. Its tooltip says **Informational security notice (not a merge gate)**. An independent reviewer decision retains its quoted question with reviewer provenance. A login mentioned in that question is not an assignment or exclusive authority; neither that suggestion nor the PR author's identity supplies a decision owner. A real blocking sentinel label still names its security gate, even when a reviewer question also exists.
 
 The hive often parks work on a person: a decision asked at **045** / **085**, a PR at **090** ready for a human merge, an approval the hive's GitHub App cannot give (`needs-human`, `unauthorized`), or a contributor who has gone offline past their grace so the operator is the fallback. Those waits used to look like any other row ("PR in progress"); nothing added them up and nothing said so. Three surfaces now read one server block, `/api/stage-tracker` → `waiting_on_human` (`count`, `items[{repo, number, type, kind, since, who}]`), so a human wait is never silent:
 

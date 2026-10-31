@@ -52,6 +52,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/hubactivity"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
@@ -5667,7 +5668,30 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					RepoTargetMisconfigured: b.repoTargetMisconfigured(),
 					RepoTargetIssue:         b.repoTargetIssueMessage(),
 				}
-			}))
+			}),
+			// Hub-wide activity digest (#15963): built from the dashboard's
+			// memoised stage tracker; tracker publishes trigger coalesced
+			// activity-only updates. hub.activity is read per build.
+			spoke.ActivitySource{
+				Options: func() spoke.ActivityOptions {
+					return spoke.ActivityOptions{
+						Enabled:      b.cfg.Hub.Enabled && b.cfg.Hub.ActivityEnabled(),
+						MaxItems:     b.cfg.Hub.Activity.MaxItems,
+						SharePrivate: b.cfg.Hub.Activity.SharePrivate,
+					}
+				},
+				Items: func(ctx context.Context) ([]hubactivity.Item, bool) {
+					if b.dashSrv == nil {
+						return nil, false
+					}
+					return b.dashSrv.HubActivityItems(ctx)
+				},
+				Subscribe: func(notify func()) {
+					if b.dashSrv != nil {
+						b.dashSrv.OnStageTrackerPublish(notify)
+					}
+				},
+			})
 
 		if b.cfg.Hub.TaskStatusPushEnabled() {
 			deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
