@@ -338,6 +338,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Action = operatorActionWontFix
 		case repoItemDecisionCloseRead:
 			out.Action = operatorActionCloseRead
+		case repoItemDecisionCloseIssue:
+			out.Action = repoItemDecisionCloseIssue
 		case repoItemDecisionMergeNow:
 			out.Action = operatorActionMergeNow
 		case repoItemDecisionQueueMerge:
