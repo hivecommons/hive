@@ -119,3 +119,17 @@ func TestNativeQueueRemovalRequiresCompleteSnapshots(t *testing.T) {
 		t.Fatal("incomplete prior snapshot claimed removal")
 	}
 }
+
+func TestNativeQueueSnapshotCacheBoundedAcrossScopeChanges(t *testing.T) {
+	var runtime nativeQueueTrackerRuntime
+	for i := 0; i <= nativeQueueObservationCache; i++ {
+		key := time.Unix(int64(i), 0).String()
+		runtime.storeObservation(key, forgequeue.Observation{ObservedAt: time.Unix(int64(i), 0)})
+	}
+	if len(runtime.observations) != nativeQueueObservationCache {
+		t.Fatal("scope changes created an unbounded snapshot cache")
+	}
+	if _, exists := runtime.observations[time.Unix(0, 0).String()]; exists {
+		t.Fatal("oldest observation not evicted")
+	}
+}

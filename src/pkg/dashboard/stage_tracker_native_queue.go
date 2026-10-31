@@ -18,6 +18,7 @@ const (
 	nativeQueueObservationScopes   = 2
 	nativeQueueObservationHistory  = 32
 	nativeQueueObservationHints    = 16
+	nativeQueueObservationCache    = 32
 )
 
 type nativeQueueHint struct {
@@ -104,7 +105,7 @@ func (s *Server) ReconcileNativeQueues(ctx context.Context) error {
 			observation.Provider, observation.Repo, observation.Base = "github-native", scope[0], scope[1]
 			observation.State, observation.Stale = "unavailable", true
 			observation.Reason = "GitHub App installation authentication is unavailable; queue evidence cannot be refreshed."
-			runtime.observations[key] = observation
+			runtime.storeObservation(key, observation)
 		}
 		runtime.mu.Unlock()
 		return fmt.Errorf("native queue observation requires GitHub App installation authentication")
@@ -141,10 +142,27 @@ func (s *Server) ReconcileNativeQueues(ctx context.Context) error {
 		} else if exists {
 			observation = nativeQueueObservationDelta(prior, observation, now)
 		}
-		runtime.observations[key] = observation
+		runtime.storeObservation(key, observation)
 		runtime.mu.Unlock()
 	}
 	return nil
+}
+
+// Caller holds mu; old scopes cannot accumulate across Settings changes.
+func (runtime *nativeQueueTrackerRuntime) storeObservation(key string, observation forgequeue.Observation) {
+	if runtime.observations == nil {
+		runtime.observations = make(map[string]forgequeue.Observation)
+	}
+	if _, exists := runtime.observations[key]; !exists && len(runtime.observations) >= nativeQueueObservationCache {
+		oldest := ""
+		for scope, prior := range runtime.observations {
+			if oldest == "" || prior.ObservedAt.Before(runtime.observations[oldest].ObservedAt) {
+				oldest = scope
+			}
+		}
+		delete(runtime.observations, oldest)
+	}
+	runtime.observations[key] = observation
 }
 
 func nativeQueueObservationDelta(prior, next forgequeue.Observation, now time.Time) forgequeue.Observation {
@@ -218,7 +236,7 @@ func (s *Server) observeNativeQueueEvent(event string, body []byte, at time.Time
 		hintKey := key + "/" + group.HeadSHA
 		switch payload.Action {
 		case "checks_requested":
-			if len(runtime.hints) >= nativeQueueObservationHints {
+			if _, exists := runtime.hints[hintKey]; !exists && len(runtime.hints) >= nativeQueueObservationHints {
 				oldest := ""
 				for id, hint := range runtime.hints {
 					if oldest == "" || hint.at.Before(runtime.hints[oldest].at) {
@@ -261,7 +279,7 @@ func (s *Server) observeNativeQueueEvent(event string, body []byte, at time.Time
 			})
 		}
 	}
-	runtime.observations[key] = observation
+	runtime.storeObservation(key, observation)
 }
 
 // Cached projection only; it never consults GitHub from a tracker request.

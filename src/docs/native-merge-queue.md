@@ -111,7 +111,8 @@ previously observed exact queued/member head records a merged receipt and its
 actual merge SHA. Failed required CI is shown on that candidate; moved/expired
 refs do not prove failure, rebuild or merge. No rebuild reason, percentage or ETA
 is invented. The last 32 lifecycle receipts and 16 event hints are memory-bounded,
-not an exhaustive durable audit: missed deliveries and restart gaps remain
+not an exhaustive durable audit. At most 32 scope snapshots are retained;
+evicted or not-yet-observed configured scopes report unknown. Missed deliveries and restart gaps remain
 explicit. Configure delivery of `merge_group` and `pull_request` events to the
 existing authenticated webhook endpoint for full event evidence; discovery
 without a signed group base intentionally leaves member mapping unknown.
