@@ -640,11 +640,13 @@ func TestIssueRequestWatcher_DAGPlacementSkipsSharedPathFold(t *testing.T) {
 	})
 
 	// The scan's exact-title gate also accepts a review-backlog title that
-	// differs only by the leading agent tag (#16074); a DAG node keeps it.
+	// differs only by a leading role tag (#16074); a DAG node keeps it. The
+	// tag is deliberately not filer-shaped (issueshape.SameTitle strips only
+	// lowercase slugs) so only reviewBacklogTitlesEqual can match it.
 	t.Run("review-backlog title twin still reuses", func(t *testing.T) {
 		m := &consolidationMock{}
 		srv := consolidationMockServer(t, []openTwin{
-			{number: 64, author: testBot, title: "[reviewer] Review backlog (security): token logged", body: "src/auth/token.go"},
+			{number: 64, author: testBot, title: "[Reviewer] Review backlog (security): token logged", body: "src/auth/token.go"},
 		}, m)
 		defer srv.Close()
 		c := issueTestClient(t, srv.URL)

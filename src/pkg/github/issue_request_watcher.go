@@ -1592,6 +1592,12 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 // fenced behind one ambiguous failure.
 const issueCreateUnknownTTL = time.Hour
 
+// exactIssueTitleMatch reports whether candidate is the same finding title as
+// title, so the scan's exact-match gate and the DAG guard cannot drift.
+func exactIssueTitleMatch(candidate, title string) bool {
+	return candidate == title || issueshape.SameTitle(candidate, title) || reviewBacklogTitlesEqual(candidate, title)
+}
+
 // reconcileIssueCreate resolves an issue create the mutation journal holds as
 // unresolved — an earlier attempt at the SAME logical operation errored
 // ambiguously (network, 5xx) or was never acknowledged — from authoritative
@@ -1607,12 +1613,6 @@ const issueCreateUnknownTTL = time.Hour
 // so the watcher counts the attempt and gives up after
 // issueReconcileMaxAttempts).
 //
-// exactIssueTitleMatch reports whether candidate is the same finding title as
-// title, so the scan's exact-match gate and the DAG guard cannot drift.
-func exactIssueTitleMatch(candidate, title string) bool {
-	return candidate == title || issueshape.SameTitle(candidate, title) || reviewBacklogTitlesEqual(candidate, title)
-}
-
 // exactTitle mirrors CreateIssueRequest.SkipSharedPathFold (#16065): a
 // declared DAG node counts only an exact-title twin as evidence that the
 // earlier attempt applied, since a canonical-stem sibling is a different
@@ -1632,7 +1632,7 @@ func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boun
 		return effects.Execute(ctx, boundary, claim, create)
 	}
 	state := effects.ExternalState{}
-	if existing := found.subject; existing != nil && (!exactTitle || issueshape.SameTitle(existing.GetTitle(), title)) {
+	if existing := found.subject; existing != nil && (!exactTitle || exactIssueTitleMatch(existing.GetTitle(), title)) {
 		state = effects.ExternalState{Applied: true, Provenance: existing.GetHTMLURL()}
 	}
 	if recErr := effects.Reconcile(ctx, boundary, claim, state); recErr != nil {
