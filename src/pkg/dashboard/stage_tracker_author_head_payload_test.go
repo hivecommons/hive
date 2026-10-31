@@ -35,7 +35,7 @@ func TestStageTrackerHeadReconciliationReachesCoveredRows(t *testing.T) {
 		it.Presence != nil || it.Rework != nil || it.Adoption != nil || it.HumanAttention != nil || it.NeedsHuman {
 		t.Fatalf("new-head payload mixes satisfied author wait with pending review: %+v", it)
 	}
-	if it.Caption != "new head observed → re-review pending" || it.StageActor == nil || it.StageActor.Kind != StageActorHive {
+	if it.Caption != "new head observed → re-review pending" || it.NoteChangedAt != nil || it.StageActor == nil || it.StageActor.Kind != StageActorHive {
 		t.Fatalf("caption/actor disagree with push: %+v", it)
 	}
 	issue := trackerItem(t, tr, "issue", 16010)

@@ -238,7 +238,7 @@
     //             the hive.
     const STAGE_TRACKER_PUSH_NEXT = { ci: 'CI running', 're-review': 're-review queued' };
     function stageTrackerPushOf(item) {
-      const p = item && item.kind === 'pr' ? item.push : null;
+      const p = item && (item.kind === 'pr' || item.via_pr) ? item.push : null;
       if (!p || (p.state !== 'waiting' && p.state !== 'pushed')) return null;
       return p;
     }

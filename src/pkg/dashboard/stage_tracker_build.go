@@ -210,6 +210,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			// The ball is back with the hive: the row says what the push
 			// queued, and its note ages from the push (a new hive line).
 			it.Caption = stageTrackerPushCaption(it.Push, now)
+			if it.Push.Since == nil {
+				it.NoteChangedAt = nil
+			}
 			if it.Push.Since != nil && (it.NoteChangedAt == nil || it.Push.Since.After(*it.NoteChangedAt)) {
 				at := *it.Push.Since
 				it.NoteChangedAt = &at

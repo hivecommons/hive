@@ -329,6 +329,17 @@ const reconciled = row({ stage_actor: { kind: 'hive', why: '@zoe pushed abc1234 
 assert.ok(/^CI \/ Review\b/.test(litWord(reconciled)), litWord(reconciled));
 assert.ok(reconciled.includes('pushed abc1234 · re-review pending'), reconciled);
 assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(reconciled), reconciled);
+// A single covering PR keeps the issue's row identity. Its via_pr view
+// must use the exact same push state rather than asking for another push.
+const covered = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 9, kind: 'issue', stage: 40,
+  title: 'Covered issue', url: 'https://x/issues/9',
+  linked_prs: [{ number: 8, stage: 71, head: 'abc1234', title: 'Fix', url: 'https://x/pull/8',
+    author: 'zoe', author_kind: 'human', state: 'open', caption: 'new head observed → re-review pending',
+    stage_actor: { kind: 'hive', why: 're-review queued for the new head' },
+    push: { state: 'pushed', login: 'zoe', sha: 'abc1234', next: 're-review' } }] }, stages, ctx);
+assert.ok(/^CI \/ Review\b/.test(litWord(covered)), litWord(covered));
+assert.ok(covered.includes('pushed abc1234 · re-review pending'), covered);
+assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(covered), covered);
 console.log('push chevron ok');
 `)
 }
