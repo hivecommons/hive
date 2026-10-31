@@ -1,1 +1,0 @@
-Tool approval now flags `rm -rf /..`, `rm -rf /./` and `rm -rf ~/.` as destructive, matching the documented root/home spellings.

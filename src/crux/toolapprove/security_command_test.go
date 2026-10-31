@@ -30,6 +30,8 @@ func TestDefaultSecurityScannerDestructiveCommandsWithoutTextFindings(t *testing
 		"rm -rf /..",
 		"rm -rf /./",
 		"rm -rf /../",
+		"rm -rf /./*",
+		"rm -rf /../*",
 		"rm -rf ~/.",
 		"rm -rf ~/..",
 		"rm -rf $HOME/.",

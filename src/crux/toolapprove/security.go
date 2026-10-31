@@ -114,7 +114,7 @@ var (
 	// name the whole home directory. Split flags (-r -f) and surrounding
 	// single or double quotes are accepted too. Names such as /.cache or
 	// ~/.cache are not matched. The fork bomb likewise needs no word boundary.
-	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?((/+\.{0,2})+|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,2})+\*?)?)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
+	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?((/+\.{0,2})+\*?|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,2})+\*?)?)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
 )
 
