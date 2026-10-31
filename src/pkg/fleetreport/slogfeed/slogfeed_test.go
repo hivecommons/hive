@@ -701,6 +701,22 @@ func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #15906: the per-head review cap suppressing a duplicate comment is expected.
+func TestReviewCommentCappedLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 8; i++ {
+		logger.Warn("review-request watcher: comment suppressed by per-head cap, verdict recorded",
+			"agent", "reviewer", "repo", "hivecommons/hive", "number", 15895,
+			"reason", "head 20854a8 already carries 1 hive review(s) (limit 1)")
+	}
+	if len(*seen) != 0 {
+		t.Errorf("produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 8 {
+		t.Errorf("wrapped handler saw %d records, want 8", n)
+	}
+}
+
 // #15333: keep repeated translator identity refusals visible under their own
 // gateway class, without treating them as backend credential failures.
 func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {

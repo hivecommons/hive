@@ -54,26 +54,16 @@ func (c *Engine) ActiveBasePreparation(ctx context.Context, owner, repo, base st
 		return BasePreparationObservation{}, false, nil
 	}
 	if head != snapshot.Owner.Head {
-		// An accepted refresh changes the head, but an author's subsequent
-		// content push must not inherit its priority. Prove the exact merge
-		// of the attempted head and base, rather than trusting any new SHA.
+		// UpdateBranch merges the live destination tip, which can differ
+		// from the attempt's PR snapshot. Reuse the App-authored refresh
+		// proof against the destination ref, not that stale base SHA.
 		if snapshot.Attempt.Head == "" || snapshot.Attempt.Base == "" {
 			return BasePreparationObservation{}, false, nil
 		}
-		commit, _, err := c.gh.Repositories.GetCommit(ctx, owner, repo, head, nil)
-		if err != nil {
-			return BasePreparationObservation{}, false, err
-		}
-		if commit.GetSHA() != head || len(commit.Parents) != 2 ||
-			commit.Parents[0].GetSHA() != snapshot.Attempt.Head || commit.Parents[1].GetSHA() != snapshot.Attempt.Base {
-			return BasePreparationObservation{}, false, nil
-		}
-		// An author can amend a merge's tree while preserving both parents.
-		// Reuse the review planner's fail-closed same-patch proof as well.
-		patches, ok := c.transport.(interface {
-			ReviewHeadsSamePatch(context.Context, string, string, string, string) bool
-		})
-		if !ok || !patches.ReviewHeadsSamePatch(ctx, owner+"/"+repo, snapshot.Attempt.Base, snapshot.Attempt.Head, head) {
+		if !c.baseRefresh.HeadIsBaseRefreshOf(ctx, c.gh.Repositories, owner, repo, snapshot.Owner.Number,
+			base, snapshot.Attempt.Head, head, c.transport.AppBotLogin()) {
+			c.info("automerge base preparation observation skipped", "repo", owner+"/"+repo,
+				"base", base, "pr", snapshot.Owner.Number, "head", head, "reason", "unverified-app-base-refresh")
 			return BasePreparationObservation{}, false, nil
 		}
 	}

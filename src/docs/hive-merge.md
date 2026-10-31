@@ -416,9 +416,11 @@ reviewer dispatch scheduling are separate policies.
 The review planner observes the durable preparation owner once per destination
 per pass. Only its exact live, CI-green, mergeable head with a verdict still
 owed receives `base-preparation` review priority; it does not need a ready train
-seat. A refreshed head must be the merge of the recorded attempted head and
-base and pass the existing same-patch proof, so an author's content push or
-amended merge cannot inherit that priority.
+seat. A refreshed head must pass the existing App-authored base-refresh proof:
+the attempted head is preserved, the merged base lies on the destination branch,
+and the PR's content is unchanged. The actual merged base can be newer than the
+attempt's recorded base SHA; this remains valid after a restart without rewriting
+ownership. An author's content push or amended merge cannot inherit priority.
 Closed, held, retargeted, released and expired owners receive no promotion.
 Observation is read-only and performs GitHub reads outside preparation locks.
 Busy valid reviews are never interrupted. After a confirmed preparation review
@@ -431,6 +433,8 @@ the existing review order is unchanged. Priority is not review approval or merge
 eligibility: normal label, model, current-head verdict and merge gates still run.
 `review swarm kick planned` exposes `priority=base-preparation`; the normal
 waiting reasons continue to expose reviewer/parallel-slot exhaustion.
+`automerge base preparation observation skipped` with
+`reason=unverified-app-base-refresh` records a failed refreshed-head proof.
 
 Human pushes, direct merges and external automation can still move a base.
 Such a move is coalesced until the preparation owner qualifies again; it must

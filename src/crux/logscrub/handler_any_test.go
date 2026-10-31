@@ -121,12 +121,51 @@ func TestScrubAttrPrefersTextAppenderLikeSlog(t *testing.T) {
 	}
 }
 
+type scrubTestCount int
+
+// Composite payloads (structs, maps, slices) are rendered by the inner handler
+// after the scrubbing boundary, so they are now rendered and scrubbed here.
+func TestScrubsCompositeAnyPayloads(t *testing.T) {
+	const token = "ghs_exampletoken1234567890"
+	type payload struct{ Out string }
+	cases := []struct {
+		name string
+		val  any
+	}{
+		{"bytes", []byte("stderr: " + token)},
+		{"strings", []string{"ok", "push " + token}},
+		{"map", map[string]string{"auth": token}},
+		{"struct", payload{Out: token}},
+		{"struct-ptr", &payload{Out: token}},
+		{"text-marshaler", scrubTestTextMarshaler{text: token}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scrubAttr(slog.Any("value", tc.val))
+			if got.Value.Kind() != slog.KindString || strings.Contains(got.Value.String(), token) || !strings.Contains(got.Value.String(), "[REDACTED]") {
+				t.Fatalf("scrubAttr = %v", got.Value)
+			}
+			for _, inner := range []func(*bytes.Buffer) slog.Handler{
+				func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
+				func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
+			} {
+				var buf bytes.Buffer
+				slog.New(NewHandler(inner(&buf))).Info("x", "value", tc.val)
+				if strings.Contains(buf.String(), token) {
+					t.Fatalf("credential leaked: %s", buf.String())
+				}
+			}
+		})
+	}
+}
+
 func TestScrubAttrPreservesNonTextValues(t *testing.T) {
 	for _, attr := range []slog.Attr{
 		slog.Int("count", 42),
 		slog.Bool("ok", true),
 		slog.Any("nil", nil),
-		slog.Any("struct", struct{ Count int }{42}),
+		slog.Any("named-int", scrubTestCount(7)),
+		slog.Duration("elapsed", 3),
 	} {
 		if got := scrubAttr(attr); !got.Equal(attr) {
 			t.Errorf("scrubAttr(%v) = %v", attr, got)
