@@ -10,6 +10,15 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
+// ChangeRequestRef is one standing CHANGES_REQUESTED review: who left it,
+// the commit it was left on, when, and its URL.
+type ChangeRequestRef struct {
+	Login       string
+	CommitID    string
+	SubmittedAt time.Time
+	URL         string
+}
+
 // Detail is what a lane's deep evaluation learned beyond the reason:
 // the reviewer verdict for the head and the author's admission tier.
 type Detail struct {
@@ -48,6 +57,14 @@ type Detail struct {
 	// was seen this cycle.
 	Reviews      int
 	ReviewsKnown bool
+	// StandingChangeRequests are the people (the hive app and bots
+	// excluded) whose latest opinionated review on the PR — APPROVED,
+	// CHANGES_REQUESTED or DISMISSED — is CHANGES_REQUESTED, on any head,
+	// from the same ListReviews walk. GitHub keeps such a review standing
+	// across pushes until its author re-reviews or it is dismissed, so the
+	// 085 ask for an approving review names it instead of inviting an
+	// approval over it (projectbluefin/utah-packages#633).
+	StandingChangeRequests []ChangeRequestRef
 	// DCO, DCOTotal and DCOUnsigned are the stage pass's own commit check
 	// for the head (hivecommons/hive#12542); filled by ApplyStageLabels,
 	// not by the lanes.

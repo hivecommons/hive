@@ -1446,6 +1446,21 @@ func prMergeableStateConflicting(pr *gh.PullRequest) bool {
 	return state == "dirty" || state == "conflicting"
 }
 
+// mergeCallConflicting reports whether GitHub says pr cannot merge for
+// conflicts: mergeable_state dirty, or, while the state is still unknown,
+// mergeable explicitly false. A known state other than dirty wins over the
+// bool, as in hgithub.MergeableFromState.
+func mergeCallConflicting(pr *gh.PullRequest) bool {
+	if prMergeableStateConflicting(pr) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(pr.GetMergeableState())) {
+	case "", "unknown":
+		return pr.Mergeable != nil && !pr.GetMergeable()
+	}
+	return false
+}
+
 // SweepTrustedAuthorAutoMerges merges green PRs whose human author already
 // holds the configured authorized-users role and, by default, GitHub
 // repository write/maintain/admin permission. This is an operator opt-in tier:
@@ -1853,6 +1868,7 @@ func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool,
 			result.Merged = append(result.Merged, laneResult.Merged...)
 		}
 	}
+	c.releaseGoneLaneFronts(ctx, targets)
 	if stageResult, stageErr := c.ApplyStageLabels(ctx); stageErr != nil {
 		c.warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
 	} else if stageResult.Writes+stageResult.Comments > 0 {
@@ -2194,6 +2210,14 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if currentHeadSHA == "" || currentHeadSHA != evaluatedHeadSHA {
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
 	}
+	// The first read can predate GitHub's conflict computation (it reports
+	// "unknown" while the base just moved), so the read right before the
+	// merge is asked again: a PR GitHub now calls conflicting is skipped
+	// without a merge call that can only be refused (405 "Pull Request has
+	// merge conflicts", projectbluefin/utah-packages#633).
+	if mergeCallConflicting(current) {
+		return reject("conflicting")
+	}
 	// Review gate (#12592), on the re-verified head immediately before the
 	// merge call: the swarm verdict for exactly the SHA about to merge.
 	// Shadow (the default) records and merges; enforce holds.
@@ -2344,6 +2368,37 @@ func (c *Engine) rejectBeforeLane(ctx context.Context, serialized bool, gate hgi
 		c.info("automerge sweep: rejected PR left the serialized lane front", "repo", owner+"/"+repo, "pr", number, "reason", reason, "lane_reason", res.Reason)
 	}
 	return AutoMergeSweepEvent{}, reason, nil
+}
+
+// releaseGoneLaneFronts asks the serialized lane, once per pass and
+// hive-serialized repo, to release a front PR that was closed, merged outside
+// the lane, made a draft or retargeted. The lanes above list open PRs only, so
+// no path calls in for such a front again: without this it held every waiter
+// until the front timeout (up to 4x that while its checks were last pending).
+// The lane reads one PR per front and never merges here.
+func (c *Engine) releaseGoneLaneFronts(ctx context.Context, targets SweepTargets) {
+	for _, repo := range c.activeRepos() {
+		owner, name := c.transport.SplitRepo(repo)
+		fullRepo := owner + "/" + name
+		if !targets.selectsRepo(fullRepo) {
+			continue
+		}
+		serialized, gate := c.serializedLane(repo)
+		if !serialized || gate == nil {
+			continue
+		}
+		res, err := hgithub.RunSerializedLane(ctx, gate, hgithub.LaneMergeRequest{
+			Repo:              fullRepo,
+			Path:              hgithub.PRAuditPathSweep,
+			ReleaseGoneFronts: true,
+		})
+		switch {
+		case err != nil:
+			c.warn("automerge sweep: serialized lane could not check its fronts", "repo", fullRepo, "error", err)
+		case res.Outcome == hgithub.LaneOutcomeLeft:
+			c.info("automerge sweep: a closed, merged or retargeted PR left the serialized lane front", "repo", fullRepo, "lane_reason", res.Reason)
+		}
+	}
 }
 
 // mergeThroughLane hands a PR that passed every gate of its sweep path to the

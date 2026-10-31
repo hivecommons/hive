@@ -601,3 +601,44 @@ func TestLaneSweep_HeldQueuedFrontLeavesTheLane(t *testing.T) {
 		}
 	}
 }
+
+// A front PR closed or merged outside the lane is not in the open-PR lists
+// the lanes walk, so no path calls in for it again. Every pass asks the lane,
+// once per hive-serialized repo it covers, to release such fronts; a direct
+// repo and a repo the pass does not target are never consulted.
+func TestLaneSweep_PassReleasesGoneFronts(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, nil, &merged)
+	defer api.Close()
+	g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeLeft, "#25: front check: pull request is closed")}
+	c := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{})
+
+	c.sweepPass(context.Background(), 5, true, nil, "tick")
+	if len(g.reqs) != 1 {
+		t.Fatalf("lane requests = %+v, want one front check", g.reqs)
+	}
+	if req := g.reqs[0]; !req.ReleaseGoneFronts || req.Repo != "acme/widget" || req.Number != 0 || req.Branch != "" || req.FrontOnly || req.Authorize != nil || req.Path != hgithub.PRAuditPathSweep {
+		t.Fatalf("lane request = %+v, want a repo-wide front check from the sweep", req)
+	}
+
+	g.reqs = nil
+	g.answer = func(context.Context, hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+		return hgithub.LaneMergeResult{Outcome: hgithub.LaneOutcomeWaiting}, errors.New("lane record unwritable")
+	}
+	c.sweepPass(context.Background(), 5, true, SweepTargets{"acme/widget": {7: true}}, "event")
+	if len(g.reqs) != 1 || !g.reqs[0].ReleaseGoneFronts {
+		t.Fatalf("targeted pass lane requests = %+v, want the repo's front check (a lane error is only logged)", g.reqs)
+	}
+
+	g.reqs = nil
+	c.sweepPass(context.Background(), 5, true, SweepTargets{"acme/other": {7: true}}, "event")
+	if len(g.reqs) != 0 {
+		t.Fatalf("pass targeting another repo consulted the lane: %+v", g.reqs)
+	}
+
+	direct := &laneGate{answer: func(context.Context, hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+		t.Fatal("a direct repo must never consult the lane")
+		return hgithub.LaneMergeResult{}, nil
+	}}
+	newLaneSweepEngine(api.URL, config.MergeStrategyDirect, direct.gate, Options{}).sweepPass(context.Background(), 5, true, nil, "tick")
+}

@@ -885,6 +885,15 @@ GitHub: ...`, since nothing was applied; a 5xx or transport error on the
 merge call is not definitive, so that front keeps waiting and re-validates
 until the front timeout.
 
+A front pull request that is closed, merged outside the lane, turned into a
+draft or retargeted to another branch leaves on the next automerge sweep
+pass. The merge paths list open pull requests only, so none of them calls in
+for it again; instead every pass reads each front of a `hive-serialized`
+repository once and releases a front in one of those states with a reason
+such as `front check: pull request is closed` or `front check: pull request
+is already merged`, and the next waiting pull request is promoted. An open
+front, including one waiting on its required checks, is left as it is.
+
 A front that GitHub still reports as `blocked` after its head contains the
 current target tip and all required checks pass also leaves immediately. The
 lane re-reads the PR after observing passing checks, so a block in the earlier

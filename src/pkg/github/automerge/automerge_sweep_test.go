@@ -1842,6 +1842,12 @@ type selfAuthoredPR struct {
 	// merge-time re-check) instead of the first-fetch head SHA — simulates a
 	// push landing between evaluation and merge.
 	headSHAOverride string
+	// recheckMergeableState, when set, is the mergeable_state the SECOND
+	// and later PR fetches return (the merge-time re-check): GitHub found
+	// a conflict after the first read.
+	recheckMergeableState string
+	// reviews, when set, are returned by GET /pulls/{n}/reviews.
+	reviews []map[string]any
 	// updatedAt, when set, is the PR's updated_at (the sweep's head-age clock).
 	updatedAt string
 	// workflowRuns are returned by GET /actions/runs?head_sha=<head>.
@@ -1887,7 +1893,12 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
 			// The self lane reads reviews on every pass for a trusted
 			// human's changes_requested (hivecommons/hive#13041).
-			json.NewEncoder(w).Encode([]map[string]any{})
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/reviews")
+			reviews := []map[string]any{}
+			if pr := byNumber[number]; pr != nil && pr.reviews != nil {
+				reviews = pr.reviews
+			}
+			json.NewEncoder(w).Encode(reviews)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/files"):
 			// The merge train lists changed files to group overlapping PRs
 			// (hivecommons/hive#15117); disjoint here, so no train forms.
@@ -1900,12 +1911,16 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			if fetchCount[number] > 1 && pr.headSHAOverride != "" {
 				headSHA = pr.headSHAOverride
 			}
+			state := pr.mergeableState
+			if fetchCount[number] > 1 && pr.recheckMergeableState != "" {
+				state = pr.recheckMergeableState
+			}
 			body := map[string]any{
 				"number":          pr.number,
 				"state":           "open",
 				"draft":           pr.draft,
-				"mergeable_state": pr.mergeableState,
-				"mergeable":       pr.mergeableState == "clean",
+				"mergeable_state": state,
+				"mergeable":       state == "clean",
 				"user":            map[string]string{"login": pr.author},
 				"head":            map[string]string{"sha": headSHA},
 				"base":            map[string]string{"ref": "main"},

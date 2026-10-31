@@ -336,6 +336,7 @@ func (t *StageTracker) drain() [][]stageObservation {
 			}
 			if detail.ReviewsKnown {
 				o.Detail.Reviews, o.Detail.ReviewsKnown = detail.Reviews, true
+				o.Detail.StandingChangeRequests = detail.StandingChangeRequests
 			}
 			if detail.DCOGateHead != "" && (o.HeadSHA == "" || detail.DCOGateHead == o.HeadSHA) {
 				o.Detail.DCOGate, o.Detail.DCOGateHead = detail.DCOGate, detail.DCOGateHead
@@ -634,9 +635,51 @@ func (c *Engine) noteStageReviews(owner, repo string, number int, reviews []*gh.
 			n++
 		}
 	}
+	standing := c.standingChangeRequests(reviews)
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
 		d.Reviews, d.ReviewsKnown = n, true
+		d.StandingChangeRequests = standing
 	})
+}
+
+// standingChangeRequests returns the people whose latest opinionated review
+// in reviews (APPROVED, CHANGES_REQUESTED or DISMISSED, in list order) is
+// CHANGES_REQUESTED, on any commit, oldest first. The hive app and bot
+// logins are left out.
+func (c *Engine) standingChangeRequests(reviews []*gh.PullRequestReview) []prstage.ChangeRequestRef {
+	latest := map[string]*gh.PullRequestReview{}
+	for _, r := range reviews {
+		if r == nil {
+			continue
+		}
+		login := strings.ToLower(strings.TrimSpace(hgithub.SafeGetLogin(r.GetUser())))
+		if login == "" || strings.HasSuffix(login, "[bot]") || c.isHiveAppReviewAuthor(r) {
+			continue
+		}
+		switch strings.ToUpper(strings.TrimSpace(r.GetState())) {
+		case "APPROVED", "CHANGES_REQUESTED", "DISMISSED":
+			latest[login] = r
+		}
+	}
+	var out []prstage.ChangeRequestRef
+	for _, r := range latest {
+		if !strings.EqualFold(strings.TrimSpace(r.GetState()), "CHANGES_REQUESTED") {
+			continue
+		}
+		out = append(out, prstage.ChangeRequestRef{
+			Login:       strings.TrimSpace(hgithub.SafeGetLogin(r.GetUser())),
+			CommitID:    strings.TrimSpace(r.GetCommitID()),
+			SubmittedAt: r.GetSubmittedAt().Time,
+			URL:         strings.TrimSpace(r.GetHTMLURL()),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].SubmittedAt.Equal(out[j].SubmittedAt) {
+			return out[i].SubmittedAt.Before(out[j].SubmittedAt)
+		}
+		return strings.ToLower(out[i].Login) < strings.ToLower(out[j].Login)
+	})
+	return out
 }
 
 // noteOwnStageComment records that this engine posted a comment on the PR
