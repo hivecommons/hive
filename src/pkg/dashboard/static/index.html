@@ -42912,11 +42912,16 @@ function burnAreaChart() {
       if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);
       navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
       if (sidebarBadge) {
-        const tooltip = document.createElement('span');
-        tooltip.className = 'config-tooltip contributor-online-tooltip';
-        tooltip.hidden = true;
+        // Reuse the tooltip node across refreshes so the pill does not grow
+        // one hidden span per poll.
+        let tooltip = sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (!tooltip) {
+          tooltip = document.createElement('span');
+          tooltip.className = 'config-tooltip contributor-online-tooltip';
+          tooltip.hidden = true;
+          sidebarBadge.appendChild(tooltip);
+        }
         tooltip.innerHTML = contributorsOnlineTooltip(pool);
-        sidebarBadge.appendChild(tooltip);
         if (_configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
       }
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
