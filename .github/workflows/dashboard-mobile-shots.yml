@@ -38,6 +38,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          sudo apt-get update
           out="$(sudo env "PATH=$PATH" npx --yes @puppeteer/browsers@2 install chrome@stable --install-deps --path "$RUNNER_TEMP/chrome-for-testing" | tail -n 1)"
           bin="${out#* }"
           test -x "$bin"

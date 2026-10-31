@@ -240,9 +240,10 @@
         && eventHtml && !eventHtml.includes('cue-event-tucked');
       const parts = caption && !captionVisible ? [caption] : [];
       if (!caption) parts.push('Current pipeline blocker unknown');
-      parts.push(e.state === 'unverified'
+      const preparation = e.state === 'unverified'
         ? stageTrackerPreparationPlace(e) + ' · ' + (e.ticket.detail || 'current identity or eligibility unknown')
-        : e.role === 'owner' ? 'preparing base' : 'queued for base refresh' + (e.ticket.behind ? ' behind PR #' + e.ticket.behind : ' · owner unknown'));
+        : e.role === 'owner' ? 'preparing base' : 'queued for base refresh' + (e.ticket.behind ? ' behind PR #' + e.ticket.behind : ' · owner unknown');
+      if (!caption.split(/\s+[·—]\s+/).includes(preparation)) parts.push(preparation);
       parts.push('ticket age ' + stageTrackerPreparationAge(e.ticket, _stageTrackerPreparationNow));
       if (e.row.nested) parts.push('shown under issue #' + e.row.host.number);
       return eventHtml + `<div class="cue-event ham-preparation-comment"><span class="cue-event-body">${esc(parts.join(' · '))}</span></div>`;

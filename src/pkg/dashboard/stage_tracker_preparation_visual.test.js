@@ -212,6 +212,18 @@ test('off-page owner remains truthful in compact header/help with real waiting o
   assert.equal(rootKeys(rows).length, 1);
 });
 
+test('preparation commentary deduplicates the exact canonical clause, not a different owner-number prefix', () => {
+  const { ctx } = load(), f = fixture();
+  f.first.caption = 'Review swarm requested; waiting for a verdict on the current head — queued for base refresh behind PR #45';
+  let html = rootRow(render(ctx, f, [f.owner, f.first, f.second]), 9).html;
+  let body = html.match(/ham-preparation-comment"><span class="cue-event-body">([^<]*)/)[1];
+  assert.equal((body.match(/queued for base refresh behind PR #45/g) || []).length, 1);
+  f.first.caption = 'Review pending — queued for base refresh behind PR #4';
+  html = rootRow(render(ctx, f, [f.owner, f.first, f.second]), 9).html;
+  body = html.match(/ham-preparation-comment"><span class="cue-event-body">([^<]*)/)[1];
+  assert.match(body, /behind PR #4 · queued for base refresh behind PR #45/);
+});
+
 test('release/handoff clears former owner decoration and pill suppression; readmission preserves durable FIFO', () => {
   const { ctx } = load(), f = fixture();
   render(ctx, f);
