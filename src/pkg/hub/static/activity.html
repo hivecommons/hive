@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Fleet activity — Hive Hub</title>
+<link rel="canonical" href="https://hive.hivecommons.dev/activity">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
+<link rel="stylesheet" href="/tokens.css">
+<link rel="stylesheet" href="/components.css">
+<link rel="stylesheet" href="/static/activity.css">
+<!-- The shared tracker row asset (pkg/webassets/trackerrow) first, then the
+     page script that defines the constants and esc() it calls. No inline
+     script: the page's CSP allows script files from 'self' only. -->
+<script src="/activity/assets/tracker-row-anchor.js" defer></script>
+<script src="/activity/assets/tracker-row-title.js" defer></script>
+<script src="/static/activity.js" defer></script>
+</head>
+<body>
+<header class="activity-header">
+  <a href="/" class="activity-brand">🐝 Hive</a>
+  <nav class="activity-nav" aria-label="Hub">
+    <a href="/dashboard">My Hives</a>
+    <a href="/fleet">Fleet</a>
+    <a href="/activity" class="active" aria-current="page">Fleet activity</a>
+    <a href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>
+  </nav>
+</header>
+<main class="activity-main">
+  <div class="activity-titlebar">
+    <h1>Fleet activity</h1>
+    <p class="activity-sub">Open issues and pull requests across the hives you can see. Read-only: open an item on GitHub, or a hive's own tracker to act on it.</p>
+    <div class="activity-controls">
+      <label class="activity-toggle"><input type="checkbox" id="activity-group" checked> Group by hive</label>
+      <span id="activity-status" class="activity-status" role="status" aria-live="polite">Loading…</span>
+    </div>
+  </div>
+  <!-- Truncation and stale, not-reporting or missing hives: always shown,
+       never only in a tooltip. -->
+  <ul id="activity-disclosures" class="activity-disclosures" aria-label="Data coverage"></ul>
+  <table id="activity-board" class="activity-board">
+    <thead>
+      <tr><th scope="col">Hive</th><th scope="col">Item</th><th scope="col">Title</th><th scope="col">Stage</th><th scope="col">Author</th></tr>
+    </thead>
+    <tbody id="activity-rows"></tbody>
+  </table>
+  <p id="activity-empty" class="activity-empty" hidden>No open items in the hives you can see.</p>
+</main>
+</body>
+</html>
