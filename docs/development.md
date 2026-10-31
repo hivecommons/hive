@@ -160,6 +160,10 @@ Node/runtime contracts as three independent lanes. The protected
 is cancelled, or unexpectedly skips. This changes scheduling, not which
 contracts run. The separate race/shuffle matrix and per-package coverage
 checks remain required and unchanged.
+As before, a transient build scope-preflight failure falls back to executing
+the full actual build/contract/runtime lanes. Scope failure is not itself a
+new build gate: all three actual lanes must succeed, and skipped or cancelled
+lanes cannot create a green aggregate.
 
 The Podman cleanup contract reads every tracked file once, checking all
 forbidden literal patterns together rather than spawning a grep for each

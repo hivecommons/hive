@@ -1297,6 +1297,10 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_runner_labels_portable.sh
 
+      - name: Build aggregate preserves scope fallback and rejects skipped lanes
+        working-directory: .
+        run: bash src/deploy/test_ci_build_lane_aggregate.sh
+
   # Preserve the protected check name: every original step still gates it.
   build-and-test:
     needs: [required-context-scope, build-go, contract-tests, runtime-tests]
@@ -1311,9 +1315,9 @@ jobs:
           CONTRACT_RESULT: ${{ needs.contract-tests.result }}
           RUNTIME_RESULT: ${{ needs.runtime-tests.result }}
         run: |
-          for result in "$SCOPE_RESULT" "$GO_RESULT" "$CONTRACT_RESULT" "$RUNTIME_RESULT"; do
+          for result in "$GO_RESULT" "$CONTRACT_RESULT" "$RUNTIME_RESULT"; do
             if [ "$result" != success ]; then
-              echo "::error::build-and-test requires successful scope, Go, contract and runtime lanes (scope=$SCOPE_RESULT go=$GO_RESULT contracts=$CONTRACT_RESULT runtime=$RUNTIME_RESULT)"
+              echo "::error::build-and-test requires successful Go, contract and runtime lanes (scope=$SCOPE_RESULT go=$GO_RESULT contracts=$CONTRACT_RESULT runtime=$RUNTIME_RESULT)"
               exit 1
             fi
           done
