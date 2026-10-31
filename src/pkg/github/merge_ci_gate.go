@@ -196,6 +196,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		}
 	}
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, CommitCIOptions{
+		PRNumber:                number,
 		Required:                required,
 		RequiredKnown:           requiredKnown,
 		RequiredKnownFromConfig: fromConfig,
@@ -209,6 +210,10 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	}
 	if cfgKnown && actualKnown {
 		c.warnRequiredChecksMismatch(owner, name, cfgSet, actualRequired, st.Observed)
+	}
+	if len(st.Reporting) > 0 {
+		c.info("merge-request CI reporting observation", "repo", owner+"/"+name, "pr", number,
+			"head", sha, "observations", st.Reporting)
 	}
 	if !st.Green && (strings.HasPrefix(st.Reason, "pending: head pushed ") || (strings.HasPrefix(st.Reason, "pending: ") && strings.HasSuffix(st.Reason, " has not started"))) {
 		c.info("merge-request CI gate blocked fresh or incomplete head", "repo", owner+"/"+name, "pr", number, "sha", sha, "reason", st.Reason)
