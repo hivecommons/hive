@@ -1,0 +1,1 @@
+- Dashboard `--sp-*` spacing tokens are now declared on `:root` instead of only `.config-modal`, so spacing outside the modal no longer resolves to invalid values (#15920)
