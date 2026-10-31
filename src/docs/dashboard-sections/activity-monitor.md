@@ -30,6 +30,19 @@ backend reconciles push/rework observations before building the row: its pill,
 actor and caption return to pending CI/re-review instead of still asking for a
 push. An independently evaluated author action on the new head remains visible.
 If the head is known but its push time is not, no push age is invented.
+When the current-head snapshot observes real checks running again without any
+failing checks, an old CI-only push request becomes **checks pending · no new push
+requested**. This is not a push or merge-readiness proof; independent review,
+conflict and sign-off requirements still stand.
+Adoption ownership policy is not a PR rejection: the chip distinguishes
+**author-owned**, **maintainer-owned** and **contributor-managed** from an actual
+**adoption blocked** capability. No adoption observation means no adoption chip.
+Operator admission never promises that outstanding review/CI findings are clear.
+Human availability is unknown: agent heartbeats do not prove that a person is
+online or offline. Observed push/comment and waiting timestamps remain action
+history, not presence evidence or an implied relinquishment of ownership.
+Explicit adoption actions/provenance remain visible; a returning human does not
+silently revoke an adoption.
 
 ### First use: find the next action
 
@@ -301,13 +314,13 @@ A copy that then fails (closed unmerged, or red at two heads) reopens the origin
 
 #### Presence indicator on the waiting-on pill
 
-Every PR row that waits on a named person — `stage/071-needs-author`, `stage/072-returned-to-contributor` (before and after the nudge), `stage/017-possibly-existing` on a PR — carries `presence{login, state: online|offline|unknown, kind: clanker|human, since, last_seen, next: wait|adopt, adopt_at}`, read from the contributor hub's live presence (registered profile + relay heartbeat: the same lookup adoption consults, so the indicator and the adoption text never disagree) and projected through adoption's own clock ([hivecommons/hive#15051](https://github.com/hivecommons/hive/issues/15051)). The pill draws it just before the `@login`: a filled **dot** (`--cue-decision`, a soft breathe; none under `prefers-reduced-motion`) when the person's contributor agent is online, tooltip "@Danathar's clanker: online, last seen 2 min ago — hive is waiting for them"; a filled **square** (`--status-error`) when it is offline, "@hanthor's clanker: offline 26h — hive will adopt at 15:10 (in 38m)" (or "— hive is waiting for them" when `ask`/`never`/adoption-off holds the clock); a **hollow ring** when no contributor agent is registered here, "@zoe: no clanker registered — waiting for a human reply" with the pill reading `waiting on @zoe (human · no clanker)`.
+Every PR row that waits on a named person — `stage/071-needs-author`, `stage/072-returned-to-contributor` (before and after the nudge), `stage/017-possibly-existing` on a PR — carries `presence{login, state: online|offline|unknown, kind: clanker|human, since, last_seen, next: wait|adopt, adopt_at}` ([hivecommons/hive#15051](https://github.com/hivecommons/hive/issues/15051)). For a contributor agent, presence comes from the contributor hub's profile/relay heartbeat and uses the same adoption clock: a filled **dot** (`--cue-decision`, a soft breathe; none under `prefers-reduced-motion`) for an online clanker, a filled **square** (`--status-error`) for an offline clanker, and a **hollow ring** when that clanker is not registered here. These are agent states, never human availability. A human author carries only the person glyph and `unknown`: "Waiting on @zoe (human) — human availability is unknown; waiting for a human reply". No agent heartbeat, elapsed response time or GitHub activity becomes a human online/offline indicator or an implied ownership transfer.
 
 Shape, not colour alone, carries the state; the indicator has its own `aria-label` ("@hanthor: clanker offline — hive will adopt at …"). A row with presence but no adoption line (071, a 072 not yet nudged, a human's PR) gets a muted `waiting on @login` pill carrying the indicator; a nudged 072 row keeps its single amber adoption pill with the indicator inside it. The Needs-human popover shows the same line under the question when the waiting person is named, a per-PR sub-row under an issue mirrors it, and the row tooltip adds a `Presence:` line.
 
 It refreshes with the tracker like every other pill.
 
-**An offline clanker's PR that has not been returned.** A clanker-authored PR the engine has not classified yet (the chevron reads `PR in progress · @odttlnt's clanker`) carries the same `presence` for its author, with `next: wait` and no `adopt_at` — the adoption clock runs only at 072. When the clanker is offline (or not registered here) the chevron's holder gains a muted suffix with the state square: `PR in progress · @odttlnt's clanker · ■ offline 3h`, and the caption states the next automatic step: "@odttlnt's clanker is offline 3h; a green PR is reviewed and merged without its author — hive adopts it only once it is returned (red CI, conflicts or review asks) and nothing is pushed for 15m" (`governor.labels.stage.adoption.after_offline`). A green PR does not need its author online: review and merge admission run on the contributor lane regardless; adoption is the exit for a PR that is red, conflicting or asked to change while its clanker is away, never for a green one, and never for a human's PR.
+**An offline clanker's PR that has not been returned.** A clanker-authored PR the engine has not classified yet (the chevron reads `PR in progress · @odttlnt's clanker`) carries the same agent `presence`, with `next: wait` and no `adopt_at` — the automatic clock runs only at 072. When the clanker is offline (or not registered here) the chevron's holder gains a muted suffix with the state square: `PR in progress · @odttlnt's clanker · ■ offline 3h`, and the caption states the next automatic step: "@odttlnt's clanker is offline 3h; a green PR is reviewed and merged without its author — hive adopts it only once it is returned (red CI, conflicts or review asks) and nothing is pushed for 15m" (`governor.labels.stage.adoption.after_offline`). This automatic clanker projection does not infer a human's availability or an adoption request. Explicit adoption actions and provenance are separate; a returning human's activity does not silently undo an adoption.
 
 A contributor PR whose `stage/*` labels the write-back gate kept off GitHub (no opt-in label, see [What hive writes to GitHub, and when](../operator-reference.md#what-hive-writes-to-github-and-when)) is tracked from the engine's record alone: the record carries `labels_suppressed` and the tracker trusts its stage (085 reads *Needs human decision*, not *PR in progress*) even though the item's labels say nothing. Until this fix the tracker read the missing park label as a lifted park and dropped the record, so a dozen fork PRs parked at 085 for a human's decision sat under "PR in progress · @x's clanker" for hours while their clankers were offline.
 

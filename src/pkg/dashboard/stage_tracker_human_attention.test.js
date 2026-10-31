@@ -200,3 +200,17 @@ test('operator approval plus current changes-requested shows the real blocker on
     assert.doesNotMatch(c.stageTrackerHumanContextHtml(changed, [], 1), /Current blocker: Review changes requested/);
   }
 });
+
+test('adoption absence is not a refusal; ownership policy and actual capability blocks have distinct words', () => {
+  const c = load();
+  Object.assign(c, { stageTrackerAdoptOffered: () => false });
+  vm.runInContext(fn('tracker-words', 'stageTrackerAdoptionChipText'), c);
+  assert.equal(c.stageTrackerAdoptionChipText(pr()), '');
+  for (const [blocked_by, word] of [
+    ['author-is-person', 'author-owned'], ['author-is-maintainer', 'maintainer-owned'],
+    ['operator-admission', 'contributor-managed'], ['capability:workflows-permission', 'adoption blocked'],
+  ]) {
+    const item = { ...pr(), adoption: { author: 'clubanderson', blocked_by } };
+    assert.equal(c.stageTrackerAdoptionChipText(item), word);
+  }
+});

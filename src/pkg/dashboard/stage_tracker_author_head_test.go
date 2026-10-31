@@ -22,6 +22,7 @@ func TestStageTrackerNewHeadSynchronizesAuthorWaitAndReview(t *testing.T) {
 			if it.Push == nil || it.Push.State != pushStatePushed || it.Push.Sha != it.Head || it.Push.Next != pushNextReReview || it.Push.Since != nil {
 				t.Fatalf("new head must satisfy the old request without inventing a push time: %+v", it.Push)
 			}
+
 			it.StageActor = stageTrackerStageActor(it, nil, now)
 			if it.StageActor.Kind != StageActorHive || !strings.Contains(it.StageActor.Why, "re-review") {
 				t.Fatalf("new head still waits on its author: %+v", it.StageActor)

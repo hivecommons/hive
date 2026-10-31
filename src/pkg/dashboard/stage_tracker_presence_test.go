@@ -22,6 +22,25 @@ func presenceOf(t *testing.T, s *Server, store *stagelabels.Store, status *Statu
 	return trackerItem(t, s.buildStageTracker(status, store, now), "pr", number).Presence
 }
 
+func TestStageTrackerHumanAvailabilityCannotComeFromAnAgentHeartbeat(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	rec := stagelabels.Record{NudgeCount: 1, FirstNudgeAt: now.Add(-time.Hour), NudgeHead: "current"}
+	for _, online := range []bool{false, true} {
+		called := false
+		lookup := func(string) (automerge.ContributorPresence, bool) {
+			called = true
+			return automerge.ContributorPresence{Registered: true, Online: online, LastSeen: now}, true
+		}
+		it := StageTrackerItem{Kind: "pr", Author: "clubanderson", AuthorKind: authorKindHuman, Head: "current"}
+		p := stageTrackerPresenceFor(it, it.Author, stagelabels.ReturnedToContributor, rec, true, lookup,
+			stageTrackerAdoptionClock{Enabled: true}, now)
+		if called || p == nil || p.State != presenceStateUnknown || p.Kind != presenceKindHuman ||
+			p.LastSeen != nil || p.AdoptAt != nil || p.Next != presenceNextWait || p.Since == nil {
+			t.Fatalf("agent heartbeat became human availability or lost observed wait: called=%v presence=%+v", called, p)
+		}
+	}
+}
+
 // Online clanker at 072 after the nudge: green, next=wait, adopt_at at the
 // online grace (2h after the first nudge), the same as adoptionDue.
 func TestStageTrackerPresenceOnlineWaits(t *testing.T) {
@@ -129,9 +148,7 @@ func TestStageTrackerPresenceHeldAdoptionWaits(t *testing.T) {
 	}
 }
 
-// A human's PR is never adopted: kind human, state unknown (no clanker),
-// next=wait, no adopt_at — on 071 as well as 072, where there is no
-// adoption payload at all.
+// Human availability is unknown; an author wait alone starts no adoption.
 func TestStageTrackerPresenceHumanAuthor(t *testing.T) {
 	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
 	s := newTestServer()
@@ -282,7 +299,7 @@ const ask = { kind: 'pr', repo: 'hivecommons/hive', number: 14524, stage: 72, au
 
 assert.strictEqual(stageTrackerPresenceTip(online, NOW), "Waiting on @Danathar's clanker (online, last seen 2 min ago) — hive is waiting for them");
 assert.match(stageTrackerPresenceTip(offline, NOW), /^Waiting on @hanthor's clanker \(offline 26h\) — hive will adopt at \S+ .*\(in 38m\)$/);
-assert.strictEqual(stageTrackerPresenceTip(human, NOW), 'Waiting on @zoe (human) — waiting for a human reply');
+assert.strictEqual(stageTrackerPresenceTip(human, NOW), 'Waiting on @zoe (human) — human availability is unknown; waiting for a human reply');
 assert.strictEqual(stageTrackerPresenceTip(ask, NOW), "Waiting on @hanthor's clanker (offline 26h) — hive is waiting for them", 'held adoption promises no adopt-at');
 
 // Kind glyph + state class + aria per state; role=img so it reads out.
@@ -309,7 +326,7 @@ const w = stageTrackerPresenceChipHtml(online);
 assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s clanker \(online, last seen 2 min ago\) — hive is waiting for them" aria-label="Waiting on @Danathar&#39;s clanker \([^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<i class="ham-presence-dot"><\/i><\/span>@Danathar<\/span>$/.test(w), w);
 // A human: the person glyph and the handle, nothing else — no dot, no "(human · no clanker)" qualifier.
 const hw = stageTrackerPresenceChipHtml(human);
-assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — waiting for a human reply" aria-label="Waiting on @zoe \(human\) — waiting for a human reply">waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*>[\s\S]*<\/svg><\/span>@zoe to push<\/span>$/.test(hw), hw);
+assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @zoe \(human\) — human availability is unknown; waiting for a human reply" aria-label="Waiting on @zoe \(human\) — human availability is unknown; waiting for a human reply">waiting on <span class="ham-presence ham-presence-unknown ham-presence-human"[^>]*><svg [^>]*>[\s\S]*<\/svg><\/span>@zoe to push<\/span>$/.test(hw), hw);
 assert.ok(!hw.includes('no clanker') && !hw.includes('ham-presence-dot'), hw);
 assert.strictEqual(stageTrackerPresenceChipHtml({ kind: 'pr', stage: 71 }), '');
 // The Needs-human popover names the presence under the question.

@@ -204,7 +204,7 @@ func stageTrackerStageActorOf(it StageTrackerItem, workers map[string]stageTrack
 		// The author's push landed and CI / the re-review for it still
 		// run: the ball is back with the hive, the person glyph goes
 		// (hivecommons/hive#15784).
-		if it.Push != nil && it.Push.State == pushStatePushed {
+		if it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking) {
 			return set(StageActorHive, "", stageTrackerPushWhy(it.Push))
 		}
 		return stageTrackerAuthorStageActor(a, it, stage, workers, now)

@@ -40,8 +40,8 @@ const (
 type StageTrackerPresence struct {
 	// Login is the GitHub login the row waits on.
 	Login string `json:"login"`
-	// State is online / offline (a registered clanker, by its heartbeat)
-	// or unknown (no clanker registered here for this login).
+	// State is online / offline for a clanker heartbeat, or unknown.
+	// Human availability is always unknown, even with an agent profile.
 	State string `json:"state"`
 	// Kind is clanker when a contributor clanker is registered for the
 	// login or the PR was authored by one, else human.
@@ -174,7 +174,7 @@ func stageTrackerPresenceFor(it StageTrackerItem, login string, stage stagelabel
 	out := &StageTrackerPresence{Login: login, State: presenceStateUnknown, Kind: presenceKindHuman, Next: presenceNextWait}
 	var p automerge.ContributorPresence
 	hasPresence := false
-	if presence != nil {
+	if presence != nil && it.AuthorKind != authorKindHuman {
 		p, hasPresence = presence(login)
 	}
 	switch {

@@ -415,6 +415,9 @@ type StageTrackerItem struct {
 	// says — a header read "8 PRs" over seven seats because a red 090
 	// row was counted.
 	ciRed bool
+	// ciChecking is a real check observed running on this snapshot's head
+	// with no failing checks, not a pending reviewer or meta check.
+	ciChecking bool
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head

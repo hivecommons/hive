@@ -194,10 +194,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if hasAttempt && (attempt.InFlight() || attempt.Merged) {
 			it.Caption, it.Actor = stageTrackerMergingCaption(attempt), StageActorHive
 		}
-		// Adoption is clanker-only (a human's PR is never adopted), so a
-		// human-authored 072 row keeps its plain caption. The one exception
-		// is a person's PR the engine was asked to adopt and refused
-		// (hivecommons/hive#15202): that row says "not adopted" wherever it sits.
+		// Do not infer a human takeover request from an author wait. A
+		// recorded author-person ownership policy gets neutral ownership
+		// wording; explicit adoption actions and provenance stay separate.
 		personRefused := hasRec && it.Kind == "pr" && rec.AdoptionBlocked(it.Head) == stagelabels.AdoptBlockedAuthorPerson
 		if personRefused || (stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman) {
 			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, adoptionClock, now); it.Adoption != nil {
@@ -205,7 +204,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 		}
 		it.Push = stageTrackerPushFor(*it, stage, rec, hasRec, pushStaleAfter, now)
-		pushed := it.Push != nil && it.Push.State == pushStatePushed
+		pushed := it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking)
 		if pushed {
 			// The ball is back with the hive: the row says what the push
 			// queued, and its note ages from the push (a new hive line).
@@ -376,6 +375,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
 		it.BaseRef = pr.BaseRef
 		it.ciRed = strings.EqualFold(pr.CIStatus, "failure") || len(pr.FailingChecks) > 0
+		it.ciChecking = it.Head != "" && !it.ciRed && strings.EqualFold(pr.CIStatus, "pending") && pr.CIChecksRunning
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
@@ -575,7 +575,7 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 		return true
 	}
 	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman &&
-		!(it.Push != nil && it.Push.State == pushStatePushed)
+		!(it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking))
 }
 
 // stageTrackerOnHold mirrors the dashboard's stageTrackerItemOnHold: the

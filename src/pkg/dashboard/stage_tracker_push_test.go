@@ -329,6 +329,13 @@ const reconciled = row({ stage_actor: { kind: 'hive', why: '@zoe pushed abc1234 
 assert.ok(/^CI \/ Review\b/.test(litWord(reconciled)), litWord(reconciled));
 assert.ok(reconciled.includes('pushed abc1234 · re-review pending'), reconciled);
 assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(reconciled), reconciled);
+// A retry on the same head is not a fabricated push.
+const retry = row({ head: 'abc1234', stage_actor: { kind: 'hive', why: 'checks pending again — no new push requested' },
+  caption: 'checks pending again on the current head — no new push requested', presence: null, rework: null,
+  push: { state: 'checking', sha: 'abc1234', next: 'ci' } });
+assert.ok(/^CI \/ Review\b/.test(litWord(retry)), litWord(retry));
+assert.ok(retry.includes('checks pending · no new push requested'), retry);
+assert.ok(!/waiting on @zoe to push|Needs @zoe|pushed abc1234/.test(retry), retry);
 // A single covering PR keeps the issue's row identity. Its via_pr view
 // must use the exact same push state rather than asking for another push.
 const covered = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 9, kind: 'issue', stage: 40,

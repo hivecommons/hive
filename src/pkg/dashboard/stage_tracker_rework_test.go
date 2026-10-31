@@ -231,7 +231,7 @@ const adopt = Object.assign({}, working, { stage: 72, adoption: { author: 'Danat
 const achip = stageTrackerAdoptionChipHtml(adopt);
 assert.ok(/@Danathar · working<\/span>$/.test(achip), achip);
 assert.ok(achip.includes("picked up the rework 5 min ago"), achip);
-assert.strictEqual(stageTrackerAdoptionChipText(Object.assign({}, adopt, { adoption: Object.assign({}, adopt.adoption, { blocked_by: 'x' }) })), 'not adopted', 'a blocked adoption keeps its own word');
+assert.strictEqual(stageTrackerAdoptionChipText(Object.assign({}, adopt, { adoption: Object.assign({}, adopt.adoption, { blocked_by: 'x' }) })), 'adoption blocked', 'a blocked adoption keeps its own word');
 // Event line: the stage does not change, the pickup does.
 const states = (items) => stageTrackerStateMap(items);
 const before = states([requested]), after = states([acked]);
