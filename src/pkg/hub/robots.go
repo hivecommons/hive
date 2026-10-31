@@ -136,9 +136,10 @@ func (s *HubServer) handleRobotsTxt(w http.ResponseWriter, r *http.Request) {
 
 // Handler is the hub's full HTTP handler: the mux wrapped in the search-engine
 // guard. Start serves this; tests that need the X-Robots-Tag behaviour go
-// through it rather than s.mux.
+// through it rather than s.mux. Activity-only heartbeat updates are routed
+// ahead of the mux (activityUpdateGuard).
 func (s *HubServer) Handler() http.Handler {
-	return searchEngineGuard(s.mux)
+	return searchEngineGuard(s.activityUpdateGuard(s.mux))
 }
 
 // searchEngineGuard stamps X-Robots-Tag: noindex, nofollow on every response
