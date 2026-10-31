@@ -55,7 +55,7 @@ class NativeQueueWorkflows(unittest.TestCase):
         self.assertTrue(all(value == "read" for value in data["permissions"].values()))
         checkout = data["jobs"]["policy"]["steps"][0]["with"]
         self.assertEqual(checkout["ref"],
-                         "${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}")
+                         "${{ github.event.merge_group.base_sha || format('refs/heads/{0}', github.event.pull_request.base.ref) }}")
         self.assertFalse(checkout["persist-credentials"])
         manifest = yaml.safe_load((ROOT / ".github/release-lines.yml").read_text())
         self.assertEqual(manifest["pinned"]["native-queue-policy.yml"], ["v6", "-v4"])

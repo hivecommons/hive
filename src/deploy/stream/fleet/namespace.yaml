@@ -1,0 +1,10 @@
+# Separate from hive-stream (the twitch.tv/hivecommons streamer) so a fault,
+# quota or rollout here cannot touch that stream, and so its stream key is not
+# readable from this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hive-stream-fleet
+  labels:
+    app.kubernetes.io/name: hive-stream-fleet
+    pod-security.kubernetes.io/enforce: baseline

@@ -4459,6 +4459,9 @@
     /* The author `display: block` above outranks the UA `[hidden] { display: none }`
        rule, so without this the portal stayed on screen after `portal.hidden = true`. */
     .config-tooltip-portal[hidden] { display: none; }
+    .contributor-online-tooltip { max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; overflow-wrap: anywhere; }
+    .contributor-online-ids { display: block; list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
+    .contributor-online-ids li { display: block; }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: none; }
     .section-help-mark { text-decoration: none; }
     .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }
@@ -7432,7 +7435,7 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
+      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count contributor-online-trigger" tabindex="0" role="link" aria-label="Contributors" data-keydown-action="ocNavigate" data-arg0="contributors-section" data-zero hidden>0/0</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Intelligence</div>
@@ -7503,7 +7506,6 @@
        block turns it on. Its id is registered in OVERLAY_SELECTOR so the
        existing installModalScrollLock() observer body-locks scroll for free. -->
   <div id="oc-drawer-backdrop"></div>
-
   <!-- Light top bar (hidden by default) -->
   <header id="oc-topbar" class="oc-topbar">
     <div class="oc-topbar-left">
@@ -42907,8 +42909,21 @@ function burnAreaChart() {
       const totalCount = pool.registered;
       const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
       // Same two-part pill as Governor / Overview: "online/total".
-      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
+      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);
       navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
+      if (sidebarBadge) {
+        // Reuse the tooltip node across refreshes so the pill does not grow
+        // one hidden span per poll.
+        let tooltip = sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (!tooltip) {
+          tooltip = document.createElement('span');
+          tooltip.className = 'config-tooltip contributor-online-tooltip';
+          tooltip.hidden = true;
+          sidebarBadge.appendChild(tooltip);
+        }
+        tooltip.innerHTML = contributorsOnlineTooltip(pool);
+        if (_configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
+      }
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
         statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
@@ -42917,7 +42932,19 @@ function burnAreaChart() {
       }
     }
 
-    // contributorsOnlineTitle is the pill tooltip: "3 online · 12 registered
+    function contributorsOnlineTooltip(pool) {
+      const online = Number(pool.online) || 0;
+      const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
+      const ids = pool.online_ids;
+      if (!Array.isArray(ids) || ids.length !== online || ids.some(id => typeof id !== 'string' || !id)) {
+        return summary + '<div>Online ClankeR IDs unavailable</div>';
+      }
+      if (!ids.length) return summary + '<div>No ClankeRs online</div>';
+      return summary + '<div>Online ClankeRs</div><ul class="contributor-online-ids">' +
+        ids.map(id => '<li>' + esc(id) + '</li>').join('') + '</ul>';
+    }
+
+    // contributorsOnlineTitle is the presence summary: "3 online · 12 registered
     // (heartbeat within 15m)". The window is the hub's presence_window, the
     // same one the tracker's "(offline 13m)" caption is judged against.
     function contributorsOnlineTitle(online, total, window) {
@@ -45431,7 +45458,7 @@ function burnAreaChart() {
     }
 
     function configTooltipPointerOver(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { scheduleConfigTooltipOpen(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       // Pointer is over something else: a sibling, a modal overlay that now
@@ -45441,13 +45468,13 @@ function burnAreaChart() {
 
     function configTooltipPointerOut(target, relatedTarget) {
       if (configTooltipOwns(relatedTarget)) return;
-      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info')) return;
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info, .contributor-online-trigger')) return;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info || configTooltipOwns(target)) scheduleConfigTooltipHide();
     }
 
     function configTooltipFocusIn(target) {
-      const info = target && target.closest ? target.closest('.config-info') : null;
+      const info = target && target.closest ? target.closest('.config-info, .contributor-online-trigger') : null;
       if (info) { positionConfigTooltip(info); return; }
       if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
       if (configTooltipIsOpen()) hideConfigTooltip();
@@ -45463,7 +45490,7 @@ function burnAreaChart() {
     document.addEventListener('focusin', (e) => configTooltipFocusIn(e.target));
     document.addEventListener('focusout', (e) => configTooltipFocusOut(e.target, e.relatedTarget));
     document.addEventListener('click', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); });
-    window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true);
+    window.addEventListener('scroll', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); }, true);
     window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); });
 
     // ── Event delegation for actions with user-controlled data ──

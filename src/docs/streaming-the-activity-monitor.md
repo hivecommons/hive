@@ -233,6 +233,110 @@ Review the manifests without applying them:
 kubectl kustomize src/deploy/stream/overlays/hive-hosted-matrix
 ```
 
+## The hivecommonsfleet broadcast
+
+The hub-wide monitor (RFC [#15861](https://github.com/hivecommons/hive/issues/15861),
+proposed by @hanthor) gets its **own** channel,
+[`twitch.tv/hivecommonsfleet`](https://www.twitch.tv/hivecommonsfleet), and
+its own deployment in
+[`src/deploy/stream/fleet/`](../deploy/stream/fleet/kustomization.yaml)
+([#15966](https://github.com/hivecommons/hive/issues/15966)). Everything above
+— the `hive-stream` namespace, `k8s/`, `overlays/hive-hosted/` and the
+`twitch.tv/hivecommons` full-screen Activity Monitor — is untouched by it; a
+CI test (`src/internal/streamdeploy`) pins those files byte for byte.
+
+| | `twitch.tv/hivecommons` | `twitch.tv/hivecommonsfleet` |
+| --- | --- | --- |
+| Manifests | `k8s/` + `overlays/hive-hosted/` | `fleet/` (standalone, shares no resource) |
+| Namespace / Deployment | `hive-stream` / `hive-stream` | `hive-stream-fleet` / `hive-stream-fleet` |
+| Source | hive's spoke dashboard, in-cluster, shared dashboard token | the hub's **public** origin, anonymous — no dashboard credential exists or is accepted |
+| Stream key Secret | `twitch-stream` | `twitch-stream-hivecommonsfleet` |
+| Egress | DNS, spoke Service, public 443/1935 | DNS, public 443/1935 only (no in-cluster rule) |
+| Default | running | **disabled** |
+
+It reuses the same `hive-stream` image. Its ConfigMap sets
+`STREAM_PROFILE=public-safe`, which turns on two guards in the image:
+
+- **`public-safe-gate.sh`** runs before any process starts and exits the
+  container unless *all* of the following hold: `STREAM_ENABLED` is exactly
+  `true`; `PUBLIC_SAFE_POLICY_ACK` equals the current policy version
+  (`hivecommonsfleet-public-safe-v1`); `DASHBOARD_TOKEN` is **unset**;
+  `DASHBOARD_URL` is an `https://` origin and neither it nor `DASHBOARD_PATH`
+  holds the `CHANGE-ME` placeholder; and `TWITCH_STREAM_KEY` is installed (a
+  local dry run with `STREAM_OUTPUT=null` or an absolute local `*.flv` path
+  needs no key; a URL such as `rtmp://…/x.flv` or any other raw
+  `STREAM_OUTPUT` is refused). Shipped defaults fail every one of
+  these, and the Deployment is at `replicas: 0` on top.
+- **The auth proxy runs anonymous.** It refuses to start with a token, strips
+  any `Authorization` or `Cookie` header the browser sends and drops
+  `Set-Cookie` from responses, so no session can form. The kiosk sees exactly
+  what an anonymous visitor of the hub sees, and nothing else.
+
+### Dashboard authentication does not protect Twitch output
+
+A Twitch stream is public. Anything painted in the kiosk is visible to anyone,
+recordable and clippable, whatever login the dashboard or hub requires and
+whoever was allowed to open the page. A user's private, per-user Fleet
+activity view (what *they* may see on the hub) therefore never authorizes a
+broadcast of its rows, identities or repository data. That is why this
+deployment carries no dashboard credential at all instead of a "viewer"
+token: there is no account whose visibility could leak onto the stream.
+
+### Public-safe content policy
+
+Policy version **`hivecommonsfleet-public-safe-v1`**. A view may be streamed
+on `hivecommonsfleet` only when every row and every value it renders is:
+
+1. from a **public** repository (no private-repository rows, titles, numbers,
+   labels or counts broken out per private repository);
+2. information **GitHub already shows publicly** for that item: number,
+   title, state, labels, public author login, CI and merge state;
+3. served to an **anonymous** request — no per-user or per-hive access
+   decision may widen what the page shows;
+4. free of tokens, settings, operator or agent terminal output, chat,
+   e-mail addresses, and any identity beyond public GitHub logins.
+
+Aggregate totals that include private items are allowed only as a single
+fleet-wide number that cannot be attributed to a repository.
+
+Bump the version (here, in `public-safe-gate.sh` and in
+`src/internal/streamdeploy`) whenever this text changes, so an old
+acknowledgement cannot cover new content.
+
+### Enabling it (owner only)
+
+Nothing below is done by this repository or by the hive; it is the owner's
+decision on #15861. Status as of this change: the channel is provisioned; the
+stream key is **not** installed and the public-safe hub view does **not** yet
+exist (it follows the Fleet activity page,
+[#15965](https://github.com/hivecommons/hive/issues/15965)).
+
+1. **Source.** Confirm a hub route renders the public-safe view anonymously
+   and meets the policy above, then set `DASHBOARD_PATH` in
+   `fleet/configmap.yaml` (e.g. with `?kiosk=1`). Open it in a private
+   browser window first: what you see there is what Twitch will show.
+2. **Stream key.** In the `hivecommonsfleet` Creator Dashboard, copy the
+   Primary Stream key and install it without echoing it or writing it to a
+   file, a commit or an issue comment:
+
+   ```sh
+   kubectl --context hive-oke apply -k src/deploy/stream/fleet   # namespace, config, NetworkPolicy; replicas 0
+   kubectl --context hive-oke -n hive-stream-fleet create secret generic twitch-stream-hivecommonsfleet \
+     --from-literal=TWITCH_STREAM_KEY="$(read -rs k; printf %s "$k")"
+   ```
+
+3. **Enable.** Set `STREAM_ENABLED: "true"` and
+   `PUBLIC_SAFE_POLICY_ACK: "hivecommonsfleet-public-safe-v1"` in the
+   ConfigMap, re-apply, then
+   `kubectl --context hive-oke -n hive-stream-fleet scale deploy/hive-stream-fleet --replicas=1`.
+   The logs must show `public-safe gate: enabled` and
+   `authproxy: … (public-safe: anonymous, no credential, no cookies)`.
+
+To stop it, scale back to `0` or set `STREAM_ENABLED: "false"`; the
+`hivecommons` stream is unaffected either way. A gate refusal reads
+`stream: public-safe gate: refusing to start: <reason>` in the pod log and
+names the missing condition without printing any value.
+
 ## Display mode and URL views
 
 For an attended screen (a wall monitor or TV someone can walk up to), use
