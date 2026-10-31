@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -167,7 +168,7 @@ func (e *Env) remotePS(ctx context.Context, c *api.Client, args []string) int {
 // following the ring buffer over SSE until ctx ends.
 func (e *Env) remoteLogs(ctx context.Context, c *api.Client, args []string) int {
 	fs := e.subFlags("logs")
-	lines := fs.Int("n", defaultLogLines, "lines to print from the pane or buffer")
+	lines := fs.Int("n", defaultLogLines, "lines to print from the pane or buffer; with -f, buffered lines to replay before following")
 	buffer := fs.Bool("buffer", false, "read the ring buffer instead of the live pane")
 	full := fs.Bool("full", false, "capture the whole scrollback")
 	follow := fs.Bool("f", false, "follow the ring buffer until interrupted")
@@ -189,7 +190,15 @@ func (e *Env) remoteLogs(ctx context.Context, c *api.Client, args []string) int 
 	}
 	name := fs.Arg(0)
 	if *follow {
-		err := c.FollowLogs(ctx, name, func(chunk api.LogChunk) error {
+		// Only an explicit -n bounds the replay; otherwise the server sends
+		// its whole follow window, as before.
+		replay := -1
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "n" {
+				replay = *lines
+			}
+		})
+		err := c.FollowLogsLines(ctx, name, replay, func(chunk api.LogChunk) error {
 			for _, line := range chunk.Lines {
 				fmt.Fprintln(e.Stdout, line)
 			}

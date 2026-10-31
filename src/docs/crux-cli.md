@@ -56,7 +56,9 @@ Global flags go before the subcommand:
 `--interval D` (output poll interval, default 1s), `--no-socket`.
 
 `logs -f` follows the agent's ring buffer; it is available in remote mode
-only, where the server streams it.
+only, where the server streams it. An explicit `-n N` replays the last N
+buffered lines before following (`-n 0` shows only new lines); without `-n`
+the server replays its whole follow window.
 
 Exit codes: 0 ok, 1 runtime error, 2 usage.
 
