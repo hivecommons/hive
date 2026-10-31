@@ -372,7 +372,7 @@ assert.strictEqual(by.open.enabled, true);
 const menu = stageTrackerMenuHtml(as, 'o/r#1 · Parked');
 assert.ok(menu.startsWith('<div class="ham-menu ham-menu-hinted" role="menu"'), 'the rescan hint makes it a hinted menu: ' + menu.slice(0, 60));
 assert.ok(menu.includes('<div class="ham-menu-head">o/r#1 · Parked</div>'));
-assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 11, 'six top-level items + five decide options');
+assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 12, 'seven top-level items including Close issue + five decide options');
 assert.ok(menu.includes('data-ham-act="hold" tabindex="-1" aria-disabled="true" title="' + STAGE_TRACKER_WHY_WRITE + '"'), 'disabled items carry the reason');
 assert.ok(menu.includes('aria-haspopup="menu" aria-expanded="false"'), 'Decide is a collapsed submenu');
 assert.ok(menu.includes('<div class="ham-submenu" role="menu" aria-label="Decide…">'));
@@ -1373,7 +1373,7 @@ assert.strictEqual(as[1].enabled, false); assert.strictEqual(as[1].why, STAGE_TR
 // The issue row over its one asking PR: the same lead answers, acting on
 // PR #317 (runRowAction resolves the decision target to the PR).
 as = stageTrackerRowActions(issue316, merger);
-assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy']);
 assert.strictEqual(as[0].target.number, 317); assert.strictEqual(as[0].target.kind, 'pr');
 assert.strictEqual(as[2].label, 'Decide PR #317…');
 assert.strictEqual(stageTrackerDecisionTarget(issue316).number, 317, 'a human-merge reason parks the PR for the issue row');
