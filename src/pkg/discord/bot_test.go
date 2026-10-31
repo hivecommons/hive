@@ -1213,7 +1213,9 @@ func TestSendEmbedTo_RateLimit429RetrySuccess(t *testing.T) {
 
 	b := newTestBot(ts, "status")
 	var slept time.Duration
-	b.sleep = func(d time.Duration) { slept += d }
+	prev := rateLimitSleep
+	rateLimitSleep = func(d time.Duration) { slept += d }
+	t.Cleanup(func() { rateLimitSleep = prev })
 
 	msgID, err := b.SendEmbedTo("rfc-chan", "", Embed{Title: "RFC"})
 	if err != nil {
@@ -1241,14 +1243,16 @@ func TestSendEmbedTo_RateLimit429RetryPersistentFailure(t *testing.T) {
 	defer ts.Close()
 
 	b := newTestBot(ts, "status")
-	b.sleep = func(time.Duration) {}
+	prev := rateLimitSleep
+	rateLimitSleep = func(time.Duration) {}
+	t.Cleanup(func() { rateLimitSleep = prev })
 
 	_, err := b.SendEmbedTo("rfc-chan", "", Embed{Title: "RFC"})
 	if err == nil {
 		t.Fatal("expected error after persistent 429")
 	}
-	if attempts != 2 {
-		t.Errorf("attempts = %d, want exactly 2 (at most one retry)", attempts)
+	if attempts != maxRateLimitRetries+1 {
+		t.Errorf("attempts = %d, want %d (bounded retries)", attempts, maxRateLimitRetries+1)
 	}
 	if !strings.Contains(err.Error(), "429") {
 		t.Errorf("err = %v, want 429", err)

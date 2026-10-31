@@ -56,6 +56,10 @@ type rfcNotifyState struct {
 	// newPublisher builds the Discord publisher; nil builds botPublisher.
 	// Tests inject a recorder (rfcnotify.Poster satisfies Publisher).
 	newPublisher func(token, channel string) rfcnotify.Publisher
+	// threads is the Discord surface of threads mode, built for channel;
+	// newThreads builds it (nil means discordRFCThreads). Tests inject a fake.
+	threads    rfcnotify.Threads
+	newThreads func(token, channel string) rfcnotify.Threads
 }
 
 // rfcNotifyState lazily builds the boot's notice state.
@@ -129,6 +133,17 @@ func (s *rfcNotifyState) ensure(cfg *config.Config, repos int, logger *slog.Logg
 			s.pub = botPublisher{bot: bot, channel: channel}
 		}
 		s.channel = channel
+		s.threads = nil
+	}
+	if gates.threads {
+		if s.threads == nil {
+			newThreads := s.newThreads
+			if newThreads == nil {
+				newThreads = discordRFCThreads(logger)
+			}
+			s.threads = newThreads(token, channel)
+		}
+		s.sweeper.SetThreads(s.threads)
 	}
 	return true
 }
@@ -145,6 +160,53 @@ func (p botPublisher) Post(content string) error {
 
 func (p botPublisher) PostCard(content string, embed rfcnotify.Embed) (string, error) {
 	return p.bot.SendEmbedTo(p.channel, content, embed)
+}
+
+// discordRFCThreads builds the threads-mode Discord surface for the RFC
+// channel. It posts through the bot token like botPublisher, without
+// starting the command bot.
+func discordRFCThreads(logger *slog.Logger) func(token, channel string) rfcnotify.Threads {
+	return func(token, channel string) rfcnotify.Threads {
+		return rfcDiscordThreads{bot: discord.NewBot(discord.Config{Token: token}, logger), channel: channel}
+	}
+}
+
+// rfcDiscordThreads adapts a discord.Bot to rfcnotify.Threads for one channel.
+type rfcDiscordThreads struct {
+	bot     *discord.Bot
+	channel string
+}
+
+func (d rfcDiscordThreads) Post(content, nonce string) (string, error) {
+	return d.bot.PostMessageNonce(d.channel, content, nonce)
+}
+
+func (d rfcDiscordThreads) StartThread(messageID, name string) (string, error) {
+	return d.bot.StartThreadFromMessage(d.channel, messageID, name)
+}
+
+func (d rfcDiscordThreads) Send(threadID, content string) error {
+	return d.bot.SendMessageTo(threadID, content)
+}
+
+func (d rfcDiscordThreads) Echo(content string) error {
+	return d.bot.SendMessageTo(d.channel, content)
+}
+
+func (d rfcDiscordThreads) ThreadURL(threadID string) (string, error) {
+	return d.bot.ThreadURL(threadID)
+}
+
+func (d rfcDiscordThreads) Recent(limit int) ([]rfcnotify.Message, error) {
+	msgs, err := d.bot.RecentMessages(d.channel, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]rfcnotify.Message, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, rfcnotify.Message{ID: m.ID, Content: m.Content, Nonce: m.Nonce, Self: m.Self})
+	}
+	return out, nil
 }
 
 type rfcRepoVisibility struct {
@@ -228,6 +290,13 @@ func newRFCNotifySource(c *github.Client, state *rfcNotifyState) rfcnotify.Sourc
 		return nil
 	}
 	return rfcNotifySource{c: c, state: state}
+}
+
+// Comment implements rfcnotify.Commenter for the opt-in thread backlink. It
+// goes through the per-issue bot comment budget, so a backlink can never
+// flood an issue.
+func (s rfcNotifySource) Comment(ctx context.Context, repo string, number int, body string) error {
+	return s.c.CreateIssueCommentBudgeted(ctx, repo, number, body)
 }
 
 func (s rfcNotifySource) ListOpen(ctx context.Context) ([]rfcnotify.Issue, error) {
@@ -388,8 +457,11 @@ func runRFCNotifySweep(ctx context.Context, src rfcnotify.Source, repos int, cfg
 			dashSrv.AuditLogRecord("system", "rfc-notify", fmt.Sprintf("channel=%s %s", state.channel, res.Posted[i]), "", ev.Issue.Repo, ev.Issue.Number)
 		}
 	}
-	if len(res.Posted) > 0 || res.Errors > 0 || res.Withheld > 0 || res.Unresolved > 0 {
-		logger.Info("rfc notify sweep", "posted", len(res.Posted), "errors", res.Errors, "withheld", res.Withheld, "unresolved", res.Unresolved)
+	if dashSrv != nil && (res.Threads > 0 || res.Reconciled > 0 || res.Backlinks > 0 || res.Errors > 0) {
+		dashSrv.AuditLogRecord("system", "rfc-notify", fmt.Sprintf("channel=%s threads=%d reconciled=%d backlinks=%d errors=%d", state.channel, res.Threads, res.Reconciled, res.Backlinks, res.Errors), "", "", 0)
+	}
+	if len(res.Posted) > 0 || res.Errors > 0 || res.Withheld > 0 || res.Unresolved > 0 || res.Threads > 0 || res.Reconciled > 0 || res.Backlinks > 0 {
+		logger.Info("rfc notify sweep", "posted", len(res.Posted), "errors", res.Errors, "withheld", res.Withheld, "unresolved", res.Unresolved, "threads", res.Threads, "reconciled", res.Reconciled, "backlinks", res.Backlinks)
 	}
 	return res
 }
