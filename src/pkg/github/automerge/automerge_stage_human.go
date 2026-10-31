@@ -453,6 +453,14 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	if requester := strings.TrimSpace(obs.Detail.HumanChangeRequester); requester != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanChangeRequestHead) == obs.HeadSHA {
 		e.HumanChangeRequester = requester
 	}
+	if obs.Reason == autoMergeReasonMergeRefusedReview {
+		// GitHub wants an approving review, and someone's change request
+		// still stands: the ask is that reviewer's re-review, not an
+		// approval over it (projectbluefin/utah-packages#633).
+		if cause := mergeRefusedReviewChangeRequestCause(obs.HeadSHA, obs.Detail.StandingChangeRequests); cause != "" {
+			e.CauseReason = cause
+		}
+	}
 	if rec, ok := c.stageStoreOrShared().Get(key); ok && rec.AdoptedHead != "" && rec.AdoptDiffFence != "" && rec.AdoptDiffFence == obs.Reason && e.CauseReason != "" {
 		// An adopted head whose diff fence is the blocker: the 085 note
 		// says the hive repaired it and why it still will not merge it.
@@ -636,6 +644,70 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		return ""
 	}
 	return prstage.CauseLaneReported(reason)
+}
+
+// mergeRefusedReviewChangeRequestCause is the 085 prose for GitHub's
+// "approving review required" merge refusal when change requests still
+// stand on the PR ("" when none does, and the plain approval ask applies).
+// It names each reviewer, the commit they reviewed and what the hive has
+// pushed since, and asks them to re-review or a maintainer to dismiss the
+// review. On projectbluefin/utah-packages#633 the hive asked three times
+// for an Approve review on a head it had reworked for @hanthor's change
+// request, without ever naming it.
+func mergeRefusedReviewChangeRequestCause(head string, requests []prstage.ChangeRequestRef) string {
+	if len(requests) == 0 {
+		return ""
+	}
+	head = strings.TrimSpace(head)
+	var said, names []string
+	for _, r := range requests {
+		login := strings.TrimSpace(r.Login)
+		if login == "" {
+			continue
+		}
+		names = append(names, "@"+login)
+		var b strings.Builder
+		b.WriteString("@" + login + " requested changes")
+		if !r.SubmittedAt.IsZero() {
+			b.WriteString(" on " + r.SubmittedAt.UTC().Format("2006-01-02"))
+		}
+		commit := strings.TrimSpace(r.CommitID)
+		switch {
+		case commit != "" && commit == head:
+			b.WriteString(" on this head")
+		case commit != "":
+			b.WriteString(" at `" + stagelabels.ShortSHA(commit) + "`")
+		}
+		if url := strings.TrimSpace(r.URL); url != "" {
+			b.WriteString(" ([review](" + url + "))")
+		}
+		if commit != "" && head != "" && commit != head {
+			b.WriteString(", and the hive has pushed since")
+			if i := strings.Index(r.URL, "/pull/"); i > 0 {
+				b.WriteString(" ([changes since that review](" + r.URL[:i] + "/compare/" + commit + "..." + head + "))")
+			}
+		}
+		said = append(said, b.String())
+	}
+	if len(said) == 0 {
+		return ""
+	}
+	return "GitHub refused the merge: branch protection requires an approving review from someone with write access, and the Hive App cannot give it. " +
+		"A change request still stands on this PR: " + strings.Join(said, "; ") + ". " +
+		"GitHub keeps a change request standing across pushes until its reviewer re-reviews or it is dismissed, so settle it before anyone approves: " +
+		joinNames(names) + ", please re-review this head; if the request no longer applies, a maintainer can dismiss the review. " +
+		"The hive retries once GitHub reports the PR unblocked, or within 30 minutes"
+}
+
+// joinNames renders "a", "a and b", "a, b and c".
+func joinNames(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // postHumanEntry writes the 085 / 090 entry comment once per stage visit,

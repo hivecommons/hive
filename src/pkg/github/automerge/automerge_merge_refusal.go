@@ -43,6 +43,20 @@ const mergeRefusalPruneAt = 1024
 // "1 review requesting changes by reviewers with write access.".
 var mergeRefusedReviewRE = regexp.MustCompile(`(?i)\d+ approving reviews? (?:is|are) required|\d+ reviews? requesting changes`)
 
+// "Pull Request has merge conflicts": the base and head conflict at the
+// time of the call, whatever the PR read before it said.
+var mergeConflictRE = regexp.MustCompile(`(?i)pull request has merge conflicts`)
+
+// mergeConflictMergeError reports GitHub's 405 for a merge call on a PR
+// that has merge conflicts.
+func mergeConflictMergeError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusMethodNotAllowed {
+		return false
+	}
+	return mergeConflictRE.MatchString(ghErr.Message) || mergeConflictRE.MatchString(ghErr.Error())
+}
+
 // "Merge commits are not allowed on this repository." and the squash and
 // rebase forms.
 var mergeRefusedMethodRE = regexp.MustCompile(`(?i)(?:merge commits|squash merges|rebase merges) are not allowed on this repository`)
@@ -206,6 +220,13 @@ func (c *Engine) refusedMerge(a mergeAttempt, err error) string {
 	if mergeQueueRequiredMergeError(err) {
 		c.noteMergeQueueBase(a.owner, a.repo, a.base)
 		return autoMergeReasonMergeQueueRequired
+	}
+	if mergeConflictMergeError(err) {
+		// Not remembered: GitHub's mergeable_state says dirty on the next
+		// read, and the lanes skip on that. Reported as the conflict it is,
+		// not merge-failed, which parked the PR at 080 for a pass
+		// (projectbluefin/utah-packages#633).
+		return "conflicting"
 	}
 	reason := mergeRefusalReason(err)
 	if reason == "" || c == nil {

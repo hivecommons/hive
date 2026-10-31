@@ -1446,6 +1446,21 @@ func prMergeableStateConflicting(pr *gh.PullRequest) bool {
 	return state == "dirty" || state == "conflicting"
 }
 
+// mergeCallConflicting reports whether GitHub says pr cannot merge for
+// conflicts: mergeable_state dirty, or, while the state is still unknown,
+// mergeable explicitly false. A known state other than dirty wins over the
+// bool, as in hgithub.MergeableFromState.
+func mergeCallConflicting(pr *gh.PullRequest) bool {
+	if prMergeableStateConflicting(pr) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(pr.GetMergeableState())) {
+	case "", "unknown":
+		return pr.Mergeable != nil && !pr.GetMergeable()
+	}
+	return false
+}
+
 // SweepTrustedAuthorAutoMerges merges green PRs whose human author already
 // holds the configured authorized-users role and, by default, GitHub
 // repository write/maintain/admin permission. This is an operator opt-in tier:
@@ -2194,6 +2209,14 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	if currentHeadSHA == "" || currentHeadSHA != evaluatedHeadSHA {
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
+	}
+	// The first read can predate GitHub's conflict computation (it reports
+	// "unknown" while the base just moved), so the read right before the
+	// merge is asked again: a PR GitHub now calls conflicting is skipped
+	// without a merge call that can only be refused (405 "Pull Request has
+	// merge conflicts", projectbluefin/utah-packages#633).
+	if mergeCallConflicting(current) {
+		return reject("conflicting")
 	}
 	// Review gate (#12592), on the re-verified head immediately before the
 	// merge call: the swarm verdict for exactly the SHA about to merge.
