@@ -25,6 +25,9 @@
 // presentation only: the cursor stays, sound keeps the user's setting, it
 // never writes layout or theme to localStorage, and it hides the row action
 // affordances. Kiosk wins when both flags are present.
+// Pop-out and display mode also set body.ham-chromeless, the one class the
+// shared chrome-less layout in css/popout.css keys on (full screen adds it at
+// runtime); popout-mode and display-mode keep their view-specific rules.
 (function(){
   var kiosk=false, popout=false, display=false, sound=true;
   try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
@@ -40,12 +43,14 @@
     document.body.classList.add('kiosk-mode');
   }else if(window.HIVE_POPOUT){
     document.body.classList.add('popout-mode');
+    document.body.classList.add('ham-chromeless');
   }
   if(kiosk||window.HIVE_POPOUT){
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
   if(window.HIVE_DISPLAY){
     document.body.classList.add('display-mode');
+    document.body.classList.add('ham-chromeless');
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();

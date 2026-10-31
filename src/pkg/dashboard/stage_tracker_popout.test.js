@@ -51,6 +51,7 @@ function load(env) {
     pick(/function stageTrackerFullscreenTarget\(\) \{[\s\S]*?\n    \}\n/, 'stageTrackerFullscreenTarget'),
     pick(/function stageTrackerFullscreenButton\(\) \{[\s\S]*?\n    \}\n/, 'stageTrackerFullscreenButton'),
     pick(/function stageTrackerIsFullscreen\(\) \{[\s\S]*?\n    \}\n/, 'stageTrackerIsFullscreen'),
+    pick(/function stageTrackerSetFullscreenLayout\(on\) \{[\s\S]*?\n    \}\n/, 'stageTrackerSetFullscreenLayout'),
     pick(/function stageTrackerFullscreenLabel\(isFull\) \{[\s\S]*?\n    \}\n/, 'stageTrackerFullscreenLabel'),
     pick(/function stageTrackerRenderFullscreenButton\(\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRenderFullscreenButton'),
     pick(/function toggleStageTrackerFullscreen\(\) \{[\s\S]*?\n    \}\n/, 'toggleStageTrackerFullscreen'),
@@ -107,13 +108,13 @@ test('⧉ opens one named popup window with the popup features and focuses it; a
 test('popout mode: boot flags the body before paint and the CSS removes every piece of chrome', () => {
   assert.ok(html.includes("popout=u.searchParams.get('popout')==='1'"), 'boot.js reads ?popout=1');
   assert.ok(html.includes("window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };"));
-  assert.ok(html.includes("document.body.classList.add('popout-mode');"));
+  assert.ok(html.includes("document.body.classList.add('popout-mode');\n    document.body.classList.add('ham-chromeless');"), 'popout shares the chrome-less layout class');
   assert.ok(html.includes("if(kiosk||window.HIVE_POPOUT){\n    if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');"), 'popout lands on the tracker section');
   for (const rule of [
-    'body.popout-mode .oc-sidebar, body.popout-mode .oc-sidebar-resize, body.popout-mode .oc-topbar,',
-    'html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }',
-    'body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),',
-    'body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }',
+    'body.ham-chromeless .oc-sidebar, body.ham-chromeless .oc-sidebar-resize, body.ham-chromeless .oc-topbar,',
+    'html body.ham-chromeless #oc-topbar[id] { display: none !important; }',
+    'body.ham-chromeless #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section) { display: none !important; }',
+    'body.popout-mode #welcome-overlay, body.popout-mode .nps-card,',
     'body.popout-mode .ham-popout-return { display: inline-flex; align-items: center; }',
     'body.popout-mode .ham-popout-btn, body.ham-fullscreen .ham-popout-btn,',
   ]) assert.ok(html.includes(rule), 'missing CSS rule: ' + rule);
@@ -161,12 +162,14 @@ test('⛶ requests full screen on the document, sets body.ham-fullscreen and fli
   assert.strictEqual(await api.toggleStageTrackerFullscreen(), true);
   assert.deepStrictEqual(root.calls, ['request']);
   assert.ok(body.classList.contains('ham-fullscreen'));
+  assert.ok(body.classList.contains('ham-chromeless'), 'full screen takes the shared chrome-less layout');
   assert.strictEqual(btn.textContent, '⛶ Exit full screen');
   assert.strictEqual(btn.attrs['aria-pressed'], 'true');
   assert.match(btn.title, /^Exit full screen/);
   assert.strictEqual(await api.toggleStageTrackerFullscreen(), true);
   assert.deepStrictEqual(root.calls, ['request', 'exit']);
   assert.ok(!body.classList.contains('ham-fullscreen'));
+  assert.ok(!body.classList.contains('ham-chromeless'), 'leaving full screen drops the layout in the main window');
   assert.strictEqual(btn.textContent, '⛶');
   assert.strictEqual(btn.attrs['aria-pressed'], 'false');
   // Esc (native exit) fires fullscreenchange with no fullscreenElement: the layout drops.
@@ -176,11 +179,25 @@ test('⛶ requests full screen on the document, sets body.ham-fullscreen and fli
   assert.ok(!body.classList.contains('ham-fullscreen'));
 });
 
+test('leaving full screen in a pop-out or display keeps the chrome-less layout the URL asked for', async () => {
+  for (const mode of ['popout-mode', 'display-mode']) {
+    const { api, body } = load();
+    body.classList.add(mode);
+    body.classList.add('ham-chromeless');
+    assert.strictEqual(await api.toggleStageTrackerFullscreen(), true);
+    assert.ok(body.classList.contains('ham-fullscreen') && body.classList.contains('ham-chromeless'), mode);
+    assert.strictEqual(await api.toggleStageTrackerFullscreen(), true);
+    assert.ok(!body.classList.contains('ham-fullscreen'), mode);
+    assert.ok(body.classList.contains('ham-chromeless'), mode + ' keeps ham-chromeless');
+  }
+});
+
 test('a refused requestFullscreen rolls the layout back and toasts', async () => {
   const { api, body, root } = load();
   root.requestFullscreen = () => Promise.reject(new Error('denied'));
   assert.strictEqual(await api.toggleStageTrackerFullscreen(), false);
   assert.ok(!body.classList.contains('ham-fullscreen'));
+  assert.ok(!body.classList.contains('ham-chromeless'));
   assert.match(api.toasts[0].msg, /denied/);
 });
 
