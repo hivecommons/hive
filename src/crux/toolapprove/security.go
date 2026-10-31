@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -139,12 +140,14 @@ const rmRootTargetPattern = `(/+\.{0,2})+\*?|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,
 // any spelling: -r/-R or --recursive mark the removal recursive, -- ends the
 // options, and every other option (--force, --no-preserve-root, -v, ...) is
 // skipped. GNU rm refuses "rm -rf /" by default; "rm -rf --no-preserve-root /"
-// is the spelling that actually removes it, and it must not pass clean.
+// is the spelling that actually removes it, and it must not pass clean. The
+// command word is matched by its base name, so /bin/rm and /usr/bin/rm are
+// read the same way as a bare rm.
 func isDestructiveRm(cmd string) bool {
 	for _, simple := range shellSeparatorRe.Split(cmd, -1) {
 		fields := strings.Fields(simple)
 		for i, f := range fields {
-			if !strings.EqualFold(f, "rm") {
+			if !isRmCommandWord(f) {
 				continue
 			}
 			if rmRemovesRoot(fields[i+1:]) {
@@ -156,6 +159,12 @@ func isDestructiveRm(cmd string) bool {
 }
 
 var shellQuoteReplacer = strings.NewReplacer(`"`, "", `'`, "")
+
+// isRmCommandWord reports whether field names the rm binary, either bare or
+// by path (/bin/rm, /usr/bin/rm, ./rm), ignoring shell quotes.
+func isRmCommandWord(field string) bool {
+	return strings.EqualFold(path.Base(shellQuoteReplacer.Replace(field)), "rm")
+}
 
 func rmRemovesRoot(args []string) bool {
 	recursive, rootTarget, endOfOptions := false, false, false
