@@ -348,6 +348,28 @@ func (b *Bot) StartThreadFromMessage(channelID, messageID, name string) (string,
 	return th.ID, nil
 }
 
+// EditMessage replaces the content of a message the bot posted in
+// channelID (PATCH /channels/{c}/messages/{m}). Like SendMessageTo it never
+// pings anyone. A 429 is retried within the same bound as every call.
+func (b *Bot) EditMessage(channelID, messageID, content string) error {
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(messageID) == "" {
+		return fmt.Errorf("discord edit: channel id and message id are required")
+	}
+	url := fmt.Sprintf("%s/channels/%s/messages/%s", discordAPIBase, channelID, messageID)
+	return b.do(http.MethodPatch, url, messagePayload(content), nil)
+}
+
+// RenameChannel renames a channel or thread (PATCH /channels/{c}). The name
+// is truncated to Discord's 100 characters. A 429 is retried within the
+// same bound as every call.
+func (b *Bot) RenameChannel(channelID, name string) error {
+	name = truncateRunes(strings.TrimSpace(name), threadNameLimit)
+	if strings.TrimSpace(channelID) == "" || name == "" {
+		return fmt.Errorf("discord rename: channel id and name are required")
+	}
+	return b.do(http.MethodPatch, fmt.Sprintf("%s/channels/%s", discordAPIBase, channelID), map[string]any{"name": name}, nil)
+}
+
 // ChannelMessage is one message from a channel's history.
 type ChannelMessage struct {
 	ID      string
