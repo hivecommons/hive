@@ -2,58 +2,37 @@
 
 ## Base preparation visibility
 
-A directly visible **Preparation queue** overview above the pipeline reuses the
-train's rail, marker and header styling without seating preparation work in a
-ready merge train. A confirmed owner reads **Preparing** and confirmed waiters
-are numbered in durable FIFO order of first qualifying admission, not PR
-creation time or number. This is preparation order, not guaranteed merge order:
-independently ready PRs may merge, invalid tickets can leave, and changed work
-may qualify again at the end of the FIFO.
+The Activity Monitor shows a compact **Preparation train** pill directly above
+the actual tracker items and the original train's thin gold side rail through
+their rows. Existing train styling and theme tokens supply its spacing, border,
+markers and font. A white marker identifies an exact-current preparation owner;
+an outlined marker identifies unverified observations. Neither changes CI /
+Review chevrons or creates a ready or native queue seat.
 
-The overview contains references to the actual PR rows, not copied or reparented
-pipeline rows. Existing custom sorts, filters, pages, collapsed repo groups and
-multiple-PR issue trees remain unchanged. Only PRs actually drawn on the current
-page receive a rail entry; missing members are explicitly identified as on
-another page/collapsed repo or hidden by the current filters. A member can keep
-its true waiting ordinal when earlier confirmed members are not on the page.
-Redundant preparation/behind-owner pills are suppressed only on PRs visibly
-represented by that rail. Outside it the existing pills remain useful fallbacks;
-unverified warnings and real CI / Review / held signals are never suppressed.
-The gold header chip/popover no longer repeats preparation counts or tickets
-when the rail is present, and is hidden when no genuine ready train exists.
-Distinct ready-train information remains available in its existing train view
-and ready-only queue popover; preparation is never promoted into those seats.
+Subdued comments inside the corresponding PR row retain the current pipeline
+caption and add base-refresh context, known ticket age, and the hosting issue
+when nested. Redundant preparation-owner and waiting-behind badges are suppressed
+only where that inline context is actually rendered. Other review, CI, hold and
+ready-train signals remain unchanged. The gold ready-queue popover does not
+duplicate preparation information; native observations stay separate.
 
-Unverified recorded owners or tickets have a separate, unnumbered note. An
-unverified waiting ticket prevents confirming the ordinal of later tickets;
-their relative FIFO order remains visible but their position reads unverified.
-No old admission-head proof is transferred to a refreshed head. Tooltips explain
-the distinction from review approval, readiness and native queue membership.
-The rail uses a labelled region/list, ordinary links, existing theme tokens,
-and static markers with no animation (including reduced-motion mode). It reads
-the existing cached tracker payload and adds no polling or store reads.
+Preparation FIFO follows first qualifying admission, not PR creation time or
+number. Sorts, filters, pagination, collapsed repositories and linked issue trees
+are unchanged: a rail ends before unrelated or backwards-ordered items, with a
+continuation pill when the group resumes. A dashed rail marks missing FIFO
+members or linked-child order that differs from FIFO. Mixed issue trees mark
+only the actual preparation children, without moving or copying them.
 
-The Activity Monitor's existing **Merge queue** chip also shows durable base
-preparation tickets for repositories using the current-base gate, even when no
-ready merge train exists. Its popover distinguishes the recorded owner from FIFO
-waiting tickets and shows their admitted head, current snapshot head, ticket age,
-and the existing pipeline caption when those heads match. Matching PR rows gain
-**Preparing base** or **Waiting for preparation behind #N** annotations; their
-underlying CI / Review stages do not change.
+Keyboard-focusable and hoverable node/header help provides exact identities,
+snapshot time when known, admission versus current heads, unverified positions,
+and off-page/filtered members. Unknown predecessors prevent confirmed waiting
+ordinals. Unreadable snapshots explicitly say unavailable, not zero work.
+Omitted preparation policy adds no train; inactive tickets are excluded.
 
-The waiting count includes only open PR snapshots with matching ticket heads.
-Known closed, merged, held, draft, or expired tickets are inactive and excluded
-from the displayed queue and active count; unmatched tickets remain explicitly
-unverified, not active waiters. Persisted FIFO ticket order is not a promise of
-actual merge order.
-
-These are persisted lifecycle observations, not proof of green exact-head CI,
-review approval, a ready train seat, or GitHub native queue membership. Changed
-heads, held/draft/expired tickets, absent PRs, and unreadable/missing preparation
-state are explicitly unverified or inactive. An owner may legitimately have a
-different head after a refresh; this read-only view does not certify that change.
-The existing tracker cache and refresh paths update this view; opening it never
-admits, expires, or promotes work.
+These are read-only lifecycle observations, not review approval, green exact-head
+CI or guaranteed merge order. Refreshed heads receive no old-head proof. The
+existing tracker cache and refresh paths update comments and rail membership;
+the view adds no polling, animation, admission, expiration or promotion.
 
 The spoke dashboard is the operator UI served from
 `src/pkg/dashboard/static/index.html`. That file is **generated**: edit the
