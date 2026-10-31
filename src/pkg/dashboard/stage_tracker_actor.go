@@ -23,13 +23,22 @@ import (
 // dependabot: cog) or StageActorNone (nobody is working on it right now —
 // the SPA leads its tooltip with STAGE_TRACKER_NOBODY_LEAD, then Why). Login names the account or agent when
 // known; Since is when the move became theirs (the stage entry time); Why
-// is the plain-words reason, always set.
+// is the plain-words reason, always set. HumanReason is set exactly when
+// Kind is StageActorHuman: at most stageTrackerHumanReasonMax runes saying
+// what the person is wanted for ("#15759 needs a decision", "workflow
+// files"), which the SPA renders after the chevron word so the 👤 marker
+// never ships without its why (hivecommons/hive#15773); Why stays the full
+// question for the tooltip.
 type StageTrackerActor struct {
-	Kind  string     `json:"kind"`
-	Login string     `json:"login,omitempty"`
-	Since *time.Time `json:"since,omitempty"`
-	Why   string     `json:"why"`
+	Kind        string     `json:"kind"`
+	Login       string     `json:"login,omitempty"`
+	Since       *time.Time `json:"since,omitempty"`
+	Why         string     `json:"why"`
+	HumanReason string     `json:"human_reason,omitempty"`
 }
+
+// stageTrackerHumanReasonMax caps HumanReason: it rides the chevron word.
+const stageTrackerHumanReasonMax = 40
 
 const (
 	StageActorHive    = authorKindHive
@@ -121,8 +130,17 @@ func stageTrackerBotWhy(author string) string {
 // stageTrackerStageActor derives the row's actor from its finished fields.
 // Issues at 030/040 and mirrored issues inherit their covering PR's actor
 // in stageTrackerResolveActors once the PR rows are known; here they get
-// the fallback for a PR not in the snapshot.
+// the fallback for a PR not in the snapshot. A person's move carries its
+// HumanReason.
 func stageTrackerStageActor(it StageTrackerItem, workers map[string]stageTrackerWorker, now time.Time) *StageTrackerActor {
+	a := stageTrackerStageActorOf(it, workers, now)
+	if a.Kind == StageActorHuman {
+		a.HumanReason = stageTrackerHumanReason(it, a)
+	}
+	return a
+}
+
+func stageTrackerStageActorOf(it StageTrackerItem, workers map[string]stageTrackerWorker, now time.Time) *StageTrackerActor {
 	a := &StageTrackerActor{Since: it.StageSince}
 	set := func(kind, login, why string) *StageTrackerActor {
 		a.Kind, a.Login, a.Why = kind, login, why
@@ -214,6 +232,74 @@ func stageTrackerStageActor(it StageTrackerItem, workers map[string]stageTracker
 		return set(StageActorHive, "", "in the merge queue — tide or the merge window takes it")
 	}
 	return set(StageActorNone, "", "no stage recorded yet")
+}
+
+// stageTrackerHumanReason is the short "what for" of a person's move on
+// it: the specific thing when the row knows it (the 090 merge-reason word,
+// the 085 lane reason), else what the stage asks of a person. Never "".
+func stageTrackerHumanReason(it StageTrackerItem, a *StageTrackerActor) string {
+	if it.Superseded != nil && it.Superseded.CloserPR > 0 {
+		return "superseded by #" + strconv.Itoa(it.Superseded.CloserPR)
+	}
+	stage := stageByNumber(it.Stage)
+	switch stage {
+	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
+		if step, _ := stageTrackerUnauthorized(it.Reason); step != "" {
+			return stageTrackerClipReason("hive may not " + step)
+		}
+		if clause := stageTrackerDecisionWhy(it); clause != "" {
+			return stageTrackerClipReason(clause)
+		}
+	case stagelabels.ReadyForHumanMerge:
+		if w, ok := stageTrackerHumanMergeReasonWords[it.HumanMergeReason]; ok {
+			return w[0]
+		}
+	case stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor:
+		if a != nil && a.Login != "" {
+			if stage == stagelabels.Fixing {
+				return stageTrackerClipReason("@" + a.Login + " must push a fix")
+			}
+			return stageTrackerClipReason("@" + a.Login + " must act")
+		}
+	}
+	return stageTrackerHumanAsk(stage)
+}
+
+// stageTrackerHumanAsk is what a stage asks of a person, in a few words;
+// an issue riding its PR prefixes the PR ("#15759 needs a decision").
+func stageTrackerHumanAsk(stage stagelabels.Stage) string {
+	switch stage {
+	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
+		return "needs a decision"
+	case stagelabels.ReadyForHumanMerge:
+		return "needs a person to merge"
+	case stagelabels.TriageNeeded:
+		return "needs triage"
+	case stagelabels.PossiblyExisting:
+		return "author confirms the gap"
+	case stagelabels.Claimed:
+		return "a person holds the claim"
+	case stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor:
+		return "waits on its author"
+	case stagelabels.None:
+		return "author marks it ready"
+	}
+	return "needs a person"
+}
+
+// stageTrackerClipReason trims s to stageTrackerHumanReasonMax runes on a
+// word boundary, with an ellipsis when cut.
+func stageTrackerClipReason(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= stageTrackerHumanReasonMax {
+		return s
+	}
+	cut := string(r[:stageTrackerHumanReasonMax-1])
+	if i := strings.LastIndex(cut, " "); i > 0 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,;:—-") + "…"
 }
 
 // stageTrackerDecisionWhy: the clause after "a human decision is owed" —
@@ -371,6 +457,14 @@ func stageTrackerResolveActors(items []StageTrackerItem) {
 		}
 		if lead.StageActor != nil {
 			cp := *lead.StageActor
+			// The issue's chevron names the PR the person is wanted on.
+			if cp.Kind == StageActorHuman {
+				ask := "needs a person"
+				if pr := prs[it.Repo+"#"+strconv.Itoa(lead.Number)]; pr != nil {
+					ask = stageTrackerHumanAsk(stageByNumber(pr.Stage))
+				}
+				cp.HumanReason = stageTrackerClipReason("#" + strconv.Itoa(lead.Number) + " " + ask)
+			}
 			it.StageActor = &cp
 		}
 	}

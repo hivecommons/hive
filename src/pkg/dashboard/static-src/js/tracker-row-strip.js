@@ -28,6 +28,8 @@
       const actorKind = stageTrackerActorKind(item);
       const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
+      // Guarded: test harnesses lift this function by name without stageTrackerHumanReason.
+      const humanReason = typeof stageTrackerHumanReason === 'function' ? stageTrackerHumanReason(item, actorKind) : '';
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
       // "· @odttlnt's clanker · ■ offline 3h": the holder's live state
@@ -100,7 +102,11 @@
         // A detour word that already names the holder ("Returned to
         // @bob's clanker") does not repeat them after the dot.
         const detourHolder = sg.detour && holderShort && sg.detour.text.indexOf(holderShort) >= 0 ? '' : holderHtml;
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}</span>` : (gateWord || `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${holderHtml}</span>`);
+        // A person's move says what for after the word, unless the word
+        // already carries a why ("Ready for human merge · workflow files").
+        const wordText = String(sg.detour ? sg.detour.text : (sg.short || ''));
+        const reasonHtml = active && !sg.cap && humanReason && !gateWord && wordText.indexOf(' · ') < 0 && wordText.toLowerCase().indexOf(humanReason.toLowerCase()) < 0 ? `<span class="ham-human-reason"> · ${esc(humanReason)}</span>` : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${holderHtml}${reasonHtml}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.

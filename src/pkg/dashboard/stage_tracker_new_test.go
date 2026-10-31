@@ -291,6 +291,10 @@ func TestStageTrackerNewRowRendering(t *testing.T) {
 		jsFunc(t, html, "stageTrackerStageActor"),
 		jsFunc(t, html, "stageTrackerActorKind"),
 		jsFunc(t, html, "stageTrackerActorTip"),
+		jsFunc(t, html, "stageTrackerHumanWhy"),
+		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_REASON_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_REASON_FALLBACK"),
+		jsFunc(t, html, "stageTrackerHumanReason"),
 		jsFunc(t, html, "stageTrackerHeadline"),
 		jsFunc(t, html, "stageTrackerSegments"),
 		jsFunc(t, html, "stageTrackerStripItems"),
@@ -360,6 +364,23 @@ for (const it of [
 }
 assert.strictEqual(stageTrackerHeadline({ kind: 'issue', stage: 0, caption: 'No stage recorded yet', labels: ['needs-triage'], modifiers: ['needs-triage'] }), 'Triage needed');
 assert.deepStrictEqual(stageTrackerNewLines({ stage: 0 }, now), []);
+
+// A person's move says what for after the chevron word (hivecommons/hive#15773):
+// the server's human_reason, else the row's reason, never a bare 👤.
+const riding = { repo: 'hivecommons/hive', number: 15503, kind: 'issue', stage: 30, modifiers: [], labels: [], caption: 'Covered by PR #15759 — waiting for a decision on the PR',
+  stage_actor: { kind: 'human', why: 'a human decision is owed — workflow path', human_reason: '#15759 needs a decision' } };
+const ridingStrip = stageTrackerStripItems(riding, stages, null, now, {});
+assert.ok(ridingStrip.includes('<span class="ham-human-reason"> · #15759 needs a decision</span>'), ridingStrip);
+assert.strictEqual((ridingStrip.match(/ham-human-reason/g) || []).length, 1, 'the reason rides the lit chevron only: ' + ridingStrip);
+assert.ok(/title="[^"]*a human decision is owed — workflow path/.test(ridingStrip), 'the full question stays in the tooltip: ' + ridingStrip);
+assert.strictEqual(stageTrackerHumanReason({ stage_actor: { kind: 'human' }, reason: 'workflow files' }, 'human'), 'workflow files');
+assert.strictEqual(stageTrackerHumanReason({ stage_actor: { kind: 'human' } }, 'human'), STAGE_TRACKER_HUMAN_REASON_FALLBACK);
+assert.strictEqual(stageTrackerHumanReason({ stage_actor: { kind: 'hive', human_reason: 'x' } }, 'hive'), '', 'only a person\'s move carries a reason');
+const long = stageTrackerHumanReason({ stage_actor: { kind: 'human', human_reason: 'keep one of the two PRs that both touch the release pipeline' } }, 'human');
+assert.ok(long.length <= STAGE_TRACKER_HUMAN_REASON_MAX && long.endsWith('…'), long);
+// A hive move, and a word that already carries its why, add nothing.
+assert.ok(!stageTrackerStripItems(Object.assign({}, riding, { stage_actor: { kind: 'hive', why: 'an agent is on it' } }), stages, null, now, {}).includes('ham-human-reason'));
+assert.ok(!strip.includes('ham-human-reason'), 'Triage needed · since 8m already says what for: ' + strip);
 `
 	cmd := exec.Command(node, "-")
 	cmd.Stdin = strings.NewReader(script)

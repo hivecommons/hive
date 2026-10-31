@@ -207,6 +207,20 @@
       if (kind !== 'human' && kind !== 'maintainer') return '';
       return String(item.human_merge_reason_text || item.reason || '').trim();
     }
+    // The short "what for" after the chevron word on a person's move
+    // ("PR in progress · #15759 needs a decision"): the server's
+    // stage_actor.human_reason (≤40 chars), else the row's own reason
+    // clipped, else a generic ask — never '' for a human move, so no 👤
+    // marker ships without its why (hivecommons/hive#15773). The full
+    // question stays in the tooltip (stageTrackerActorTip).
+    const STAGE_TRACKER_HUMAN_REASON_MAX = 40;
+    const STAGE_TRACKER_HUMAN_REASON_FALLBACK = 'needs a person';
+    function stageTrackerHumanReason(item, kind) {
+      if (kind !== 'human' && kind !== 'maintainer') return '';
+      const sa = stageTrackerStageActor(item);
+      const r = String((sa && sa.human_reason) || stageTrackerHumanWhy(item, kind) || STAGE_TRACKER_HUMAN_REASON_FALLBACK).replace(/\s+/g, ' ').trim();
+      return r.length > STAGE_TRACKER_HUMAN_REASON_MAX ? r.slice(0, STAGE_TRACKER_HUMAN_REASON_MAX - 1).replace(/\s+\S*$/, '') + '…' : r;
+    }
     function stageTrackerActorTip(item) {
       // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
       const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';

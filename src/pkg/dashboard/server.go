@@ -1765,7 +1765,7 @@ func (w *serverTimingResponseWriter) Unwrap() http.ResponseWriter {
 
 func (w *serverTimingResponseWriter) WriteHeader(status int) {
 	if !w.wrote {
-		w.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.1f", float64(time.Since(w.start).Microseconds())/1000))
+		w.Header().Add("Server-Timing", fmt.Sprintf("app;dur=%.1f", float64(time.Since(w.start).Microseconds())/1000))
 		w.wrote = true
 	}
 	w.ResponseWriter.WriteHeader(status)
