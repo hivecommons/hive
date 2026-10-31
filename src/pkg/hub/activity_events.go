@@ -74,7 +74,13 @@ func (r *activityEventRing) ingest(hiveID string, events []hubactivity.Event, dr
 		if e.Seq <= h.lastSeq {
 			// The spoke trims acknowledged events, so holding one proves
 			// it never saw the ack and its drop disclosure is cumulative
-			// over the one already counted.
+			// over the one already counted. Known limit: if the spoke
+			// buffered more than hubactivity.MaxEvents new events before
+			// the resend, the earlier events were trimmed for room and
+			// nothing here repeats a Seq, so the restatement goes
+			// undetected and the previous batch's drops are counted once
+			// more. The over-count is bounded by one batch's disclosure
+			// and affects only the drop counter, never stored events.
 			restated = true
 			continue
 		}

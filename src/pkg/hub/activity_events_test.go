@@ -174,6 +174,51 @@ func TestActivityEventRing_DedupesByAcknowledgedSeq(t *testing.T) {
 	}
 }
 
+// Known limit, pinned so a change is deliberate: a lost ack followed by a
+// full buffer turnover (more than hubactivity.MaxEvents new events) leaves
+// no repeated Seq in the resend, so the hub cannot see that the spoke's
+// cumulative disclosure restates drops already counted and counts the
+// earlier batch's drops once more. The over-count is bounded by that one
+// batch's disclosure; stored events are never duplicated.
+func TestActivityEventRing_RestatedDropsAfterFullTurnoverOverCountOnce(t *testing.T) {
+	var st activityStore
+	first := withEvents(activityDigest("o/a", 1), activityEv(1, hubactivity.EventOpened, "o/a", 1), activityEv(2, hubactivity.EventStage, "o/a", 1))
+	first.EventsDropped = 3
+	st.record("hive-a", first, activityT0)
+
+	// The ack is lost and the spoke buffers MaxEvents newer events, so the
+	// resend holds only Seq 3.. and its disclosure 3 (old) + 2 (new) = 5.
+	turned := make([]hubactivity.Event, 0, hubactivity.MaxEvents)
+	for i := range hubactivity.MaxEvents {
+		turned = append(turned, activityEv(uint64(3+i), hubactivity.EventStage, "o/a", 1))
+	}
+	resend := withEvents(first, turned...)
+	resend.EventsDropped = 5
+	st.record("hive-a", resend, activityT0.Add(time.Minute))
+
+	snap := st.eventsSnapshot([]string{"hive-a"})
+	if len(snap.events) != 2+hubactivity.MaxEvents {
+		t.Fatalf("stored %d events, want %d (no duplicates)", len(snap.events), 2+hubactivity.MaxEvents)
+	}
+	if got := st.eventsAck("hive-a"); got != uint64(2+hubactivity.MaxEvents) {
+		t.Fatalf("ack = %d, want %d", got, 2+hubactivity.MaxEvents)
+	}
+	// Exact accounting would be 5; the undetectable restatement adds the
+	// first batch's 3 once more, and never more than that.
+	if snap.dropped["hive-a"] != 8 {
+		t.Fatalf("disclosed drops = %d, want 8 (5 exact + the 3 restated once, undetectable without a repeated Seq)", snap.dropped["hive-a"])
+	}
+
+	// A further resend that does repeat a Seq is detected again and only
+	// the increase over the last counted disclosure is added.
+	again := withEvents(resend, turned[len(turned)-1], activityEv(uint64(3+hubactivity.MaxEvents), hubactivity.EventMerged, "o/a", 1))
+	again.EventsDropped = 6
+	st.record("hive-a", again, activityT0.Add(2*time.Minute))
+	if got := st.eventsSnapshot([]string{"hive-a"}).dropped["hive-a"]; got != 9 {
+		t.Fatalf("drops after detected resend = %d, want 9", got)
+	}
+}
+
 // The fleet-wide ring keeps the last 1,000 events across all hives, oldest
 // dropped first; each block is also capped at hubactivity.MaxEvents with
 // the overflow disclosed.
