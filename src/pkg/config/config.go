@@ -184,7 +184,8 @@ type Config struct {
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
-	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	Convergence              ConvergenceConfig              `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	IntegrationOrchestration IntegrationOrchestrationConfig `yaml:"integration_orchestration,omitempty" json:"integration_orchestration"`
 	// SLA holds the Delivery SLA span targets the dashboard Overview colours
 	// against (see sla.go). Unset fields use the defaults.
 	SLA SLAConfig `yaml:"sla,omitempty" json:"sla,omitempty"`
@@ -3576,6 +3577,11 @@ type GitHubConfig struct {
 	// reporterTrustHoldEnvOverride is set by HIVE_REPORTER_TRUST_HOLD and never
 	// serialized, for the same reason as selfAuthorizationHoldEnvOverride.
 	reporterTrustHoldEnvOverride *bool `yaml:"-" json:"-"`
+	// Notifications governs how loudly the hive's own PR bookkeeping reaches
+	// people. Every new issue comment and every review submission emails
+	// the author and every watcher; editing an existing comment does not.
+	// See GitHubNotificationsConfig.
+	Notifications GitHubNotificationsConfig `yaml:"notifications,omitempty" json:"notifications,omitempty"`
 	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
 	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
 	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be
@@ -4974,6 +4980,13 @@ type DashboardStageTrackerConfig struct {
 	// ToastErrorS is the same for error toasts. 0 means the default (30);
 	// values are clamped to 3..120.
 	ToastErrorS int `yaml:"toast_error_s,omitempty" json:"toast_error_s,omitempty"`
+	// MergedHoldS is how many seconds the activity monitor keeps a row at
+	// "Merging · merge landed" after the payload dropped it, bridging the
+	// gap until the SPA has the merged fact (hivecommons/hive#15808). The
+	// celebration launches as soon as that fact arrives, so this is a
+	// ceiling, not a delay. 0 means the default (8); values under 3 read
+	// as 3.
+	MergedHoldS int `yaml:"merged_hold_s,omitempty" json:"merged_hold_s,omitempty"`
 }
 
 // Defaults and bounds for dashboard.stage_tracker.toast_info_s and
@@ -5011,6 +5024,26 @@ func (c *Config) StageTrackerToastError() time.Duration {
 		return DefaultStageTrackerToastErrorS * time.Second
 	}
 	return time.Duration(stageTrackerToastSeconds(c.Dashboard.StageTracker.ToastErrorS, DefaultStageTrackerToastErrorS)) * time.Second
+}
+
+// defaultStageTrackerMergedHold is the default
+// dashboard.stage_tracker.merged_hold_s; minStageTrackerMergedHold its floor.
+const (
+	defaultStageTrackerMergedHold = 8 * time.Second
+	minStageTrackerMergedHold     = 3 * time.Second
+)
+
+// StageTrackerMergedHold is the effective dashboard.stage_tracker.merged_hold_s
+// as a duration: the default when unset, never under the floor.
+func (c *Config) StageTrackerMergedHold() time.Duration {
+	if c == nil || c.Dashboard.StageTracker.MergedHoldS == 0 {
+		return defaultStageTrackerMergedHold
+	}
+	d := time.Duration(c.Dashboard.StageTracker.MergedHoldS) * time.Second
+	if d < minStageTrackerMergedHold {
+		return minStageTrackerMergedHold
+	}
+	return d
 }
 
 // defaultStageTrackerWaitingPushStale is the default
@@ -8309,6 +8342,10 @@ type AutoMergeConfig struct {
 	// opt-in per repo: a hive that never sets it keeps the pre-queue
 	// behaviour, including the `merge-queue-required` park.
 	NativeMergeQueue NativeMergeQueueAutoMergeConfig `yaml:"native_merge_queue,omitempty" json:"native_merge_queue,omitempty"`
+	// HiveSuperseding is the owner's rule for the hive's own superseding
+	// copies of other PRs (@clubanderson: "if a pr is superseded by a pr
+	// that a hive agent creates, it should auto merge"). Default ON.
+	HiveSuperseding HiveSupersedingAutoMergeConfig `yaml:"hive_superseding,omitempty" json:"hive_superseding,omitempty"`
 }
 
 // NativeMergeQueueAutoMergeConfig is auto_merge.native_merge_queue.*.
@@ -8360,6 +8397,26 @@ func (n NativeMergeQueueAutoMergeConfig) EffectiveProbeTTL() time.Duration {
 		return DefaultNativeMergeQueueProbeTTL
 	}
 	return n.ProbeTTL
+}
+
+// HiveSupersedingAutoMergeConfig is auto_merge.hive_superseding.*.
+type HiveSupersedingAutoMergeConfig struct {
+	// AutoMerge: a PR the hive App authored that declares "Supersedes #N"
+	// auto-merges with no operator decision. A reviewer's requires_human
+	// — a risk-class question or a security-sensitive finding included —
+	// is routed to the fixer and re-reviewed like any other finding; the
+	// PR parks at stage 085 only for a sentinel finding nobody has
+	// acknowledged or an emergent hard-stop (fix attempts exhausted, a
+	// hold, CI red after fixes, an unresolvable base conflict). nil/unset
+	// means ON; `auto_merge: false` restores the ordinary hive-authored
+	// routing, where such findings wait for a person.
+	AutoMerge *bool `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+}
+
+// AutoMergeEnabled reports the auto_merge.hive_superseding.auto_merge
+// switch; unset is on.
+func (h HiveSupersedingAutoMergeConfig) AutoMergeEnabled() bool {
+	return h.AutoMerge == nil || *h.AutoMerge
 }
 
 // MergeTrainAutoMergeConfig is auto_merge.merge_train.*.

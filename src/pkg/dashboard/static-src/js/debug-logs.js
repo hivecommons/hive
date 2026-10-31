@@ -308,6 +308,11 @@
           <div style="${rowStyle}"><span>Cache Read</span><span style="font-weight:600">${tokenCache}</span></div>
           ${budgetLimit > 0 ? `<div style="margin-top:var(--sp-4);${labelStyle}">Budget</div><div style="${rowStyle}"><span>Used</span><span style="font-weight:600">$${budgetUsed.toFixed(2)} / $${budgetLimit.toFixed(2)} (${budgetPct}%)</span></div>` : ''}
         </div>
+        <div class="debug-process-card">
+          <div class="debug-process-label">Hive process</div>
+          <div class="debug-process-note">Pod rolls — by the hub, <code>kubectl rollout restart</code> or SIGTERM — animate the version chip while the pod restarts.</div>
+          <div class="debug-process-actions"><button type="button" class="hv-btn btn-sm" data-action="versionPreviewUpgradeDemo" title="Walk the upgrade animation through announced → restarting → upgraded without rolling anything (also: ?demo=upgrade)">Preview upgrade animation</button></div>
+        </div>
       `);
       applySectionCollapse('debug-section');
     }

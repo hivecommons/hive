@@ -26,6 +26,7 @@
     .contrib-status-badge.is-online { background: var(--status-ok); color: var(--bg); }
     .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
     .contrib-status-dot.online { background: var(--status-ok); }
+    .contrib-abandoned { color: var(--status-error); font-weight: 600; }
     .contrib-card {
       --contrib-accent: #5aa7ff;
       --contrib-accent-2: #74df9a;

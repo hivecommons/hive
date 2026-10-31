@@ -768,6 +768,33 @@
             });
             if (!slaRes.ok) throw new Error(await saveErrorMessage(slaRes));
             _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
+          } else if (_configState.type === 'governor' && section === 'integration_orchestration') {
+            const body = Object.assign({}, (_configState.data || {}).integration_orchestration || {}, values);
+            const integrationMinuteNanoseconds = 60 * 1e9;
+            for (const key of ['lease_ttl', 'window', 'max_observation_age']) {
+              if (Object.prototype.hasOwnProperty.call(body, key + '_minutes')) {
+                body[key] = Number(body[key + '_minutes']) * integrationMinuteNanoseconds;
+                delete body[key + '_minutes'];
+              }
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'policy_json')) {
+              body.policies = JSON.parse(body.policy_json);
+              if (!Array.isArray(body.policies)) throw new Error('Integration workflow contracts must be a JSON array');
+              delete body.policy_json;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'scope_lines')) {
+              body.scopes = String(body.scope_lines).split('\n').map(s => s.trim()).filter(Boolean).map(s => {
+                const at = s.indexOf('#');
+                if (at < 1 || at === s.length - 1) throw new Error('Each integration scope must be owner/repo#base');
+                return { repo: s.slice(0, at), base: s.slice(at + 1) };
+              });
+              delete body.scope_lines;
+            }
+            const ioRes = await fetch('/api/config/integration-orchestration', {
+              method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify(body)
+            });
+            if (!ioRes.ok) throw new Error(await saveErrorMessage(ioRes));
+            _configState.data.integration_orchestration = await ioRes.json();
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence
@@ -931,4 +958,3 @@
         })
         .catch(() => {});
     }
-

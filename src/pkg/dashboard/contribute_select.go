@@ -1107,6 +1107,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// set, this is a no-op and behaviour is identical to the previous first-eligible pick.
 	ownFirst := make([]candidate, len(candidates))
 	copy(ownFirst, candidates)
+	integrationKeys := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		integrationKeys = append(integrationKeys, c.ref.Key())
+	}
+	integrationRanks := h.server.integrationAgingRanks(integrationKeys)
 	sort.SliceStable(ownFirst, func(i, j int) bool {
 		if ri, rj := orderRank(ownFirst[i]), orderRank(ownFirst[j]); ri != rj {
 			return ri < rj // operator-pinned (lower rank) sorts ahead
@@ -1119,6 +1124,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		}
 		if ownFirst[i].recentFailures != ownFirst[j].recentFailures {
 			return ownFirst[i].recentFailures < ownFirst[j].recentFailures // fewer failures first
+		}
+		if len(integrationRanks) > 0 {
+			return integrationRanks[ownFirst[i].ref.Key()] < integrationRanks[ownFirst[j].ref.Key()]
 		}
 		return false // equal keys → SliceStable preserves original scan order
 	})

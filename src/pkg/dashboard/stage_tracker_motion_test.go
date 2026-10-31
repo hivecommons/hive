@@ -38,7 +38,7 @@ func TestStageTrackerMotionWiring(t *testing.T) {
 		`function stageTrackerNoteMoves(d)`,
 		`function stageTrackerAnimateMoves(root)`,
 		`function stageTrackerMotionEffect(setting, reduced)`,
-		`stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }`,
+		`stageTrackerReconcileMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }`,
 		`const ctx = { nowMs, stages, moves: _stageTrackerMoves };`,
 		`if (Object.keys(_stageTrackerMoves).length) { stageTrackerAnimateMoves(el); _stageTrackerMoves = {}; }`,
 		`window.matchMedia('(prefers-reduced-motion: reduce)').matches`,

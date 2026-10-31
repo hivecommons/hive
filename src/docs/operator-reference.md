@@ -18,6 +18,29 @@ read or mutate live `/data` state and have killed agent sessions. Human
 operators can debug inside the pod by setting `HIVE_ALLOW_LOCAL_GO_TEST=1`; all
 other Go subcommands pass through unchanged.
 
+## Abandoned contributor PRs
+
+An abandoned PR is a contributor PR the hive adopts to finish, either **in
+place** on the contributor's branch or by **supersession** into a hive PR.
+Operator **Adopt now** / `adoption/supersede` takeovers count with reason
+`operator_takeover`; automatic adoptions carry `offline` or `unresponsive`.
+A relay disconnect or failed task alone is not a PR adoption.
+
+The adoption recorder deduplicates by repository and original PR: adopting the
+same PR again does not increment the count. If an in-place adoption is later
+superseded, its existing record gains `adopted_into_pr` rather than counting
+again. A zero `adopted_into_pr` means adoption in place. Records also carry the
+original `repo`, `pr`, `reason`, and timestamp `at`.
+
+The dashboard **Contributors** tile shows **Abandoned N** in muted red only for
+nonzero counts. Hover for the five most recent adopted PRs, newest first, with
+the superseding PR (or “in-place”), reason, and timestamp.
+`/api/status.contributorPool` exposes the historical `abandoned` total and
+`abandoned_by_login` counts (lowercase login keys), including offline and
+revoked profiles. `/api/contributors` exposes the underlying per-profile
+`abandoned` and `abandoned_prs` data. These counters are independent of
+Completed/Failed task counts and do not change contributor trust tiers.
+
 ## Minimum required configuration
 
 Most of `hive.yaml.example` is optional. The smallest config the hive will start
@@ -445,6 +468,7 @@ advanced into the merge path.
 | `auto_merge.native_merge_queue.repos` | unset (every watched repo once enabled) | `owner/repo` allow-list for the hand-off, matched case-insensitively. |
 | `auto_merge.native_merge_queue.skip_current_base_gate` | `false` | Explicitly lets a queue-enabled base bypass the `auto_merge.require_current_base` gate and the `behind` update-branch, because the merge group re-tests the merged result and a pushed head drops the PR from the queue. Off keeps both gates in force on queue bases. |
 | `auto_merge.native_merge_queue.probe_ttl` | `30m` | How long one base branch's `isMergeQueueEnabled` GraphQL answer is cached before re-reading. |
+| `auto_merge.hive_superseding.auto_merge` | `true` | Owner rule: a PR the hive App itself opened to supersede another PR (`Supersedes #N` in its body — takeover, close-first adoption, re-author) auto-merges with no operator decision. A reviewer `requires_human`, security-sensitive included, is routed to the fixer as `changes_requested` instead of parking at `stage/085`; the head merges through the hive-authored lane once CI and review are clean. The only stops are an unacknowledged sentinel finding, a hold, exhausted fix attempts (CI still red / base still conflicting), or a conflict the hive already failed to rebase twice — each named in the 085 caption as `hive-superseder-hard-stop:<reason>`. `false` restores the old park. See [hive-merge.md](hive-merge.md#hive-authored-superseding-prs-auto-merge). |
 | `auto_merge.squash_only` | unset (no repo) | Repo list (`owner/repo`) whose branch policy forbids merge commits. Elsewhere, a `role/trusted` PR whose head mixes the contributor's commits with App-linked, App-signed ones (the hive's own in-place adoption fixes), every commit self-signed, is labelled `merge-method/merge` and merged with a merge commit instead of parking at `stage/085` as `adoption-stalled:hive-signoff-attribution`; a listed repo keeps squash-only policy and re-homes an in-place adoption to an App-authored superseder instead (#13975). |
 | `auto_merge.credit_issue_authors` | `true` | Append `Co-authored-by: <login> <id+login@users.noreply.github.com>` for the human authors of the issues a PR closes (`Fixes|Closes|Resolves #N`) to the squash (or merge) commit message on every hive-performed merge, so reporters land on the contributor graph when an external clanker fixed their issue. Bots, the PR author and logins already credited on the branch are skipped; the logins are recorded as `issue_authors=` on the merge audit entry and in review evidence. One cached `GET /issues/{n}` per newly referenced issue. `false` leaves GitHub's default squash message untouched (#14581). |
 | `auto_merge.bot_takeover.enabled` | `true` | When `github-actions[bot]` is in `auto_merge.trusted_bot_authors`, re-author its same-repo PRs whose required `pull_request` checks can never run (the bot opened them with a workflow `GITHUB_TOKEN`). After the head is older than both `min_head_age` and 30 minutes with no `pull_request` run, the App pushes the same change as one signed-off commit to `hive/takeover-<n>`, opens a PR with the original title/body plus `Supersedes #<n>`, comments `Superseded by #N` on the bot PR and closes it. One attempt per bot head SHA. See [hive-merge.md](hive-merge.md#github-actionsbot-pr-takeover). |
@@ -1213,6 +1237,52 @@ same-item entries. Suppressions appear in the drill-down with the reasons
 above, and `/api/status` → `writeback.dedupe` carries the settings plus the
 last-hour counters `dedupe_same_item`, `dedupe_burst` and `rate_capped`.
 `enabled: false` turns the layer off.
+
+### Notification mode (`github.notifications.mode`)
+
+**Why:** every issue comment and every review the hive posts emails the PR
+author and everyone watching the repository. Editing an existing comment or
+review notifies nobody. Measured on one busy PR, the hive posted eight
+comments and three reviews in two hours — a 071 note per new head (each
+@-mentioning the author), a "stage regressed" note for a check that had
+merely gone back to pending after a push, a "stalled" note for a PR that
+was simply queued in the merge train, a duplicate-PR redirect, and three
+"**Reviewed** — no findings" reviews. Multiplied over thirty open PRs that
+is dozens of emails an hour saying nothing the Activity Monitor, the
+evidence bundle and the stage labels did not already say.
+
+```yaml
+github:
+  notifications:
+    mode: quiet   # quiet (default) | normal
+```
+
+`quiet` (the default) changes how the hive delivers its own PR bookkeeping,
+not what it records:
+
+- **One status comment per PR, edited in place.** The stage-stalled and
+  stage-regressed notes, the trusted-human 071 note and the duplicate-PR
+  redirect are sections of a single comment marked `<!-- hive:status -->`.
+  The comment is created the first time a note is due and PATCHed for every
+  later note; only the creation sends email.
+- **No "no findings" reviews.** A reviewer whose whole body is the clean
+  acknowledgement has its verdict recorded through the relay and the
+  evidence bundle, and no GitHub review is submitted (the reviewer prompts
+  also stop asking for the line, whatever `review.acknowledge_no_findings`
+  says). Only perspectives with findings post, and a head carries at most
+  one hive review: a later perspective's findings for the same head are
+  folded into the status comment instead of becoming a second review.
+- **@-mentions once per cause.** The 071 note mentions the author the first
+  time a cause class appears (conflict, red CI, changes requested) and is
+  silent for further heads with the same cause; a new cause mentions again.
+
+Independently of the mode, a check going back to pending after a push is
+no longer reported as a stage regression, and a PR the hive itself is
+holding — queued behind the merge-train front, being rebased by the train,
+or waiting on a base refresh — is never marked stalled.
+
+`normal` restores the previous behaviour: every note is its own comment,
+every perspective's verdict its own review, every new head its own mention.
 
 ## Suspicious-activity alerts (`sentinel`)
 
@@ -2018,6 +2088,7 @@ dashboard:
     waiting_push_stale_h: 4        # hours without a push on a CI / Review row before the pill's age turns muted-amber
     toast_info_s: 15               # how long the tracker's result / waiting-on-you toasts stay (3-120 s); the merge banner stays twice as long
     toast_error_s: 30              # how long a failed row action's toast stays (3-120 s); editable from the Activity Monitor's ⚙ → Toasts & timing
+    merged_hold_s: 8               # ceiling on the "Merging · merge landed" bridge; celebration fires on the merged fact (min 3)
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions
@@ -2075,6 +2146,29 @@ the next stage pass; *Re-check permissions* on a blocked row
 installation now and releases every item blocked on that permission when it is
 there. `GET /api/status` carries the same picture as
 `capabilities: {missing: ["workflows"], blocked_items: N, by_permission: {workflows: N}}`.
+
+#### Onboarding errors point to the Getting Started guide
+
+Every setup problem the dashboard's **🧭 Guide** (top navbar; also *Getting
+Started* in the sidebar) has a step for is classified server-side and rendered
+with a tip — *New hive? Open the 🧭 Guide → step ‘Install the Forge App
+(GitHub App)’ for the install URL and permissions checklist* — whose link opens
+the guide at that step. The classification rides the status payload as
+`onboardingIssues: [{kind, guideStep, message}]`, on system alerts as
+`onboarding: true` + `guideStep`, and on the embedded `deepHealth` checks
+(`github_auth`, `repo_target`) as `onboarding`/`guideStep`. Kinds:
+`github-app-not-installed`, `github-app-wrong-installation`,
+`github-app-permissions`, `github-app-credentials`, `github-base-url`
+(→ step `github-app`), `repo-target`, `no-repos` (→ `repos`), `no-agents`
+(→ `add-agent`), `proxy-token` (→ `welcome`). Error text is unchanged; the tip
+is appended. While any onboarding issue is active the Guide chip stays visible
+even if the checklist was dismissed earlier. The guide's GitHub App step shows
+the concrete install URL for the configured forge host (`githubAppInstallURL`,
+GHES-aware; on an enterprise host with no `github_app_slug` it says what to
+configure instead of linking to github.com). The guide, its entry points and
+the ⚙️ Governor Config gear require a non-`read` role from `GET /api/role` —
+a read-only viewer sees none of them and must be granted access via Manage
+Access.
 
 ## Runtime diagnostics (`debug`, `GOMEMLIMIT`, `mem:` log line)
 

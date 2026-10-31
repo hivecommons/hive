@@ -167,6 +167,7 @@ type LeaderboardEntry struct {
 	TrustTier      string `json:"trust_tier"`
 	TasksCompleted int    `json:"tasks_completed"`
 	TasksFailed    int    `json:"tasks_failed"`
+	Abandoned      int    `json:"abandoned"`
 	Active         bool   `json:"active"`
 	CurrentTask    string `json:"current_task,omitempty"`
 	HiveName       string `json:"hive_name,omitempty"`
@@ -456,10 +457,14 @@ type HeartbeatResponse struct {
 	PendingGateway      *HeartbeatGatewayConfig   `json:"pending_gateway,omitempty"`
 	ClusterID           string                    `json:"cluster_id,omitempty"`
 	UpgradePolicy       *HeartbeatUpgradePolicy   `json:"upgrade_policy,omitempty"`
-	SigHiveID           string                    `json:"sig_hive_id,omitempty"`
-	SigSeq              int64                     `json:"sig_seq,omitempty"`
-	SigSignedAt         int64                     `json:"sig_ts,omitempty"`
-	SigVersion          int                       `json:"sig_v,omitempty"`
+	// UpgradeAnnounce tells a hub-managed spoke its pod is about to be
+	// rolled (#15788); the spoke dashboard shows the upgrade animation
+	// before the kill. Decoded by spoke.HeartbeatResponse.UpgradeAnnounce.
+	UpgradeAnnounce *spoke.UpgradeAnnounce `json:"upgrade_announce,omitempty"`
+	SigHiveID       string                 `json:"sig_hive_id,omitempty"`
+	SigSeq          int64                  `json:"sig_seq,omitempty"`
+	SigSignedAt     int64                  `json:"sig_ts,omitempty"`
+	SigVersion      int                    `json:"sig_v,omitempty"`
 	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
 	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
 }

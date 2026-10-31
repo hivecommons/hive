@@ -1,0 +1,1 @@
+- Show abandoned PR counts and recent-adoption tooltips on Contributors cards, and expose historical totals and per-login counts in `/api/status.contributorPool`.
