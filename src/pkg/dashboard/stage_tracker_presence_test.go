@@ -194,11 +194,13 @@ func TestStageTrackerPresenceHumanAuthor(t *testing.T) {
 			t.Fatalf("#%d human PR carries adoption: %+v", n, it.Adoption)
 		}
 	}
-	// A human who does run a registered clanker reads as a clanker.
+	// A registered agent's heartbeat is not evidence of human availability.
+	lookedUp := false
 	s.presenceLookup = func(string) (automerge.ContributorPresence, bool) {
+		lookedUp = true
 		return automerge.ContributorPresence{Registered: true, Online: true, LastSeen: now}, true
 	}
-	if p := presenceOf(t, s, store, status, now, 14990); p == nil || p.State != "online" || p.Kind != "clanker" || p.Next != "wait" || p.AdoptAt != nil {
+	if p := presenceOf(t, s, store, status, now, 14990); lookedUp || p == nil || p.State != "unknown" || p.Kind != "human" || p.Next != "wait" || p.AdoptAt != nil || p.LastSeen != nil {
 		t.Fatalf("registered human presence = %+v", p)
 	}
 }

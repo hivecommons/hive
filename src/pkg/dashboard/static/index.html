@@ -16032,7 +16032,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const kind = mg.prior_head_merge_failed_kind || (fallback && fallback.kind) || '';
       const detail = kind === 'checks-pending' ? 'required checks had not reported' : (STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || stageTrackerMergeFailedShort(why));
       const head = String(mg.prior_head_merge_failed_head || '').slice(0, 7);
-      return 'merge attempt on previous head' + (head ? ' ' + head : '') + ' failed: ' + detail;
+      return 'earlier merge attempt' + (head ? ' on head ' + head : '') + ' failed: ' + detail;
     }
     // Pure: a refusal's first line, cut to STAGE_TRACKER_MERGE_FAILED_SHORT_MAX
     // (tooltips and toasts; the pill detail comes from the refusal kind).
@@ -16719,6 +16719,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const repairing = typeof stageTrackerUnderRepair === 'function' && !!stageTrackerUnderRepair(cur, item && item.reason);
       if (repairing && cur > STAGE_TRACKER_PR_COLUMN && cur !== STAGE_TRACKER_NEEDS_DECISION) return 50;
       const mg = item && item.merge_gate;
+      const refusal = mg && mg.state === 'merge-failed'
+        ? mg.merge_failed_kind || (typeof stageTrackerMergeRefusalFromRaw === 'function' ? stageTrackerMergeRefusalFromRaw(String(mg.merge_failed || '')).kind : '') : '';
+      if ((cur === 50 || cur === 60) && refusal === 'checks-pending') return 50;
       if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       // A merge-train member is a Merge queue matter too, 1st included:
       // the train's facts are mirrored onto its head while the head still
