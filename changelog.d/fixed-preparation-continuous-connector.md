@@ -1,1 +1,1 @@
-- Keep adjacent preparation-train members connected through full row captions and nested PR spacing under one compact header, even when the selected display order runs opposite to preparation FIFO; preserve row order and stop the rail before unrelated work.
+- Group complete preparation issue/PR row units into a front-first FIFO block with an uninterrupted connector through captions and nested spacing; preserve unrelated rows and child associations, distinguish unverified recorded fronts, and validate geometry in Chrome with its required runtime dependencies.

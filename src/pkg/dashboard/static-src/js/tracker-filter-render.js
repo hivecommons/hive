@@ -87,7 +87,8 @@
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
-      const ordered = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
       const tv = typeof stageTrackerDisplayTv === 'function' && stageTrackerDisplayTv();

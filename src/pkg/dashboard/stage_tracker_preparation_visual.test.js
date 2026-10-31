@@ -110,19 +110,82 @@ test('original compact pill and connector decorate actual rows with FIFO help an
   assert.deepEqual(plain(f.data), before);
 });
 
-test('custom sort and pagination stay unchanged; adjacent reverse-FIFO members share one uninterrupted train', () => {
+test('preparation FIFO overrides custom row sort before pagination without mutating its input', () => {
   const { ctx } = load(), f = fixture();
   const ordered = ctx.stageTrackerSort(f.data.items, [], { sort: 'number', dir: 'asc' });
-  const page = ctx.stageTrackerPage(ordered, { size: 25, page: 1 });
+  const original = plain(ordered);
+  const prepared = ctx.stageTrackerPreparationOrderRows(f.data, ordered, []);
+  const page = ctx.stageTrackerPage(prepared, { size: 25, page: 1 });
   const before = plain(page), rows = render(ctx, f, page.rows, ordered);
+  assert.deepEqual(plain(ordered), original);
   assert.deepEqual(plain(page), before);
-  assert.deepEqual(rootKeys(rows), page.rows.map(it => ctx.stageTrackerItemKey(it)));
+  assert.deepEqual(rootKeys(rows), [45, 9, 2].map(n => REPO + '/pr#' + n));
   assert.equal(rows.filter(row => row.key.startsWith('preparation:')).length, 1);
   assert.doesNotMatch(content(rows), /continuation/);
   const members = rows.filter(row => !row.key.startsWith('preparation:'));
   for (const row of members.slice(0, -1)) assert.doesNotMatch(row.html, /ham-train-last|ham-preparation-gap/);
   assert.match(members.at(-1).html, /ham-train-last/);
   assert.deepEqual(plain(model(ctx, f)[0].waiting.map(e => [e.ticket.number, e.position])), [[9, 1], [2, 2]]);
+});
+
+test('scrambled preparation units form one front-first block while nonmembers retain their relative order', () => {
+  const { ctx } = load(), f = fixture();
+  const others = [81, 82, 83].map(number => ({ ...f.first, number, preparation: null, head: 'other-' + number }));
+  const source = [others[0], f.second, others[1], f.owner, others[2], f.first];
+  f.data.items = source;
+  const before = plain(source);
+  const ordered = ctx.stageTrackerPreparationOrderRows(f.data, source, []);
+  assert.deepEqual(plain(ordered.map(it => it.number)), [81, 45, 9, 2, 82, 83]);
+  assert.equal(new Set(ordered).size, source.length);
+  assert.deepEqual(plain(source), before);
+  const rows = render(ctx, f, ordered);
+  assert.equal(rows.filter(row => row.key.startsWith('preparation:')).length, 1);
+  for (const other of others) assert.doesNotMatch(rootRow(rows, other.number).html, /ham-preparation-member|ham-preparation-node/);
+});
+
+test('a nested front moves its complete issue unit and preserves unrelated children without duplicate PR rows', () => {
+  const { ctx } = load(), f = fixture();
+  const unrelated = { ...f.first, number: 84, head: 'unrelated', preparation: null };
+  const issue = { kind: 'issue', repo: REPO, number: 500, stage: 40, linked_prs: [unrelated, f.owner] };
+  f.data.items = [f.second, issue, f.first];
+  const before = plain(f.data);
+  const ordered = ctx.stageTrackerPreparationOrderRows(f.data, f.data.items, []);
+  assert.deepEqual(plain(ordered.map(it => [it.kind, it.number])), [['issue', 500], ['pr', 9], ['pr', 2]]);
+  assert.deepEqual(plain(issue.linked_prs.map(it => it.number)), [84, 45]);
+  assert.deepEqual(plain(f.data), before);
+  const rows = render(ctx, f, ordered), html = content(rows);
+  assert.deepEqual(rootKeys(rows), [REPO + '/issue#500', REPO + '/pr#9', REPO + '/pr#2']);
+  assert.equal((html.match(/data-ham-sub-key="hivecommons\/hive\/pr#45"/g) || []).length, 1);
+  assert.doesNotMatch(html, /data-ham-key="hivecommons\/hive\/pr#45"/);
+});
+
+test('nested preparation children follow FIFO as one block while nonmember siblings keep their original order', () => {
+  const { ctx } = load(), f = fixture();
+  const others = [85, 86].map(number => ({ ...f.first, number, preparation: null, head: 'other-' + number }));
+  const issue = { kind: 'issue', repo: REPO, number: 501, stage: 40,
+    linked_prs: [others[0], f.second, others[1], f.owner, f.first] };
+  f.data.items = [issue];
+  ctx.stageTrackerPreparationVisualSync(f.data, f.data.items, f.data.items, [], NOW);
+  const ordered = ctx.stageTrackerPreparationOrderLinked(issue.linked_prs, issue);
+  assert.deepEqual(plain(ordered.map(lp => lp.number)), [85, 45, 9, 2, 86]);
+  assert.deepEqual(plain(issue.linked_prs.map(lp => lp.number)), [85, 2, 86, 45, 9]);
+});
+
+test('missing, closed and stale recorded fronts never become verified owners or fabricated rows when ordering', () => {
+  for (const state of ['missing', 'closed', 'stale']) {
+    const { ctx } = load(), f = fixture();
+    if (state === 'missing') f.data.items = [f.second, f.first];
+    if (state === 'closed') f.owner.state = 'closed';
+    if (state === 'stale') f.owner.head = 'new-owner-head';
+    const ordered = ctx.stageTrackerPreparationOrderRows(f.data, f.data.items, []);
+    assert.equal(new Set(ordered).size, f.data.items.length, state);
+    if (state === 'missing') assert.deepEqual(plain(ordered.map(it => it.number)), [9, 2]);
+    const rows = render(ctx, f, ordered), html = content(rows);
+    assert.doesNotMatch(html, /ham-train-front/);
+    assert.match(rows.find(row => row.key.startsWith('preparation:')).html, /recorded front: #45/);
+    if (state === 'missing') assert.doesNotMatch(html, /data-ham-key="hivecommons\/hive\/pr#45"/);
+    if (state === 'stale') assert.match(rootRow(rows, 45).html, /ham-preparation-unverified/);
+  }
 });
 
 test('unrelated rows terminate rails; filtered FIFO gaps use dashed continuation without inventing adjacency', () => {

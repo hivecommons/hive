@@ -1544,23 +1544,28 @@
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-preparation-head { flex-wrap: wrap; }
     .ham-row.ham-preparation-member::before { top: calc(-1 * var(--line-width)); }
+    .ham-row.ham-preparation-member.ham-train-last::before { bottom: 0; }
+    .ham-row.ham-preparation-member::after { display: none; }
     .ham-preparation-head .ham-train-chip { white-space: normal; }
     .ham-preparation-head .ham-preparation-help { background: none; border-color: var(--ham-train-accent); color: var(--muted); }
     .ham-preparation-help::before { content: '?'; }
     .config-info.ham-preparation-node { position: absolute; left: calc(var(--sp-2) - 2px); top: calc(50% - var(--sp-2)); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
+    .ham-row.ham-preparation-member > .ham-strip-row > .ham-preparation-node { left: calc(var(--sp-2) - var(--sp-5) - 2px); }
+    .ham-preparation-node::before { content: none; }
+    .ham-preparation-node::after { content: ''; position: absolute; left: 1px; top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
+    .ham-train-front > .ham-strip-row > .ham-preparation-node::after { background: var(--text); }
     .ham-preparation-node:focus-visible { outline: var(--focus-ring-width) solid var(--ham-train-accent); outline-offset: var(--sp-1); }
     .ham-row.ham-preparation-gap::before, .ham-sub.ham-preparation-member.ham-preparation-gap::before { border-left-style: dashed; }
-    .ham-row.ham-preparation-unverified::after, .ham-sub.ham-preparation-member.ham-preparation-unverified::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
+    .ham-preparation-unverified > .ham-strip-row > .ham-preparation-node::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
     .ham-preparation-comment { animation: none; }
     /* Mixed issue trees keep their existing children; only actual prep PRs
        receive a rail, at the original gutter offset minus the parent inset. */
     .ham-row > .ham-preparation-head { margin-left: calc(-1 * var(--sp-2)); }
     .ham-sub.ham-preparation-member { position: relative; --ham-train-accent: var(--amber); }
     .ham-sub.ham-preparation-member::before { content: ''; position: absolute; left: 2px; top: calc(-1 * var(--sp-3) - var(--sp-2)); bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
-    .ham-sub.ham-preparation-member.ham-train-last::before { bottom: 50%; }
-    .ham-sub.ham-preparation-member::after { content: ''; position: absolute; left: -1px; top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
-    .ham-sub.ham-preparation-member.ham-train-front::after { background: var(--text); }
+    .ham-sub.ham-preparation-member.ham-train-last::before { bottom: 0; }
     .ham-sub .config-info.ham-preparation-node { left: calc(-1 * var(--sp-1)); }
+    .ham-sub .ham-preparation-node::after { left: 3px; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
     .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
     .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }
@@ -17848,12 +17853,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>`;
       }
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(pr, stages, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
-          ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : ''))}
           </div>
           <div class="ham-strip-row">
+            ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
@@ -18150,12 +18155,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const trainKey = typeof stageTrackerTrainKey === 'function' ? stageTrackerTrainKey(item) : '';
       if (typeof stageTrackerPreparationMark === 'function') stageTrackerPreparationMark(shown);
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
-        ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''))}
         </div>
         <div class="ham-strip-row">
+          ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}
         </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
@@ -19703,7 +19708,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         navCountDelta(document.getElementById(id), null);
       }
     }
-    // Preparation decorates the existing rows; it never sorts or admits them.
+    // Keep complete issue/PR row units together in recorded preparation order.
+    // This changes display order only, never admission or pipeline stage.
     var _stageTrackerPreparationShown = new Map();
     var _stageTrackerPreparationRendered = new Map();
     var _stageTrackerPreparationInline = [];
@@ -19719,7 +19725,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of adopted) {
         if (!it) continue;
         const put = pr => {
-          const key = stageTrackerPreparationKey(it.repo, pr.number);
+          const key = stageTrackerPreparationKey(pr.repo || it.repo, pr.number);
           if (it.kind === 'pr' || !byKey.has(key)) byKey.set(key, { item: pr, host: it, nested: it.kind === 'issue' });
         };
         if (it.kind === 'pr') put(it);
@@ -19730,6 +19736,44 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
       }
       return byKey;
+    }
+    function stageTrackerPreparationContiguous(items, entryOf) {
+      const groups = new Map(), membership = new Map();
+      items.forEach((item, index) => {
+        const entry = item && entryOf(item);
+        if (!entry) return;
+        if (!groups.has(entry.groupIndex)) groups.set(entry.groupIndex, []);
+        groups.get(entry.groupIndex).push({ item, index, sequence: entry.sequence });
+        membership.set(index, entry.groupIndex);
+      });
+      for (const members of groups.values()) members.sort((a, b) => a.sequence - b.sequence || a.index - b.index);
+      const emitted = new Set(), out = [];
+      items.forEach((item, index) => {
+        if (!membership.has(index)) { out.push(item); return; }
+        const group = membership.get(index);
+        if (emitted.has(group)) return;
+        emitted.add(group);
+        out.push(...groups.get(group).map(member => member.item));
+      });
+      return out;
+    }
+    function stageTrackerPreparationOrderRows(data, items, stages) {
+      const byHost = new Map();
+      stageTrackerPreparationVisualModel(data, items, items, stages).forEach((group, groupIndex) => {
+        for (const entry of group.members) {
+          if (!entry.row || entry.location !== 'page') continue;
+          const host = entry.row.host;
+          if (typeof stageTrackerTrainKey === 'function' && stageTrackerTrainKey(host)) continue;
+          const key = stageTrackerItemKey(host), prior = byHost.get(key);
+          if (!prior || (prior.groupIndex === groupIndex && entry.sequence < prior.sequence)) {
+            byHost.set(key, { groupIndex, sequence: entry.sequence });
+          }
+        }
+      });
+      return stageTrackerPreparationContiguous(items, item => byHost.get(stageTrackerItemKey(item)));
+    }
+    function stageTrackerPreparationOrderLinked(linked, issue) {
+      return stageTrackerPreparationContiguous(linked, lp => stageTrackerPreparationEntry(stageTrackerLinkedPRItem(issue, lp)));
     }
     function stageTrackerPreparationVisualModel(data, listedRows, pageRows, stages) {
       const known = stageTrackerPreparationRows(data && data.items, stages);
@@ -19805,7 +19849,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPreparationRowInfo(item, stages) {
       if (!item || (typeof stageTrackerTrainKey === 'function' && stageTrackerTrainKey(item))) return null;
       const prs = item.kind === 'pr' ? [item] : item.kind === 'issue'
-        ? stageTrackerLinkedSorted(item, stages).map(lp => stageTrackerLinkedPRItem(item, lp)) : [];
+        ? stageTrackerPreparationOrderLinked(stageTrackerLinkedSorted(item, stages), item).map(lp => stageTrackerLinkedPRItem(item, lp)) : [];
       const members = prs.map(pr => stageTrackerPreparationEntry(pr));
       if (!members.length || members.some(e => !e) || members.some(e => e.groupIndex !== members[0].groupIndex)) return null;
       const ordered = members.every((e, i) => !i || e.sequence > members[i - 1].sequence);
@@ -19818,7 +19862,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const q = group.queue;
       const details = [`${q.repo || 'Repository unknown'} → ${q.base_ref || 'base unknown'}`,
         q.message || 'FIFO follows first qualifying admission, not PR age or guaranteed merge order.',
-        'The connector joins adjacent preparation members in the selected display order; ticket positions still follow preparation FIFO.',
+        'The recorded front is first, then waiting tickets in preparation FIFO. Complete issue/PR row units stay together; ticket positions remain explicit when related PRs share one issue.',
         'Preparation is not CI, review approval, a ready train seat, or native queue membership.'];
       if (q.observed_at) details.push('Snapshot ' + q.observed_at);
       for (const e of group.members) {
@@ -19914,6 +19958,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return eventHtml + `<div class="cue-event ham-preparation-comment"><span class="cue-event-body">${esc(parts.join(' · '))}</span></div>`;
     }
     function stageTrackerPreparationSubRows(linked, issue, stages, nowMs, ctx) {
+      linked = stageTrackerPreparationOrderLinked(linked, issue);
       const parent = stageTrackerPreparationRowInfo(issue, stages);
       const infos = linked.map(lp => stageTrackerPreparationRowInfo(stageTrackerLinkedPRItem(issue, lp), stages));
       const seen = new Set();
@@ -20139,7 +20184,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
-      const ordered = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
       const tv = typeof stageTrackerDisplayTv === 'function' && stageTrackerDisplayTv();
