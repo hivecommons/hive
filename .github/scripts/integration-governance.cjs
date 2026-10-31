@@ -7,6 +7,9 @@ const path = require('node:path');
 const MAX_MEMBERS = 8;
 const MAX_COMMITS = 1000;
 const MAX_AUTHOR_BATCH = 50;
+// This literal is inside the enrolled .github closure. A caller-supplied
+// preparedBy.sourceSHA must never choose a new executable verifier tree.
+const TRUSTED_SCRIPTS_TREE = 'c1b6e83ee24e5108657ef7f9b15865fd23f4ebce';
 const SOURCE = 'https://github.com/kubernetes-sigs/kubebuilder-release-tools/tree/012269a88fa4c034a0acf1ba84c26b195c0dbab4';
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const git = (args, cwd = process.cwd()) =>
@@ -92,7 +95,8 @@ async function verify(kind, subject, members, github) {
   const root = process.cwd(), source = subject.preparedBy?.sourceSHA;
   if (!/^[a-f0-9]{40}$/.test(source || '') ||
       git(['rev-parse', `${source}:.github`]) !== subject.workflowTree ||
-      git(['rev-parse', `${source}:src/scripts`]) !== git(['rev-parse', 'HEAD:src/scripts'])) {
+      git(['rev-parse', `${source}:src/scripts`]) !== TRUSTED_SCRIPTS_TREE ||
+      git(['rev-parse', 'HEAD:src/scripts']) !== TRUSTED_SCRIPTS_TREE) {
     throw new Error('Trusted control/helper closure unavailable; no candidate script execution');
   }
   if (kind === 'contents') {

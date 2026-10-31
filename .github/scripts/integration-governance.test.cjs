@@ -85,11 +85,7 @@ test('real pinned helpers enforce each original member and reject missing signof
   fs.mkdirSync(workspace);
   try {
     fs.mkdirSync(path.join(workspace, '.github'));
-    fs.mkdirSync(path.join(workspace, 'src/scripts'), {recursive: true});
-    for (const file of ['check-dco-trailers.sh', 'lib-dco-identity.sh',
-      'check-squash-signoff-attribution.sh', 'check-changelog-fragment.sh']) {
-      fs.copyFileSync(path.join(root, 'src/scripts', file), path.join(workspace, 'src/scripts', file));
-    }
+    fs.cpSync(path.join(root, 'src/scripts'), path.join(workspace, 'src/scripts'), {recursive: true});
     fs.writeFileSync(path.join(workspace, '.github/trusted'), 'trusted closure\n');
     git('init', '--initial-branch=base');
     git('config', 'user.name', 'Fixture Author');
@@ -128,5 +124,8 @@ test('real pinned helpers enforce each original member and reject missing signof
     fs.appendFileSync(path.join(workspace, 'src/scripts/check-dco-trailers.sh'), '\n# different helper\n');
     git('add', '.'); git('commit', '-s', '-m', 'Different helper closure');
     assert.throws(() => check('dco', bad, [pr]));
+    const forgedSource = structuredClone(bad);
+    forgedSource.preparedBy.sourceSHA = git('rev-parse', 'HEAD');
+    assert.throws(() => check('dco', forgedSource, [pr]));
   } finally { fs.rmSync(workspace, {recursive: true, force: true}); }
 });

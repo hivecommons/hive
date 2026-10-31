@@ -43,6 +43,13 @@ The five governance contexts run trusted read-only policy:
   available. The candidate itself is a tested merge object, not a fabricated
   bot-authored squash PR.
 
+The verifier's enrolled `.github` closure contains a literal pin to the
+`src/scripts` tree, not merely a comparison against caller-supplied
+`preparedBy.sourceSHA`. Both the declared source and checkout must match that
+pin before any checker executes. Helper changes require a deliberately reviewed
+pin/profile update; choosing the candidate itself as a new source cannot
+authorize changed verifier code.
+
 Candidate receipt schema 2 signs the actual job/check/App/suite identities and
 conclusions for all eleven contexts, plus the exact subject/run/attempt and a
 digest of member author, head/ref, base identity, draft, title, body and labels.
