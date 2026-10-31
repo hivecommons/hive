@@ -39,6 +39,10 @@ const nested = stageTrackerItemByKey({ items: [pr] }, 'other/repository/issue#90
 assert.strictEqual(nested.title, 'Selected nested issue');
 assert.strictEqual(stageTrackerActionRequest(nested, 'decide:close-issue').url, '/api/repos/other/repository/items/902/decision');
 assert.strictEqual(stageTrackerItemByKey({ items: [issue, pr] }, 'hivecommons/dibs/issue#527'), issue, 'canonical root DTO wins');
+const pend = { keys: ['other/repository/issue#902'], key: 'other/repository/issue#902', state: stageTrackerItemState(nested), at: Date.now() };
+const refreshed = { ...pr, linked_issues: pr.linked_issues.map(li => li.number === 902 ? { ...li, state: 'closed' } : li) };
+assert.strictEqual(stageTrackerPendingLive([pend], { items: [refreshed] }, Date.now()).length, 0, 'canonical closed linked issue settles pending without hiding its PR');
+assert.strictEqual(refreshed.number, 900);
 `)
 }
 
@@ -99,6 +103,16 @@ const tick = async () => { for (let i = 0; i < 10; i++) await Promise.resolve();
     assert.strictEqual(_stageTrackerPending.length, 0, 'error clears pending');
     assert.ok(results.at(-1).outcome.includes(error), 'standard error notification includes server reason');
     assert.strictEqual(_stageTracker.items[0], issue, 'failed close does not hide issue');
+  }
+  for (const data of [{}, { status: 'refused', result: { action: 'refused', target: { repo: issue.repo, number: 527, kind: 'issue' }, outcome: 'Close refused: repo paused' } }]) {
+    const attempt = runRowAction('decide:close-issue', issue);
+    releasePrompt('');
+    await tick();
+    releaseFetch({ ok: true, json: async () => data });
+    await attempt;
+    assert.ok(results.at(-1).action === 'error' || results.at(-1).action === 'refused', 'no fake success');
+    assert.strictEqual(_stageTrackerPending.length, 0);
+    assert.strictEqual(_stageTracker.items[0], issue);
   }
   const cancelled = runRowAction('decide:close-issue', issue);
   const before = calls.length;

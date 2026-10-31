@@ -2039,7 +2039,7 @@
     }
     // The ledger name of a row action id (the inverse of the badge's
     // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
-    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
     // A failed or refused action is noted on the row at once, so the
     // history badge turns red and its hover's first line names the reason
     // — the server's ledger only sees 5xx and refused answers, and a
@@ -2069,7 +2069,7 @@
     // Pure: the state signature a toast / acting row waits to see change.
     function stageTrackerItemState(it) {
       if (!it) return '';
-      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '') + (it.rebase_merge && it.rebase_merge.state ? '|rm:' + it.rebase_merge.state : '') + (it.rebase && it.rebase.text ? '|rb:' + it.rebase.text : '');
+      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '') + (it.state ? '|state:' + it.state : '') + (it.rebase_merge && it.rebase_merge.state ? '|rm:' + it.rebase_merge.state : '') + (it.rebase && it.rebase.text ? '|rb:' + it.rebase.text : '');
     }
     function stageTrackerTargetKey(target) {
       return target && target.number ? stageTrackerItemKey({ repo: target.repo, kind: target.kind === 'pr' ? 'pr' : 'issue', number: target.number }) : '';

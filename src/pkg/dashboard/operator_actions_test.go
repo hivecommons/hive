@@ -480,13 +480,16 @@ func TestStageTrackerDropOperatorClosed(t *testing.T) {
 		{Repo: "o/r", Number: 4, Kind: "issue", LastOperatorAction: act(operatorActionWontFix, operatorActionOutcomeApplied, operatorActionClosedDetail, grace+time.Second)},
 		{Repo: "o/r", Number: 5, Kind: "issue", LastOperatorAction: act(operatorActionCloseRead, operatorActionOutcomeFailed, "Close refused: repo paused", time.Minute)},
 		{Repo: "o/r", Number: 6, Kind: "issue", LastOperatorAction: act(operatorActionApprove, operatorActionOutcomeApplied, "unparked", time.Minute)},
+		{Repo: "o/r", Number: 7, Kind: "issue", LastOperatorAction: act(operatorActionCloseIssue, operatorActionOutcomeApplied, operatorActionClosedDetail, time.Minute)},
+		{Repo: "o/r", Number: 8, Kind: "issue", LastOperatorAction: act(operatorActionCloseIssue, operatorActionOutcomeFailed, "permission denied", time.Minute)},
+		{Repo: "o/r", Number: 9, Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{{Number: 7, State: "open"}}},
 	}
 	got := stageTrackerDropOperatorClosed(items, now, grace)
 	var nums []int
 	for _, it := range got {
 		nums = append(nums, it.Number)
 	}
-	want := []int{1, 4, 5, 6}
+	want := []int{1, 4, 5, 6, 8, 9}
 	if !slices.Equal(nums, want) {
 		t.Fatalf("kept %v, want %v (just-closed rows 2 and 3 must leave; a refused close, an old close and a non-close stay)", nums, want)
 	}
