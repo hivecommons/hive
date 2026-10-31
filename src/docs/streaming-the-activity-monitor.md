@@ -189,6 +189,8 @@ full-screen Activity Monitor.
 
 ## Matrix mode (separate channel)
 
+When `dashboard.matrix.enabled` is set, the Activity Monitor header also shows a **Matrix** tab that opens `?kiosk=1&view=matrix` in the same window.
+
 Matrix is an experimental, default-off code display for a separate channel,
 [`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).
 It depends on the Matrix display renderer (`/?kiosk=1&view=matrix`,
