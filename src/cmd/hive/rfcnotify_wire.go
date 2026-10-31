@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/discord"
@@ -208,12 +210,98 @@ func (s rfcNotifySource) ListUpdatedSince(ctx context.Context, since time.Time) 
 	return s.markPrivate(ctx, rfcNotifyIssues(snaps)), err
 }
 
-// markPrivate sets Issue.Private on RFC issues from their repo's
-// visibility; non-RFC issues are ignored by the detector and need no
+// ListPRsUpdatedSince implements rfcnotify.PRSource. Per repo it pages the
+// pulls list newest-updated first and stops at the first PR updated before
+// since. A PR whose title does not mark it as an RFC has its files listed,
+// so the lookup is bounded to PRs updated since the watermark; a new open
+// one that proposes an RFC doc also has the doc read for its first heading.
+func (s rfcNotifySource) ListPRsUpdatedSince(ctx context.Context, since time.Time) ([]rfcnotify.Issue, error) {
+	api := s.c.GoGitHub()
+	if api == nil {
+		return nil, github.ErrNoGitHubClient
+	}
+	var out []rfcnotify.Issue
+	for _, repo := range s.c.Repositories() {
+		owner, name := s.c.SplitRepo(repo)
+		opts := &gh.PullRequestListOptions{State: "all", Sort: "updated", Direction: "desc", ListOptions: gh.ListOptions{PerPage: 100}}
+	pages:
+		for {
+			prs, resp, err := api.PullRequests.List(ctx, owner, name, opts)
+			if err != nil {
+				return nil, err
+			}
+			for _, pr := range prs {
+				if pr == nil {
+					continue
+				}
+				if pr.GetUpdatedAt().Before(since) {
+					break pages
+				}
+				is, err := s.rfcNotifyPR(ctx, api, owner, name, since, pr)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, is)
+			}
+			if resp == nil || resp.NextPage == 0 {
+				break
+			}
+			opts.ListOptions.Page = resp.NextPage
+		}
+	}
+	return s.markPrivate(ctx, out), nil
+}
+
+func (s rfcNotifySource) rfcNotifyPR(ctx context.Context, api *gh.Client, owner, name string, since time.Time, pr *gh.PullRequest) (rfcnotify.Issue, error) {
+	is := rfcnotify.Issue{
+		Repo: owner + "/" + name, Number: pr.GetNumber(), Title: pr.GetTitle(), URL: pr.GetHTMLURL(),
+		Author: pr.GetUser().GetLogin(), State: strings.ToLower(pr.GetState()), CreatedAt: pr.GetCreatedAt().Time,
+		MergedAt: pr.GetMergedAt().Time, Body: pr.GetBody(), IsPR: true,
+	}
+	for _, l := range pr.Labels {
+		is.Labels = append(is.Labels, l.GetName())
+	}
+	if rfcnotify.IsRFCPR(is.Title, nil) {
+		return is, nil
+	}
+	fopts := &gh.ListOptions{PerPage: 100}
+	for {
+		files, resp, err := api.PullRequests.ListFiles(ctx, owner, name, is.Number, fopts)
+		if err != nil {
+			return is, fmt.Errorf("list files of %s: %w", is.Key(), err)
+		}
+		for _, f := range files {
+			if f.GetStatus() != "removed" {
+				is.Files = append(is.Files, f.GetFilename())
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		fopts.Page = resp.NextPage
+	}
+	if !is.Open() || !is.CreatedAt.After(since) {
+		return is, nil
+	}
+	for _, f := range is.Files {
+		if !rfcnotify.IsRFCDoc(f) {
+			continue
+		}
+		// The heading is cosmetic: on any failure the PR title is used.
+		if doc, err := s.c.GetFileContentRef(ctx, owner, name, f, pr.GetHead().GetSHA()); err == nil {
+			is.DocTitle = rfcnotify.FirstHeading(doc)
+		}
+		break
+	}
+	return is, nil
+}
+
+// markPrivate sets Issue.Private on RFC issues and PRs from their repo's
+// visibility; non-RFC items are ignored by the detector and need no
 // lookup.
 func (s rfcNotifySource) markPrivate(ctx context.Context, issues []rfcnotify.Issue) []rfcnotify.Issue {
 	for i := range issues {
-		if !rfcnotify.IsRFC(issues[i].Title, issues[i].Labels) {
+		if !issues[i].RFC() {
 			continue
 		}
 		if s.state == nil {

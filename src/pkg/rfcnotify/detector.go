@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,6 +29,8 @@ type issueRecord struct {
 	// hold episode; a new hold resets it.
 	ReadyAnnounced bool      `json:"ready_announced,omitempty"`
 	LastSeen       time.Time `json:"last_seen"`
+	// PR marks an RFC document pull request.
+	PR bool `json:"pr,omitempty"`
 }
 
 // State is the persisted detector memory.
@@ -104,11 +108,12 @@ func (d *Detector) Watermark() time.Time { return d.state.Watermark }
 // Known reports whether the detector has a record for the issue key.
 func (d *Detector) Known(key string) bool { _, ok := d.state.Issues[key]; return ok }
 
-// Seed records the current open issues without announcing anything and
-// marks the detector seeded as of now. Call it once with the full open set.
+// Seed records the current open issues (and any RFC pull requests passed
+// along) without announcing anything and marks the detector seeded as of
+// now. Call it once with the full open set.
 func (d *Detector) Seed(issues []Issue, now time.Time) {
 	for _, is := range issues {
-		if !IsRFC(is.Title, is.Labels) {
+		if !is.RFC() {
 			continue
 		}
 		d.state.Issues[is.Key()] = recordOf(is, now)
@@ -122,6 +127,10 @@ func (d *Detector) Seed(issues []Issue, now time.Time) {
 // announce, in a stable order. It also advances the watermark to now and
 // prunes closed records older than the retention window. Calling it with
 // the same snapshot twice yields events only once.
+//
+// Pull requests (Issue.IsPR) that propose an RFC document yield KindOpened
+// when opened after the watermark and KindDocAccepted when merged; a PR
+// closed without merging yields nothing.
 func (d *Detector) Observe(issues []Issue, now time.Time) []Event {
 	if !d.state.Seeded {
 		d.Seed(issues, now)
@@ -129,7 +138,7 @@ func (d *Detector) Observe(issues []Issue, now time.Time) []Event {
 	}
 	var events []Event
 	for _, is := range issues {
-		if !IsRFC(is.Title, is.Labels) {
+		if !is.RFC() {
 			// An issue that stopped being an RFC (label dropped, title
 			// edited) is forgotten so a later re-labeling starts clean.
 			delete(d.state.Issues, is.Key())
@@ -139,6 +148,10 @@ func (d *Detector) Observe(issues []Issue, now time.Time) []Event {
 		prev, known := d.state.Issues[key]
 		cur := recordOf(is, now)
 		switch {
+		case is.IsPR:
+			if ev, ok := d.observePR(is, prev, known); ok {
+				events = append(events, ev)
+			}
 		case !known:
 			if is.Open() && is.CreatedAt.After(d.state.Watermark) {
 				events = append(events, Event{Kind: KindOpened, Issue: is})
@@ -160,6 +173,12 @@ func (d *Detector) Observe(issues []Issue, now time.Time) []Event {
 		}
 		d.state.Issues[key] = cur
 	}
+	for i := range events {
+		events[i].Thread = events[i].Issue.Key()
+		if events[i].Kind == KindDocAccepted {
+			d.linkThread(&events[i])
+		}
+	}
 	d.state.Watermark = now
 	d.prune(now)
 	sort.SliceStable(events, func(i, j int) bool {
@@ -172,12 +191,52 @@ func (d *Detector) Observe(issues []Issue, now time.Time) []Event {
 	return events
 }
 
+// observePR decides the event for an RFC pull request. Like issues, an
+// unknown PR is announced only when it was opened after the watermark (so
+// proposals already open at seed time stay silent); a merge is announced
+// once, when seen after the watermark or as an open record closing.
+func (d *Detector) observePR(is Issue, prev *issueRecord, known bool) (Event, bool) {
+	switch {
+	case !known && is.Open():
+		if is.CreatedAt.After(d.state.Watermark) {
+			return Event{Kind: KindOpened, Issue: is}, true
+		}
+	case !known && is.Merged():
+		if is.MergedAt.After(d.state.Watermark) {
+			return Event{Kind: KindDocAccepted, Issue: is}, true
+		}
+	case known && prev.Open && !is.Open() && is.Merged():
+		return Event{Kind: KindDocAccepted, Issue: is}, true
+	}
+	return Event{}, false
+}
+
+// linkThread points a merged RFC doc PR at the thread of the RFC issue its
+// body links (Closes/Refs #N or an issue URL), when the detector tracks
+// that issue as an RFC; otherwise the PR's own thread is kept.
+func (d *Detector) linkThread(ev *Event) {
+	for _, key := range LinkedIssueKeys(ev.Issue.Repo, ev.Issue.Body) {
+		rec, ok := d.state.Issues[key]
+		if !ok || rec.PR {
+			continue
+		}
+		_, num, _ := strings.Cut(key, "#")
+		n, err := strconv.Atoi(num)
+		if err != nil {
+			continue
+		}
+		ev.Thread, ev.LinkedRFC = key, n
+		return
+	}
+}
+
 func recordOf(is Issue, now time.Time) *issueRecord {
 	return &issueRecord{
 		Open:       is.Open(),
-		Held:       is.Open() && Held(is.Labels),
-		Actionable: Actionable(is.Labels),
+		Held:       !is.IsPR && is.Open() && Held(is.Labels),
+		Actionable: !is.IsPR && Actionable(is.Labels),
 		LastSeen:   now,
+		PR:         is.IsPR,
 	}
 }
 
