@@ -202,6 +202,16 @@ func TestMatrixAcceptLine(t *testing.T) {
 		{name: "entropy run 31 ok", in: "id " + strings.Repeat("a", 31), want: "id " + strings.Repeat("a", 31), ok: true},
 		{name: "redaction marker", in: "value <redacted> here"},
 		{name: "scrub changes", in: "key AKIA" + "IOSFODNN7EXAMPLE end"},
+		{name: "yaml password", in: "password: hunter2"},
+		{name: "env api key", in: "API_KEY=abc123"},
+		{name: "quoted secret", in: `secret: "x"`},
+		{name: "json password", in: `"password": "hunter2"`},
+		{name: "json api key compact", in: `"api_key":"abc"`},
+		{name: "php password", in: `'password' => 'hunter2'`},
+		{name: "ruby symbol token", in: `token: "abc"`},
+		{name: "go short declare kept", in: "token := parse(r)", want: "token := parse(r)", ok: true},
+		{name: "comment kept", in: "// the token is refreshed hourly", want: "// the token is refreshed hourly", ok: true},
+		{name: "identifier kept", in: "tokenize(line)", want: "tokenize(line)", ok: true},
 		{name: "pane scrub changes", in: "use sk-" + "abcdef12 now"},
 	}
 	for _, tc := range tests {
@@ -480,4 +490,20 @@ func TestMatrixSourceExpiredHashInLivePR(t *testing.T) {
 	if m.totalHashes != 2 {
 		t.Fatalf("totalHashes = %d, want 2", m.totalHashes)
 	}
+}
+
+func TestServerCloseStopsMatrixSource(t *testing.T) {
+	s := &Server{}
+	if s.MatrixObserver(matrixTestConfig()) == nil {
+		t.Fatal("active matrix returned no observer")
+	}
+	src := s.matrix
+	s.Close()
+	select {
+	case <-src.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Server.Close did not stop the matrix goroutine")
+	}
+	s.Close()
+	(&Server{}).Close()
 }

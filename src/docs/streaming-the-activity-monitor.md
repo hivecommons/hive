@@ -200,7 +200,7 @@ and acts only when clicked:
 | Control | What it does |
 |---|---|
 | **✕ Exit display** | Leaves display mode, the same as **Esc**. |
-| **🔗 Copy link** | Copies a link to this display: `display=1`, the current `am.*` view (or the playlist's `am.view` + `interval`) and `theme`, and nothing else — never a token or cookie. If the clipboard is unavailable or refused, the link is shown in a selectable field instead. |
+| **🔗 Copy link** | Copies a link to this display: `display=1`, the current `am.*` view (or the playlist's `am.view` + `interval`), `theme`, and the `density=tv` / `shift=1` display options when set, and nothing else — never a token or cookie. If the clipboard is unavailable or refused, the link is shown in a selectable field instead. |
 | **⛶ Full screen** | The same full screen as the header's ⛶ button. Disabled with a "not supported" tooltip where the browser has no Fullscreen API. |
 | **☀ Keep awake** | Asks the browser to keep the screen awake (Screen Wake Lock). Shows *on*, *off*, *denied* (with the browser's reason; it is not retried automatically) or is disabled where unsupported. While on, it is re-requested when the tab becomes visible again; it is released on exit and is not remembered after a reload. |
 
@@ -228,6 +228,30 @@ time per view with `interval`:
   motion it is a static *next in Ns* label instead.
 - Playlists exist only in the URL. There are no named presets in `hive.yaml`,
   and playlists apply only in display mode, never to `?kiosk=1`.
+
+A display says honestly when its data is old. Its header shows the hive id,
+a clock and a live dot. When the event stream has been silent for more than
+two poll intervals (about a minute), or the tracker payload is older than two
+server cache TTLs, the dot turns amber, the board dims and a banner reads
+*Stale: last update N ago*. It recovers by itself when updates resume. If
+the stream fails to reconnect five times in a row, the display reloads
+itself after 30 s, doubling on each further reload up to 10 minutes; it also
+reloads once after a hive upgrade finishes. A reload keeps the URL, so the
+view survives. The ordinary Activity Monitor and `?kiosk=1` do not dim, and
+the "updated … ago" chip behaves as before everywhere.
+
+Two wall-screen options apply only together with `display=1` and are ignored
+otherwise:
+
+| Parameter | Effect |
+|---|---|
+| `density=tv` | Larger type and only the stage, title and actor of each row. No filters, row chips or pager: the rows that fit the screen, then a "+N more" footer. Recomputed when the window is resized. `tv` is the only value; anything else is ignored. |
+| `shift=1` | OLED burn-in protection: the board moves 1–2 px to a new spot every 4 minutes. Off by default. |
+
+With the operating system's *reduce motion* setting on, a display plays no
+row movement, no burn-in shift and no dim transition.
+
+Example: `/?display=1&density=tv&shift=1#section-activity-monitor-section`.
 
 Any Activity Monitor filter can be described in the URL with `am.*`
 parameters, so a display link reproduces the view in a fresh browser profile:

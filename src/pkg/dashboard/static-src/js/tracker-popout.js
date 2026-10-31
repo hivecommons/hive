@@ -93,13 +93,21 @@
     function stageTrackerIsFullscreen() {
       return !!(document.fullscreenElement && document.fullscreenElement === stageTrackerFullscreenTarget()) && document.body.classList.contains('ham-fullscreen');
     }
+    // body.ham-fullscreen marks browser full screen; body.ham-chromeless is
+    // the shared chrome-less layout (css/popout.css). Leaving full screen
+    // keeps the layout when the URL already asks for it (pop-out, display).
+    function stageTrackerSetFullscreenLayout(on) {
+      const cl = document.body.classList;
+      cl.toggle('ham-fullscreen', !!on);
+      cl.toggle('ham-chromeless', !!on || cl.contains('popout-mode') || cl.contains('display-mode'));
+    }
     // Pure: label + title for the ⛶ button given the current state.
     function stageTrackerFullscreenLabel(isFull) {
       return isFull ? STAGE_TRACKER_FULLSCREEN_LABELS.exit : STAGE_TRACKER_FULLSCREEN_LABELS.enter;
     }
     function stageTrackerRenderFullscreenButton() {
       // Esc (or the browser) leaving full screen must drop the layout too.
-      if (!document.fullscreenElement) document.body.classList.remove('ham-fullscreen');
+      if (!document.fullscreenElement) stageTrackerSetFullscreenLayout(false);
       const full = stageTrackerIsFullscreen();
       const btn = stageTrackerFullscreenButton();
       if (!btn) return;
@@ -114,17 +122,17 @@
       if (!target) return Promise.resolve(false);
       let p;
       if (stageTrackerIsFullscreen()) {
-        document.body.classList.remove('ham-fullscreen');
+        stageTrackerSetFullscreenLayout(false);
         p = document.exitFullscreen ? document.exitFullscreen() : Promise.resolve();
       } else if (target.requestFullscreen) {
-        document.body.classList.add('ham-fullscreen');
+        stageTrackerSetFullscreenLayout(true);
         p = target.requestFullscreen();
       } else {
         if (typeof showToast === 'function') showToast('This browser does not support full screen here.', 'error');
         return Promise.resolve(false);
       }
       return Promise.resolve(p).then(() => { stageTrackerRenderFullscreenButton(); return true; }, (err) => {
-        document.body.classList.remove('ham-fullscreen');
+        stageTrackerSetFullscreenLayout(false);
         stageTrackerRenderFullscreenButton();
         if (typeof showToast === 'function') showToast('Full screen was refused: ' + ((err && err.message) || err), 'error');
         return false;
@@ -323,7 +331,8 @@
     }
     // Pure: the link Copy display link puts on the clipboard. Only view
     // parameters ride along — display=1, am.* (or, given a parsed playlist,
-    // one am.view per accepted view plus interval) and theme — so no token,
+    // one am.view per accepted view plus interval), theme and the rendering-only
+    // density=tv / shift=1 flags — so no token,
     // cookie or other query param can leak. Playlist views are re-serialised
     // from the parsed { filter, group }, never echoed from the current URL.
     function stageTrackerDisplayLinkUrl(href, filter, group, playlist) {
@@ -341,6 +350,8 @@
       }
       const theme = src.searchParams.get('theme');
       if (theme !== null) out.searchParams.set('theme', theme);
+      if (src.searchParams.get('density') === 'tv') out.searchParams.set('density', 'tv');
+      if (src.searchParams.get('shift') === '1') out.searchParams.set('shift', '1');
       out.hash = STAGE_TRACKER_POPOUT_HASH;
       return out.toString();
     }

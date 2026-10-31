@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"path"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -12,6 +13,13 @@ import (
 // matrixEntropyRun is the longest run of token-alphabet characters a Matrix
 // line may carry; a longer run looks like a key, hash or encoded secret.
 const matrixEntropyRun = 32
+
+// matrixKeyValueSecret matches a secret-looking key, optionally closed by a
+// quote as in JSON, PHP or Ruby (`"password": "x"`, `'password' => 'x'`),
+// followed by `=`, `:` or `=>` and a value, so short secrets such as
+// `password: hunter2` are dropped. Go's `:=` and `==` are excluded so ordinary
+// code is not over-dropped.
+var matrixKeyValueSecret = regexp.MustCompile(`(?i)(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|token)["']?\s*(?:=[^=]|:[^=])\s*["']?[^\s"']`)
 
 var matrixLockfiles = map[string]bool{
 	"go.sum":              true,
@@ -123,6 +131,9 @@ func matrixAcceptLine(raw string) (string, bool) {
 		}
 	}
 	if matrixHasEntropyRun(line) {
+		return "", false
+	}
+	if matrixKeyValueSecret.MatchString(line) {
 		return "", false
 	}
 	if logscrub.ContainsRedactionMarker(line) {

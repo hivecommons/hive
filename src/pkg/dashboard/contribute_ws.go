@@ -5068,12 +5068,18 @@ func (s *Server) CloseContributeHub() {
 }
 
 // Close shuts down server-managed background resources, including the
-// contributor hub.
+// contributor hub and the Matrix line source.
 func (s *Server) Close() {
 	if s == nil {
 		return
 	}
 	s.CloseContributeHub()
+	s.matrixMu.Lock()
+	m := s.matrix
+	s.matrixMu.Unlock()
+	if m != nil {
+		m.close()
+	}
 }
 
 func contributorStatePath(contributorsDir, currentPath, name string) string {
