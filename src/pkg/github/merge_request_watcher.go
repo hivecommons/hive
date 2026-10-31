@@ -409,6 +409,20 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		c.handleForgeMergeRequest(ctx, path, req, attempts, merge, nowFn)
 		return
 	}
+	owner, repoName := c.SplitRepo(req.Repo)
+	destination, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_destination"), owner, repoName, req.Number)
+	if err != nil {
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		return
+	}
+	ctx, releaseDestination, err := AcquireDestinationMerge(ctx, DestinationMergeDirectory(), owner+"/"+repoName, destination.GetBase().GetRef())
+	if err != nil {
+		if !errors.Is(err, ErrDestinationMergeBusy) {
+			c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		}
+		return
+	}
+	defer releaseDestination()
 
 	// Human-merge paths (#11039): a PR touching a path listed in
 	// auto_merge.human_merge_paths for its repo is never merged by the App,

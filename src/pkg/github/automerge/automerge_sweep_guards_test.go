@@ -90,12 +90,12 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				w.WriteHeader(fx.firstGetStatus)
 				return
 			}
-			if fetches > 1 && fx.recheckGetStatus != 0 {
+			if fetches > 2 && fx.recheckGetStatus != 0 {
 				w.WriteHeader(fx.recheckGetStatus)
 				return
 			}
 			head := *fx.headSHA
-			if fetches > 1 {
+			if fetches > 2 {
 				head = *fx.recheckHeadSHA
 			}
 			var prLabels []map[string]string
@@ -114,6 +114,7 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				"mergeable":       fx.mergeableState == "clean",
 				"user":            map[string]string{"login": fx.author},
 				"head":            map[string]string{"sha": head},
+				"base":            map[string]string{"ref": "main"},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/files":
 			if fx.filesHTTPCode != 0 {

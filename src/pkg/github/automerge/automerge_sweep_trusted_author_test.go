@@ -84,12 +84,12 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 				http.Error(w, "get error", fx.getStatus)
 				return
 			}
-			if fetches > 1 && fx.recheckStatus != 0 {
+			if fetches > 2 && fx.recheckStatus != 0 {
 				http.Error(w, "recheck error", fx.recheckStatus)
 				return
 			}
 			sha := "sha7"
-			if fetches > 1 && fx.recheckHeadSHA != "" {
+			if fetches > 2 && fx.recheckHeadSHA != "" {
 				sha = fx.recheckHeadSHA
 			}
 			json.NewEncoder(w).Encode(pull(sha))

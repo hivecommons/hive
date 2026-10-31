@@ -1,0 +1,1 @@
+- Allow independently proven, CI-ready pull requests to prepare past a completed refresh awaiting CI, without displacing unresolved mutations or bypassing dependency, review, fresh-base, or serialized-merge gates.

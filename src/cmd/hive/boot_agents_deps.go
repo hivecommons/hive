@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/hivecommons/hive/crux/api/callback"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/github/requestwatch"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // bootAgentsDeps carries the effects of bootAgents that outlive the call
@@ -98,6 +100,7 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 			github.StartTokenAccessAuditWatcher(ctx, logger)
 		},
 		startRequestRelays: func(ctx context.Context, c *github.Client, r requestRelays) <-chan struct{} {
+			github.ConfigureDestinationMerges(filepath.Join(stagelabels.DefaultStateDir, "destination-merges"))
 			if r.mergePolicy != nil {
 				c.SetMergeRequestPolicyGate(r.mergePolicy(c))
 			}

@@ -1852,7 +1852,7 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			pr := byNumber[number]
 			fetchCount[number]++
 			headSHA := "sha" + strconv.Itoa(pr.number)
-			if fetchCount[number] > 1 && pr.headSHAOverride != "" {
+			if fetchCount[number] > 2 && pr.headSHAOverride != "" {
 				headSHA = pr.headSHAOverride
 			}
 			body := map[string]any{
