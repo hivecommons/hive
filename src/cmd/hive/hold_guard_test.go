@@ -41,6 +41,11 @@ func newTestHoldGuardStore(t *testing.T) *holdguard.Store {
 	t.Helper()
 	s := holdguard.Load(filepath.Join(t.TempDir(), "hold-guard.json"))
 	swapHoldGuardStore(t, s)
+	// A fresh ledger is a fresh process: forget the held-PR update stops
+	// already announced, or a repo#number/head reused across tests inherits
+	// an earlier test's WARN and note dedupe.
+	heldPRUpdateStopAnnounced.Clear()
+	t.Cleanup(heldPRUpdateStopAnnounced.Clear)
 	// Keep the hold-guard's hold-source record off the real data dir.
 	oldSources := github.HoldSourcesPath
 	github.HoldSourcesPath = filepath.Join(t.TempDir(), github.HoldSourcesFile)

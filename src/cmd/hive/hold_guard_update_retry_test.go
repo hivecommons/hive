@@ -397,3 +397,25 @@ func TestStopHeldPRUpdateWarnsAndNotesOncePerHeadAndBase(t *testing.T) {
 		t.Fatalf("a moved head must earn a new note; got %d", len(writer.comments))
 	}
 }
+
+// Process memory is scoped to the ledger it shadows: a fresh test store
+// (newTestHoldGuardStore) forgets earlier stops, so the same repo#number and
+// head earns its own WARN and note in each test instead of inheriting an
+// earlier test's dedupe.
+func TestStopHeldPRUpdateFreshStoreForgetsAnnouncedStops(t *testing.T) {
+	pr := github.PullRequest{Repo: "widgets", Number: 9017, HeadSHA: "fresh-h1", BaseSHA: "fresh-b1", MergeableState: "dirty", FromFork: true}
+	for i := 0; i < 2; i++ {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		store := newTestHoldGuardStore(t)
+		writer := &fakeIssueWriter{}
+		store.Snapshot("acme/widgets", pr.Number, pr.HeadSHA, nil)
+		stopHeldPRUpdate(context.Background(), writer, store, "acme/widgets", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+		if n := strings.Count(buf.String(), "stopped keeping held PR mergeable"); n != 1 {
+			t.Fatalf("store %d: warned %d times, want 1:\n%s", i, n, buf.String())
+		}
+		if len(writer.comments) != 1 {
+			t.Fatalf("store %d: posted %d notes, want 1", i, len(writer.comments))
+		}
+	}
+}
