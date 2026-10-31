@@ -44,6 +44,7 @@ const fill = d => {fields = {}; for(const [k,v] of Object.entries(d)) fields['ev
   const model = state.eventTriggers;
   assert(model.loaded);
   const markup = ui.renderEventTriggersSection();
+  assert(markup.includes('settings-subsection config-field'), 'search must resolve the Event triggers settings row');
   for(const text of ['Event triggers','ACTIONABLE','once per hive process','Existing actionable issues','restart replays','does not reset','Pause, budget, on-demand','separate setup','without restarting']) {
     assert(markup.includes(text), text);
   }
