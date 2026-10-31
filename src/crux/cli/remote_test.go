@@ -359,7 +359,7 @@ func TestRemoteErrors(t *testing.T) {
 		{[]string{"--server", socket, "--token", "tok", "logs", "-h"}, ExitOK, ""},
 		{[]string{"--server", socket, "--token", "tok", "logs", "-buffer", "-full", "fixer"}, ExitUsage, "exclusive"},
 		{[]string{"--server", socket, "--token", "tok", "logs", "-f", "-json", "fixer"}, ExitUsage, "exclusive"},
-		{[]string{"--server", socket, "--token", "tok", "logs", "-buffer", "-f", "fixer"}, ExitError, "agent fixer"}, // -buffer with -f is accepted
+		{[]string{"--server", socket, "--token", "tok", "logs", "-buffer", "-f", "lost"}, ExitError, "agent lost not found"}, // -buffer with -f is accepted and takes the follow path
 		{[]string{"--server", socket, "--token", "tok", "kick", "fixer"}, ExitUsage, "usage: crux kick"},
 		{[]string{"--server", socket, "--token", "tok", "kick", "-h"}, ExitOK, ""},
 		{[]string{"--server", socket, "--token", "tok", "kick", "fixer", "  "}, ExitUsage, "empty"},
@@ -432,7 +432,8 @@ func TestLogsBufferFollowHelp(t *testing.T) {
 	if code := h.run("--server", socket, "--token", "tok", "logs", "-h"); code != ExitOK {
 		t.Fatalf("logs -h: %d %s", code, h.stderr)
 	}
-	helpText := h.stdout.String()
+	// subFlags sends flag usage to Stderr, so -h help lands there.
+	helpText := h.stderr.String()
 	if !strings.Contains(helpText, "redundant") && !strings.Contains(helpText, "implied") {
 		t.Fatalf("logs -h does not mention -buffer is redundant/implied with -f:\n%s", helpText)
 	}
