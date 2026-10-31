@@ -265,7 +265,7 @@ test('foreign winners and unreadable/malformed claim acknowledgements never auth
     }
     if (reason === 'ack_malformed') f.github.rest.git.createRef = async () => ({status: 201, data: {}});
     const result = await prepare(f.args());
-    assert.ok(!f.calls.some(call => call.type === 'dispatch')));
+    assert.ok(!f.calls.some(call => call.type === 'dispatch'));
     if (reason === 'foreign') {
       assert.equal(result.failure, null);
       assert.ok(result.prepared.every(item => item.dispatch === 'observer'));
