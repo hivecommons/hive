@@ -289,3 +289,51 @@ func TestEventMapperKinds(t *testing.T) {
 		t.Errorf("pr event mapping wrong: %+v", ev)
 	}
 }
+
+// TestCELOpenedFiresOncePerItem verifies issue.opened / pr.opened are
+// edge-triggered: the same snapshot evaluated twice matches once, and a newly
+// appearing item still fires.
+func TestCELOpenedFiresOncePerItem(t *testing.T) {
+	cfg := &config.Config{
+		Triggers: []config.TriggerRule{
+			{Name: "issue", Expr: `event.kind == "issue.opened"`, Agent: "reviewer"},
+			{Name: "pr", Expr: `event.kind == "pr.opened"`, Agent: "fixer"},
+		},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"reviewer": enabledAgent(), "fixer": enabledAgent()},
+		},
+	}
+	engine := celEngineFor(cfg, celTestLogger())
+	gov := newTestGovernor(cfg.Agents)
+	notPaused := func(string) bool { return false }
+	snap := func(issues []int, prs []int) *github.ActionableResult {
+		r := &github.ActionableResult{}
+		for _, n := range issues {
+			r.Issues.Items = append(r.Issues.Items, github.Issue{Repo: "o/r", Number: n})
+		}
+		for _, n := range prs {
+			r.PRs.Items = append(r.PRs.Items, github.PullRequest{Repo: "o/r", Number: n})
+		}
+		return r
+	}
+	var seen celSeenSet
+	run := func(a *github.ActionableResult) int {
+		return len(celMatchedAgentsOnce(engine, a, cfg, gov, notPaused, celTestLogger(), &seen))
+	}
+
+	if got := run(snap([]int{1}, []int{2})); got != 2 {
+		t.Fatalf("first eval: want 2 agents, got %d", got)
+	}
+	if got := run(snap([]int{1}, []int{2})); got != 0 {
+		t.Fatalf("second eval of same snapshot: want 0 agents, got %d", got)
+	}
+	if got := run(snap([]int{1, 3}, []int{2})); got != 1 {
+		t.Fatalf("new issue: want 1 agent, got %d", got)
+	}
+	if got := run(snap([]int{1, 3}, []int{2, 4})); got != 1 {
+		t.Fatalf("new PR: want 1 agent, got %d", got)
+	}
+	if got := len(celMatchedAgents(engine, snap([]int{1}, nil), cfg, gov, notPaused, celTestLogger())); got != 1 {
+		t.Fatalf("level-triggered wrapper must still match, got %d", got)
+	}
+}

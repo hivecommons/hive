@@ -280,6 +280,17 @@ type PRPassFacts struct {
 	// PR reads 085 with stagelabels.LaneReasonRebaseFailedTwice so a
 	// person decides (hivecommons/hive#15307).
 	RebaseFailedTwice bool
+	// FixerExhausted is the attempt count when the review fix dispatcher
+	// refuses another fix for this hive-authored PR because the
+	// re-engagement cap is spent: the PR reads 085 with
+	// stagelabels.FixerExhaustedReason(n) so a person decides instead of
+	// the row claiming "Fixing" with nobody on it (hivecommons/hive#15744).
+	FixerExhausted int
+	// FixerExcluded is true when no fix job is active and the dispatcher
+	// bars one for any reason (exhausted, no enabled fixer, …): a stale
+	// answered decision on the same head must not pull the PR back from
+	// 085 to 070 and strip stage/stalled (hivecommons/hive#15744).
+	FixerExcluded bool
 	// Stalled is the pass's dwell verdict (stagelabels.StalledWith over the
 	// store record after this pass's Observe); KindLabels are the
 	// configured author/<kind> names. Both are outputs of the pass the

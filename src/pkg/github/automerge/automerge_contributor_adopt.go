@@ -725,6 +725,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 
 	if policy.AdoptInPlace && canPushInPlace && !dcoRehome {
 		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
+		c.recordContributorAbandon(ctx, obs, reason, 0, now)
 		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(fence)
 		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
@@ -978,6 +979,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	superseding := created.GetNumber()
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
 	store.NoteAdoptReason(key, reason)
+	c.recordContributorAbandon(ctx, obs, reason, superseding, now)
 	if admittedBy != "" {
 		c.carryAdmissionToCopy(obs, admittedBy, superseding, nonEmpty(created.GetHead().GetSHA(), nonEmpty(resignedTip, obs.HeadSHA)), now)
 	}
