@@ -21,7 +21,7 @@
     body.display-mode .hive-chat-panel, body.display-mode #welcome-overlay, body.display-mode .nps-card { display: none !important; }
     /* /api/theme.css (theme/theme.go layoutGuardCSS) forces the topbar to
        display:grid!important with id specificity; beat it with (1,2,2). */
-    html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id],
+    html body.popout-mode #oc-topbar[id], html body.ham-fullscreen #oc-topbar[id] { display: none !important; }
     html body.display-mode #oc-topbar[id] { display: none !important; }
     body.popout-mode #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
     body.ham-fullscreen #hive-dashboard-root > [data-dashboard-section]:not(#activity-monitor-section),
