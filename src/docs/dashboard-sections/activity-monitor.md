@@ -201,6 +201,14 @@ It counts under **Needs attention**. Before the merge gate only the held-workflo
 
 #### Merge train
 
+**Preparation is a separate, not-yet-ready train.** Its compact gold header and
+original thin rail annotate actual preparation members without changing their
+CI/review stages. Adjacent members share one header and a continuous connector
+through expanded captions, row padding and nested PR spacing, even when the
+selected display order is opposite to the durable FIFO. Ticket positions remain
+the FIFO authority; row sorting, pagination and issue/PR association do not change.
+An unrelated row or child ends the run rather than acquiring a misleading rail.
+
 When several approved PRs to the same base touch the same files, the automerge lanes merge them one at a time ([#15117](https://github.com/hivecommons/hive/issues/15117)). The tracker renders every train contiguously, in merge order, with a thin left rail linking the rows and a header chip `🚆 merge train · 4 PRs · 1st: #15074` — the glyph is an inline-SVG railcar (14px, currentColor, hover *Merge queue*), the same icon the **Merge queue** column header and its chevrons wear; overlapping files are listed beside it. Pill wording per state is the PR's place in the queue (the owner's words — `front` and `queued-behind` appear nowhere a person reads): the head reads "Merge queued · 1st of 4 · ~13m" (its own soak left plus the next pass); the others "Merge queued · 2nd of 4 · ~4m", "Merge queued · 3rd of 4", … (`1st 2nd 3rd 4th … 11th 12th 13th 21st`, always with the queue length, countdown to its turn); when the page draws more than one train each queue word ends with its train's tag — "Merge queued · 1st of 2 · train main.go" (the first overlapping file's basename, else the head `#N`) — and the hover leads *Train of 2 PRs overlapping main.go; merges after #15567.*, so two "1st"s on one page tell apart (one train → no tag); the header and every member row of a train share one rail accent (`.ham-train-k0…k3`, cycling in page order); once the front merged and the hive is rebasing a conflicting sibling, "Rebasing · attempt 1/2"; when the loop guard (`auto_merge.merge_train.max_rebase_attempts`) is spent, "Needs human decision · rebase failed twice" at stage/085 with the decision option "Rebase, then merge as maintainer".
 
 The tooltip lists the PRs ahead and the overlapping files. Waiting siblings are never red, never `needs human`; a `needs-rebase` label on one is reported under `stale_labels`, the train repairs it. Each item carries `merge_gate.state` (`queued-behind` / `rebasing` / `rebase-exhausted` / `front`, with an honest `reason` such as `behind #15074 in merge train (3rd of 4, overlapping files: stage_tracker.go, index.html)`) and `merge_train{id, state, front, position, size, attempt, max_attempts, overlap_files, ahead, members}`; the id is `<base>#<front>` and `members` is the whole roster in merge order.

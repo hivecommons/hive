@@ -1,0 +1,1 @@
+- Keep adjacent preparation-train members connected through full row captions and nested PR spacing under one compact header, even when the selected display order runs opposite to preparation FIFO; preserve row order and stop the rail before unrelated work.

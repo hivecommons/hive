@@ -107,13 +107,13 @@
       return { groupIndex: members[0].groupIndex, members, ordered };
     }
     function stageTrackerPreparationAdjacent(a, b) {
-      return !!(a && b && a.ordered && b.ordered && a.groupIndex === b.groupIndex
-        && a.members[a.members.length - 1].sequence < b.members[0].sequence);
+      return !!(a && b && a.groupIndex === b.groupIndex);
     }
     function stageTrackerPreparationHelp(group) {
       const q = group.queue;
       const details = [`${q.repo || 'Repository unknown'} → ${q.base_ref || 'base unknown'}`,
         q.message || 'FIFO follows first qualifying admission, not PR age or guaranteed merge order.',
+        'The connector joins adjacent preparation members in the selected display order; ticket positions still follow preparation FIFO.',
         'Preparation is not CI, review approval, a ready train seat, or native queue membership.'];
       if (q.observed_at) details.push('Snapshot ' + q.observed_at);
       for (const e of group.members) {
@@ -169,8 +169,9 @@
       if (!info || ctx && ctx.preparationParent) return '';
       const prev = ctx && ctx.preparationPrev !== undefined ? ctx.preparationPrev : stageTrackerPreparationRowInfo(ctx && ctx.prevRow, stages);
       const next = ctx && ctx.preparationNext !== undefined ? ctx.preparationNext : stageTrackerPreparationRowInfo(ctx && ctx.nextRow, stages);
-      const gap = !info.ordered || info.members.some((e, i) => i && e.sequence !== info.members[i - 1].sequence + 1)
-        || stageTrackerPreparationAdjacent(prev, info) && info.members[0].sequence !== prev.members[prev.members.length - 1].sequence + 1;
+      const trail = stageTrackerPreparationAdjacent(prev, info)
+        ? [prev.members[prev.members.length - 1]].concat(info.members) : info.members;
+      const gap = trail.some((e, i) => i && Math.abs(e.sequence - trail[i - 1].sequence) > 1);
       return ' ham-train' + stageTrackerTrainAccentClass(STAGE_TRACKER_PREPARATION_ACCENT) + ' ham-preparation-member'
         + (info.members.some(e => e.role === 'owner' && e.state === 'current') ? ' ham-train-front' : '')
         + (!stageTrackerPreparationAdjacent(info, next) ? ' ham-train-last' : '')

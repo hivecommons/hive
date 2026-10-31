@@ -206,6 +206,7 @@
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-preparation-head { flex-wrap: wrap; }
+    .ham-row.ham-preparation-member::before { top: calc(-1 * var(--line-width)); }
     .ham-preparation-head .ham-train-chip { white-space: normal; }
     .ham-preparation-head .ham-preparation-help { background: none; border-color: var(--ham-train-accent); color: var(--muted); }
     .ham-preparation-help::before { content: '?'; }

@@ -27,6 +27,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { preparationRailLayoutFixture } from './fixtures/dashboard-preparation-rail.mjs';
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
@@ -246,6 +247,7 @@ async function main() {
   }
 
   const report = [];
+  const preparationRailReport = [];
   let socket;
   try {
     const tabs = await waitForTabs();
@@ -279,6 +281,7 @@ async function main() {
     // Each state callback is best-effort: a missing helper yields a skipped shot, not a harness error.
     const setThemeJS = (theme) => `document.body.classList.toggle('light-mode', ${theme === 'light'}); document.documentElement.style.colorScheme = '${theme}'; true`;
     const resetJS = `(() => {
+      document.getElementById('preparation-rail-layout-fixture')?.remove();
       document.querySelectorAll('.config-overlay, .modal-overlay').forEach((el) => { el.classList.add('hidden'); });
       document.documentElement.classList.remove('modal-open'); document.body.classList.remove('modal-open');
       return true;
@@ -324,6 +327,13 @@ async function main() {
         states.push({ name: 'settings', run: async () => { await evaluate(collapseAllJS); return evaluate(settingsJS); } });
         states.push({ name: 'knowledge-sources', run: async () => { await evaluate(collapseAllJS); return evaluate(knowledgeJS); } });
         states.push({ name: 'terminal', run: async () => { await evaluate(collapseAllJS); return evaluate(terminalJS); } });
+        states.push({ name: 'preparation-rail', run: async () => {
+          await evaluate(collapseAllJS);
+          const result = await evaluate('(' + preparationRailLayoutFixture.toString() + ')()');
+          preparationRailReport.push({ viewport: vp.name, theme, ...result });
+          if (result.failures.length) throw new Error('Preparation rail layout: ' + result.failures.join('; '));
+          return true;
+        } });
 
         for (const state of states) {
           await evaluate(resetJS);
@@ -347,6 +357,7 @@ async function main() {
     if (socket) socket.close();
     await cleanup();
     fs.writeFileSync(path.join(opts.out, 'overflow-report.json'), JSON.stringify(report, null, 2) + '\n');
+    fs.writeFileSync(path.join(opts.out, 'preparation-rail-layout.json'), JSON.stringify(preparationRailReport, null, 2) + '\n');
   }
   console.log(`wrote ${report.length} finding(s) to ${path.join(opts.out, 'overflow-report.json')}`);
 }
