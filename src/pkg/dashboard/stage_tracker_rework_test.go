@@ -89,6 +89,26 @@ func TestStageTrackerReworkFor(t *testing.T) {
 			state: "requested", actor: "zoe", since: requested, reqAtFrom: requested},
 		{name: "new head pushed", it: pr("bbb", tp(-3*time.Minute)), login: "zoe", stage: stagelabels.ReturnedToContributor, rec: nudged, hasRec: true, fixWork: inflight,
 			state: "pushed", evidence: "commit", actor: "zoe", since: now.Add(-3 * time.Minute), head: "bbb", reqAtFrom: requested},
+		// hivecommons/hive#16021: the author force-pushed (rebased commits
+		// keep their old dates; the list payload's updated_at predates the
+		// ask), the sweep re-entered 071 for the new red head and re-nudged
+		// for it. The record remembers the push: pushed, dated from the
+		// push, requested_at from the original ask.
+		{name: "re-asked on the pushed head still reads pushed", it: pr("bbb", tp(-2*time.Hour)), login: "zoe", stage: stagelabels.NeedsAuthor,
+			rec: stagelabels.Record{Stage: stagelabels.NeedsAuthor, Reason: "optional-check-failing:server-tests", EnteredAt: now.Add(-10 * time.Minute), NudgeHead: "bbb", FirstNudgeAt: now.Add(-10 * time.Minute), LastNudgeAt: now.Add(-10 * time.Minute), NudgeCount: 1,
+				ReworkAskedAt: requested, ReworkPushedHead: "bbb", ReworkPushedAt: now.Add(-12 * time.Minute)}, hasRec: true, fixWork: none,
+			state: "pushed", evidence: "commit", actor: "zoe", since: now.Add(-12 * time.Minute), head: "bbb", reqAtFrom: requested},
+		{name: "review verdict on the pushed head is a fresh ask", it: pr("bbb", nil), login: "zoe", stage: stagelabels.NeedsAuthor,
+			rec: stagelabels.Record{Stage: stagelabels.NeedsAuthor, Reason: stagelabels.LaneReasonChangesRequested, EnteredAt: now.Add(-10 * time.Minute), NudgeHead: "bbb", FirstNudgeAt: now.Add(-10 * time.Minute), LastNudgeAt: now.Add(-10 * time.Minute), NudgeCount: 1,
+				ReworkAskedAt: requested, ReworkPushedHead: "bbb", ReworkPushedAt: now.Add(-12 * time.Minute)}, hasRec: true, fixWork: none,
+			state: "requested", actor: "zoe", since: now.Add(-10 * time.Minute), reqAtFrom: now.Add(-10 * time.Minute)},
+		{name: "remembered push on another head does not vouch for this one", it: pr("ccc", nil), login: "zoe", stage: stagelabels.NeedsAuthor,
+			rec: stagelabels.Record{Stage: stagelabels.NeedsAuthor, Reason: "conflicting", EnteredAt: now.Add(-10 * time.Minute), NudgeHead: "ccc", FirstNudgeAt: now.Add(-10 * time.Minute), LastNudgeAt: now.Add(-10 * time.Minute), NudgeCount: 1,
+				ReworkAskedAt: requested, ReworkPushedHead: "bbb", ReworkPushedAt: now.Add(-12 * time.Minute)}, hasRec: true, fixWork: none,
+			state: "requested", actor: "zoe", since: now.Add(-10 * time.Minute), reqAtFrom: now.Add(-10 * time.Minute)},
+		{name: "webhook-booked push dates the pushed state", it: pr("bbb", tp(-2*time.Hour)), login: "zoe", stage: stagelabels.ReturnedToContributor,
+			rec: stagelabels.Record{Stage: stagelabels.ReturnedToContributor, EnteredAt: requested.Add(-time.Minute), NudgeHead: "aaa", FirstNudgeAt: requested, LastNudgeAt: requested, NudgeCount: 1, LastPushSha: "bbb", LastPushAt: now.Add(-4 * time.Minute)}, hasRec: true, fixWork: none,
+			state: "pushed", evidence: "commit", actor: "zoe", since: now.Add(-4 * time.Minute), head: "bbb", reqAtFrom: requested},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
