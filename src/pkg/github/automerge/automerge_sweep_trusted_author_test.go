@@ -46,6 +46,9 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 	t.Helper()
 	fetches := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnprotectedSweepBase(w, r) {
+			return
+		}
 		state := fx.mergeableState
 		if state == "" {
 			state = "clean"
