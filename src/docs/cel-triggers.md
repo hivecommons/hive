@@ -94,6 +94,36 @@ once per issue/PR (keyed `repo#number`) per hive process, the first time the
 item is enumerated, not on every cycle while it stays actionable. The seen-set
 is in memory, so a hive restart re-emits currently actionable items once.
 
+### Run the scanner for newly seen GitHub issues
+
+Agent → Configuration → Channels is **not** a GitHub webhook installer.
+Only the governor `kick` channel has a supported runtime; the old `webhook`,
+`discord`, `schedule`, and `bead` channel runtimes were removed.
+Instead, add a top-level rule in `hive.yaml` (keep existing rules):
+
+```yaml
+triggers:
+  - name: scanner-new-issue
+    expr: event.kind == "issue.opened" && event.repo == "org/repo"
+    agent: scanner
+```
+
+Replace `org/repo` with a repository managed by this hive and ensure the
+scanner is enabled. Normal pause, budget, and on-demand gates still apply.
+This means **first seen actionable issue**, not exclusively an issue created
+after the rule was installed: existing actionable issues match once, and
+restart replays them once as described above.
+
+For prompt delivery rather than waiting for reconciliation, use the existing
+signed GitHub webhook receiver and subscribe to `issues`:
+[operator setup](operator-reference.md#webhook-driven-pr-cache-invalidation).
+Hosted hives normally receive the GitHub App's signed deliveries through the
+hub relay; stand-alone hives use `POST /api/webhook/github`.
+The receiver requires `GITHUB_WEBHOOK_SECRET` and a matching HMAC signature.
+Saving a channel or adding a CEL rule neither registers a webhook nor
+configures its secret. Delivery wakes an early governor evaluation subject
+to debounce/minimum-gap pacing; it does not bypass agent execution gates.
+
 ### Available functions
 
 Besides the standard CEL string/list operators (`in`, `.contains(...)`,
