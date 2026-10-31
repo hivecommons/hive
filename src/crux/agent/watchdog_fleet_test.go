@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,6 +38,13 @@ func newWatchdogTestManager(t *testing.T, backends map[string]string) (*Manager,
 	origExists := tmuxSessionExists
 	tmuxSessionExists = func(_ *Manager, _ *AgentProcess) bool { return true }
 	t.Cleanup(func() { tmuxSessionExists = origExists })
+	// Observe's bounded probe defers to whatever tmuxSessionExists is faked to
+	// at call time, so tests keep scripting the session through one seam.
+	origProbe := tmuxSessionProbe
+	tmuxSessionProbe = func(_ context.Context, m *Manager, a *AgentProcess) (bool, error) {
+		return tmuxSessionExists(m, a), nil
+	}
+	t.Cleanup(func() { tmuxSessionProbe = origProbe })
 
 	for name := range backends {
 		m.agents[name].State = StateRunning
@@ -166,6 +174,115 @@ func TestWatchdogObserveMissingSession(t *testing.T) {
 	}
 	if obs.Pane != "" {
 		t.Fatal("no capture must be attempted against a missing session")
+	}
+}
+
+// blockingVisiblePaneTerminal is a terminal whose bounded capture behaves
+// like a wedged tmux server: it never answers and only returns once ctx ends.
+type blockingVisiblePaneTerminal struct {
+	funcTerminal
+	called chan struct{}
+}
+
+func (b blockingVisiblePaneTerminal) CaptureVisiblePaneContext(ctx context.Context, _ *AgentProcess) (string, error) {
+	close(b.called)
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func shrinkObserveProbeTimeout(t *testing.T) {
+	t.Helper()
+	orig := observeProbeTimeout
+	observeProbeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { observeProbeTimeout = orig })
+}
+
+// TestWatchdogObserveWedgedSessionProbeIsUnobservable pins #16097: a tmux
+// has-session that never answers must be cut off by the probe deadline and
+// reported as an error (agent unobservable), never as "no session" — which
+// the reconciler would read as dead and restart.
+func TestWatchdogObserveWedgedSessionProbeIsUnobservable(t *testing.T) {
+	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+	shrinkObserveProbeTimeout(t)
+	tmuxSessionProbe = func(ctx context.Context, _ *Manager, _ *AgentProcess) (bool, error) {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("Observe's session probe must carry a deadline")
+		}
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := WatchdogFleet{M: m}.Observe("a1")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Observe err = %v, want deadline exceeded", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Observe did not return: the session probe is unbounded")
+	}
+}
+
+// TestWatchdogObserveWedgedCaptureIsUnobservable is the capture-pane half of
+// #16097: the session exists but capture-pane hangs.
+func TestWatchdogObserveWedgedCaptureIsUnobservable(t *testing.T) {
+	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+	shrinkObserveProbeTimeout(t)
+	term := blockingVisiblePaneTerminal{called: make(chan struct{})}
+	m.terminal = term
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := WatchdogFleet{M: m}.Observe("a1")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Observe err = %v, want deadline exceeded", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Observe did not return: the pane capture is unbounded")
+	}
+	select {
+	case <-term.called:
+	default:
+		t.Fatal("Observe must capture through the context-bounded path")
+	}
+}
+
+// TestTmuxCmdContextHonoursCancelledContext checks the bounded builder runs
+// the same command line as tmuxCmd and refuses to run once ctx is done, so
+// no real tmux is ever spawned here.
+func TestTmuxCmdContextHonoursCancelledContext(t *testing.T) {
+	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+	agent := m.agents["a1"]
+	agent.tmuxSocket = "hive-a1"
+
+	plain := m.tmuxCmd(agent, "has-session", "-t", "hive-a1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	bounded := m.tmuxCmdContext(ctx, agent, "has-session", "-t", "hive-a1")
+	if fmt.Sprint(plain.Args) != fmt.Sprint(bounded.Args) {
+		t.Fatalf("tmuxCmdContext args = %v, want tmuxCmd's %v", bounded.Args, plain.Args)
+	}
+	// Start reports a missing tmux binary before ctx, so only require that
+	// nothing ran successfully; the probes below pin the ctx error.
+	if err := bounded.Run(); err == nil {
+		t.Fatal("Run with cancelled ctx must fail without running tmux")
+	}
+
+	exists, err := probeTmuxSession(ctx, m, agent)
+	if exists || !errors.Is(err, context.Canceled) {
+		t.Fatalf("probeTmuxSession(cancelled) = %v, %v; want false, context.Canceled", exists, err)
+	}
+	pane, err := (tmuxTerminal{manager: m}).CaptureVisiblePaneContext(ctx, agent)
+	if pane != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("CaptureVisiblePaneContext(cancelled) = %q, %v; want \"\", context.Canceled", pane, err)
 	}
 }
 
