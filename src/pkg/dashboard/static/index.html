@@ -6964,13 +6964,20 @@
       body.display-mode #activity-monitor-panel, body.display-mode #activity-monitor-meta,
       body.display-mode #activity-monitor-sticky, body.display-mode #activity-monitor-native-queue { transition: none; }    }
 body.matrix-mode #hive-dashboard-root { display: none !important; }
-body.matrix-mode #hive-matrix { position: fixed; inset: 0; z-index: 100000; background: #000804; color: var(--matrix-color, #52ed86); font: 16px monospace; }
+body.matrix-mode #hive-matrix {
+  --matrix-bg: #000804;
+  --matrix-fg: #52ed86;
+  --matrix-surface: #000000;
+  --matrix-text: #e8f5eb;
+  --matrix-muted: #b8ccbb;
+  position: fixed; inset: 0; z-index: 100000; background: var(--matrix-bg); color: var(--matrix-color, var(--matrix-fg)); font: 16px monospace;
+}
 body.matrix-mode .matrix-canvas { width: 100%; height: 100%; }
-body.matrix-mode .matrix-labels { position: absolute; bottom: 1rem; left: 1rem; right: 1rem; padding: .6rem; background: #000; color: #e8f5eb; font-size: 14px; overflow-wrap: anywhere; }
-body.matrix-mode .matrix-notice { position: absolute; top: 2rem; left: 1rem; right: 1rem; color: #e8f5eb; }
+body.matrix-mode .matrix-labels { position: absolute; bottom: 1rem; left: 1rem; right: 1rem; padding: var(--sp-3); background: var(--matrix-surface); color: var(--matrix-text); font-size: var(--fs-base); overflow-wrap: anywhere; }
+body.matrix-mode .matrix-notice { position: absolute; top: 2rem; left: 1rem; right: 1rem; color: var(--matrix-text); }
 body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; overflow: hidden; }
 body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 1rem; }
-body.matrix-mode .matrix-list small { color: #b8ccbb; }
+body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
 body.matrix-mode #hive-matrix [hidden] { display: none !important; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
@@ -7189,7 +7196,9 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
     window.addEventListener('resize', resize);
     resize(); sync(); pull();
     // Recover from missed nudges, endpoint activation and transient failures.
-    setInterval(function(){ updateLabels(); if (!document.hidden) pull(); }, 30000);
+    if (typeof dashboardSetInterval === 'function') {
+      dashboardSetInterval('matrix-poll', function(){ updateLabels(); if (!document.hidden) pull(); }, 30000);
+    }
   };
 })();
 // Apply layout immediately and hide content until first data render.
@@ -7233,7 +7242,7 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
   window.HIVE_MATRIX = kiosk && view === 'matrix';
   if(window.HIVE_MATRIX){
     document.body.classList.add('matrix-mode');
-    document.addEventListener('DOMContentLoaded', function(){ hiveMatrixStart(); });
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
   }
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;

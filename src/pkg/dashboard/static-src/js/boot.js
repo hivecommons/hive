@@ -39,7 +39,7 @@
   window.HIVE_MATRIX = kiosk && view === 'matrix';
   if(window.HIVE_MATRIX){
     document.body.classList.add('matrix-mode');
-    document.addEventListener('DOMContentLoaded', function(){ hiveMatrixStart(); });
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
   }
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;

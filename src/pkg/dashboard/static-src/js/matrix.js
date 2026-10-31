@@ -198,6 +198,8 @@
     window.addEventListener('resize', resize);
     resize(); sync(); pull();
     // Recover from missed nudges, endpoint activation and transient failures.
-    setInterval(function(){ updateLabels(); if (!document.hidden) pull(); }, 30000);
+    if (typeof dashboardSetInterval === 'function') {
+      dashboardSetInterval('matrix-poll', function(){ updateLabels(); if (!document.hidden) pull(); }, 30000);
+    }
   };
 })();
