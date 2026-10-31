@@ -38,6 +38,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_ALL_MIN"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_ACTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_GENERIC_ACTIONS"),
+		jsConstLine(t, html, "_stageTrackerCloseIssueBusy"),
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		"var _stageTrackerSel = new Set(); var _stageTrackerSelAnchor = ''; var _stageTrackerMenu = null; var _stageTracker = null; var _statusSeqFloor = 0; var _stageTrackerEtag = 'e'; var _stageTrackerSig = 's';",
 		jsFunc(t, html, "esc"),
@@ -289,12 +290,12 @@ const ids = as => as.map(a => a.id);
 const ctx = { user: true, canHold: true, canHuman: true };
 const parked = { repo: 'o/r', kind: 'issue', number: 1, title: 'Parked', url: 'https://github.com/o/r/issues/1', stage: 45, modifiers: ['needs-decision'] };
 let as = stageTrackerRowActions(parked, ctx);
-assert.deepStrictEqual(ids(as), ['decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy']);
 assert.deepStrictEqual(ids(as[0].submenu), ['decide:delegate', 'decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'], 'an issue gets let-hive-decide first, then approve / direction / close');
 assert.ok(as.every(a => a.enabled), 'everything is enabled for a writer');
 
 const plain = { repo: 'o/r', kind: 'issue', number: 2, url: 'u', stage: 20, modifiers: [] };
-assert.deepStrictEqual(ids(stageTrackerRowActions(plain, ctx)), ['hold', 'retry', 'needs-human', 'open', 'copy'], 'no Decide off 045/085');
+assert.deepStrictEqual(ids(stageTrackerRowActions(plain, ctx)), ['hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy'], 'no Decide off 045/085');
 
 const held = { repo: 'o/r', kind: 'pr', number: 3, url: 'u', stage: 60, modifiers: ['hold', 'needs-human'] };
 as = stageTrackerRowActions(held, ctx);
@@ -372,7 +373,7 @@ assert.strictEqual(by.open.enabled, true);
 const menu = stageTrackerMenuHtml(as, 'o/r#1 · Parked');
 assert.ok(menu.startsWith('<div class="ham-menu ham-menu-hinted" role="menu"'), 'the rescan hint makes it a hinted menu: ' + menu.slice(0, 60));
 assert.ok(menu.includes('<div class="ham-menu-head">o/r#1 · Parked</div>'));
-assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 11, 'six top-level items + five decide options');
+assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 12, 'seven top-level items including Close issue + five decide options');
 assert.ok(menu.includes('data-ham-act="hold" tabindex="-1" aria-disabled="true" title="' + STAGE_TRACKER_WHY_WRITE + '"'), 'disabled items carry the reason');
 assert.ok(menu.includes('aria-haspopup="menu" aria-expanded="false"'), 'Decide is a collapsed submenu');
 assert.ok(menu.includes('<div class="ham-submenu" role="menu" aria-label="Decide…">'));
@@ -694,7 +695,7 @@ assert.strictEqual(stageTrackerActionRequest(a, 'decide:approve', {}).url, '/api
 // The issue row no longer picks one: no single Decide, an explicit all-PRs item.
 assert.strictEqual(stageTrackerDecisionTarget(issue), null, 'two parked PRs is ambiguous');
 as = stageTrackerRowActions(issue, ctx);
-assert.deepStrictEqual(ids(as), ['decide:delegate-all', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide:delegate-all', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy']);
 assert.strictEqual(as[0].label, 'Let hive decide — all 2 PRs'); assert.strictEqual(as[0].hint, 'per PR'); assert.deepStrictEqual(as[0].prs, [15017, 15020]);
 assert.strictEqual(stageTrackerRowActions(issue, { user: false, canHold: false })[0].enabled, false);
 const req = stageTrackerActionRequest(issue, 'decide:delegate-all');
@@ -1373,7 +1374,7 @@ assert.strictEqual(as[1].enabled, false); assert.strictEqual(as[1].why, STAGE_TR
 // The issue row over its one asking PR: the same lead answers, acting on
 // PR #317 (runRowAction resolves the decision target to the PR).
 as = stageTrackerRowActions(issue316, merger);
-assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy']);
 assert.strictEqual(as[0].target.number, 317); assert.strictEqual(as[0].target.kind, 'pr');
 assert.strictEqual(as[2].label, 'Decide PR #317…');
 assert.strictEqual(stageTrackerDecisionTarget(issue316).number, 317, 'a human-merge reason parks the PR for the issue row');

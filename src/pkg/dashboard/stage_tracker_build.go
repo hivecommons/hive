@@ -577,8 +577,7 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 		return true
 	}
 	humanOwner := it.AuthorKind == authorKindHuman || (it.Adoption != nil && it.Adoption.BlockedBy == stagelabels.AdoptBlockedAuthorPerson)
-	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && humanOwner &&
-		!(it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking))
+	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && humanOwner && !stageTrackerPushPending(it)
 }
 
 // stageTrackerOnHold mirrors the dashboard's stageTrackerItemOnHold: the

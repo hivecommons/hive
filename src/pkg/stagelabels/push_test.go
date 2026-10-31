@@ -133,3 +133,74 @@ func TestStoreNotePushEnumerateFallback(t *testing.T) {
 		t.Fatalf("waiting clock must survive a reload: %+v ok=%v", rec, ok)
 	}
 }
+
+// TestStoreReworkPushSurvivesReAsk (hivecommons/hive#16021): the author
+// answers a 071 ask with a new head; the sweep re-stages the PR to 050 and,
+// the head red again, back to 071 within one pass, re-nudging for it. That
+// re-entry restarts the waiting-on-push state and the nudge clock, but the
+// record keeps the original ask and the push that answered it.
+func TestStoreReworkPushSurvivesReAsk(t *testing.T) {
+	now := time.Date(2026, 10, 30, 22, 48, 0, 0, time.UTC)
+	s := NewStore(filepath.Join(t.TempDir(), "stage.json"), func() time.Time { return now })
+	key := Key("hivecommons/hive", 15849)
+	asked := now
+	s.Observe(key, NeedsAuthor, "required-check-failing:build-and-test")
+	s.NoteActivity(key, Activity{Head: "3746f58", Comments: -1, Reviews: -1})
+	s.MarkNudged(key, "3746f58", 1, false, now)
+	rec, _ := s.Get(key)
+	if !rec.ReworkAskedAt.Equal(asked) || rec.ReworkPushedHead != "" {
+		t.Fatalf("071 entry must open the ask and nothing else: %+v", rec)
+	}
+	// The webhook sees the force-push (rebased commits keep their old
+	// dates; only the delivery instant counts).
+	pushAt := now.Add(12 * time.Hour)
+	now = pushAt.Add(time.Minute)
+	if !s.NotePush(key, "0ff4ed1", pushAt) {
+		t.Fatal("new head is a push")
+	}
+	// Sweep A: CI pending on the new head → 050, waiting on the hive.
+	now = now.Add(time.Minute)
+	s.Observe(key, ReviewPending, "required-check-pending:sign-off")
+	s.NoteActivity(key, Activity{Head: "0ff4ed1", Comments: -1, Reviews: -1, WaitingOnHive: true})
+	// Sweep B, seconds later: an optional check failed fast → 071 again,
+	// nudged for the new head.
+	now = now.Add(12 * time.Second)
+	s.Observe(key, NeedsAuthor, "optional-check-failing:server-tests")
+	s.MarkNudged(key, "0ff4ed1", 1, false, now)
+	s.NoteActivity(key, Activity{Head: "0ff4ed1", Comments: -1, Reviews: -1})
+	rec, _ = s.Get(key)
+	if rec.LastPushSha != "" || !rec.WaitingPushSince.Equal(now) || rec.NudgeHead != "0ff4ed1" || !rec.FirstNudgeAt.Equal(now) {
+		t.Fatalf("re-entry must restart the push wait and the nudge clock as before: %+v", rec)
+	}
+	head, at, ok := rec.ReworkPushed()
+	if !ok || head != "0ff4ed1" || !at.Equal(pushAt) || !rec.ReworkAskedAt.Equal(asked) {
+		t.Fatalf("the push that answered the ask must survive the re-ask: %+v", rec)
+	}
+	// A second push the webhook missed, seen by the enumerate while the
+	// row still sits at 071, replaces it.
+	now = now.Add(time.Hour)
+	s.NoteActivity(key, Activity{Head: "0157cc9", Comments: -1, Reviews: -1})
+	rec, _ = s.Get(key)
+	if head, at, _ = rec.ReworkPushed(); head != "0157cc9" || !at.Equal(now) {
+		t.Fatalf("enumerate head change must book the newer push: %+v", rec)
+	}
+	// The hive evaluates it, finds it green and waits on nobody: the
+	// exchange is over, the next 071 is a fresh ask.
+	now = now.Add(time.Minute)
+	s.Observe(key, ReviewPending, "review-gate:awaiting-review-approval")
+	s.NoteActivity(key, Activity{Head: "0157cc9", Comments: -1, Reviews: -1})
+	rec, _ = s.Get(key)
+	if _, _, ok := rec.ReworkPushed(); ok || !rec.ReworkAskedAt.IsZero() {
+		t.Fatalf("settled head must close the ask: %+v", rec)
+	}
+	now = now.Add(time.Hour)
+	s.Observe(key, NeedsAuthor, LaneReasonChangesRequested)
+	if rec, _ := s.Get(key); !rec.ReworkAskedAt.Equal(now) || rec.ReworkPushedHead != "" {
+		t.Fatalf("a later 071 is a new ask: %+v", rec)
+	}
+	// Leaving the CI / Review column forgets it all.
+	s.Observe(key, AwaitingMergeAdmission, "green")
+	if rec, _ := s.Get(key); !rec.ReworkAskedAt.IsZero() || rec.ReworkPushedHead != "" {
+		t.Fatalf("leaving the column must clear the ask: %+v", rec)
+	}
+}

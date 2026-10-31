@@ -535,6 +535,7 @@
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <span class="ham-title ham-no-issue-t">${esc(li.text)}</span>
           </div>`;
+        if (typeof stageTrackerLinkedIssueToolsHtml === 'function') leadHtml += stageTrackerLinkedIssueToolsHtml(item);
       }
       const prs = typeof stageTrackerRowPRKeys === 'function' ? stageTrackerRowPRKeys(item) : '';
       const trainKey = typeof stageTrackerTrainKey === 'function' ? stageTrackerTrainKey(item) : '';

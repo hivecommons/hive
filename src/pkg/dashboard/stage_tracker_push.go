@@ -234,3 +234,9 @@ func stageTrackerAuthorPushSatisfied(it StageTrackerItem, stage stagelabels.Stag
 	}
 	return true
 }
+
+// stageTrackerPushPending reports a head awaiting CI/re-review, or observed
+// same-head checks running again without requiring a new push.
+func stageTrackerPushPending(it StageTrackerItem) bool {
+	return it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking)
+}

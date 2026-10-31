@@ -350,6 +350,19 @@ type Record struct {
 	// them too.
 	LastPushAt  time.Time `json:"last_push_at,omitempty"`
 	LastPushSha string    `json:"last_push_sha,omitempty"`
+	// ReworkAskedAt / ReworkPushedHead / ReworkPushedAt remember the
+	// author's answer to a 071 / 072 ask across the re-ask on the head
+	// they pushed (hivecommons/hive#16021): when the hive first asked them
+	// to push in this run of asks, and the latest head seen after it with
+	// when it landed. A new head red again re-enters 071 within one sweep,
+	// which restarts the waiting-on-push state and re-nudges for the new
+	// head — the two fields the dashboard's rework chip read — so the
+	// row said "no response" to an author who had just pushed. Cleared
+	// when the pushed head settles in the CI / Review column without a
+	// re-ask, and when the item leaves the column.
+	ReworkAskedAt    time.Time `json:"rework_asked_at,omitempty"`
+	ReworkPushedHead string    `json:"rework_pushed_head,omitempty"`
+	ReworkPushedAt   time.Time `json:"rework_pushed_at,omitempty"`
 	// LabelsSuppressed is set when the write-back gate kept the stage
 	// labels off the item on GitHub (a contributor PR without the opt-in
 	// label): the stage lives in this record only, so a label-less item
@@ -828,14 +841,22 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	if a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead {
 		// The enumerate fallback for a push no webhook announced
 		// (hivecommons/hive#15784). A head the sweep evaluated and still
-		// routed back to the author starts a fresh waiting-on-push state.
+		// routed back to the author starts a fresh waiting-on-push state
+		// — but it is still the author's answer to the standing ask
+		// (hivecommons/hive#16021).
 		switch {
 		case r.Stage.WaitsOnPush():
+			r.noteReworkPush(a.Head, at)
 			r.WaitingPushSince = at
 			r.LastPushAt, r.LastPushSha = time.Time{}, ""
 		case a.Head != r.LastPushSha:
 			r.LastPushAt, r.LastPushSha = at, a.Head
 		}
+	}
+	if a.Head != "" && !a.WaitingOnHive && r.Stage.TracksPush() && !r.Stage.WaitsOnPush() && r.Stage != Fixing && r.Stage != AdoptedByHive && strings.EqualFold(a.Head, r.ReworkPushedHead) {
+		// The hive evaluated the author's answer and is not waiting on
+		// itself any more: the exchange is over, a later ask is a new one.
+		r.clearRework()
 	}
 	if changed {
 		r.HiveHeldWarned = false
@@ -866,6 +887,13 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 func (r *Record) notePushStageChange(now time.Time) {
 	switch {
 	case r.Stage.WaitsOnPush():
+		if r.ReworkAskedAt.IsZero() {
+			r.ReworkAskedAt = now
+		} else if r.LastPushSha != "" && !r.LastPushAt.Before(r.ReworkAskedAt) {
+			// Back to the author on the head they pushed for the standing
+			// ask: the push is the answer, keep it (hivecommons/hive#16021).
+			r.noteReworkPush(r.LastPushSha, r.LastPushAt)
+		}
 		r.WaitingPushSince = now
 		r.LastPushAt, r.LastPushSha = time.Time{}, ""
 	case r.Stage.TracksPush():
@@ -873,7 +901,36 @@ func (r *Record) notePushStageChange(now time.Time) {
 	default:
 		r.WaitingPushSince = time.Time{}
 		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+		r.clearRework()
 	}
+}
+
+// noteReworkPush books head as the author's latest answer to the standing
+// 071 / 072 ask (hivecommons/hive#16021). The same head twice keeps the
+// first instant; no standing ask, nothing to answer.
+func (r *Record) noteReworkPush(head string, at time.Time) {
+	head = strings.TrimSpace(head)
+	if head == "" || r.ReworkAskedAt.IsZero() || strings.EqualFold(head, r.ReworkPushedHead) {
+		return
+	}
+	if at.IsZero() || at.Before(r.ReworkAskedAt) {
+		at = r.ReworkAskedAt
+	}
+	r.ReworkPushedHead, r.ReworkPushedAt = head, at
+}
+
+// clearRework forgets the standing ask and the author's answer to it.
+func (r *Record) clearRework() {
+	r.ReworkAskedAt, r.ReworkPushedHead, r.ReworkPushedAt = time.Time{}, "", time.Time{}
+}
+
+// ReworkPushed reports the author's head pushed after the standing ask,
+// with when it landed; ok is false when none is on record.
+func (r Record) ReworkPushed() (head string, at time.Time, ok bool) {
+	if r.ReworkPushedHead == "" || r.ReworkAskedAt.IsZero() {
+		return "", time.Time{}, false
+	}
+	return r.ReworkPushedHead, r.ReworkPushedAt, true
 }
 
 // NotePush records that key's head moved to sha at the given instant, as a
@@ -1228,7 +1285,19 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	if !ok {
 		return
 	}
+	if r.ReworkAskedAt.IsZero() {
+		// Records written before the field existed: the first nudge on
+		// record is the ask.
+		if r.ReworkAskedAt = r.NudgeStart(); r.ReworkAskedAt.IsZero() {
+			r.ReworkAskedAt = now
+		}
+	}
 	if r.NudgeHead != head {
+		if r.NudgeHead != "" {
+			// A nudge for another head: the author pushed since the last
+			// one (hivecommons/hive#16021).
+			r.noteReworkPush(head, now)
+		}
 		r.NudgeCount = 0
 		r.FirstNudgeAt = now
 		r.NudgeOnline = online
