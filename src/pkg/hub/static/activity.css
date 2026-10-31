@@ -91,3 +91,22 @@ a.activity-chip:hover, a.activity-chip:focus-visible { background: hsl(var(--hiv
   .activity-board tr { display: block; padding: var(--sp-3) 0; }
   .activity-board td, .activity-board th { display: block; border: 0; padding: var(--sp-1) var(--sp-4); }
 }
+
+/* Display mode (#16064), the spoke's #15860 Part A on this page.
+   ?kiosk=1: an unattended stream, no chrome and no cursor; it never rotates.
+   ?display=1: an attended wall screen, no chrome (Esc or d leaves it). The
+   status line and the coverage list stay visible in both. */
+body.kiosk-mode { cursor: none; }
+body.kiosk-mode .activity-header, body.display-mode .activity-header,
+body.kiosk-mode .activity-sub, body.display-mode .activity-sub,
+body.kiosk-mode .activity-toggle, body.display-mode .activity-toggle { display: none !important; }
+body.kiosk-mode .activity-playlist { display: none !important; }
+.activity-playlist[hidden] { display: none; }
+.activity-playlist { position: fixed; top: 0; left: 0; right: 0; z-index: 20; pointer-events: none; }
+.activity-playlist-track { height: 3px; background: var(--line-subtle); }
+.activity-playlist-bar { --activity-playlist-left: 1; display: block; height: 100%; width: calc(var(--activity-playlist-left) * 100%); background: var(--accent); transition: width 1s linear; }
+.activity-playlist-next { display: none; position: absolute; top: var(--sp-2); right: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+  .activity-playlist-track { display: none; }
+  .activity-playlist-next { display: inline-block; }
+}

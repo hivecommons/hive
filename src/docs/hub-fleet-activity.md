@@ -12,7 +12,8 @@ signed in; a browser without a hub session is sent to `/login`.
 
 The design is RFC [#15861](https://github.com/hivecommons/hive/issues/15861)
 by @hanthor, delivered in [#15965](https://github.com/hivecommons/hive/issues/15965)
-and its children. The page itself is [#16063](https://github.com/hivecommons/hive/issues/16063).
+and its children. The page itself is [#16063](https://github.com/hivecommons/hive/issues/16063);
+its display mode is [#16064](https://github.com/hivecommons/hive/issues/16064).
 
 ## Who sees what
 
@@ -40,7 +41,10 @@ Each row is one open issue or PR:
 | **Stage** | The strip column the spoke tracker would light (Open, Actionable, Claimed, PR in progress, CI / Review, Merge gate, Merged) and the stage slug. |
 | **Author** | `human`, `clanker` or `hive` when the spoke knows it. |
 
-Rows come in the endpoint's order: most urgent first, then furthest stage.
+Rows are ordered like the spoke tracker's default sort: furthest strip column
+first; within a column, rows with a modifier or parked on a person first and
+held or draft rows last; then longest in stage. `am.sort` and `am.dir` change
+the order (see [Display mode and URL views](#display-mode-and-url-views)).
 
 **Group by hive** is on by default. It draws one header row per hive, even when
 the hive has no open items. The header shows:
@@ -77,13 +81,59 @@ hidden and resumes, with an immediate refresh, when you come back. The status
 line shows when the data last changed and when it was last checked. If your
 session expires, the page sends you to `/login`.
 
+## Display mode and URL views
+
+The page takes the same display parameters as the spoke Activity Monitor
+(see [Display mode and URL views](streaming-the-activity-monitor.md#display-mode-and-url-views)).
+They are the spoke's own parameters, read by the spoke's own code: the hub
+serves a byte-identical copy of the spoke's URL-view and playlist helpers
+(`src/pkg/webassets/trackerview`). There are no hub-only display parameters.
+
+| Parameter | On `/activity` |
+|---|---|
+| `kiosk=1` | Unattended screen: hides the hub header, the description and the **Group by hive** toggle, and hides the cursor. The status line and the coverage list stay. A kiosk never rotates a playlist. |
+| `display=1` | Attended wall screen: the same chrome-less board, with the cursor. **Esc** (unless the browser is in full screen) or **d** leaves display mode and keeps the rest of the URL. `kiosk=1` wins when both are set. |
+| `am.*` | The board's view, with the spoke's keys and values. See the table below. |
+| `am.view`, `interval` | A playlist, in display mode only. Each `am.view` is a URL-encoded `am.*` query string, and every entry is a `hub-activity` view: this board under that entry's `am.*` state. `interval` is `Ns` or `Nm`, clamped to 10 s – 1 h, default 60 s. With fewer than two valid entries the board does not rotate. |
+
+How each `am.*` key applies here:
+
+| Key | Effect on the hub board |
+|---|---|
+| `am.kind` | `pr` or `issue` only. |
+| `am.repo` | One `owner/repo`, exact match. |
+| `am.q` | Title text, or the item number (`123` or `#123`). |
+| `am.author` | `human`, `clanker` or `hive`. |
+| `am.sort`, `am.dir` | `furthest` (default), `waiting` (longest in stage) or `number`; `asc` / `desc`. `newest` needs an opening time the digest does not carry, so it sorts as `furthest`. |
+| `am.group` | `none` turns grouping off. Grouping by hive is the default and is never written into the URL. A spoke value the hub board has no grouping for (`repo`) falls back to the default, as an unknown value does on the spoke. |
+| `am.labels`, `am.needsHuman`, `am.onHold`, `am.attention`, `am.age`, `am.acted` | Not applied: the activity digest carries no labels or verdicts for them. They stay in the URL, so the link still works on a spoke, and the coverage list names them under *Not applied on the hub*. |
+
+A link copied from a spoke display therefore opens on the hub with the same
+view where the hub has the data for it, and says which parts it could not
+apply. Turning **Group by hive** on or off rewrites `am.group` in the address
+bar, so the address is always a link to the current view; credentials in the
+URL never survive that rewrite.
+
+The playlist follows the spoke's rules:
+
+- The current view follows the wall clock, so a reload resumes on the same
+  view. Rotation happens in memory: it does not navigate, refetch or change
+  the URL.
+- A thin bar at the top shows the time until the next view. With reduced
+  motion it is a static *N/M · next in Ns* label instead.
+
+```text
+/activity?display=1&am.view=am.kind%3Dpr&am.view=am.group%3Dnone%26am.repo%3Dhivecommons%2Fhive&interval=2m
+```
+
+The spoke-only wall options `density=tv` and `shift=1` are ignored here.
+
 ## What the page does not do
 
 - It has no action menus. The hub is visibility-only: act on an item on
   GitHub, or from the hive's own tracker.
-- Display mode (`?kiosk=1`, `am.*` URL state, `?display=1` and a
-  `hub-activity` playlist view) is not part of this page yet; it is tracked in
-  [#16064](https://github.com/hivecommons/hive/issues/16064).
+- It is not a broadcast source. Display mode only changes how the signed-in
+  page looks; the page still needs a hub session and shows only your hives.
 
 ## Security
 
@@ -93,7 +143,7 @@ session expires, the page sends you to `/login`.
   from other origins.
 - Titles and every other value from a spoke are written as text, never parsed
   as HTML.
-- The page, its script and the shared row-presentation asset are revalidated
+- The page, its script and the shared row-presentation and view assets are revalidated
   on every load (`Cache-Control: no-cache` with a content ETag), so a hub
   upgrade is picked up on the next visit.
 - `/activity` is marked `noindex` and is disallowed in `robots.txt`.
