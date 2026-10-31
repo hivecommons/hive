@@ -21,24 +21,25 @@ import (
 const testHiveAppBotLogin = "kubestellar-hive[bot]"
 
 type sweepPR struct {
-	nodeID          string
-	number          int
-	author          string
-	queuedBy        string
-	reviewAuthor    string
-	reviewState     string
-	headSHA         string
-	baseRef         string
-	baseSHA         string
-	reviewCommitID  *string
-	label           bool
-	extraLabels     []string
-	draft           bool
-	mergeableState  string
-	statusState     string
-	checkStatus     string
-	checkConclusion string
-	headRepo        string
+	nodeID            string
+	number            int
+	author            string
+	queuedBy          string
+	reviewAuthor      string
+	reviewState       string
+	headSHA           string
+	baseRef           string
+	baseSHA           string
+	protectionUnknown bool
+	reviewCommitID    *string
+	label             bool
+	extraLabels       []string
+	draft             bool
+	mergeableState    string
+	statusState       string
+	checkStatus       string
+	checkConclusion   string
+	headRepo          string
 }
 
 func issueLabels(primary string, extra []string) []map[string]string {
@@ -619,13 +620,16 @@ func TestSweepQueuedAutoMergesDequeuesWhenApprovalHeadMissing(t *testing.T) {
 func TestSweepQueuedAutoMergesDefersRedUnknownChecksToMergeEndpoint(t *testing.T) {
 	var merged []int
 	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{
-		{number: 7, author: "alice", queuedBy: "bob", label: true, mergeableState: "clean", statusState: "failure", checkStatus: "completed", checkConclusion: "success"},
+		{number: 7, author: "alice", queuedBy: "bob", label: true, mergeableState: "clean", statusState: "failure", checkStatus: "completed", checkConclusion: "success", protectionUnknown: true},
 		{number: 8, author: "carol", queuedBy: "dave", label: false, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
 		{number: 9, author: "erin", queuedBy: "frank", label: true, draft: true, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
 	}, &merged)
 	defer api.Close()
 
 	c := newAutoMergeSweepClient(api.URL)
+	if _, known, _, _, source := hgithub.RequiredStatusCheckContextsDetailedWithSource(context.Background(), c.gh, "acme", "widget", "main", nil, false); known || source != "none" {
+		t.Fatalf("required checks known=%v source=%q, want unreadable protected-branch metadata", known, source)
+	}
 	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
@@ -2936,7 +2940,9 @@ func newAutoMergeSweepClient(apiURL string) *Engine {
 func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, merged *[]int, extras ...func(http.ResponseWriter, *http.Request)) *httptest.Server {
 	t.Helper()
 	byNumber := make(map[int]sweepPR, len(prs))
+	protectionUnknown := false
 	for i, pr := range prs {
+		protectionUnknown = protectionUnknown || pr.protectionUnknown
 		if pr.baseRef == "" {
 			pr.baseRef = "main"
 		}
@@ -3071,6 +3077,16 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			*merged = append(*merged, number)
 			json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merge" + strconv.Itoa(number)})
 		default:
+			if protectionUnknown && r.Method == http.MethodGet {
+				switch r.URL.Path {
+				case "/repos/acme/widget/branches/main":
+					json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true, "commit": map[string]string{"sha": "base1"}})
+					return
+				case "/repos/acme/widget/branches/main/protection/required_status_checks":
+					http.Error(w, "protection metadata unavailable", http.StatusForbidden)
+					return
+				}
+			}
 			if serveUnprotectedSweepBase(w, r) {
 				return
 			}
