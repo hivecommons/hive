@@ -32,6 +32,7 @@ var staticPageCanonicals = map[string]string{
 	"cncf-reference-architecture-console.html": "/cncf-reference-architecture/console",
 	"cncf-reference-architecture-bluefin.html": "/cncf-reference-architecture/bluefin",
 	"my-hives.html": "/fleet",
+	"activity.html": "/activity",
 }
 
 const canonicalOrigin = "https://hive.hivecommons.dev"
