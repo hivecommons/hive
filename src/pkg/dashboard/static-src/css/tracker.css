@@ -443,7 +443,7 @@
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
     /* The preview opens as a skeleton while the plan is gathered
-       (hivecommons/hive#15773): placeholder lines breathe gently, and stand
+       (hivecommons/hive 15773): placeholder lines breathe gently, and stand
        still under prefers-reduced-motion. */
     .ham-plan-loading { margin: var(--sp-1) 0 var(--sp-4); color: var(--muted); }
     .ham-plan-skeleton-line { display: block; height: .75em; margin: var(--sp-3) 0; border-radius: var(--r-pill); background: var(--panel-strong); animation: ham-plan-skeleton-pulse 1.4s ease-in-out infinite; }
@@ -456,7 +456,7 @@
     /* A covered issue's "decision pending on #N" chip goes to the PR's row. */
     .ham-decision-pending { font-family: inherit; font-size: var(--fs-xs); background: transparent; cursor: pointer; }
     .ham-decision-pending:hover, .ham-decision-pending:focus-visible { color: var(--text); }
-    /* "PR in progress · #15759 needs a decision": what the person is wanted for. */
+    /* "PR in progress · PR N needs a decision": what the person is wanted for. */
     .ham-human-reason { font-weight: normal; }
     .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-lineage:hover { color: var(--text); }
