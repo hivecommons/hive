@@ -550,6 +550,7 @@ func TestRFCNotifyWire_CardFormatPostsEmbed(t *testing.T) {
 	}
 	pub := &testCardPublisher{}
 	state := &rfcNotifyState{
+		statePath: filepath.Join(t.TempDir(), "rfc-notify.json"),
 		newPublisher: func(token, channel string) rfcnotify.Publisher {
 			return pub
 		},

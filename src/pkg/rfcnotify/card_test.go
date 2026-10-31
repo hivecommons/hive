@@ -325,7 +325,7 @@ func TestSweeperCardFormat_PostsCardAndFallsBackOnMalformed(t *testing.T) {
 
 	// Poll 1: Well-formed RFC #2, and malformed RFC #3
 	now = now.Add(5 * time.Minute)
-	src.since = []Issue{
+	src.updated = []Issue{
 		{
 			Number:    2,
 			Title:     "RFC: Well-formed",
@@ -396,7 +396,7 @@ func TestSweeperCardFormat_PostCardFailureRollsBack(t *testing.T) {
 	// Fail the card post
 	pub.fail = true
 	now = now.Add(5 * time.Minute)
-	src.since = []Issue{
+	src.updated = []Issue{
 		{
 			Number:    2,
 			Title:     "RFC: Card fail",

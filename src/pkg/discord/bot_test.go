@@ -55,9 +55,11 @@ func newTestBot(ts *httptest.Server, channelID string) *Bot {
 		AllowedUsers: []string{"uid", "u1"},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	b.client = &http.Client{
-		Transport: &redirectTransport{target: ts.URL},
-		Timeout:   httpTimeoutS * time.Second,
+	if ts != nil {
+		b.client = &http.Client{
+			Transport: &redirectTransport{target: ts.URL},
+			Timeout:   httpTimeoutS * time.Second,
+		}
 	}
 
 	return b
