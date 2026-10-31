@@ -282,6 +282,15 @@ func TestActivityUpdatesCoalesceToOnePer15sWithBackpressure(t *testing.T) {
 	p := testActivityPublisher(ActivityOptions{Enabled: true}, box, clock)
 	rec := &recordingPost{sent: make(chan *hubactivity.Digest, 8), gate: make(chan struct{}), status: http.StatusOK, ok: true}
 	p.post = rec.post
+	// built reports each digest build. run drains a pending kick just
+	// before it builds, so a build observed here proves a later notify
+	// is not swallowed by that drain.
+	built := make(chan struct{}, 8)
+	items := p.src.Items
+	p.src.Items = func(ctx context.Context) ([]hubactivity.Item, bool) {
+		built <- struct{}{}
+		return items(ctx)
+	}
 	waits := make(chan time.Duration, 8)
 	fire := make(chan time.Time)
 	p.after = func(d time.Duration) <-chan time.Time {
@@ -302,6 +311,7 @@ func TestActivityUpdatesCoalesceToOnePer15sWithBackpressure(t *testing.T) {
 
 	// First publish: nothing sent recently, so the update goes out at once.
 	p.notify()
+	<-built
 	first := <-rec.sent
 	if digestNumbers(first)[0] != 1 {
 		t.Fatalf("first update = %v", digestNumbers(first))
@@ -323,6 +333,7 @@ func TestActivityUpdatesCoalesceToOnePer15sWithBackpressure(t *testing.T) {
 	p.notify()
 	clock.Advance(activityUpdateMinInterval)
 	fire <- clock.Now()
+	<-built
 	second := <-rec.sent
 	rec.gate <- struct{}{}
 	if got := digestNumbers(second); len(got) != 2 {
@@ -336,9 +347,11 @@ func TestActivityUpdatesCoalesceToOnePer15sWithBackpressure(t *testing.T) {
 	}
 	clock.Advance(time.Second)
 	fire <- clock.Now()
+	// Wait for the unchanged pass to build before signalling again,
+	// otherwise the kick-drain ahead of that build swallows the signal.
+	<-built
 	// An unchanged pass does not restart the window, so the next signal
-	// waits out the remainder of the last real update's 15 s; receiving
-	// that wait also proves the unchanged pass has finished.
+	// waits out the remainder of the last real update's 15 s.
 	p.notify()
 	if wait := <-waits; wait != activityUpdateMinInterval-time.Second {
 		t.Fatalf("signal after an unchanged pass waited %v, want %v", wait, activityUpdateMinInterval-time.Second)
