@@ -204,6 +204,24 @@ Dashboard authentication alone does not make a code stream safe for public
 Twitch broadcasting: the public allowlist, author restriction and scrub/drop
 rules are required.
 
+The display's look is chosen with `mx.*` URL parameters; each value is also
+remembered in the browser (`hive.matrix.*` in local storage) for later visits.
+Every effect renders only lines already delivered by `/api/matrix/lines`.
+
+| `mx.effect` | Display |
+|---|---|
+| `rain` (default) | Falling columns built from the characters of the latest lines. Unknown values fall back to `rain`. |
+| `cascade` | Whole lines drift down the screen, each with its `repo#PR · path` caption. |
+| `ghost` | Ghost coder: a fake editor with one tab per PR (`repo#PR`), titled with the file path; at most six tabs, the oldest closes first. Lines are typed character by character behind a blinking cursor, with light keyword/string/comment/number colouring by file extension. |
+| `terminal` | An endless `git log -p`-style scroll: each line printed as a green `+ <line>`, with a `repo#PR · path` header whenever the PR or file changes. |
+
+`mx.speed` (0.1–5, default 1) and `mx.fps` (1–60, default 30) set the
+animation and typing speed, `mx.palette` is `green` (default), `amber` or
+`gold`, and `mx.captions=off` hides the `repo#PR · path` captions and headers
+on the canvas. `p` or Space pauses; a hidden tab pauses too. With the
+operating system's *reduce motion* setting on, every effect is replaced by
+static pages of the latest lines with their captions.
+
 [`overlays/hive-hosted-matrix/`](../deploy/stream/overlays/hive-hosted-matrix/kustomization.yaml)
 reuses the streamer image and base as a separate instance. It renders Deployment,
 ConfigMap and NetworkPolicy `matrix-hive-stream` in namespace `hive-stream-matrix`,
