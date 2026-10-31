@@ -487,10 +487,13 @@ func (r *Reconciler) recordLocked(name string) *agentRecord {
 }
 
 // Tick runs one reconciliation sweep. It is synchronous and bounded: every
-// probe carries a deadline and every restart runs detached under the hard
-// RestartTimeout, so the governor tick that hosts it can never wedge on a
-// stuck agent (the RFC's control-plane guard). Calls inside ProbeInterval of
-// the previous sweep are no-ops.
+// probe carries a deadline (Source implementations must bound Observe —
+// crux/agent's WatchdogFleet caps its tmux probes at ObserveProbeTimeout) and
+// every restart runs detached under the hard RestartTimeout, so the governor
+// tick that hosts it can never wedge on a stuck agent (the RFC's control-plane
+// guard). ctx is checked between agents, so a cancelled ctx (shutdown) ends
+// the sweep early. Calls inside ProbeInterval of the previous sweep are
+// no-ops.
 func (r *Reconciler) Tick(ctx context.Context) {
 	now := r.now()
 	r.mu.Lock()
@@ -507,6 +510,9 @@ func (r *Reconciler) Tick(ctx context.Context) {
 
 	authCache := make(map[string]authVerdict)
 	for _, name := range r.fleet.AgentNames() {
+		if ctx.Err() != nil {
+			return
+		}
 		r.reconcileAgent(ctx, name, now, authCache)
 	}
 }
