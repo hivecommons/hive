@@ -67,6 +67,10 @@ assert.ok(!tooltip(row).includes('no one is working'), tooltip(row));
 row = stageTrackerRowHtml(pr(504, { author:'', author_kind:'', stage_actor:{kind:'none'} }),stages,ctx);
 assert.strictEqual(detour(row),'CI failing · owner unknown');
 assert.ok(litTitle(row).includes('ownership and current work activity are unknown'));
+row = stageTrackerRowHtml(pr(504, {author:'',author_kind:'',stage_actor:{kind:'none'},
+  claimant:{kind:'person',login:'recorded-owner',source:'assignee'}}),stages,ctx);
+assert.strictEqual(detour(row),'CI failing · owner recorded');
+assert.ok(litTitle(row).includes('Recorded PR owner @recorded-owner — current work activity is unknown'));
 
 // No stage_actor (older server): the stage-table heuristic still applies and the word stays Fixing.
 row = stageTrackerRowHtml(pr(505, { author_kind: 'clanker' }), stages, ctx);
@@ -107,6 +111,12 @@ for(const kind of ['human','hive']){
   assert.ok(litTitle(row).includes('ownership and current work activity are unknown'),litTitle(row));
   assert.ok(!litTitle(row).includes('@issue-filer'),litTitle(row));
 }
+row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',
+  claimant:{kind:'person',login:'issue-holder',source:'assignee'},linked_prs:[{...externalLP,author:'',
+    claimant:{kind:'person',login:'pr-holder',source:'assignee'}}]},stages,ctx);
+assert.strictEqual(detour(row),'CI failing · owner recorded');
+assert.ok(litTitle(row).includes('Recorded PR owner @pr-holder'),litTitle(row));
+assert.ok(!litTitle(row).includes('@issue-holder'),litTitle(row));
 row=stageTrackerRowHtml({repo:'hivecommons/docs',number:601,kind:'issue',stage:40,linked_prs:[externalLP,{...externalLP,number:512}]},stages,ctx);
 for(const sub of subs(row)){
   assert.ok(sub.includes('CI failing · author-owned'),sub);
