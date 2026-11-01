@@ -1743,6 +1743,23 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		// the hive disappears from the listing immediately, and best-effort purge
 		// any leftover record dir / timeline file so a partial prior delete cannot
 		// leave a status:"available" husk that resurrects in the listing.
+		//
+		// This branch is reachable by any authenticated user, and
+		// removeRegistryEntry uses `by` only for the audit log, so the registry
+		// entry's Owner must be checked here before anything is removed.
+		s.mu.RLock()
+		regOwner := ""
+		for _, e := range s.registry.Hives {
+			if e.ID == id {
+				regOwner = e.Owner
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if regOwner != "" && !canonicalEqual(regOwner, username) && !isHubAdmin(username) {
+			http.Error(w, `{"error":"only the owner can delete this hive"}`, http.StatusForbidden)
+			return
+		}
 		s.removeRegistryEntry(id, username)
 		removeHiveRecord(id, s.logger)
 		s.publicActivity.invalidate()

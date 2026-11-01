@@ -1,0 +1,1 @@
+- Deleting a registry-only hive now requires being its owner or a hub admin (#16134)
