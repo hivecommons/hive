@@ -112,6 +112,14 @@ const (
 	// (approved|changes_requested|commented). This makes reviews a first-class
 	// audited activity instead of an invisible agent-CLI write.
 	AuditActionPRReviewed = "agent_pr_reviewed"
+	// AuditActionPRReviewObserved records a review someone other than the
+	// hive submitted (a person, or another bot), observed by the merged-PR
+	// settle scan once the PR merged or closed (hivecommons/hive#16116). It is
+	// not a hive write: it feeds the human/other columns of the throughput
+	// card's Reviewed row. Recorded at the review's submitted_at; detail
+	// carries repo=, number=, review_id= (the de-duplication key), actor= and
+	// actor_class= (human|other_automation).
+	AuditActionPRReviewObserved = "pr_review_observed"
 	// AuditActionSentinelBlockedApproval records an approval/LGTM path refused
 	// because the configured sentinel alert label is present.
 	AuditActionSentinelBlockedApproval = "sentinel-blocked-approval"

@@ -340,7 +340,12 @@ type Client struct {
 	// handoff summary included), used by PR follow-up resume (#9583).
 	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
-	prRepoPolicyGate       atomic.Pointer[PRRepoPolicyGate]
+	// prReviewObservedHook and prTerminalReviews: other people's reviews on
+	// terminal PRs, read once per PR by the settle scan (#16116). See
+	// prreviews_observed.go.
+	prReviewObservedHook atomic.Pointer[PRReviewObservedHook]
+	prTerminalReviews    prTerminalReviewCache
+	prRepoPolicyGate     atomic.Pointer[PRRepoPolicyGate]
 	// agentStartHook is told when an agent's own relay request shows it
 	// working an issue (#10527). See agent_start_hook.go.
 	agentStartHook atomic.Pointer[AgentStartHook]

@@ -1069,6 +1069,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 							State:      PRStateClosed,
 							ObservedAt: closedAt,
 						})
+						c.emitTerminalPRReviews(ctx, owner, repoName, repo, pr.GetNumber(), identity)
 						history = append(history,
 							prHistoryFromClaims(claimsFromPR(pr, repo, identity, now), PRStateClosed, now)...)
 					}
@@ -1089,6 +1090,9 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 					URL:         pr.GetHTMLURL(),
 					Issues:      mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
 				})
+				// #16116: other people's reviews reach the throughput card's
+				// Reviewed row the way their merges reach Merged·Closed.
+				c.emitTerminalPRReviews(ctx, owner, repoName, repo, pr.GetNumber(), identity)
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
 				for _, claim := range prClaims {
