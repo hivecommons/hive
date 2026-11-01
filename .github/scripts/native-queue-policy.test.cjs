@@ -185,6 +185,34 @@ test('PR-target admission consumes policy providers without group APIs', async (
   assert.equal(f.state.seen.length, 0);
 });
 
+test('closed PR on pull_request_target passes as a no-op and skips evidence lookup', async () => {
+  const f = fixture('pull_request_target');
+  f.state.prs[0].state = 'closed';
+  let lookups = 0;
+  const paginate = f.github.paginate;
+  f.github.paginate = async (...args) => { lookups++; return paginate(...args); };
+  assert.match(await evaluate(f), /PR #1 is closed; nothing to evaluate/);
+  assert.equal(lookups, 0);
+});
+
+test('PR closed during evidence wait passes as a no-op', async () => {
+  const f = fixture('pull_request_target');
+  const get = f.github.rest.pulls.get;
+  let reads = 0;
+  f.github.rest.pulls.get = async args => {
+    const res = await get(args);
+    if (++reads === 2) res.data.state = 'closed';
+    return res;
+  };
+  assert.match(await evaluate(f), /is closed; nothing to evaluate/);
+});
+
+test('open PR with moved head still fails closed on pull_request_target', async () => {
+  const f = fixture('pull_request_target');
+  f.state.prs[0].head.sha = sha(99);
+  await assert.rejects(evaluate(f), /head\/base moved/);
+});
+
 test('untrusted events and workflow provenance are rejected', async () => {
   const f = fixture('pull_request');
   await assert.rejects(evaluate(f), /Unsupported/);

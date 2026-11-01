@@ -231,9 +231,12 @@ metadata, not a fabricated last-member PR event.
   this bridge does not turn its underlying implementation into a strict
   content validator. Dependabot runs that same trusted PR-target verifier
   rather than skipping it; skipped policy evidence is never exempted by actor.
-- Draft/closed/held PRs, changes requested, dismissed approvals and approvals
-  on an old head fail closed. Membership and mutable PR/review state are
-  re-read before success, and the synthetic ref must still name this group.
+- Draft/held PRs, changes requested, dismissed approvals and approvals on an
+  old head fail closed. A `pull_request_target` run on an already closed or
+  merged PR (re-fired by a post-merge label or comment edit) passes as a
+  no-op before any eligibility or evidence check; on `merge_group` a closed
+  PR still fails closed. Membership and mutable PR/review state are re-read
+  before success, and the synthetic ref must still name this group.
   Missing/pending evidence has a bounded wait; API errors, inconsistent
   membership and untrusted provenance fail the check. A later owner rerun
   must read current evidence again; it cannot bless a vanished group.
