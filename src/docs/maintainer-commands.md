@@ -193,10 +193,12 @@ A bare `/hive decision approve` on such a PR is recorded as the approval for
 the current head, as the dashboard's approval is, and answers its
 `requires_human` question: on the owner's own PR GitHub refuses the Approve
 review, so this is the owner's command. On a PR that edits workflow files it
-also releases the workflow-path fence, which `/hive approve` never does; the
-contributor lane records it as the answer when it reads the comment for the
-fence, so it counts even where the PR carries no stage label
-([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)).
+also releases the workflow-path fence, which `/hive approve` never does. The
+contributor lane records it as the answer on every PR it evaluates — when it
+reads the comment for the fence, and on a PR no fence trips while the verdict
+still asks for a person — so it counts even where the PR carries no stage label
+([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254),
+hivecommons/hive#16121).
 
 The self-merge sweep's review verdict hold (App-authored and trusted-author
 PRs, [review-swarm.md](review-swarm.md)) is released by a person's GitHub

@@ -41,7 +41,23 @@ func workflowAskFixture(comments ...map[string]any) contributorLaneFixture {
 }
 
 func typedDecisionApprove(id int, login, at string) map[string]any {
-	return map[string]any{"id": id, "user": map[string]string{"login": login}, "body": "/hive decision approve", "created_at": at, "html_url": "https://github.com/acme/widget/pull/7#issuecomment-" + strconv.Itoa(id)}
+	return map[string]any{"id": id, "user": map[string]string{"login": login}, "body": "/hive decision approve", "created_at": at, "updated_at": at, "html_url": "https://github.com/acme/widget/pull/7#issuecomment-" + strconv.Itoa(id)}
+}
+
+// editedInto is comment after someone rewrote its body at editedAt: GitHub
+// keeps created_at and moves updated_at.
+func editedInto(comment map[string]any, editedAt string) map[string]any {
+	comment["updated_at"] = editedAt
+	return comment
+}
+
+// stageHumanApprover is what the stage engine sees as the trusted approver
+// for the PR after one pass of the lane.
+func stageHumanApprover(engine *Engine) (string, string) {
+	engine.stageTracker.mu.Lock()
+	defer engine.stageTracker.mu.Unlock()
+	d := engine.stageTracker.details[stageKey("acme", "widget", 7)]
+	return d.HumanApprover, d.HumanApprovalHead
 }
 
 func runWorkflowAsk(t *testing.T, fx *contributorLaneFixture, store *review.HumanChangeRequests, verdict ContributorLaneVerdictFunc) (string, *Engine) {
@@ -57,6 +73,8 @@ func runWorkflowAsk(t *testing.T, fx *contributorLaneFixture, store *review.Huma
 	}
 	engine := newContributorLaneEngine(api.URL, policy, clock, opts)
 	engine.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, workflowAskOwner) })
+	engine.stageTracker = NewStageTracker()
+	engine.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} }
 	_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
 	if err != nil {
 		t.Fatal(err)
@@ -188,4 +206,85 @@ func TestTypedDecisionApproveRecordsOnlyWhenItAnswersAnOpenQuestion(t *testing.T
 			t.Fatalf("reason=%q records=%d, want the fence to hold and nothing recorded", reason, store.Len())
 		}
 	})
+}
+
+// hivecommons/hive#16121: the same typed approval on an owner's PR that
+// touches no workflow file. No fence trips, so the fence release never read
+// the comment, and the un-park sweep that also records it reads only
+// stage-labelled PRs: the lane reads it for the verdict itself.
+func TestTypedDecisionApproveAnswersTheRequiresHumanVerdictOnANonFencedPR(t *testing.T) {
+	nonFenced := func(comments ...map[string]any) contributorLaneFixture {
+		fx := workflowAskFixture(comments...)
+		fx.files = nil
+		return fx
+	}
+	t.Run("trusted merger after the head", func(t *testing.T) {
+		fx := nonFenced(typedDecisionApprove(5, "Danathar", "2026-10-31T15:06:57Z"))
+		store := review.NewHumanChangeRequests("")
+		reason, engine := runWorkflowAsk(t, &fx, store, workflowAskVerdict)
+		if reason != "" || fx.merges != 1 {
+			t.Fatalf("reason=%q merges=%d, want the merge the owner approved (comments=%v)", reason, fx.merges, fx.allComments)
+		}
+		req, ok := review.DecisionAnswerFor(store, "acme/widget", 7, "sha7")
+		if !ok || !req.IsApproval() || !strings.EqualFold(req.Actor, workflowAskOwner) || req.SourceID != 5 || req.Source != review.HumanChangeRequestSourceDecision {
+			t.Fatalf("recorded = %+v, %v; want the owner's typed approval (comment 5) on sha7", req, ok)
+		}
+		if want := mustParseTime(t, "2026-10-31T15:06:57Z"); !req.RecordedAt.Equal(want) {
+			t.Fatalf("recorded at %s, want the comment's time %s", req.RecordedAt, want)
+		}
+		if v := engine.contributorLaneVerdictFor("acme/widget", 7, "sha7"); !v.DecisionAnswered || !strings.EqualFold(v.DecisionAnsweredBy, workflowAskOwner) {
+			t.Fatalf("verdict after the record = %+v, want answered by the owner", v)
+		}
+		// noteStageVerdict ran before the record existed; the stage engine
+		// must still see the approver on this pass, not the next sweep's.
+		if login, head := stageHumanApprover(engine); !strings.EqualFold(login, workflowAskOwner) || head != "sha7" {
+			t.Fatalf("stage approver = (%q, %q), want the owner on sha7 this tick", login, head)
+		}
+		for _, body := range fx.allComments {
+			if strings.HasPrefix(body, workflowApprovalMarkerPrefix) {
+				t.Fatalf("no fence tripped, yet a workflow-approval comment was posted: %q", body)
+			}
+		}
+	})
+	t.Run("a later decision stands", func(t *testing.T) {
+		fx := nonFenced(typedDecisionApprove(5, "Danathar", "2026-10-31T15:06:57Z"))
+		store := review.NewHumanChangeRequests("")
+		later := review.HumanChangeRequest{
+			Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Source: review.HumanChangeRequestSourceDecision, SourceID: 9,
+			Actor: workflowAskOwner, Body: "drop the second condition", Kind: review.HumanChangeRequestKindChanges,
+			RecordedAt: mustParseTime(t, "2026-10-31T15:20:00Z"),
+		}
+		if err := store.Record(later); err != nil {
+			t.Fatal(err)
+		}
+		reason, _ := runWorkflowAsk(t, &fx, store, workflowAskVerdict)
+		if fx.merges != 0 || reason == "" {
+			t.Fatalf("reason=%q merges=%d, want the later instruction to hold the PR", reason, fx.merges)
+		}
+		if got, _ := store.For("acme/widget", 7, "sha7"); got.SourceID != 9 || got.IsApproval() {
+			t.Fatalf("newest decision = %+v, want the later instruction kept", got)
+		}
+	})
+	for _, tc := range []struct {
+		name    string
+		comment map[string]any
+		verdict ContributorLaneVerdictFunc
+		reason  string
+	}{
+		{name: "typed approve older than the head", comment: typedDecisionApprove(5, "Danathar", "2026-10-31T13:00:00Z"), verdict: workflowAskVerdict, reason: contributorLaneReasonNoVerdict},
+		{name: "typed approve by someone who is not a trusted merger", comment: typedDecisionApprove(5, "passerby", "2026-10-31T15:06:57Z"), verdict: workflowAskVerdict, reason: contributorLaneReasonNoVerdict},
+		// A collaborator with write access can edit the merger's benign
+		// post-head comment into the command; an edit is not an instruction.
+		{name: "typed approve edited into an existing comment", comment: editedInto(typedDecisionApprove(5, "Danathar", "2026-10-31T15:06:57Z"), "2026-10-31T15:10:00Z"), verdict: workflowAskVerdict, reason: contributorLaneReasonNoVerdict},
+		{name: "verdict asks nobody", comment: typedDecisionApprove(5, "Danathar", "2026-10-31T15:06:57Z"), verdict: approvedVerdict, reason: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := nonFenced(tc.comment)
+			store := review.NewHumanChangeRequests("")
+			reason, _ := runWorkflowAsk(t, &fx, store, tc.verdict)
+			if reason != tc.reason || store.Len() != 0 {
+				t.Fatalf("reason=%q records=%d, want %q and nothing recorded", reason, store.Len(), tc.reason)
+			}
+		})
+	}
 }
