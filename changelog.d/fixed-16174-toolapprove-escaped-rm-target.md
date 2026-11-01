@@ -1,0 +1,1 @@
+- `toolapprove` now denies recursive `rm` of the filesystem root written with backslash escapes (`rm -rf \/`, `rm -rf /\*`), matching the quoted spellings it already caught; `\$HOME` and `\~` stay literal and allowed ([#16174](https://github.com/hivecommons/hive/issues/16174)).

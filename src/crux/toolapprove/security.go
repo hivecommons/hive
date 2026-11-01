@@ -158,10 +158,15 @@ func isDestructiveRm(cmd string) bool {
 	return false
 }
 
-var shellQuoteReplacer = strings.NewReplacer(`"`, "", `'`, "")
+// shellQuoteReplacer reads an rm argv token the way the shell does: quotes are
+// dropped and backslash-escaped "/" and "*" resolve to the bare character, so
+// rm -rf \/ and rm -rf /\* are judged like rm -rf "/" and rm -rf /*. "\$" and
+// "\~" are deliberately left alone: the shell keeps those literal, so they
+// are not a home-directory expansion.
+var shellQuoteReplacer = strings.NewReplacer(`"`, "", `'`, "", `\/`, "/", `\*`, "*")
 
 // isRmCommandWord reports whether field names the rm binary, either bare or
-// by path (/bin/rm, /usr/bin/rm, ./rm), ignoring shell quotes.
+// by path (/bin/rm, /usr/bin/rm, ./rm), reading the word as the shell does.
 func isRmCommandWord(field string) bool {
 	return strings.EqualFold(path.Base(shellQuoteReplacer.Replace(field)), "rm")
 }
