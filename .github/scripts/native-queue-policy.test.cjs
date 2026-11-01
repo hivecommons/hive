@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
-  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, evaluate,
+  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
 } = require('./native-queue-policy.cjs');
 
 const sha = n => n.toString(16).padStart(40, '0');
@@ -191,7 +191,7 @@ test('closed PR on pull_request_target passes as a no-op and skips evidence look
   let lookups = 0;
   const paginate = f.github.paginate;
   f.github.paginate = async (...args) => { lookups++; return paginate(...args); };
-  assert.match(await evaluate(f), /PR #1 is closed; nothing to evaluate/);
+  assert.match(await evaluate(f), new RegExp(closedNoop(f.state.prs[0])));
   assert.equal(lookups, 0);
 });
 
@@ -204,7 +204,7 @@ test('PR closed during evidence wait passes as a no-op', async () => {
     if (++reads === 2) res.data.state = 'closed';
     return res;
   };
-  assert.match(await evaluate(f), /is closed; nothing to evaluate/);
+  assert.match(await evaluate(f), new RegExp(closedNoop(f.state.prs[0])));
 });
 
 test('open PR with moved head still fails closed on pull_request_target', async () => {
