@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // openEntry pins path with an O_PATH descriptor that refuses to follow a
@@ -13,9 +15,10 @@ import (
 // needing read permission, so the watcher can still repair entries whose
 // owner read bits are missing — the very modes it exists to fix. The
 // descriptor cannot be used with fchmod or fchown, so changes go through its
-// /proc/self/fd link instead.
+// /proc/self/fd link instead. O_PATH comes from x/sys/unix: the standard
+// syscall package does not define it.
 func openEntry(path string) (*os.File, error) {
-	return os.OpenFile(path, syscall.O_PATH|syscall.O_NOFOLLOW, 0)
+	return os.OpenFile(path, unix.O_PATH|syscall.O_NOFOLLOW, 0)
 }
 
 func entryChmod(f *os.File, mode os.FileMode) error {
