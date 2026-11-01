@@ -349,6 +349,43 @@ func TestSweepIssueUnparkCommandsDecisionOnHumanPRExplainsReviews(t *testing.T) 
 	}
 }
 
+// A bare `/hive decision approve` on a PR the hive did not open is the
+// owner's answer to the swarm's question, as the dashboard's approval is:
+// recorded for the head with no fix routed to the author. On the owner's
+// own PR GitHub refuses the Approve review it stands in for
+// (Danathar/zfs-aurora-complex#254, an owner-authored workflow PR).
+func TestSweepIssueUnparkCommandsDecisionApproveOnHumanPRRecordsTheAnswer(t *testing.T) {
+	for _, body := range []string{"/hive decision approve", "/hive decision approve\n\nThe guard is what I wanted."} {
+		t.Run(body, func(t *testing.T) {
+			issues := []unparkWireIssue{parkedPR(254, "danathar", []string{PRNeedsDecisionStageLabel}, humanComment(60, "danathar", body))}
+			c, rec := newUnparkPRClient(t, issues, map[string]string{"danathar": "admin"})
+			store := review.NewHumanChangeRequests("")
+			result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("danathar")})
+			if err != nil {
+				t.Fatalf("sweep: %v", err)
+			}
+			if len(result.PRDecisions) != 1 || result.PRDecisions[0].Mode != string(prDecisionApprove) || result.Replies != 0 {
+				t.Fatalf("result = %+v, want one recorded approval", result)
+			}
+			req, ok := review.DecisionAnswerFor(store, "org/repo", 254, liveDecisionHead)
+			if !ok || !req.IsApproval() || req.Actor != "danathar" || req.SourceID != 60 {
+				t.Fatalf("recorded = %+v, %v; want danathar's approval from comment 60", req, ok)
+			}
+			if review.HumanChangeRequestFor(store, "org/repo", 254, liveDecisionHead) != nil {
+				t.Fatal("an approval must not read as a change request for the fixer")
+			}
+			reply := strings.Join(rec.posted[254], "\n")
+			if !strings.Contains(reply, "Approval recorded by @danathar") || strings.Contains(reply, "did not open this PR") {
+				t.Fatalf("reply = %q, want the approval acknowledgement", reply)
+			}
+			facts := prDecisionFacts(t, c)
+			if len(facts) != 1 || facts[0].Instruction || facts[0].SelfAuthored || facts[0].Head != liveDecisionHead {
+				t.Fatalf("stage facts = %+v, want one approval on a PR the hive did not open", facts)
+			}
+		})
+	}
+}
+
 func TestSweepIssueUnparkCommandsPRIgnoresUntrustedAndUnparked(t *testing.T) {
 	tests := []struct {
 		name        string

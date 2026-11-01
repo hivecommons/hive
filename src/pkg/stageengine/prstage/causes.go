@@ -23,7 +23,7 @@ const (
 	CauseWorkflowPathManual = "the PR edits CI workflow / action files, which the lane never merges unattended"
 	// CauseWorkflowPathAwaitingApproval is the same fence awaiting the
 	// owner's explicit approval (hivecommons/hive#14664).
-	CauseWorkflowPathAwaitingApproval = "the PR edits CI workflow / action files: awaiting owner approval — a hive owner / trusted merger's GitHub **Approve** review on the current head (or a dashboard `/hive decision approve`) releases the fence and the hive merges it; approval on an earlier head does not count, so re-approve after a push"
+	CauseWorkflowPathAwaitingApproval = "the PR edits CI workflow / action files: awaiting owner approval — a hive owner / trusted merger's GitHub **Approve** review on the current head (or a `/hive decision approve` reply, typed on the PR or from the dashboard) releases the fence and the hive merges it; approval on an earlier head does not count, so re-approve after a push"
 )
 
 // CauseWorkflowApprovalUntrusted is the cause when the repository's

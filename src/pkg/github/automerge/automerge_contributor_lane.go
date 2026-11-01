@@ -1462,11 +1462,14 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 				return eval, tests, nil
 			}
 		}
-		approver, released := c.workflowFenceReleased(ctx, displayRepo, owner, repo, pr, number, headSHA, reason, policy)
+		approval, released := c.workflowFenceReleased(ctx, displayRepo, owner, repo, pr, number, headSHA, reason, policy, verdict, humanApproved)
 		if !released {
 			return eval, reason, nil
 		}
-		eval.workflowApprover = approver
+		eval.workflowApprover = approval.Login
+		if approval.AnswersVerdict && !humanApproved {
+			approver, humanApproved = approval.Login, true
+		}
 	}
 	if held, err := c.hasReporterTrustHold(ctx, owner, repo, number); err != nil {
 		return eval, "reporter-trust-check", err

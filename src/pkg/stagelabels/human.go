@@ -659,13 +659,16 @@ func DecisionActions(r Route) string {
 	var steps []string
 	head := "`" + ShortSHA(r.Head) + "`"
 	if r.ManualMerge {
-		// Only `/hive decision approve` and an Approve review release the
-		// fence; `/hive approve` never does (hivecommons/hive#14672).
+		// Only `/hive decision approve` (typed or from the dashboard) and
+		// an Approve review release the fence; `/hive approve` never does
+		// (hivecommons/hive#14672). The first two also answer a
+		// requires_human verdict on the head, so the owner of their own PR,
+		// whom GitHub refuses as a reviewer, has one command for both.
 		settles := ""
 		if r.Verdict == VerdictRequiresHuman {
 			settles = " and settles the reviewer's `requires_human` verdict"
 		}
-		steps = append(steps, "a trusted merger approves this head ("+head+") with a GitHub **Approve** review (or a dashboard `/hive decision approve`), which releases the CI workflow-file fence"+settles+", and the hive merges the PR once the other gates clear; approval on an earlier head does not count, and a `/hive approve` reply does not release the fence")
+		steps = append(steps, "a trusted merger approves this head ("+head+") with a GitHub **Approve** review (or a `/hive decision approve` reply, typed here or from the dashboard), which releases the CI workflow-file fence"+settles+", and the hive merges the PR once the other gates clear; approval on an earlier head does not count, and a `/hive approve` reply does not release the fence")
 	} else if r.Verdict == VerdictRequiresHuman {
 		if r.SelfAuthored {
 			steps = append(steps, "approve this head ("+head+") to merge as-is — a GitHub **Approve** review, or a `/hive approve` reply posted after the verdict — or leave a *changes requested* review (or reply `/hive decision <what to change>`) and the hive will push the fix")
