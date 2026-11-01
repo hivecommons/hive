@@ -1,1 +1,1 @@
-- The native queue policy check now reports neutral instead of failing on pull requests that are already closed or merged ([#16128](https://github.com/hivecommons/hive/issues/16128)).
+- The native queue policy check now passes as a no-op instead of failing when a `pull_request_target` run lands on a pull request that is already closed or merged ([#16128](https://github.com/hivecommons/hive/issues/16128)).

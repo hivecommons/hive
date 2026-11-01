@@ -185,7 +185,7 @@ test('PR-target admission consumes policy providers without group APIs', async (
   assert.equal(f.state.seen.length, 0);
 });
 
-test('closed PR on pull_request_target is neutral and skips evidence lookup', async () => {
+test('closed PR on pull_request_target passes as a no-op and skips evidence lookup', async () => {
   const f = fixture('pull_request_target');
   f.state.prs[0].state = 'closed';
   let lookups = 0;
@@ -195,7 +195,7 @@ test('closed PR on pull_request_target is neutral and skips evidence lookup', as
   assert.equal(lookups, 0);
 });
 
-test('PR closed during evidence wait is neutral', async () => {
+test('PR closed during evidence wait passes as a no-op', async () => {
   const f = fixture('pull_request_target');
   const get = f.github.rest.pulls.get;
   let reads = 0;
