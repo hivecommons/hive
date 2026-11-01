@@ -1,1 +1,0 @@
-- test(scripts): deflake confirm-fixed DRY_RUN assertion (SIGPIPE under pipefail) (#16151)
