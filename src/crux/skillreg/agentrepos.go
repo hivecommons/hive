@@ -69,8 +69,10 @@ func SpecRepos(spec AgentSpec) []string {
 // caller names "console" or "acme/console", and a spec scoped to
 // "laredo/cuga-agent" is matched by that full reference. Nothing here knows the
 // hive's org, so an org-qualified name matches a bare one by comparing the
-// trailing segment — the hive-side predicate in pkg/config, which does know the
-// org, is the stricter one and is what enforcement uses.
+// trailing segment. Two org-qualified references must have the same owner and
+// name to match — the owner/name spelling exists to disambiguate cross-org repos.
+// The hive-side predicate in pkg/config, which does know the org, is the
+// stricter one and is what enforcement uses.
 func SpecServesRepo(spec AgentSpec, repo string) bool {
 	scope := SpecRepos(spec)
 	if len(scope) == 0 {
@@ -89,12 +91,18 @@ func SpecServesRepo(spec AgentSpec, repo string) bool {
 }
 
 // repoRefsMatch compares two repo references case-insensitively, treating a
-// bare name and an "owner/name" reference as equal when the names agree. b is
+// bare name and an "owner/name" reference as equal when the names agree. Two
+// org-qualified references (both containing "/") must match exactly. b is
 // expected already lower-cased and trimmed.
 func repoRefsMatch(a, b string) bool {
 	a = strings.ToLower(strings.TrimSpace(a))
 	if a == b {
 		return true
+	}
+	// Only compare trailing segments if at least one side is bare (contains no "/").
+	// Two qualified refs with different owners must NOT match.
+	if strings.Contains(a, "/") && strings.Contains(b, "/") {
+		return false
 	}
 	return baseRepoName(a) == baseRepoName(b)
 }
