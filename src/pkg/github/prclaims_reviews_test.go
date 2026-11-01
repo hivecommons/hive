@@ -217,3 +217,72 @@ func TestFetchClaimScan_ReviewReadFailureIsRetriedNotCached(t *testing.T) {
 		t.Fatalf("observations after the retry = %+v, want alice's review 9", got)
 	}
 }
+
+// A review by a deleted (ghost) account has no login. It is still a
+// submitted review, so it is counted as "unknown" rather than dropped
+// (#16123), the way a merge with no login lands in the unknown column.
+func TestFetchClaimScan_GhostReviewerCountsAsUnknown(t *testing.T) {
+	merged := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	srv := newReviewScanServer(t, []map[string]any{
+		mergedPR(830, "hive-app[bot]", "fix", "Fixes #3", merged, merged),
+	}, map[int][][]map[string]any{830: {{
+		reviewFixture(11, "", "APPROVED", merged),
+		reviewFixture(12, "alice", "COMMENTED", merged),
+	}}})
+	c := NewClientForTest(srv.URL, "torch-spyre", []string{"spyre-inference"}, testLogger())
+	var got []PRReviewObservation
+	c.SetPRReviewObservedHook(func(o PRReviewObservation) { got = append(got, o) })
+
+	if _, err := c.FetchClaimScan(context.Background(), HiveIdentity{AppLogin: "hive-app[bot]"}); err != nil {
+		t.Fatalf("FetchClaimScan: %v", err)
+	}
+	assertReviewObservations(t, got, []PRReviewObservation{
+		{Repo: "spyre-inference", Number: 830, ReviewID: 11, Reviewer: "", Attribution: "unknown", State: "APPROVED", SubmittedAt: merged},
+		{Repo: "spyre-inference", Number: 830, ReviewID: 12, Reviewer: "alice", Attribution: "human", State: "COMMENTED", SubmittedAt: merged},
+	})
+}
+
+// A review submitted after the first read is picked up once the PR's
+// updated_at moves (#16119): the list is read again and only the review not
+// yet observed is emitted. An unchanged PR keeps being served from cache.
+func TestEmitTerminalPRReviews_LateReviewReadsAgainWhenPRChanged(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	t1, t2 := now.Add(-3*time.Hour), now.Add(-30*time.Minute)
+	reviews := [][]map[string]any{{reviewFixture(1, "alice", "APPROVED", t1)}}
+	srv := newReviewScanServer(t, nil, map[int][][]map[string]any{840: reviews})
+	c := NewClientForTest(srv.URL, "torch-spyre", []string{"spyre-inference"}, testLogger())
+	var got []PRReviewObservation
+	c.SetPRReviewObservedHook(func(o PRReviewObservation) { got = append(got, o) })
+	identity := HiveIdentity{AppLogin: "hive-app[bot]"}
+	emit := func(updatedAt time.Time) {
+		c.emitTerminalPRReviews(context.Background(), "torch-spyre", "spyre-inference", "spyre-inference", 840, updatedAt, identity)
+	}
+
+	emit(t1)
+	emit(t1)
+	if calls := srv.reviewCalls(840); calls != 1 {
+		t.Fatalf("reviews requests = %d for an unchanged PR, want 1", calls)
+	}
+	if len(got) != 2 {
+		t.Fatalf("observations = %+v, want the one review emitted per scan", got)
+	}
+
+	reviews[0] = append(reviews[0], reviewFixture(2, "bob", "COMMENTED", t2))
+	got = nil
+	emit(t2)
+	if calls := srv.reviewCalls(840); calls != 2 {
+		t.Fatalf("reviews requests = %d after the PR changed, want 2", calls)
+	}
+	assertReviewObservations(t, got, []PRReviewObservation{
+		{Repo: "spyre-inference", Number: 840, ReviewID: 2, Reviewer: "bob", Attribution: "human", State: "COMMENTED", SubmittedAt: t2},
+	})
+
+	got = nil
+	emit(t2)
+	if calls := srv.reviewCalls(840); calls != 2 {
+		t.Fatalf("reviews requests = %d after a rescan of the changed PR, want 2", calls)
+	}
+	if len(got) != 2 {
+		t.Fatalf("observations = %+v, want both cached reviews replayed", got)
+	}
+}
