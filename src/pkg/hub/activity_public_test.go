@@ -31,7 +31,17 @@ func setActivityHiveVisibility(t *testing.T, s *HubServer, hiveID string, public
 // credentials a signed-in admin would send.
 func getPublicActivity(t *testing.T, s *HubServer, user, ifNoneMatch string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, activityPublicPath, nil)
+	return getPublicActivityQuery(t, s, "", user, ifNoneMatch)
+}
+
+// getPublicActivityQuery is getPublicActivity with a raw query string.
+func getPublicActivityQuery(t *testing.T, s *HubServer, rawQuery, user, ifNoneMatch string) *httptest.ResponseRecorder {
+	t.Helper()
+	target := activityPublicPath
+	if rawQuery != "" {
+		target += "?" + rawQuery
+	}
+	req := httptest.NewRequest(http.MethodGet, target, nil)
 	if user != "" {
 		req.AddCookie(testAuthCookie(user))
 		req.Header.Set("Authorization", "Bearer "+testHubSecret)
@@ -243,5 +253,119 @@ func TestActivityPublic_CachesBodyForTTL(t *testing.T) {
 	third := getPublicActivity(t, s, "", "")
 	if third.Body.String() == first.Body.String() {
 		t.Fatalf("body not rebuilt after TTL expiry")
+	}
+}
+
+// Query strings that parse to the empty filter (#16111 review) share the
+// default cache entry, so `?x=1` or `?hive=` cannot force a rebuild.
+func TestActivityPublic_EmptyFilterQueriesHitCache(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newActivityHub()
+	postActivityHeartbeat(t, s, "hive-a", activityDigest("o/a", 1))
+	setActivityHiveVisibility(t, s, "hive-a", true, "github.com")
+
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldNow := publicActivityNow
+	publicActivityNow = func() time.Time { return clock }
+	defer func() { publicActivityNow = oldNow }()
+
+	first := getPublicActivity(t, s, "", "")
+	postActivityHeartbeat(t, s, "hive-a", activityDigest("o/a", 1, 2))
+	for _, q := range []string{"x=1", "hive=", "hive=%20&repo=", "q=&x=y"} {
+		rec := getPublicActivityQuery(t, s, q, "", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("?%s status %d", q, rec.Code)
+		}
+		if rec.Body.String() != first.Body.String() {
+			t.Errorf("?%s bypassed the default cache entry", q)
+		}
+		if rec.Header().Get("ETag") != first.Header().Get("ETag") {
+			t.Errorf("?%s ETag differs from the cached body's", q)
+		}
+	}
+}
+
+// Filtered views are cached per parsed filter for the same TTL, bounded in
+// number, and never mixed up with the default view.
+func TestActivityPublic_FilteredViewsCachedAndBounded(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newActivityHub()
+	postActivityHeartbeat(t, s, "hive-a", activityDigest("o/a", 1))
+	postActivityHeartbeat(t, s, "hive-b", activityDigest("o/b", 7))
+	setActivityHiveVisibility(t, s, "hive-a", true, "github.com")
+	setActivityHiveVisibility(t, s, "hive-b", true, "github.com")
+
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldNow := publicActivityNow
+	publicActivityNow = func() time.Time { return clock }
+	defer func() { publicActivityNow = oldNow }()
+	oldCap := publicActivityFilteredCap
+	publicActivityFilteredCap = 2
+	defer func() { publicActivityFilteredCap = oldCap }()
+
+	def := getPublicActivity(t, s, "", "").Body.String()
+	filtered := getPublicActivityQuery(t, s, "hive=hive-a", "", "").Body.String()
+	if filtered == def || !strings.Contains(filtered, "o/a") || strings.Contains(filtered, "o/b") {
+		t.Fatalf("filtered body not restricted to hive-a: %s", filtered)
+	}
+
+	postActivityHeartbeat(t, s, "hive-a", activityDigest("o/a", 1, 2))
+	if again := getPublicActivityQuery(t, s, "hive=hive-a", "", "").Body.String(); again != filtered {
+		t.Fatalf("filtered body rebuilt inside the TTL window")
+	}
+	// The same filter spelled differently is the same key.
+	if again := getPublicActivityQuery(t, s, "hive=%20hive-a%20&x=1", "", "").Body.String(); again != filtered {
+		t.Fatalf("equivalent filtered query bypassed its cache entry")
+	}
+	if got := getPublicActivity(t, s, "", "").Body.String(); got != def {
+		t.Fatalf("default body disturbed by filtered requests")
+	}
+
+	// Distinct filters beyond the cap evict rather than grow.
+	getPublicActivityQuery(t, s, "hive=hive-b", "", "")
+	getPublicActivityQuery(t, s, "repo=o/a", "", "")
+	getPublicActivityQuery(t, s, "q=zzz", "", "")
+	s.publicActivity.mu.Lock()
+	n := len(s.publicActivity.filtered)
+	s.publicActivity.mu.Unlock()
+	if n > publicActivityFilteredCap {
+		t.Fatalf("filtered cache holds %d entries, cap %d", n, publicActivityFilteredCap)
+	}
+
+	clock = clock.Add(publicActivityCacheTTL + time.Second)
+	if third := getPublicActivityQuery(t, s, "hive=hive-a", "", "").Body.String(); third == filtered {
+		t.Fatalf("filtered body not rebuilt after TTL expiry")
+	}
+}
+
+// A hive made private stops appearing anonymously as soon as the toggle
+// invalidates the cache, not at TTL expiry.
+func TestActivityPublic_InvalidateDropsHiveAtOnce(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newActivityHub()
+	postActivityHeartbeat(t, s, "hive-a", activityDigest("o/a", 1))
+	setActivityHiveVisibility(t, s, "hive-a", true, "github.com")
+
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldNow := publicActivityNow
+	publicActivityNow = func() time.Time { return clock }
+	defer func() { publicActivityNow = oldNow }()
+
+	if body := getPublicActivity(t, s, "", "").Body.String(); !strings.Contains(body, "hive-a") {
+		t.Fatalf("public hive missing before the flip: %s", body)
+	}
+	getPublicActivityQuery(t, s, "hive=hive-a", "", "")
+	setActivityHiveVisibility(t, s, "hive-a", false, "github.com")
+	if body := getPublicActivity(t, s, "", "").Body.String(); !strings.Contains(body, "hive-a") {
+		t.Fatalf("cache unexpectedly bypassed before invalidate")
+	}
+	s.publicActivity.invalidate()
+	for _, q := range []string{"", "hive=hive-a"} {
+		if body := getPublicActivityQuery(t, s, q, "", "").Body.String(); strings.Contains(body, "hive-a") {
+			t.Fatalf("?%s still shows the private hive after invalidate: %s", q, body)
+		}
 	}
 }
