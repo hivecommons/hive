@@ -736,6 +736,34 @@ func TestHoldGuardDriftLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #16112: a sentinel finding on a PR is the sweep working as designed (it
+// flags the PR for a human), not a hive runtime defect, even when several
+// PRs or sweeps cross the repeat threshold in one window.
+func TestSentinelAlertLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 10; i++ {
+		logger.Warn("sentinel alert", "repo", "server", "pr", 583+i,
+			"author", "contributor", "rules", "sensitive_path,security_policy_edit")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("sentinel findings produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Errorf("wrapped handler saw %d records, want 10", n)
+	}
+	if !strings.Contains(out.String(), "sentinel alert") {
+		t.Error("sentinel alert warning missing from local logs")
+	}
+
+	// Do not blanket-suppress the sentinel: a failing sweep or a PR it could
+	// not evaluate still needs fleet visibility.
+	logger.Warn("sentinel sweep failed", "error", "unexpected failure")
+	logger.Warn("sentinel sweep: PR skipped", "detail", "o/r#1: unexpected failure")
+	if len(*seen) != 2 {
+		t.Fatalf("sentinel sweep failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #15906: the per-head review cap suppressing a duplicate comment is expected.
 func TestReviewCommentCappedLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)
