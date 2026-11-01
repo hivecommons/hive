@@ -18,6 +18,19 @@ import (
 	"github.com/hivecommons/hive/crux/inferencehealth"
 )
 
+// logTranslateFailure logs a translateAnthropicToOpenAI refusal. A missing
+// model is an operator configuration condition the agent's LastError already
+// names with its remedy, so it logs at WARN under its own message instead of
+// the ERROR the fleet report counts as an inference_upstream_error
+// (hivecommons/hive#16170).
+func (p *GitHubProxy) logTranslateFailure(agentName string, err error) {
+	if errors.Is(err, errNoInferenceModel) {
+		p.logger.Warn("inference model not configured; request refused", "agent", agentName, "error", err)
+		return
+	}
+	p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
+}
+
 // inferenceAPIKeyPrefix is what the manager prepends to the agent's name to
 // form the ANTHROPIC_API_KEY it hands each inference-routed agent
 // (agent/manager_env.go). The suffix is the agent's NAME, not a secret.
@@ -438,7 +451,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 
 		openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
 		if err != nil {
-			p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
+			p.logTranslateFailure(agentName, err)
 			p.recordAgentInferenceError(agentName, "translation error: "+err.Error(), 0)
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, jsonEscape(err.Error())), http.StatusBadGateway)
 			return
@@ -659,7 +672,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 
 	openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
 	if err != nil {
-		p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
+		p.logTranslateFailure(agentName, err)
 		p.recordAgentInferenceError(agentName, "translation error: "+err.Error(), 0)
 		p.writeHTTPError(conn, http.StatusBadGateway, "translation error: "+err.Error())
 		return

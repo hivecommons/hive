@@ -752,6 +752,13 @@ var benignSubstrings = []string{
 	// every agent warn once in the same boot — an operator configuration
 	// condition, not a repeated runtime defect (hivecommons/hive#14020).
 	"copilot cli substituted the configured model",
+	// The inference translator (src/crux/proxy/github_proxy_inference.go)
+	// refuses every request from an agent with neither an agent model nor a
+	// gateway default_model, and names the remedy on the agent's dashboard
+	// LastError. Each refused call warns, so an unconfigured agent bursts —
+	// an operator configuration condition, not an upstream inference defect
+	// (hivecommons/hive#16170).
+	"inference model not configured; request refused",
 	// The scheduler (src/pkg/scheduler/kick_priming.go) warns when the primer
 	// render exceeds knowledge.primer.max_bytes (#12124). The render already
 	// carries its own truncation marker. A hive whose vault outgrows the cap
