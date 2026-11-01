@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -600,23 +601,23 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		return
 	}
 
-	// The descriptor opened with O_NOFOLLOW is what gets chowned/chmodded,
-	// mirroring fixModeFile, so the entry Walk reported is the entry that is
-	// changed. ELOOP (now a link), EACCES and ENOENT are skipped silently.
-	flags := os.O_RDONLY | syscall.O_NOFOLLOW
-	if fi.IsDir() {
-		flags |= syscall.O_DIRECTORY
-	}
-	f, err := os.OpenFile(path, flags, 0)
+	// The entry is pinned by an O_PATH descriptor and changed through its
+	// /proc/self/fd link, mirroring fixModeFile's descriptor discipline, so the
+	// entry Walk reported is the entry that is changed. O_PATH needs no read
+	// permission, so entries with unreadable modes can still be repaired. ELOOP,
+	// EACCES and ENOENT are skipped silently.
+	f, err := os.OpenFile(path, syscall.O_PATH|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return
 	}
-	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
+	defer func() { _ = f.Close() }() // O_PATH fd; nothing to lose on close error
 	ofi, err := f.Stat()
-	if err != nil || ofi.IsDir() != fi.IsDir() || (!ofi.IsDir() && !ofi.Mode().IsRegular()) {
+	if err != nil || ofi.Mode()&os.ModeSymlink != 0 || ofi.IsDir() != fi.IsDir() || (!ofi.IsDir() && !ofi.Mode().IsRegular()) {
 		return
 	}
 	mode := ofi.Mode()
+	procPath := fmt.Sprintf("/proc/self/fd/%d", f.Fd())
+	chmod := func(m os.FileMode) error { return os.Chmod(procPath, m) }
 
 	// Fix group ownership if not in the node group — all agents share this group.
 	// Also fix root-owned files (uid 0) to the dev user.
@@ -630,7 +631,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		needsChown = true
 	}
 	if needsChown {
-		if err := f.Chown(newUID, NodeGID); err != nil {
+		if err := os.Chown(procPath, newUID, NodeGID); err != nil {
 			warnDeduped(logger, "chown", "permissions watcher: chown failed", path, err)
 		} else {
 			permWarnDedupe.clear(dedupeKey("chown", path))
@@ -660,7 +661,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// these non-DevUID dirs. Only the group r/w/x bits are added — owner and
 	// other bits are preserved — so an already-770 dir is left untouched.
 	if fi.IsDir() && filepath.Base(path) == bobStateDirBase {
-		fixBobStateDirGroupWrite(path, mode, f.Chmod, logger)
+		fixBobStateDirGroupWrite(path, mode, chmod, logger)
 	}
 
 	// Shared CLI credentials are the other class the watcher must widen even
@@ -669,7 +670,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// exactly the case that breaks the fleet (#5730). Group READ only, ORed in,
 	// so an already-correct file is left byte-identical.
 	if !fi.IsDir() && isSharedGroupReadableFile(path) {
-		fixSharedCredentialGroupRead(path, mode, f.Chmod, stat.Uid, logger)
+		fixSharedCredentialGroupRead(path, mode, chmod, stat.Uid, logger)
 		return
 	}
 
@@ -688,7 +689,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		// Directories need u+rwx to be usable.
 		if mode.Perm()&DirPerms != DirPerms {
 			newMode := mode.Perm() | DirPerms
-			if err := f.Chmod(newMode); err != nil {
+			if err := chmod(newMode); err != nil {
 				warnDeduped(logger, "chmod dir", "permissions watcher: chmod dir failed", path, err)
 			} else {
 				permWarnDedupe.clear(dedupeKey("chmod dir", path))
@@ -705,7 +706,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		// Regular files need u+rw to be readable/writable.
 		if mode.Perm()&FilePerms != FilePerms {
 			newMode := mode.Perm() | FilePerms
-			if err := f.Chmod(newMode); err != nil {
+			if err := chmod(newMode); err != nil {
 				warnDeduped(logger, "chmod file", "permissions watcher: chmod file failed", path, err)
 			} else {
 				permWarnDedupe.clear(dedupeKey("chmod file", path))

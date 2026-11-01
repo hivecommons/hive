@@ -629,6 +629,61 @@ func TestFixEntry_ActsOnOpenedEntryNotPath(t *testing.T) {
 	}
 }
 
+// TestFixEntry_RepairsEntryWithoutReadBit pins that entries lacking owner read
+// bits are still repaired, since the descriptor is opened without read access.
+func TestFixEntry_RepairsEntryWithoutReadBit(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permission bits")
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	oldUID, oldGID := DevUID, NodeGID
+	DevUID, NodeGID = os.Getuid(), os.Getgid()
+	t.Cleanup(func() { DevUID, NodeGID = oldUID, oldGID })
+	root := t.TempDir()
+
+	entry := filepath.Join(root, "entry")
+	if err := os.WriteFile(entry, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	if err := os.Chmod(entry, 0o200); err != nil {
+		t.Fatalf("chmod entry: %v", err)
+	}
+	fixEntry(entry, fakeFileInfo{
+		name: "entry",
+		mode: 0o200,
+		sys:  &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
+	}, logger)
+	info, err := os.Stat(entry)
+	if err != nil {
+		t.Fatalf("stat entry: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o660 {
+		t.Fatalf("file mode = %v, want 0660", got)
+	}
+
+	d := filepath.Join(root, "d")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(d, 0o000); err != nil {
+		t.Fatalf("chmod dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(d, 0o700) })
+	fixEntry(d, fakeFileInfo{
+		name:  "d",
+		mode:  os.ModeDir,
+		isDir: true,
+		sys:   &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
+	}, logger)
+	info, err = os.Stat(d)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o770 {
+		t.Fatalf("dir mode = %v, want 0770", got)
+	}
+}
+
 func TestCoverageGuardsForRestartAndBobRelaunch(t *testing.T) {
 	m := &Manager{
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
