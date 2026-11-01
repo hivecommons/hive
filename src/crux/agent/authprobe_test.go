@@ -467,7 +467,7 @@ func TestPermissionsWatcherRepairsBobStateDir(t *testing.T) {
 		t.Fatalf("bob state dir mode = %v, want group rwx bits", got)
 	}
 
-	fixBobStateDirGroupWrite(dir, info.Mode(), logger)
+	fixBobStateDirGroupWrite(dir, info.Mode(), func(m os.FileMode) error { return os.Chmod(dir, m) }, logger)
 	again, err := os.Stat(dir)
 	if err != nil {
 		t.Fatalf("stat idempotent bob state dir: %v", err)
@@ -536,6 +536,22 @@ func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
 func (f fakeFileInfo) IsDir() bool        { return f.isDir }
 func (f fakeFileInfo) Sys() any           { return f.sys }
 
+// syntheticStat returns a Stat_t that reports the caller-chosen uid/gid for
+// the entry at path while carrying the entry's real device and inode number,
+// so pinEntry still recognises it as the entry Walk reported.
+func syntheticStat(t *testing.T, path string, uid, gid uint32) *syscall.Stat_t {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat %s: %v", path, err)
+	}
+	real, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("no syscall.Stat_t on this platform")
+	}
+	return &syscall.Stat_t{Dev: real.Dev, Ino: real.Ino, Uid: uid, Gid: gid}
+}
+
 func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := filepath.Join(t.TempDir(), "dir")
@@ -546,7 +562,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 		name:  "dir",
 		mode:  0o700 | os.ModeDir,
 		isDir: true,
-		sys:   &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
+		sys:   syntheticStat(t, dir, uint32(DevUID), uint32(NodeGID)),
 	}, logger)
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -563,7 +579,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 	fixEntry(file, fakeFileInfo{
 		name: "file",
 		mode: 0o600,
-		sys:  &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
+		sys:  syntheticStat(t, file, uint32(DevUID), uint32(NodeGID)),
 	}, logger)
 	info, err = os.Stat(file)
 	if err != nil {
@@ -577,13 +593,155 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 	fixEntry(file, fakeFileInfo{
 		name: "other-owner",
 		mode: 0o600,
-		sys:  &syscall.Stat_t{Uid: uint32(DevUID + 100), Gid: uint32(NodeGID)},
+		sys:  syntheticStat(t, file, uint32(DevUID+100), uint32(NodeGID)),
 	}, logger)
 	fixEntry(file, fakeFileInfo{
 		name: "root-owned",
 		mode: 0o600,
-		sys:  &syscall.Stat_t{Uid: 0, Gid: 0},
+		sys:  syntheticStat(t, file, 0, 0),
 	}, logger)
+}
+
+// TestFixEntry_ActsOnOpenedEntryNotPath pins that an entry replaced by a link
+// after Walk reported it is skipped rather than followed to the link target.
+func TestFixEntry_ActsOnOpenedEntryNotPath(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	oldUID, oldGID := DevUID, NodeGID
+	DevUID, NodeGID = os.Getuid(), os.Getgid()
+	t.Cleanup(func() { DevUID, NodeGID = oldUID, oldGID })
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "secret")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Chmod(target, 0o600); err != nil {
+		t.Fatalf("chmod target: %v", err)
+	}
+	entry := filepath.Join(dir, "entry")
+	if err := os.WriteFile(entry, []byte("y"), 0o644); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	walked := fakeFileInfo{
+		name: "entry",
+		mode: 0o644,
+		sys:  syntheticStat(t, entry, uint32(DevUID), uint32(NodeGID)),
+	}
+	if err := os.Remove(entry); err != nil {
+		t.Fatalf("remove entry: %v", err)
+	}
+	if err := os.Symlink(target, entry); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	fixEntry(entry, walked, logger)
+
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("target mode = %v, want 0600 unchanged", got)
+	}
+}
+
+// TestFixEntry_SkipsSameKindReplacement pins that an entry replaced by a
+// different regular file after Walk reported it is skipped: the ownership
+// decision made from the walked stat must not be applied to another inode.
+func TestFixEntry_SkipsSameKindReplacement(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permission bits")
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	oldUID, oldGID := DevUID, NodeGID
+	DevUID, NodeGID = os.Getuid(), os.Getgid()
+	t.Cleanup(func() { DevUID, NodeGID = oldUID, oldGID })
+
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "entry")
+	if err := os.WriteFile(entry, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	walked := fakeFileInfo{
+		name: "entry",
+		mode: 0o600,
+		sys:  syntheticStat(t, entry, uint32(DevUID), uint32(NodeGID)),
+	}
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(other, []byte("y"), 0o600); err != nil {
+		t.Fatalf("write other: %v", err)
+	}
+	if err := os.Chmod(other, 0o600); err != nil {
+		t.Fatalf("chmod other: %v", err)
+	}
+	if err := os.Rename(other, entry); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	fixEntry(entry, walked, logger)
+
+	info, err := os.Stat(entry)
+	if err != nil {
+		t.Fatalf("stat entry: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("replacement mode = %v, want 0600 unchanged", got)
+	}
+}
+
+// TestFixEntry_RepairsEntryWithoutReadBit pins that entries lacking owner read
+// bits are still repaired, since the descriptor is opened without read access.
+func TestFixEntry_RepairsEntryWithoutReadBit(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permission bits")
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	oldUID, oldGID := DevUID, NodeGID
+	DevUID, NodeGID = os.Getuid(), os.Getgid()
+	t.Cleanup(func() { DevUID, NodeGID = oldUID, oldGID })
+	root := t.TempDir()
+
+	entry := filepath.Join(root, "entry")
+	if err := os.WriteFile(entry, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	if err := os.Chmod(entry, 0o200); err != nil {
+		t.Fatalf("chmod entry: %v", err)
+	}
+	fixEntry(entry, fakeFileInfo{
+		name: "entry",
+		mode: 0o200,
+		sys:  syntheticStat(t, entry, uint32(DevUID), uint32(NodeGID)),
+	}, logger)
+	info, err := os.Stat(entry)
+	if err != nil {
+		t.Fatalf("stat entry: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o660 {
+		t.Fatalf("file mode = %v, want 0660", got)
+	}
+
+	d := filepath.Join(root, "d")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(d, 0o000); err != nil {
+		t.Fatalf("chmod dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(d, 0o700) })
+	fixEntry(d, fakeFileInfo{
+		name:  "d",
+		mode:  os.ModeDir,
+		isDir: true,
+		sys:   syntheticStat(t, d, uint32(DevUID), uint32(NodeGID)),
+	}, logger)
+	info, err = os.Stat(d)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o770 {
+		t.Fatalf("dir mode = %v, want 0770", got)
+	}
 }
 
 func TestCoverageGuardsForRestartAndBobRelaunch(t *testing.T) {
