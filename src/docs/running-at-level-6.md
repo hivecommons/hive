@@ -71,7 +71,7 @@ would hold but does not stop the App sweep.
 | `governor.review_gate.mode: enforce` | Enforces review on the App sweep's self-authored, trusted-bot and trusted-author paths; do not assume this switch alone configures scanner eligibility |
 | `governor.review_gate.mode: off` | Does not weaken `review.require_approval: true`; the strictest setting wins |
 | Trusted human merger's GitHub **Approve** review on the exact head | Can override **any** swarm outcome in the enforcing sweep gate, including `changes_requested` or `reject`; audit records the actor and overridden outcome |
-| `/hive decision approve <rationale>` by a trusted merger on a PR at 085 or 070, or on a workflow-path PR whose fence it releases | Records approval for that head and can release `requires_human`; not a universal override of every gate |
+| `/hive decision approve <rationale>` by a trusted merger on a PR at 085 or 070, on a workflow-path PR whose fence it releases, or posted after the head on any other contributor-lane PR whose verdict asks for a person (no fence, no stage label needed) | Records approval for that head and can release `requires_human`; an edited comment never counts; not a universal override of every gate |
 | Bare `/hive approve` on a PR | Acknowledgement only; does not release or authorize a merge |
 
 In-place adopted PRs use the contributor lane's `RequireReviewerVerdict`, not

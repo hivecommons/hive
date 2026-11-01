@@ -267,9 +267,13 @@ do not.
 * **PR commands (085/070).** Bare `/hive approve` is acknowledged only.
   On an eligible Hive-authored PR, `/hive decision <instruction>` routes
   the full text to the author/fixer. `/hive decision approve <rationale>`
-  records approval for the current head and can release `requires_human`,
-  on any PR at 085/070 and on a workflow-path PR whose fence it releases.
-  This requires repo write access or higher **and** configured merger trust.
+  records approval for the current head and can release `requires_human`:
+  on any PR at 085/070, on a workflow-path PR whose fence it releases, and
+  on any other contributor-lane PR whose verdict asks for a person, when a
+  trusted merger posts it after the head (see the review-verdict gate in
+  [hive-merge.md](hive-merge.md#contributor-lane-auto-merge)). An edited comment
+  never counts. This requires repo write access or higher **and**
+  configured merger trust.
   Other authors use GitHub reviews/manual merging. Commands do not waive
   CI, holds, author admission or path fences. See
   [the exact gate contract](running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).

@@ -191,12 +191,12 @@ func (c *Engine) recordTypedApprovalDecision(displayRepo, owner, repo string, nu
 // typedDecisionApprovalAnswer is recordTypedApprovalDecision for a PR no
 // diff fence tripped (hivecommons/hive#16121): the newest typed
 // `/hive decision approve` by a trusted merger bound to headSHA — read with
-// workflowApprovalCommentActor, the same rule the fence uses — answers a
+// latestTrustedCommentApproval, the same rule the fence uses — answers a
 // verdict that still asks for a person. Without it an owner's own PR that
 // touches no workflow file waited on the un-park sweep, which reads only
 // stage-labelled PRs. Returns the approver when the head now carries the
-// approval; a read failure, or a later decision on the head, answers
-// nothing.
+// approval; a read failure, a dashboard approval (which records its own
+// decision), or a later decision on the head answers nothing.
 func (c *Engine) typedDecisionApprovalAnswer(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA string, verdict ContributorLaneVerdict) (string, bool) {
 	if c == nil || c.gh == nil || c.humanChangeRequests == nil || strings.TrimSpace(headSHA) == "" {
 		return "", false
@@ -209,23 +209,17 @@ func (c *Engine) typedDecisionApprovalAnswer(ctx context.Context, displayRepo, o
 		c.warn("typed decision approve: could not read comments", "repo", displayRepo, "pr", number, "head", headSHA, "error", err)
 		return "", false
 	}
-	headPushedAt := c.headObservedAt(owner, repo, number, headSHA, pr)
-	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
-	for i := len(comments) - 1; i >= 0; i-- {
-		login, ok := workflowApprovalCommentActor(comments[i], headSHA, headPushedAt, appLogin)
-		if !ok || !strings.EqualFold(strings.TrimSpace(hgithub.SafeGetLogin(comments[i].GetUser())), login) {
-			// The dashboard's approval records its own decision.
-			continue
-		}
-		if trusted, configured := c.isTrustedMerger(login); !configured || !trusted {
-			continue
-		}
-		if !c.recordTypedApprovalDecision(displayRepo, owner, repo, number, headSHA, workflowApproval{Login: login, Typed: comments[i]}) {
-			return "", false
-		}
-		return login, true
+	approval, ok := c.latestTrustedCommentApproval(owner, repo, pr, number, headSHA, comments)
+	if !ok || approval.Typed == nil {
+		return "", false
 	}
-	return "", false
+	if !c.recordTypedApprovalDecision(displayRepo, owner, repo, number, headSHA, approval) {
+		return "", false
+	}
+	// The verdict was noted for the stage engine before the record existed;
+	// tell it now so the stage moves on this tick rather than the next.
+	c.noteStageTrustedHumanApproval(owner, repo, number, headSHA, approval.Login)
+	return approval.Login, true
 }
 
 // workflowFenceApproval finds the trusted merger whose explicit approval is
@@ -235,6 +229,22 @@ func (c *Engine) workflowFenceApproval(ctx context.Context, owner, repo string, 
 	if login, ok := c.latestTrustedHumanApproval(ctx, owner, repo, number, headSHA); ok {
 		return workflowApproval{Login: login}, true
 	}
+	approval, ok := c.latestTrustedCommentApproval(owner, repo, pr, number, headSHA, comments)
+	if !ok {
+		return workflowApproval{}, false
+	}
+	c.noteStageTrustedHumanApproval(owner, repo, number, headSHA, approval.Login)
+	return approval, true
+}
+
+// latestTrustedCommentApproval walks comments newest-first for the first
+// explicit approval bound to headSHA (workflowApprovalCommentActor) whose
+// actor is a configured trusted merger. Typed is set when the merger posted
+// the comment themselves (`/hive decision approve`) rather than through the
+// dashboard's App-posted `/approve`. The workflow fence and the non-fenced
+// verdict answer share this so the rule binding a comment to the head is
+// written once.
+func (c *Engine) latestTrustedCommentApproval(owner, repo string, pr *gh.PullRequest, number int, headSHA string, comments []*gh.IssueComment) (workflowApproval, bool) {
 	headPushedAt := c.headObservedAt(owner, repo, number, headSHA, pr)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
 	for i := len(comments) - 1; i >= 0; i-- {
@@ -242,14 +252,14 @@ func (c *Engine) workflowFenceApproval(ctx context.Context, owner, repo string, 
 		if !ok {
 			continue
 		}
-		if trusted, configured := c.isTrustedMerger(login); configured && trusted {
-			c.noteStageTrustedHumanApproval(owner, repo, number, headSHA, login)
-			approval := workflowApproval{Login: login}
-			if strings.EqualFold(strings.TrimSpace(hgithub.SafeGetLogin(comments[i].GetUser())), login) {
-				approval.Typed = comments[i]
-			}
-			return approval, true
+		if trusted, configured := c.isTrustedMerger(login); !configured || !trusted {
+			continue
 		}
+		approval := workflowApproval{Login: login}
+		if strings.EqualFold(strings.TrimSpace(hgithub.SafeGetLogin(comments[i].GetUser())), login) {
+			approval.Typed = comments[i]
+		}
+		return approval, true
 	}
 	return workflowApproval{}, false
 }
@@ -259,9 +269,14 @@ func (c *Engine) workflowFenceApproval(ctx context.Context, owner, repo string, 
 // `/approve` posted by the App counts for the maintainer it names; a
 // person's `/hive decision approve` counts for its author. Either binds to
 // the head through its marker, or — for comments without one — by having
-// been posted after the head (headPushedAt, when known).
+// been posted after the head (headPushedAt, when known). An edited comment
+// never counts: collaborators can edit others' comments, and an edit to an
+// existing comment is not a new instruction.
 func workflowApprovalCommentActor(comment *gh.IssueComment, headSHA string, headPushedAt time.Time, appLogin string) (string, bool) {
 	if comment == nil {
+		return "", false
+	}
+	if created, updated := comment.GetCreatedAt().Time, comment.GetUpdatedAt().Time; !created.IsZero() && updated.After(created) {
 		return "", false
 	}
 	body := comment.GetBody()

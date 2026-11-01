@@ -440,6 +440,10 @@ func TestWorkflowApprovalCommentActor(t *testing.T) {
 	after := mustParseTime(t, "2026-10-27T12:00:00Z")
 	before := mustParseTime(t, "2026-10-27T10:00:00Z")
 	comment := newIssueComment
+	edited := func(c *gh.IssueComment, at time.Time) *gh.IssueComment {
+		c.UpdatedAt = &gh.Timestamp{Time: at}
+		return c
+	}
 	dashboard := func(actor, head string) string {
 		b := "/approve\n\nPosted by @" + actor + " from the Hive dashboard; the merge gate decides from here."
 		if head != "" {
@@ -465,6 +469,9 @@ func TestWorkflowApprovalCommentActor(t *testing.T) {
 		{name: "plain hive approve", comment: comment("clubanderson", "/hive approve", after)},
 		{name: "decision with other text", comment: comment("clubanderson", "/hive decision approve the rename later", after)},
 		{name: "bot typed decision", comment: comment("someone[bot]", "/hive decision approve", after)},
+		{name: "typed decision approve edited after posting", comment: edited(comment("clubanderson", "/hive decision approve", after), after.Add(time.Minute))},
+		{name: "dashboard approve edited after posting", comment: edited(comment(testHiveAppBotLogin, dashboard("clubanderson", "sha7"), after), after.Add(time.Minute))},
+		{name: "unedited comment reports updated_at equal to created_at", comment: edited(comment("clubanderson", "/hive decision approve", after), after), wantLogin: "clubanderson", wantOK: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			login, ok := workflowApprovalCommentActor(tc.comment, "sha7", pushed, testHiveAppBotLogin)
