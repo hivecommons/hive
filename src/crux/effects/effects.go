@@ -332,6 +332,10 @@ func (b LoggingBoundary) ExpireUnresolved(ctx context.Context, claim Claim, ttl 
 	return ExpireUnresolved(ctx, b.Next, claim, ttl)
 }
 
+func (b LoggingBoundary) LookupApplied(ctx context.Context, claim Claim) (Result, bool) {
+	return LookupApplied(ctx, b.Next, claim)
+}
+
 func (c Claim) Validate() error {
 	if strings.TrimSpace(c.Repo) == "" || !strings.Contains(c.Repo, "/") {
 		return fmt.Errorf("repo must be owner/name")
