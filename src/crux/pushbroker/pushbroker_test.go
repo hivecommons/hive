@@ -1081,25 +1081,36 @@ func TestBrokerSurfacesReadHeadFailureAfterAmend(t *testing.T) {
 	}
 }
 
-// A changed file that becomes unreadable between being listed by `git diff
-// --name-only` and stripTrailingBlankLines opening it (permission revoked
-// mid-run, in practice a filesystem race) must surface as an attributable
-// error rather than silently skip normalisation.
+// A changed file whose HEAD blob cannot be read must surface as an
+// attributable error rather than silently skip normalisation.
 func TestBrokerSurfacesReadFailureDuringNormalisation(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores file permissions, so an unreadable-file test cannot fail as designed")
-	}
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
-	path := filepath.Join(dir, "main.go")
-	if err := os.Chmod(path, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(path, 0o644)
-	r := &recordingRunner{}
+	r := &nthCallFailingRunner{failSubstr: "show HEAD:main.go", failOnCall: 1, failErr: errors.New("bad object")}
 	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
 		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+}
+
+// Uncommitted working-tree edits to a touched file must not be folded into
+// the normalisation amend: the amended commit holds only HEAD's content,
+// normalised.
+func TestBrokerAmendExcludesWorkingTreeEditsOfTouchedFile(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	edited := "package main\n\nfunc main() { leaked() }\n\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	got := runGitOutput(t, dir, "show", "HEAD:main.go")
+	if want := "package main\n\nfunc main() {}\n"; got != want {
+		t.Fatalf("amended blob = %q, want %q (working-tree edit must not be committed)", got, want)
 	}
 }
 

@@ -660,9 +660,12 @@ func shortSHA(sha string) string {
 // one newline is untouched, and a file containing a NUL byte in its first 8KB
 // — the same binary heuristic git itself uses — is never rewritten as text.
 // Only files still present on disk are considered — a changed file that was
-// deleted has nothing to normalise. This deliberately makes no additional git
-// call: everything it needs comes from the file list Run() already fetched
-// and the file content on disk.
+// deleted has nothing to normalise.
+//
+// The content normalised is HEAD's blob (`git show HEAD:<path>`), never the
+// working-tree file, so uncommitted edits to a touched path cannot be folded
+// into the amended commit. The normalised blob replaces the working-tree copy,
+// then `git add` and `git commit --amend --only` record exactly that content.
 func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (bool, error) {
 	var touched []string
 	for _, rel := range files {
@@ -674,9 +677,9 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (b
 		if err != nil || !info.Mode().IsRegular() {
 			continue // deleted, a directory entry from a rename, or a symlink — nothing to normalise
 		}
-		data, err := os.ReadFile(abs)
+		data, err := b.git(ctx, "show", "HEAD:"+rel)
 		if err != nil {
-			return false, fmt.Errorf("reading %s: %w", rel, err)
+			return false, fmt.Errorf("reading %s from HEAD: %w", rel, err)
 		}
 		if looksBinary(data) {
 			continue
