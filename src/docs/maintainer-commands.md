@@ -56,7 +56,12 @@ removes it with the other parking labels. `needs-spec` (and its renamed
 labels) is never handled by these commands.
 
 The "What to reply" notice lists the lettered options (`Option A:`,
-`**A.** …`) the issue body offers, or the newest Hive comment that lists them.
+`**A.** …`, or a list item such as `- A: …`) the issue body offers, or the
+newest Hive comment that lists them. A comment Hive posted to park the issue
+that lists options is a choice, not an owner step, so it never offers
+`/hive done`. Lane policies ask every 045 park to name one option on a
+`Recommended: <letter>, because <reason>` line (`Recommended (owner confirms):`
+where governance rules forbid Hive choosing), which `/hive approve` accepts.
 Each option bullet ends with `: <summary>`, the rest of the option's first
 line with whitespace collapsed, HTML comments and `@mentions` removed, and cut
 to 160 characters with a trailing `…`. When the options came from a comment

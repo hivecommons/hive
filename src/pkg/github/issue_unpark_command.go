@@ -1447,8 +1447,8 @@ func maintainerCommandReference() string {
 }
 
 // unparkOptionLabels finds the lettered options an issue offers, e.g. a line
-// starting "Option B:" or "- **C.**". Only A-F, in the order they appear, and
-// each one once.
+// starting "Option B:", "- **C.**" or "- A:". Only A-F, in the order they
+// appear, and each one once.
 func unparkOptionLabels(issueBody string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -1494,12 +1494,13 @@ var unparkHTMLCommentPattern = regexp.MustCompile(`<!--.*?(-->|$)`)
 // into the hive-authored notice, and @mentions are defanged so quoting the
 // option notifies nobody.
 //
-// Invariant: the byte offsets below mirror unparkOptionLetter and
-// unparkBoldOptionLetter, which have already validated the line's shape by
-// the time the guard on the first line passes. "Option X" lines yield a rest
-// starting at the single-byte letter; bold lines are "**X" after trimming
-// list markers, so b[2:] is the letter and rest[1:] skips it. Change those
-// parsers and this slicing together.
+// Invariant: the byte offsets below mirror unparkOptionLetter,
+// unparkBoldOptionLetter and unparkPlainOptionAt, which have already
+// validated the line's shape by the time the guard on the first line passes.
+// "Option X" lines yield a rest starting at the single-byte letter; bold lines
+// are "**X" after trimming list markers, so b[2:] is the letter; plain list
+// items yield a rest starting at the letter; and rest[1:] skips it. Change
+// those parsers and this slicing together.
 func unparkOptionSummary(line string) string {
 	if unparkOptionLetter(line) == "" {
 		return ""
@@ -1507,11 +1508,14 @@ func unparkOptionSummary(line string) string {
 	t := strings.TrimLeft(strings.TrimSpace(line), "-*# \t")
 	t = strings.TrimPrefix(t, "**")
 	var rest string
-	if strings.HasPrefix(strings.ToLower(t), "option ") {
+	switch {
+	case strings.HasPrefix(strings.ToLower(t), "option "):
 		rest = strings.TrimSpace(t[len("option "):])
-	} else {
+	case unparkBoldOptionLetter(line) != "":
 		b := strings.TrimLeft(strings.TrimSpace(line), "-+ \t")
 		rest = b[2:]
+	default:
+		rest = unparkPlainOptionAt(line)
 	}
 	rest = rest[1:]
 	rest = strings.TrimLeftFunc(rest, func(r rune) bool { return strings.ContainsRune(" \t*.:)—–-", r) })
@@ -1531,7 +1535,13 @@ func unparkOptionLetter(line string) string {
 	trimmed = strings.TrimPrefix(trimmed, "**")
 	lower := strings.ToLower(trimmed)
 	if !strings.HasPrefix(lower, "option ") {
-		return unparkBoldOptionLetter(line)
+		if letter := unparkBoldOptionLetter(line); letter != "" {
+			return letter
+		}
+		if rest := unparkPlainOptionAt(line); rest != "" {
+			return rest[:1]
+		}
+		return ""
 	}
 	rest := strings.TrimSpace(trimmed[len("option "):])
 	if rest == "" {
