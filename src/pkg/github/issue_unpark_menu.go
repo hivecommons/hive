@@ -288,6 +288,40 @@ func unparkBoldOptionLetter(line string) string {
 	return ""
 }
 
+// unparkPlainOptionAt reads a plain lettered option on a list item or
+// heading, such as "- A: Keep the rule", "* B. text", "+ C) text" or
+// "## D — text". It returns the line from the letter on, or "" when the line
+// is not one. The list marker is required, so a prose "A: yes" answer line or
+// a sentence opening "A." is never read as an option.
+func unparkPlainOptionAt(line string) string {
+	s := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(s, "#"):
+		s = strings.TrimLeft(s, "#")
+	case strings.HasPrefix(s, "-"), strings.HasPrefix(s, "*"), strings.HasPrefix(s, "+"):
+		s = s[1:]
+	default:
+		return ""
+	}
+	if s == "" || (s[0] != ' ' && s[0] != '\t') {
+		return ""
+	}
+	s = strings.TrimLeft(s, " \t")
+	if len(s) < 2 || s[0] < 'A' || s[0] > 'F' {
+		return ""
+	}
+	after := s[1:]
+	if strings.ContainsAny(after[:1], ".:)") && (len(after) == 1 || after[1] == ' ' || after[1] == '\t') {
+		return s
+	}
+	for _, sep := range []string{" — ", " – ", " - "} {
+		if strings.HasPrefix(after, sep) {
+			return s
+		}
+	}
+	return ""
+}
+
 // ownerStepCommentBody tags a body that parks its issue with
 // --needs-decision (a new issue or a comment on an existing one), so the
 // "What to reply" notice can offer `/hive done`.

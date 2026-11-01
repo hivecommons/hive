@@ -96,3 +96,45 @@ func TestLanePoliciesParkOwnerOnlyHandOffs(t *testing.T) {
 		t.Fatal("no lane policies found; the guard would pass vacuously")
 	}
 }
+
+// Every lane rule that parks work at stage/045-needs-decision must ask for the
+// options in the shape the "What to reply" notice reads and for one named
+// recommendation, so the owner can accept it with `/hive approve`. A 045 ask
+// with options but no recommendation left Danathar/goodreads-mcp#432 with a
+// governance A/B/C and nothing to accept.
+func TestNeedsDecisionAsksNameARecommendation(t *testing.T) {
+	t.Parallel()
+
+	options := []byte("post one maintainer question with options A/B/C, one per line as `Option A: …`")
+	recommend := []byte("`Recommended: <letter>, because <reason>`")
+	ownerConfirms := []byte("`Recommended (owner confirms): <letter>, because <reason>`")
+
+	entries, err := fs.ReadDir(DefaultPolicies, "defaults")
+	if err != nil {
+		t.Fatalf("read embedded defaults: %v", err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, err := DefaultPolicies.ReadFile(path.Join("defaults", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		for _, line := range bytes.Split(data, []byte("\n")) {
+			if !bytes.HasPrefix(line, []byte("- `stage/045-needs-decision`:")) {
+				continue
+			}
+			checked++
+			for _, want := range [][]byte{options, recommend, ownerConfirms} {
+				if !bytes.Contains(line, want) {
+					t.Errorf("%s: the 045 rule lacks %s", e.Name(), want)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no 045 rules found; the guard would pass vacuously")
+	}
+}
