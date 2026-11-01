@@ -19,17 +19,31 @@ import (
 )
 
 type preparationAPI struct {
-	mu      sync.Mutex
-	prs     map[int]*gh.PullRequest
-	behind  map[string]int
-	pending map[string]bool
-	updates map[int]int
-	merges  map[int]int
+	mu                sync.Mutex
+	prs               map[int]*gh.PullRequest
+	behind            map[string]int
+	pending           map[string]bool
+	missing           map[string]bool
+	stale             map[string]bool
+	stacked           bool
+	requiredContexts  []string
+	requirementsError bool
+	additionalChecks  map[string][]string
+	updates           map[int]int
+	merges            map[int]int
+	files             map[int][]*gh.CommitFile
+	baseSHA           string
+	dependencyMissing bool
+	dependencyError   bool
+	dependencyBlocked bool
+	truncated         bool
+	onFiles           func(*preparationAPI, int)
 }
 
 func preparationPR(number int, base, head string) *gh.PullRequest {
 	return &gh.PullRequest{
 		Number: gh.Ptr(number), State: gh.Ptr("open"), Title: gh.Ptr("prepare fixture"),
+		Body: gh.Ptr(fmt.Sprintf("Closes #%d", number+100)), ChangedFiles: gh.Ptr(1),
 		Mergeable: gh.Ptr(true), MergeableState: gh.Ptr("clean"),
 		User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)},
 		Head: &gh.PullRequestBranch{SHA: gh.Ptr(head), Repo: &gh.Repository{FullName: gh.Ptr("acme/widget")}},
@@ -41,12 +55,17 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 	t.Helper()
 	api := &preparationAPI{
 		prs: map[int]*gh.PullRequest{}, behind: map[string]int{}, pending: map[string]bool{},
-		updates: map[int]int{}, merges: map[int]int{},
+		missing:          map[string]bool{},
+		stale:            map[string]bool{},
+		additionalChecks: map[string][]string{},
+		updates:          map[int]int{}, merges: map[int]int{},
+		files: map[int][]*gh.CommitFile{}, baseSHA: "base1",
 	}
 	for n := 1; n <= 3; n++ {
 		head := fmt.Sprintf("head%d", n)
 		api.prs[n] = preparationPR(n, "main", head)
 		api.behind[head] = 1
+		api.files[n] = []*gh.CommitFile{{Filename: gh.Ptr(fmt.Sprintf("file%d.go", n))}}
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api.mu.Lock()
@@ -83,6 +102,14 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 				write(map[string]string{"message": "Updating pull request branch"})
 			case "reviews":
 				write([]any{})
+			case "files":
+				if api.onFiles != nil {
+					api.onFiles(api, n)
+				}
+				if api.truncated {
+					w.Header().Set("Link", `<http://example.test/repos/acme/widget/pulls/1/files?page=4>; rel="next"`)
+				}
+				write(api.files[n])
 			case "merge":
 				api.merges[n]++
 				write(map[string]any{"merged": true, "sha": "merged"})
@@ -91,25 +118,75 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 				w.WriteHeader(http.StatusNotFound)
 			}
 		case "compare":
-			_, head, _ := strings.Cut(path[4], "...")
-			write(map[string]any{"behind_by": api.behind[head], "base_commit": map[string]string{"sha": "base1"}})
+			base, head, _ := strings.Cut(path[4], "...")
+			status := "diverged"
+			if api.stacked && base == "head2" && head == "refreshed1" {
+				status = "ahead"
+			}
+			if (base == "head1" || base == "base1") && head == "refreshed1" ||
+				(base == "head2" || base == "base1" || base == "base2") && head == "refreshed2" {
+				status = "ahead"
+			}
+			write(map[string]any{"status": status, "behind_by": api.behind[head], "base_commit": map[string]string{"sha": api.baseSHA}})
+		case "issues":
+			if api.dependencyError {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			n, _ := strconv.Atoi(path[4])
+			payload := map[string]any{"number": n, "state": "open"}
+			if !api.dependencyMissing {
+				blockers := 0
+				if api.dependencyBlocked {
+					blockers = 1
+				}
+				payload["issue_dependencies_summary"] = map[string]int{"blocked_by": blockers}
+			}
+			write(payload)
 		case "branches":
 			if len(path) > 5 {
+				if api.requirementsError {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				if len(api.requiredContexts) != 0 {
+					write(map[string]any{"strict": true, "contexts": api.requiredContexts})
+					return
+				}
 				w.WriteHeader(http.StatusNotFound)
 				write(map[string]string{"message": "Branch not protected"})
 			} else {
-				write(map[string]any{"name": path[4], "commit": map[string]string{"sha": "base1"}})
+				if api.requirementsError {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				write(map[string]any{"name": path[4], "commit": map[string]string{"sha": api.baseSHA}})
 			}
 		case "rules":
+			if api.requirementsError {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			write([]any{})
 		case "commits":
 			head := path[4]
+			if api.missing[head] {
+				write(map[string]any{"state": "pending", "total_count": 0, "statuses": []any{}, "check_runs": []any{}})
+				return
+			}
 			state, conclusion := "success", "success"
 			if api.pending[head] {
 				state, conclusion = "pending", ""
 			}
+			if api.stale[head] {
+				state, conclusion = "success", "stale"
+			}
 			if path[5] == "status" {
-				write(map[string]any{"state": state, "total_count": 1, "statuses": []map[string]string{{"context": "build", "state": state}}})
+				statuses := []map[string]string{{"context": "build", "state": state}}
+				for _, name := range api.additionalChecks[head] {
+					statuses = append(statuses, map[string]string{"context": name, "state": "success"})
+				}
+				write(map[string]any{"state": state, "total_count": len(statuses), "statuses": statuses})
 			} else {
 				status := "completed"
 				if conclusion == "" {

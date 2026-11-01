@@ -59,6 +59,27 @@ type issueWithDependencies struct {
 	SubIssuesSummary *IssueChildren `json:"sub_issues_summary,omitempty"`
 }
 
+// ReadIssueDependencyEvidence requires an explicit native summary. Unlike
+// work enumeration's compatibility fallback, unknown is never independence.
+func ReadIssueDependencyEvidence(ctx context.Context, client *gh.Client, owner, repo string, number int) (blocked, known bool, err error) {
+	path := fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number)
+	req, err := client.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return false, false, err
+	}
+	var payload issueWithDependencies
+	if _, err := client.Do(ctx, req, &payload); err != nil {
+		return false, false, err
+	}
+	if payload.PullRequestLinks != nil || payload.DependenciesSummary == nil {
+		return false, false, nil
+	}
+	if payload.DependenciesSummary.BlockedBy != 0 {
+		return true, true, nil
+	}
+	return false, true, nil
+}
+
 // listOpenIssuesWithBlockedCounts is Issues.ListByRepo(state=open) with the
 // dependency and sub-issue summaries preserved. It returns the issues
 // go-github would have and, keyed by issue number, how many OPEN blockers

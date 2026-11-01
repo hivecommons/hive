@@ -98,6 +98,7 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 			github.StartTokenAccessAuditWatcher(ctx, logger)
 		},
 		startRequestRelays: func(ctx context.Context, c *github.Client, r requestRelays) <-chan struct{} {
+			github.ConfigureDestinationMerges(automerge.DefaultDestinationMergeDirectory())
 			if r.mergePolicy != nil {
 				c.SetMergeRequestPolicyGate(r.mergePolicy(c))
 			}

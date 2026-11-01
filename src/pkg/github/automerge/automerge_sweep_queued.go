@@ -16,13 +16,14 @@ import (
 )
 
 func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo string, number int, label string) (eventOut AutoMergeSweepEvent, reasonOut string, errOut error) {
-	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
+	pr, ctx, unlock, err := c.guardedPR(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	defer unlock()
 	defer func() { c.reconcileNativeQueueGate(ctx, nativeQueueLaneQueued, owner, repo, pr, reasonOut) }()
 	c.noteStagePR(owner, repo, number, pr)
 	if !strings.EqualFold(pr.GetState(), "open") {
@@ -327,6 +328,14 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 }
 
 func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, skippedByDesign map[string]bool) (bool, string, error) {
+	st, _, err := c.commitCIForPRSkipping(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, skippedByDesign)
+	if err != nil {
+		return false, st.Reason, err
+	}
+	return st.Green, st.Reason, err
+}
+
+func (c *Engine) commitCIForPRSkipping(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, skippedByDesign map[string]bool) (hgithub.CommitCIState, bool, error) {
 	// The walk itself lives in hgithub.EvaluateCommitCI so the merge-request
 	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
 	// identical rules; only the required-set precedence is engine-specific.
@@ -363,7 +372,7 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 		Now:                                 c.now,
 	})
 	if err != nil {
-		return false, st.Reason, err
+		return st, actualKnown, err
 	}
 	if prNumber > 0 && st.HeadTimeAheadBy > 0 {
 		c.info("automerge head time ahead of host clock; min_head_age not evaluable from it, measured from first observation", "repo", owner+"/"+repo, "pr", prNumber,
@@ -399,7 +408,8 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 			reason = baseBranchRedReason(checks)
 		}
 	}
-	return st.Green, reason, nil
+	st.Reason = reason
+	return st, actualKnown, nil
 }
 
 func isFreshHeadOrMissingExpectedReason(reason string) bool {
@@ -597,6 +607,13 @@ func mergeAPIErrorNotApplied(err error) error {
 // brackets it with a merge attempt (hivecommons/hive#15245) so the tracker
 // shows "Merging" for the call's duration and a refusal's reason after.
 func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, head string, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	original := merge
+	merge = func(ctx context.Context) (effects.Result, error) {
+		if err := hgithub.VerifyDestinationMerge(ctx, c.gh, owner, repo, number, head); err != nil {
+			return effects.Result{}, effects.NotApplied(err)
+		}
+		return original(ctx)
+	}
 	slug := owner + "/" + repo
 	hgithub.BeginMergeAttemptOnHead(slug, number, hgithub.PRAuditPathSweep, head)
 	out, err := c.executeMergeEffectOnce(ctx, claim, owner, repo, number, merge)

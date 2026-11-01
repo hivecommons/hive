@@ -48,6 +48,8 @@ func newMergeForwardServer(t *testing.T, a *mergeForwardAPI) *httptest.Server {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
 			pr := mergeForwardPR(false, "author/human")
 			pr.State = gh.Ptr("open")
