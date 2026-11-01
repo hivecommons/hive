@@ -172,9 +172,12 @@ async function evaluate({ github, context }) {
   if (context.eventName === 'pull_request_target') {
     const event = context.payload.pull_request;
     const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
+    // Post-merge label/comment edits re-fire this event; a closed PR has nothing to gate.
+    if (pr.state === 'closed') return `PR #${pr.number} is closed; nothing to evaluate`;
     assertEligible(pr, event.head.sha, event.base.ref);
     await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS);
     const { data: current } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
+    if (current.state === 'closed') return `PR #${current.number} is closed; nothing to evaluate`;
     assertEligible(current, event.head.sha, event.base.ref);
     return `PR #${pr.number}: five existing policy providers succeeded on ${pr.head.sha}`;
   }
