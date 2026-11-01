@@ -8,18 +8,30 @@ import (
 )
 
 // pinEntry opens the entry Walk reported as path with openEntry and confirms
-// the descriptor still names an entry of the same kind, so the check-then-
-// change in fixEntry happens on one inode and cannot be redirected by swapping
-// the pathname in between (CWE-59 / CWE-367). The returned chmod acts through
-// the descriptor. ok is false, with no descriptor to close, when the entry
-// cannot be opened (ELOOP, EACCES, ENOENT) or no longer matches fi.
+// the descriptor names the very inode Walk saw (same device and inode number,
+// and still a directory or regular file), so the check-then-change in
+// fixEntry happens on one inode and cannot be redirected by swapping the
+// pathname in between — not even for another entry of the same kind, whose
+// ownership differs from the one fi describes (CWE-59 / CWE-367). The
+// returned chmod acts through the descriptor. ok is false, with no descriptor
+// to close, when the entry cannot be opened (ELOOP, EACCES, ENOENT) or no
+// longer matches fi.
 func pinEntry(path string, fi os.FileInfo) (f *os.File, mode os.FileMode, chmod func(os.FileMode) error, ok bool) {
+	walked, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, 0, nil, false
+	}
 	f, err := openEntry(path)
 	if err != nil {
 		return nil, 0, nil, false
 	}
 	ofi, err := f.Stat()
 	if err != nil || ofi.Mode()&os.ModeSymlink != 0 || ofi.IsDir() != fi.IsDir() || (!ofi.IsDir() && !ofi.Mode().IsRegular()) {
+		_ = f.Close()
+		return nil, 0, nil, false
+	}
+	opened, ok := ofi.Sys().(*syscall.Stat_t)
+	if !ok || opened.Dev != walked.Dev || opened.Ino != walked.Ino {
 		_ = f.Close()
 		return nil, 0, nil, false
 	}
