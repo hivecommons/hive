@@ -78,7 +78,7 @@ func healthyAgentInfo(t *testing.T, path string) os.FileInfo {
 	if err != nil {
 		t.Fatalf("lstat %s: %v", path, err)
 	}
-	return fakeOwnerInfo{FileInfo: fi, sys: &syscall.Stat_t{Uid: 2001, Gid: uint32(NodeGID)}}
+	return fakeOwnerInfo{FileInfo: fi, sys: syntheticStat(t, path, 2001, uint32(NodeGID))}
 }
 
 // unfixableEntry creates a regular file whose real ownership makes fixEntry

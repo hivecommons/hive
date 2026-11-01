@@ -1,0 +1,1 @@
+- crux: the permissions watcher now chowns and chmods each walked entry through the descriptor it opened, mirroring fixModeFile, so the entry it reported is the entry it changes.
