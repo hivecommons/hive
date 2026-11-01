@@ -278,7 +278,12 @@ func (s *DefaultSecurityScanner) touchesGuardrailPath(path string) bool {
 
 func matchPattern(pattern, path string) bool {
 	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
-	path = filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(path), "./"))
+	path = strings.TrimSpace(path)
+	if path != "" {
+		// Collapse redundant separators and ./.. components so they cannot dodge the patterns.
+		path = filepath.Clean(path)
+	}
+	path = filepath.ToSlash(strings.TrimPrefix(filepath.ToSlash(path), "./"))
 
 	if ok, _ := filepath.Match(pattern, path); ok {
 		return true

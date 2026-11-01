@@ -151,14 +151,22 @@ func TestAuditFieldsIncludeScanViolations(t *testing.T) {
 func TestGuardrailPatternMatching(t *testing.T) {
 	s := NewDefaultSecurityScanner()
 	cases := map[string]bool{
-		".github/workflows/ci.yml":       true, // direct **-suffix directory
-		"nested/dir/.github/workflows/x": true, // **/ prefix recursion
-		"policies/acmm.yaml":             true, // dir/** suffix
-		"deep/policies/acmm.yaml":        true, // /policies/ containment
-		"sub/dir/OWNERS":                 true, // base-name match
-		"bin/gh-wrapper.sh":              true, // gh-wrapper* glob
-		"src/pkg/turn/runner.go":         false,
-		"docs/design/reentrant-turn.md":  false,
+		".github/workflows/ci.yml":         true, // direct **-suffix directory
+		"nested/dir/.github/workflows/x":   true, // **/ prefix recursion
+		"policies/acmm.yaml":               true, // dir/** suffix
+		"deep/policies/acmm.yaml":          true, // /policies/ containment
+		"sub/dir/OWNERS":                   true, // base-name match
+		"bin/gh-wrapper.sh":                true, // gh-wrapper* glob
+		".github//workflows/ci.yml":        true, // redundant separator
+		".github/./workflows/ci.yml":       true, // . component
+		"/repo/.github/./workflows/ci.yml": true,
+		"src/../.github/workflows/x.yml":   true, // .. component
+		"policies//acmm.yaml":              true,
+		"./hive.yaml":                      true,
+		".githubx/workflows/ci.yml":        false,
+		"":                                 false,
+		"src/pkg/turn/runner.go":           false,
+		"docs/design/reentrant-turn.md":    false,
 	}
 	for path, want := range cases {
 		got := s.touchesGuardrailPath(path)
