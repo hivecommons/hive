@@ -763,6 +763,90 @@ func TestBrokerStripsTrailingBlankLineBeforePush(t *testing.T) {
 	}
 }
 
+// The normalisation amend runs inside the agent-written workspace, whose
+// index may hold paths the agent staged but never committed. Only the
+// rewritten files may enter the amended commit: anything else staged must
+// stay out of HEAD, and the protected-path guard must hold against the
+// commit that is actually pushed, not the one inspected before the amend.
+func TestBrokerAmendDoesNotSweepStagedPathsIntoHead(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	staged := filepath.Join(dir, ".github", "workflows", "ci.yml")
+	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("on: push\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", ".github/workflows/ci.yml")
+
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if !res.Pushed {
+		t.Fatal("Pushed=false")
+	}
+	if got := strings.Join(res.ChangedFiles, ","); got != "main.go" {
+		t.Fatalf("ChangedFiles = %q, want only main.go", got)
+	}
+	headFiles := runGitOutput(t, dir, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "HEAD")
+	if strings.Contains(headFiles, ".github/workflows/ci.yml") {
+		t.Fatalf("staged-but-uncommitted path entered the amended commit: %s", headFiles)
+	}
+	if !strings.Contains(runGitOutput(t, dir, "diff", "--cached", "--name-only"), ".github/workflows/ci.yml") {
+		t.Fatal("staged path was dropped from the index instead of being left alone")
+	}
+}
+
+// Even if the amended commit does pick up extra paths, the protected-path
+// guard must be judged against the post-amend file list. A runner that
+// substitutes a bare --amend for the path-limited one stands in for any
+// future regression of that kind.
+func TestBrokerRechecksProtectedPathsAfterAmend(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	staged := filepath.Join(dir, ".github", "workflows", "ci.yml")
+	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("on: push\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", ".github/workflows/ci.yml")
+
+	r := &bareAmendRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "protected paths changed") {
+		t.Fatalf("Run error = %v, want protected-path rejection after amend", err)
+	}
+	if res.Pushed || r.pushed {
+		t.Fatalf("broker pushed a protected path: res=%+v", res)
+	}
+	if got := strings.Join(res.ProtectedReject, ","); got != ".github/workflows/ci.yml" {
+		t.Fatalf("ProtectedReject = %q", got)
+	}
+}
+
+// bareAmendRunner rewrites the broker's path-limited amend into a bare
+// `git commit --amend --no-edit`, reproducing an amend that commits the
+// whole index, and records whether a push was attempted.
+type bareAmendRunner struct {
+	pushed bool
+}
+
+func (r *bareAmendRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" && slices.Contains(args, "push") {
+		r.pushed = true
+		return []byte("ok"), nil
+	}
+	if len(args) >= 2 && args[0] == "commit" && args[1] == "--amend" {
+		args = []string{"commit", "--amend", "--no-edit"}
+	}
+	return ExecRunner{}.Run(ctx, dir, env, name, args...)
+}
+
 // A file already ending in a single newline — the common, correctly
 // formatted case — must be left byte-identical and must not needlessly
 // amend the commit.

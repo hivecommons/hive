@@ -10,9 +10,9 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/saas/usage` | Hub auth | Usage | `pkg/hub/saas.go:381` |
 | `POST` | `/api/saas/hives` | Hub auth | Create Hive | `pkg/hub/saas.go:394` |
 | `GET` | `/api/saas/hives/{id}/status` | Hub auth | Hive Status | `pkg/hub/saas.go:395` |
-| `POST` | `/api/saas/hives/{id}/pin-digest` | Hub auth (owner) | Pin Digest - hold the spoke at an immutable image digest (`{"digest":"sha256:..."}` or `{"sha":"<short git SHA>"}`, optional `reason`) | `pkg/hub/digest_pin.go` |
-| `POST` | `/api/saas/hives/{id}/unpin-digest` | Hub auth (owner) | Unpin Digest - lift the pin and return to the tracked channel or branch tag | `pkg/hub/digest_pin.go` |
-| `GET` | `/api/saas/hives/{id}/digest-pin` | Hub auth (owner) | Digest Pin - the pin with provenance and whether the spoke reports running it | `pkg/hub/digest_pin.go` |
+| `POST` | `/api/saas/hives/{id}/pin-digest` | Hub auth (owner or admin) | Pin Digest - hold the spoke at an immutable image digest (`{"digest":"sha256:..."}` or `{"sha":"<short git SHA>"}`, optional `reason`) | `pkg/hub/digest_pin.go` |
+| `POST` | `/api/saas/hives/{id}/unpin-digest` | Hub auth (owner or admin) | Unpin Digest - lift the pin and return to the tracked channel or branch tag | `pkg/hub/digest_pin.go` |
+| `GET` | `/api/saas/hives/{id}/digest-pin` | Hub auth (owner or admin) | Digest Pin - the pin with provenance and whether the spoke reports running it | `pkg/hub/digest_pin.go` |
 | `GET` | `/api/saas/hives/{id}/open` | Hub handler-specific | Open Hive | `pkg/hub/saas.go:400` |
 | `DELETE` | `/api/saas/hives/{id}` | Hub auth (owner or admin) | Delete Hive | `pkg/hub/saas.go:401` |
 | `POST` | `/api/saas/hives/{id}/upgrade` | Hub auth | Upgrade Hive - arms heartbeat delivery (`200 {"status":"upgrading"}`); a spoke already at its reachable target is a no-op `200 {"status":"current","current","target","channel","message"}`, not an error | `pkg/hub/saas.go:402` |
