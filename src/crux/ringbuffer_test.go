@@ -2,6 +2,7 @@ package crux
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -123,5 +124,30 @@ func TestRingBuffer_LargeDataSet(t *testing.T) {
 	expectedLast := fmt.Sprintf("line-%d", totalWrites-1)
 	if got[cap-1] != expectedLast {
 		t.Errorf("last item: got %q, want %q", got[cap-1], expectedLast)
+	}
+}
+
+func TestRingBufferSince(t *testing.T) {
+	r := NewRingBuffer(3)
+	if lines, next := r.Since(0); len(lines) != 0 || next != 0 {
+		t.Fatalf("empty: %v %d", lines, next)
+	}
+	r.Write("a")
+	r.Write("a")
+	lines, next := r.Since(0)
+	if len(lines) != 2 || next != 2 {
+		t.Fatalf("got %v %d", lines, next)
+	}
+	r.Write("a")
+	lines, next = r.Since(next)
+	if len(lines) != 1 || next != 3 {
+		t.Fatalf("repeated line lost: %v %d", lines, next)
+	}
+	for _, s := range []string{"b", "c", "d", "e"} {
+		r.Write(s)
+	}
+	lines, next = r.Since(next)
+	if strings.Join(lines, "") != "cde" || next != 7 || r.Total() != 7 {
+		t.Fatalf("overwritten: %v %d", lines, next)
 	}
 }

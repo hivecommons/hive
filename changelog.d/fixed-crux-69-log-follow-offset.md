@@ -1,0 +1,1 @@
+- crux `logs -f` / `run` streaming and the server `follow=1` log endpoint now stream by ring-buffer offset, so repeated lines and bursts are no longer dropped or duplicated.
