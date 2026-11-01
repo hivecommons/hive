@@ -27,7 +27,8 @@ type PRReviewObservation struct {
 	ReviewID int64
 	Reviewer string
 	// Attribution is prTerminalMergeAttribution's class for Reviewer:
-	// "human" or "other_automation". The hive's own reviews are never
+	// "human", "other_automation", or "unknown" for a deleted (ghost)
+	// account with no login. The hive's own reviews are never
 	// observed — agent_pr_reviewed already counts them.
 	Attribution string
 	// State is GitHub's review state (APPROVED, CHANGES_REQUESTED,
@@ -60,29 +61,38 @@ func (c *Client) prReviewObserved() PRReviewObservedHook {
 
 // emitTerminalPRReviews reports the reviews of one PR the settle scan just
 // saw merged or closed. The reviews are read from GitHub once per PR and
-// served from cache on every later scan of the window; the dashboard sink
-// de-duplicates the repeats by review ID. A failed read emits nothing, is
+// served from cache on every later scan of the window while the PR's
+// updated_at is unchanged; when it moved, the list is read again and only
+// the reviews not seen before are emitted. The dashboard sink de-duplicates
+// repeats by review ID. A failed read emits nothing, is
 // not cached, and does not fail the scan: the next scan retries it.
-func (c *Client) emitTerminalPRReviews(ctx context.Context, owner, repoName, repo string, number int, identity HiveIdentity) {
+func (c *Client) emitTerminalPRReviews(ctx context.Context, owner, repoName, repo string, number int, updatedAt time.Time, identity HiveIdentity) {
 	hook := c.prReviewObserved()
 	if hook == nil || number <= 0 {
 		return
 	}
 	key := strings.ToLower(owner+"/"+repoName) + "#" + strconv.Itoa(number)
-	reviews, ok := c.prTerminalReviews.get(key, time.Now())
-	if !ok {
-		var err error
-		reviews, err = c.listTerminalPRReviews(ctx, owner, repoName, repo, number, identity)
-		if err != nil {
-			if c.logger != nil {
-				c.logger.Debug("terminal PR reviews lookup failed", "repo", owner+"/"+repoName, "number", number, "error", err)
-			}
-			return
+	now := time.Now()
+	reviews, ok := c.prTerminalReviews.get(key, updatedAt, now)
+	if ok {
+		for _, r := range reviews {
+			hook(r)
 		}
-		c.prTerminalReviews.put(key, reviews, time.Now())
+		return
 	}
-	for _, r := range reviews {
-		hook(r)
+	fresh, err := c.listTerminalPRReviews(ctx, owner, repoName, repo, number, identity)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Debug("terminal PR reviews lookup failed", "repo", owner+"/"+repoName, "number", number, "error", err)
+		}
+		return
+	}
+	seen := c.prTerminalReviews.seen(key, now)
+	c.prTerminalReviews.put(key, updatedAt, fresh, now)
+	for _, r := range fresh {
+		if !seen[r.ReviewID] {
+			hook(r)
+		}
 	}
 }
 
@@ -114,15 +124,15 @@ func (c *Client) listTerminalPRReviews(ctx context.Context, owner, repoName, rep
 }
 
 // observedReview classifies one review. A pending review (no submitted_at)
-// is not a review yet; the hive's own review and one with no reviewer login
-// are not counted here.
+// is not a review yet; the hive's own review is not counted here, and one with
+// no reviewer login (a deleted account) is counted as "unknown".
 func (c *Client) observedReview(r *gh.PullRequestReview, repo string, number int, identity HiveIdentity) (PRReviewObservation, bool) {
 	if r == nil || r.GetID() == 0 || r.GetSubmittedAt().Time.IsZero() {
 		return PRReviewObservation{}, false
 	}
 	login := safeGetLogin(r.GetUser())
 	class := prTerminalMergeAttribution(login, identity, c.appBotLogin)
-	if class == PRMergeAttributionHive || class == "unknown" {
+	if class == PRMergeAttributionHive {
 		return PRReviewObservation{}, false
 	}
 	return PRReviewObservation{
@@ -144,21 +154,39 @@ type prTerminalReviewCache struct {
 }
 
 type prTerminalReviewEntry struct {
-	reviews  []PRReviewObservation
-	storedAt time.Time
+	reviews   []PRReviewObservation
+	updatedAt time.Time
+	storedAt  time.Time
 }
 
-func (p *prTerminalReviewCache) get(key string, now time.Time) ([]PRReviewObservation, bool) {
+// get serves the cached reviews only while the PR is unchanged since they
+// were read; a moved updated_at means a review may have landed since.
+func (p *prTerminalReviewCache) get(key string, updatedAt, now time.Time) ([]PRReviewObservation, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e, ok := p.entries[key]
-	if !ok || now.Sub(e.storedAt) > prTerminalReviewCacheTTL {
+	if !ok || now.Sub(e.storedAt) > prTerminalReviewCacheTTL || !e.updatedAt.Equal(updatedAt) {
 		return nil, false
 	}
 	return e.reviews, true
 }
 
-func (p *prTerminalReviewCache) put(key string, reviews []PRReviewObservation, now time.Time) {
+// seen returns the IDs of the reviews already cached for key, none once the entry is past the TTL.
+func (p *prTerminalReviewCache) seen(key string, now time.Time) map[int64]bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := map[int64]bool{}
+	e, ok := p.entries[key]
+	if !ok || now.Sub(e.storedAt) > prTerminalReviewCacheTTL {
+		return out
+	}
+	for _, r := range e.reviews {
+		out[r.ReviewID] = true
+	}
+	return out
+}
+
+func (p *prTerminalReviewCache) put(key string, updatedAt time.Time, reviews []PRReviewObservation, now time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.entries == nil {
@@ -169,5 +197,5 @@ func (p *prTerminalReviewCache) put(key string, reviews []PRReviewObservation, n
 			delete(p.entries, k)
 		}
 	}
-	p.entries[key] = prTerminalReviewEntry{reviews: reviews, storedAt: now}
+	p.entries[key] = prTerminalReviewEntry{reviews: reviews, updatedAt: updatedAt, storedAt: now}
 }
