@@ -1192,6 +1192,96 @@ func TestBrokerRestoresWorkingTreeEditWhenAmendFails(t *testing.T) {
 	}
 }
 
+// If the restore itself fails, the error must name the file whose edit could
+// not be put back, joined onto the amend failure rather than replacing it —
+// an agent reading the log needs to know both that the push failed and that
+// its working-tree copy is not what it left there.
+func TestBrokerSurfacesRestoreFailureAfterFailedAmend(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores file permissions, so a read-only-file test cannot fail as designed")
+	}
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n\nfunc main() { wip() }\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0o644)
+	// Revoke write permission only once the normalised blob is on disk, so
+	// the initial overwrite succeeds and it is the restore that fails.
+	r := &hookedRunner{hookSubstr: "commit --amend", hook: func() error {
+		if err := os.Chmod(path, 0o444); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("hook rejected")
+	}}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+	if !strings.Contains(err.Error(), "restoring uncommitted edit to main.go") {
+		t.Fatalf("Run error = %v, want it to also report the failed restore of main.go", err)
+	}
+}
+
+// hookedRunner runs hook (and fails with its error, if any) the first time a
+// git subcommand matching hookSubstr is invoked, so a test can change the
+// workspace mid-normalisation — between the write of the normalised blob and
+// the restore of the agent's edit — without a full scripted double.
+type hookedRunner struct {
+	hookSubstr string
+	hook       func() error
+	fired      bool
+}
+
+func (h *hookedRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" && !h.fired && strings.Contains(strings.Join(args, " "), h.hookSubstr) {
+		h.fired = true
+		if err := h.hook(); err != nil {
+			return []byte("fatal: injected failure"), err
+		}
+	}
+	if name == "git" && slices.Contains(args, "push") {
+		return []byte("ok"), nil
+	}
+	return ExecRunner{}.Run(ctx, dir, env, name, args...)
+}
+
+// If HEAD's tree cannot be listed, normalisation cannot tell a changed path
+// from a deleted one and must fail attributably rather than guess.
+func TestBrokerSurfacesHeadTreeListingFailureDuringNormalisation(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &failingRunner{failSubstr: "ls-tree -r -z --name-only HEAD", failErr: errors.New("bad tree")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "listing HEAD tree") {
+		t.Fatalf("Run error = %v, want it to mention listing HEAD tree", err)
+	}
+}
+
+// A changed file whose working-tree copy cannot be READ must surface as an
+// attributable error: without the on-disk bytes the broker cannot know
+// whether there is an uncommitted edit to preserve, so it must not overwrite
+// the file. HEAD's blob is read via git, so only the disk read is affected by
+// revoking the file's read permission.
+func TestBrokerSurfacesWorkingTreeReadFailureDuringNormalisation(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores file permissions, so an unreadable-file test cannot fail as designed")
+	}
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	path := filepath.Join(dir, "main.go")
+	if err := os.Chmod(path, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0o644)
+	r := &recordingRunner{}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") || !strings.Contains(err.Error(), "reading main.go:") {
+		t.Fatalf("Run error = %v, want it to report reading main.go during normalisation", err)
+	}
+}
+
 // A changed file that cannot be WRITTEN back must surface as an attributable
 // error, not a silently unnormalised push. os.WriteFile on an existing path
 // opens O_WRONLY|O_TRUNC on the file itself (pushbroker.go's own doc comment
