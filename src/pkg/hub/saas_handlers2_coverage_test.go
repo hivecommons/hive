@@ -168,6 +168,84 @@ func TestHandleDeleteHiveNotOwner_Cov2(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteHiveRegistryOnlyOwnerGate(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, "alice")
+	mkUser(t, "mallory")
+	s := newHandlerHub2()
+	s.registry.Hives = []RegistryEntry{{ID: "reg-only", Owner: "alice"}}
+
+	rec := httptest.NewRecorder()
+	req := setPathValue(reqWithUser(http.MethodDelete, "/del", "", "mallory"), "id", "reg-only")
+	s.handleDeleteHive(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner delete status = %d, want 403", rec.Code)
+	}
+	s.mu.RLock()
+	n := len(s.registry.Hives)
+	s.mu.RUnlock()
+	if n != 1 {
+		t.Fatalf("registry entry removed by non-owner; have %d entries, want 1", n)
+	}
+
+	rec = httptest.NewRecorder()
+	req = setPathValue(reqWithUser(http.MethodDelete, "/del", "", "alice"), "id", "reg-only")
+	s.handleDeleteHive(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner delete status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	s.mu.RLock()
+	n = len(s.registry.Hives)
+	s.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("registry entry survived owner delete; have %d entries, want 0", n)
+	}
+}
+
+func TestHandleDeleteHiveRegistryOnlyOwnerlessAdminOnly(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, "mallory")
+	mkUser(t, hubAdminUsername)
+	s := newHandlerHub2()
+	s.registry.Hives = []RegistryEntry{{ID: "reg-only", Owner: ""}}
+
+	rec := httptest.NewRecorder()
+	req := setPathValue(reqWithUser(http.MethodDelete, "/del", "", "mallory"), "id", "reg-only")
+	s.handleDeleteHive(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin delete of ownerless entry status = %d, want 403", rec.Code)
+	}
+	s.mu.RLock()
+	n := len(s.registry.Hives)
+	s.mu.RUnlock()
+	if n != 1 {
+		t.Fatalf("ownerless registry entry removed by non-admin; have %d entries, want 1", n)
+	}
+
+	rec = httptest.NewRecorder()
+	req = setPathValue(reqWithUser(http.MethodDelete, "/del", "", hubAdminUsername), "id", "reg-only")
+	s.handleDeleteHive(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin delete status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	s.mu.RLock()
+	n = len(s.registry.Hives)
+	s.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("ownerless registry entry survived admin delete; have %d entries, want 0", n)
+	}
+
+	// No registry entry at all: nothing to protect, so the purge stays idempotent.
+	rec = httptest.NewRecorder()
+	req = setPathValue(reqWithUser(http.MethodDelete, "/del", "", "mallory"), "id", "never-existed")
+	s.handleDeleteHive(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("delete of absent entry status = %d, want 200", rec.Code)
+	}
+}
+
 func TestHandleAssignHive(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()

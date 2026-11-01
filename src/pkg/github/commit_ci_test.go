@@ -34,6 +34,53 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "pending: head pushed 1m0s ago (< min_head_age)",
 		},
 		{
+			// #16143: GitHub's head time is +1h ahead of the host. The hold
+			// is not skipped (unknown required set, slow checks may not have
+			// registered) and does not clamp to "pushed 0s ago" for the hour:
+			// on first observation it holds for one min_head_age window.
+			name:   "head time ahead of host clock holds from first observation, not forever",
+			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
+			opts: CommitCIOptions{
+				MinHeadAge:   3 * time.Minute,
+				HeadPushedAt: now.Add(time.Hour),
+				Now:          func() time.Time { return now },
+			},
+			want: "pending: head time ahead of host clock; head first seen 0s ago (< min_head_age)",
+		},
+		{
+			name:   "head time ahead of host clock still holds while first seen under min age",
+			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
+			opts: CommitCIOptions{
+				MinHeadAge:      3 * time.Minute,
+				HeadPushedAt:    now.Add(time.Hour),
+				HeadFirstSeenAt: now.Add(-time.Minute),
+				Now:             func() time.Time { return now },
+			},
+			want: "pending: head time ahead of host clock; head first seen 1m0s ago (< min_head_age)",
+		},
+		{
+			name:   "head time ahead of host clock clears once first seen reaches min age",
+			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
+			opts: CommitCIOptions{
+				MinHeadAge:      3 * time.Minute,
+				HeadPushedAt:    now.Add(time.Hour),
+				HeadFirstSeenAt: now.Add(-3 * time.Minute),
+				Now:             func() time.Time { return now },
+			},
+			wantGreen: true,
+		},
+		{
+			name:   "first seen is ignored when the head time is not ahead of the host clock",
+			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
+			opts: CommitCIOptions{
+				MinHeadAge:      3 * time.Minute,
+				HeadPushedAt:    now.Add(-time.Minute),
+				HeadFirstSeenAt: now.Add(-time.Hour),
+				Now:             func() time.Time { return now },
+			},
+			want: "pending: head pushed 1m0s ago (< min_head_age)",
+		},
+		{
 			name:   "expected name missing no longer blocks unknown required set",
 			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
 			opts: CommitCIOptions{
