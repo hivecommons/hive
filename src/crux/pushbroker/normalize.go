@@ -19,8 +19,10 @@ import (
 // not the "...\n\n" defect #5116 reports), a file already ending in exactly
 // one newline is untouched, and a file containing a NUL byte in its first 8KB
 // — the same binary heuristic git itself uses — is never rewritten as text.
-// Only files still present on disk are considered — a changed file that was
-// deleted has nothing to normalise.
+// Only files present both in HEAD and on disk are considered: files lists
+// every path the outgoing commits touch, so it includes paths those commits
+// deleted, and a deleted path has nothing to normalise even if the agent has
+// since re-created it uncommitted on disk.
 //
 // The content normalised is HEAD's blob (`git show HEAD:<path>`), never the
 // working-tree file, so uncommitted edits to a touched path cannot be folded
@@ -28,9 +30,19 @@ import (
 // working-tree copy only for as long as `git add` and `git commit --amend
 // --only` need to record it: a file the agent had edited since HEAD is
 // snapshotted first and put back on disk — whether or not the amend
-// succeeds — so no uncommitted edit is lost. A file still identical to HEAD
-// is simply left normalised, keeping the workspace clean after the amend.
+// succeeds — so the edit's content is preserved. It is restored to the
+// working tree, not the index: `git add` of the normalised blob replaces
+// whatever the agent had staged for that path, so a staged edit comes back
+// unstaged. A file still identical to HEAD is simply left normalised,
+// keeping the workspace clean after the amend.
 func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (amended bool, err error) {
+	if len(files) == 0 {
+		return false, nil
+	}
+	inHead, err := b.headPaths(ctx)
+	if err != nil {
+		return false, err
+	}
 	var touched []string
 	var edited []workingTreeSnapshot
 	defer func() {
@@ -41,13 +53,16 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 		}
 	}()
 	for _, rel := range files {
+		if _, ok := inHead[rel]; !ok {
+			continue // deleted by the outgoing commits — nothing in HEAD to normalise
+		}
 		abs := filepath.Join(b.Workspace, rel)
 		// Lstat, not Stat: a committed symlink is a path the agent chose, and
 		// following it would read and rewrite whatever hive-owned file it
 		// points at. Only a regular file inside the tree is normalised.
 		info, err := os.Lstat(abs)
 		if err != nil || !info.Mode().IsRegular() {
-			continue // deleted, a directory entry from a rename, or a symlink — nothing to normalise
+			continue // removed from disk, a directory entry from a rename, or a symlink — nothing to normalise
 		}
 		data, err := b.git(ctx, "show", "HEAD:"+rel)
 		if err != nil {
@@ -91,6 +106,22 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 		b.Logger.Info("pushbroker normalised trailing blank lines", "repo", b.Repo, "branch", b.Branch, "files", touched)
 	}
 	return true, nil
+}
+
+// headPaths returns the set of paths HEAD's tree contains, so the normaliser
+// can tell a path the outgoing commits deleted from one they changed without
+// a `git show` per file. -z keeps exact bytes, matching changedFiles.
+func (b *Broker) headPaths(ctx context.Context) (map[string]struct{}, error) {
+	out, err := b.git(ctx, "ls-tree", "-r", "-z", "--name-only", "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("listing HEAD tree: %w", err)
+	}
+	paths := splitNUL(out)
+	set := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		set[p] = struct{}{}
+	}
+	return set, nil
 }
 
 // workingTreeSnapshot is an agent's uncommitted edit to a file that

@@ -1350,10 +1350,10 @@ func TestGitEnvCarriesWorkspaceConfigOverrides(t *testing.T) {
 	}
 }
 
-// The normaliser commits the bytes `git show HEAD:<path>` returns, and the
-// runner captures stderr alongside stdout. An inherited GIT_TRACE* variable
-// would therefore prepend "trace: built-in: git show …" to every normalised
-// blob and push it as file content, so the broker env must not carry one.
+// The normaliser commits the bytes `git show HEAD:<path>` returns. The runner
+// already keeps stderr out of a successful command's output, but dropping
+// GIT_TRACE* from the broker env is defence in depth: an inherited trace
+// variable must never get anywhere near content that is pushed as a blob.
 func TestGitEnvDropsInheritedGitTrace(t *testing.T) {
 	t.Setenv("GIT_TRACE", "1")
 	t.Setenv("GIT_TRACE_SETUP", "1")
@@ -1418,6 +1418,36 @@ func TestBrokerNormalisationSkipsSymlinks(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(outside); string(got) != "keep\n\n\n" {
 		t.Fatalf("normaliser followed a committed symlink and rewrote %s: %q", outside, got)
+	}
+}
+
+// The changed-file list spans the outgoing commits, so it includes paths they
+// deleted. If the agent has since re-created such a path uncommitted on disk,
+// it passes the on-disk check but `git show HEAD:<path>` fails — a deleted
+// path has nothing in HEAD to normalise, so it must be skipped, not fail the
+// push, and the untracked file must be left alone.
+func TestBrokerNormalisationSkipsPathDeletedInHead(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "gone.go", "package gone\n")
+	runGit(t, dir, "rm", "-q", "gone.go")
+	runGit(t, dir, "commit", "-s", "-m", "delete gone.go")
+	if err := os.WriteFile(filepath.Join(dir, "gone.go"), []byte("package gone\n\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Pushed {
+		t.Fatal("Pushed=false")
+	}
+	if res.Commit != head {
+		t.Fatalf("Result.Commit = %s, want HEAD %s unchanged: a deleted path must not trigger an amend", res.Commit, head)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "gone.go")); string(got) != "package gone\n\n\n" {
+		t.Fatalf("untracked re-created file was rewritten: %q", got)
 	}
 }
 
