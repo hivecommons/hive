@@ -136,9 +136,10 @@ test('real pinned helpers enforce each original member and reject missing signof
     // Changing the helper closure is not permission to execute a new checker.
     fs.appendFileSync(path.join(workspace, 'src/scripts/check-dco-trailers.sh'), '\n# different helper\n');
     git('add', '.'); git('commit', '-s', '-m', 'Different helper closure');
-    assert.throws(() => check('dco', bad, [pr]));
+    // HEAD:src/scripts drifted from the pin: the refusal names both trees and the re-pin.
+    assert.throws(() => check('dco', bad, [pr]), /is not the pinned TRUSTED_SCRIPTS_TREE .*re-pin the literal/);
     const forgedSource = structuredClone(bad);
     forgedSource.preparedBy.sourceSHA = git('rev-parse', 'HEAD');
-    assert.throws(() => check('dco', forgedSource, [pr]));
+    assert.throws(() => check('dco', forgedSource, [pr]), /closure unavailable/);
   } finally { fs.rmSync(workspace, {recursive: true, force: true}); }
 });
