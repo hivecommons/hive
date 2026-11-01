@@ -60,6 +60,10 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 		return nil, nil
 	case key == "merge-base --is-ancestor origin/main HEAD" || strings.HasPrefix(key, "merge-base --is-ancestor refs/remotes/"):
 		return nil, nil
+	case key == "ls-tree -r -z --name-only HEAD":
+		// A fake workspace has no files on disk, so an empty HEAD tree keeps
+		// the normaliser out of these scenarios exactly as before.
+		return nil, nil
 	}
 	return nil, errors.New("unscripted git invocation: " + name + " " + key)
 }
@@ -423,7 +427,8 @@ func TestGitHubAppMinterLeavesScopeOpenForAnUnqualifiedRepo(t *testing.T) {
 }
 
 // ExecRunner is the production runner; the interface contract it has to honor
-// is that a non-zero exit surfaces as an error with the combined output kept.
+// is that a non-zero exit surfaces as an error with both streams kept for the
+// error text, while a successful command yields stdout only.
 func TestExecRunnerReturnsCombinedOutputAndExitError(t *testing.T) {
 	out, err := ExecRunner{}.Run(context.Background(), t.TempDir(), []string{"PATH=" + os.Getenv("PATH")}, "sh", "-c", "echo hello; echo bad 1>&2; exit 3")
 	if err == nil {
@@ -431,6 +436,19 @@ func TestExecRunnerReturnsCombinedOutputAndExitError(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "hello") || !strings.Contains(string(out), "bad") {
 		t.Fatalf("output = %q, want both streams", out)
+	}
+}
+
+// Successful output is treated as data by callers (the normaliser commits
+// `git show HEAD:<path>` output as file content), so stderr written by an
+// exit-0 command must not leak into it.
+func TestExecRunnerDropsStderrOnSuccess(t *testing.T) {
+	out, err := ExecRunner{}.Run(context.Background(), t.TempDir(), []string{"PATH=" + os.Getenv("PATH")}, "sh", "-c", "echo 'warning: noise' 1>&2; echo hello")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if string(out) != "hello\n" {
+		t.Fatalf("output = %q, want stdout only", out)
 	}
 }
 

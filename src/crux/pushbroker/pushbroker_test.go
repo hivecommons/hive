@@ -763,6 +763,50 @@ func TestBrokerStripsTrailingBlankLineBeforePush(t *testing.T) {
 	}
 }
 
+// The normaliser commits `git show HEAD:<path>` output as the file's content.
+// git writes config and ambiguous-ref warnings to stderr while still exiting
+// 0, so the runner has to keep stderr out of what the broker reads or that
+// warning text gets amended into the pushed blob.
+func TestBrokerNormalisationIgnoresRunnerStderr(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &stderrNoiseRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if !r.wrapped {
+		t.Fatal("test runner never wrapped a git show invocation")
+	}
+	want := "package main\n\nfunc main() {}\n"
+	if got := runGitOutput(t, dir, "show", "HEAD:main.go"); got != want {
+		t.Fatalf("HEAD:main.go = %q, want %q (stderr leaked into the amended blob)", got, want)
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "main.go"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != want {
+		t.Fatalf("working tree main.go = %q, want %q", got, want)
+	}
+}
+
+// stderrNoiseRunner makes every `git show` print a warning on stderr before
+// running the real command, mimicking git's exit-0 config warnings.
+type stderrNoiseRunner struct {
+	recordingRunner
+	wrapped bool
+}
+
+func (r *stderrNoiseRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" && len(args) > 0 && args[0] == "show" {
+		r.wrapped = true
+		shArgs := append([]string{"-c", `echo "warning: ignoring unknown core.fsyncMethod value 'nonsense'" 1>&2; exec git "$@"`, "git"}, args...)
+		return ExecRunner{}.Run(ctx, dir, env, "sh", shArgs...)
+	}
+	return r.recordingRunner.Run(ctx, dir, env, name, args...)
+}
+
 // The normalisation amend runs inside the agent-written workspace, whose
 // index may hold paths the agent staged but never committed. Only the
 // rewritten files may enter the amended commit: anything else staged must
@@ -1081,25 +1125,160 @@ func TestBrokerSurfacesReadHeadFailureAfterAmend(t *testing.T) {
 	}
 }
 
-// A changed file that becomes unreadable between being listed by `git diff
-// --name-only` and stripTrailingBlankLines opening it (permission revoked
-// mid-run, in practice a filesystem race) must surface as an attributable
-// error rather than silently skip normalisation.
+// A changed file whose HEAD blob cannot be read must surface as an
+// attributable error rather than silently skip normalisation.
 func TestBrokerSurfacesReadFailureDuringNormalisation(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &nthCallFailingRunner{failSubstr: "show HEAD:main.go", failOnCall: 1, failErr: errors.New("bad object")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+}
+
+// Uncommitted working-tree edits to a touched file must not be folded into
+// the normalisation amend — the amended commit holds only HEAD's content,
+// normalised — and must still be on disk afterwards: normalisation may not
+// silently destroy an agent's in-progress work.
+func TestBrokerAmendExcludesWorkingTreeEditsOfTouchedFile(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	edited := "package main\n\nfunc main() { leaked() }\n\n"
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	got := runGitOutput(t, dir, "show", "HEAD:main.go")
+	if want := "package main\n\nfunc main() {}\n"; got != want {
+		t.Fatalf("amended blob = %q, want %q (working-tree edit must not be committed)", got, want)
+	}
+	onDisk, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(onDisk) != edited {
+		t.Fatalf("working-tree file = %q, want the uncommitted edit %q preserved on disk", onDisk, edited)
+	}
+}
+
+// The uncommitted edit must come back even when the amend itself fails:
+// the broker's error path may not leave HEAD's blob sitting over the
+// agent's work.
+func TestBrokerRestoresWorkingTreeEditWhenAmendFails(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	edited := "package main\n\nfunc main() { wip() }\n\n"
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &failingRunner{failSubstr: "commit --amend", failErr: errors.New("hook rejected")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+	onDisk, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(onDisk) != edited {
+		t.Fatalf("working-tree file = %q after failed amend, want the uncommitted edit %q restored", onDisk, edited)
+	}
+}
+
+// If the restore itself fails, the error must name the file whose edit could
+// not be put back, joined onto the amend failure rather than replacing it —
+// an agent reading the log needs to know both that the push failed and that
+// its working-tree copy is not what it left there.
+func TestBrokerSurfacesRestoreFailureAfterFailedAmend(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores file permissions, so a read-only-file test cannot fail as designed")
+	}
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n\nfunc main() { wip() }\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0o644)
+	// Revoke write permission only once the normalised blob is on disk, so
+	// the initial overwrite succeeds and it is the restore that fails.
+	r := &hookedRunner{hookSubstr: "commit --amend", hook: func() error {
+		if err := os.Chmod(path, 0o444); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("hook rejected")
+	}}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+	if !strings.Contains(err.Error(), "restoring uncommitted edit to main.go") {
+		t.Fatalf("Run error = %v, want it to also report the failed restore of main.go", err)
+	}
+}
+
+// hookedRunner runs hook (and fails with its error, if any) the first time a
+// git subcommand matching hookSubstr is invoked, so a test can change the
+// workspace mid-normalisation — between the write of the normalised blob and
+// the restore of the agent's edit — without a full scripted double.
+type hookedRunner struct {
+	hookSubstr string
+	hook       func() error
+	fired      bool
+}
+
+func (h *hookedRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" && !h.fired && strings.Contains(strings.Join(args, " "), h.hookSubstr) {
+		h.fired = true
+		if err := h.hook(); err != nil {
+			return []byte("fatal: injected failure"), err
+		}
+	}
+	if name == "git" && slices.Contains(args, "push") {
+		return []byte("ok"), nil
+	}
+	return ExecRunner{}.Run(ctx, dir, env, name, args...)
+}
+
+// If HEAD's tree cannot be listed, normalisation cannot tell a changed path
+// from a deleted one and must fail attributably rather than guess.
+func TestBrokerSurfacesHeadTreeListingFailureDuringNormalisation(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &failingRunner{failSubstr: "ls-tree -r -z --name-only HEAD", failErr: errors.New("bad tree")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "listing HEAD tree") {
+		t.Fatalf("Run error = %v, want it to mention listing HEAD tree", err)
+	}
+}
+
+// A changed file whose working-tree copy cannot be READ must surface as an
+// attributable error: without the on-disk bytes the broker cannot know
+// whether there is an uncommitted edit to preserve, so it must not overwrite
+// the file. HEAD's blob is read via git, so only the disk read is affected by
+// revoking the file's read permission.
+func TestBrokerSurfacesWorkingTreeReadFailureDuringNormalisation(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores file permissions, so an unreadable-file test cannot fail as designed")
 	}
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
 	path := filepath.Join(dir, "main.go")
-	if err := os.Chmod(path, 0o000); err != nil {
+	if err := os.Chmod(path, 0o200); err != nil {
 		t.Fatal(err)
 	}
 	defer os.Chmod(path, 0o644)
 	r := &recordingRunner{}
 	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
-		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") || !strings.Contains(err.Error(), "reading main.go:") {
+		t.Fatalf("Run error = %v, want it to report reading main.go during normalisation", err)
 	}
 }
 
@@ -1261,6 +1440,22 @@ func TestGitEnvCarriesWorkspaceConfigOverrides(t *testing.T) {
 	}
 }
 
+// The normaliser commits the bytes `git show HEAD:<path>` returns. The runner
+// already keeps stderr out of a successful command's output, but dropping
+// GIT_TRACE* from the broker env is defence in depth: an inherited trace
+// variable must never get anywhere near content that is pushed as a blob.
+func TestGitEnvDropsInheritedGitTrace(t *testing.T) {
+	t.Setenv("GIT_TRACE", "1")
+	t.Setenv("GIT_TRACE_SETUP", "1")
+	t.Setenv("GIT_TRACE_PERFORMANCE", "/tmp/perf.log")
+	env := (&Broker{Repo: "hivecommons/hive"}).gitEnv()
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_TRACE") {
+			t.Fatalf("inherited %q survived into the broker env:\n%s", entry, strings.Join(env, "\n"))
+		}
+	}
+}
+
 // The trailing-blank-line normaliser amends HEAD with `git add` + `git commit
 // --amend` inside the agent-written workspace. Those commands used to run
 // without any hook override, so a pre-commit hook the agent dropped into
@@ -1313,6 +1508,36 @@ func TestBrokerNormalisationSkipsSymlinks(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(outside); string(got) != "keep\n\n\n" {
 		t.Fatalf("normaliser followed a committed symlink and rewrote %s: %q", outside, got)
+	}
+}
+
+// The changed-file list spans the outgoing commits, so it includes paths they
+// deleted. If the agent has since re-created such a path uncommitted on disk,
+// it passes the on-disk check but `git show HEAD:<path>` fails — a deleted
+// path has nothing in HEAD to normalise, so it must be skipped, not fail the
+// push, and the untracked file must be left alone.
+func TestBrokerNormalisationSkipsPathDeletedInHead(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "gone.go", "package gone\n")
+	runGit(t, dir, "rm", "-q", "gone.go")
+	runGit(t, dir, "commit", "-s", "-m", "delete gone.go")
+	if err := os.WriteFile(filepath.Join(dir, "gone.go"), []byte("package gone\n\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Pushed {
+		t.Fatal("Pushed=false")
+	}
+	if res.Commit != head {
+		t.Fatalf("Result.Commit = %s, want HEAD %s unchanged: a deleted path must not trigger an amend", res.Commit, head)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "gone.go")); string(got) != "package gone\n\n\n" {
+		t.Fatalf("untracked re-created file was rewritten: %q", got)
 	}
 }
 

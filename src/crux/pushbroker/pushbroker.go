@@ -234,11 +234,23 @@ type CommandRunner interface {
 
 type ExecRunner struct{}
 
+// Run returns stdout alone on success. Callers treat a successful command's
+// output as data — `git show HEAD:<path>` output is committed as file content
+// by the normaliser — so exit-0 stderr noise (config warnings, ambiguous-ref
+// warnings, traces) must never be mixed into it. On failure stderr is appended
+// so error messages still carry git's diagnostics.
 func (ExecRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = env
-	return cmd.CombinedOutput()
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			out = append(out, exitErr.Stderr...)
+		}
+	}
+	return out, err
 }
 
 // TokenScoper mints an installation token narrowed to a permission tier and,
@@ -650,105 +662,6 @@ func shortSHA(sha string) string {
 	return sha
 }
 
-// stripTrailingBlankLines removes any blank line(s) trailing the final
-// newline of each changed, still-present, textual file, leaving exactly one
-// trailing newline. It reports whether it amended HEAD.
-//
-// Scope is deliberately narrow: a file with no trailing newline at all is
-// left untouched (that is a different, less universally-enforced style rule,
-// not the "...\n\n" defect #5116 reports), a file already ending in exactly
-// one newline is untouched, and a file containing a NUL byte in its first 8KB
-// — the same binary heuristic git itself uses — is never rewritten as text.
-// Only files still present on disk are considered — a changed file that was
-// deleted has nothing to normalise. This deliberately makes no additional git
-// call: everything it needs comes from the file list Run() already fetched
-// and the file content on disk.
-func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (bool, error) {
-	var touched []string
-	for _, rel := range files {
-		abs := filepath.Join(b.Workspace, rel)
-		// Lstat, not Stat: a committed symlink is a path the agent chose, and
-		// following it would read and rewrite whatever hive-owned file it
-		// points at. Only a regular file inside the tree is normalised.
-		info, err := os.Lstat(abs)
-		if err != nil || !info.Mode().IsRegular() {
-			continue // deleted, a directory entry from a rename, or a symlink — nothing to normalise
-		}
-		data, err := os.ReadFile(abs)
-		if err != nil {
-			return false, fmt.Errorf("reading %s: %w", rel, err)
-		}
-		if looksBinary(data) {
-			continue
-		}
-		normalized, changed := trimTrailingBlankLines(data)
-		if !changed {
-			continue
-		}
-		if err := os.WriteFile(abs, normalized, info.Mode().Perm()); err != nil {
-			return false, fmt.Errorf("writing %s: %w", rel, err)
-		}
-		touched = append(touched, rel)
-	}
-	if len(touched) == 0 {
-		return false, nil
-	}
-	addArgs := append([]string{"add", "--"}, touched...)
-	if _, err := b.git(ctx, addArgs...); err != nil {
-		return false, err
-	}
-	// --only keeps the agent's staged-but-uncommitted paths out of the amend.
-	amendArgs := append([]string{"commit", "--amend", "--no-edit", "--only", "--"}, touched...)
-	if _, err := b.git(ctx, amendArgs...); err != nil {
-		if isEmptyAmendError(err) {
-			return false, errors.New("pushbroker: refusing to push a commit made empty by broker normalisation; retrigger CI with gh run rerun --failed or workflow_dispatch instead of pushing to the PR branch")
-		}
-		return false, err
-	}
-	if b.Logger != nil {
-		b.Logger.Info("pushbroker normalised trailing blank lines", "repo", b.Repo, "branch", b.Branch, "files", touched)
-	}
-	return true, nil
-}
-
-func isEmptyAmendError(err error) bool {
-	msg := strings.ReplaceAll(err.Error(), "\n", " ")
-	return strings.Contains(msg, "would make") && strings.Contains(msg, "it empty")
-}
-
-// looksBinary reports whether data appears to be non-text, using the same
-// "NUL byte in a leading sample" heuristic git itself applies (see git's
-// buffer_is_binary), so this classifies files the same way `git diff` would
-// without shelling out to ask it.
-func looksBinary(data []byte) bool {
-	const sample = 8000
-	if len(data) > sample {
-		data = data[:sample]
-	}
-	return bytes.IndexByte(data, 0) != -1
-}
-
-// trimTrailingBlankLines collapses one-or-more blank lines at end-of-file
-// down to a single trailing newline. It leaves data with no trailing newline
-// untouched entirely — that is not the defect being fixed here.
-func trimTrailingBlankLines(data []byte) ([]byte, bool) {
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		return data, false
-	}
-	trimmed := bytes.TrimRight(data, "\n")
-	// TrimRight on an all-newline file would strip everything; that is not a
-	// realistic agent-authored source file, but guard it anyway rather than
-	// emit an empty file.
-	want := append(append([]byte(nil), trimmed...), '\n')
-	if len(trimmed) == 0 {
-		want = []byte("\n")
-	}
-	if bytes.Equal(want, data) {
-		return data, false
-	}
-	return want, true
-}
-
 func (b *Broker) outgoingDiff(ctx context.Context) (string, error) {
 	if base := strings.TrimSpace(b.BaseRef); base != "" {
 		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
@@ -776,12 +689,17 @@ func (b *Broker) git(ctx context.Context, args ...string) ([]byte, error) {
 func (b *Broker) gitEnv() []string {
 	env := PushEnv(os.Environ())
 	// Drop any inherited command-scope config so the overrides below are the
-	// only GIT_CONFIG_* git sees and their indices cannot collide.
+	// only GIT_CONFIG_* git sees and their indices cannot collide. GIT_TRACE*
+	// goes too as defence in depth: the runner already keeps stderr out of a
+	// successful command's output, but `git show HEAD:<path>` output is
+	// committed as file content by the normaliser, so trace output must not
+	// get anywhere near it.
 	env = slices.DeleteFunc(env, func(entry string) bool {
 		return strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") ||
 			strings.HasPrefix(entry, "GIT_CONFIG_KEY_") ||
 			strings.HasPrefix(entry, "GIT_CONFIG_VALUE_") ||
-			strings.HasPrefix(entry, "GIT_CONFIG_PARAMETERS=")
+			strings.HasPrefix(entry, "GIT_CONFIG_PARAMETERS=") ||
+			strings.HasPrefix(entry, "GIT_TRACE")
 	})
 	env = append(env, configEnv(workspaceConfigOverrides(b.remote(), b.Repo))...)
 	if name, email, ok := gitidentity.AgentIdentity(strings.TrimSpace(b.AgentName)); ok {
