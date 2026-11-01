@@ -1054,6 +1054,12 @@ func (c *BobConfig) resolveAPIKeyWithSource() (string, string) {
 			continue
 		}
 		seen[f] = true
+		// SECURITY (audit N8): only the managed secrets dirs. The two defaults
+		// appended above already satisfy this; the gate is for c.APIKeyFile,
+		// which is operator/API-supplied.
+		if !SecretFilePathAllowed(f) {
+			continue
+		}
 		if data, err := os.ReadFile(f); err == nil {
 			if key := strings.TrimSpace(string(data)); key != "" {
 				return key, "file:" + f

@@ -1,0 +1,1 @@
+- crux: `governor.bob.api_key_file` is now resolved through the same managed-secrets-directory check as the LiteLLM, gateway and inference key files.
