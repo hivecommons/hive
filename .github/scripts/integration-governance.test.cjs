@@ -68,6 +68,13 @@ test('unsupported or untrusted helper scope refuses instead of returning green',
   await assert.rejects(policy.verify('contents', subject(), [member()]), /closure unavailable/);
 });
 
+test('src/scripts tree matches the pinned TRUSTED_SCRIPTS_TREE', () => {
+  const pinned = /const TRUSTED_SCRIPTS_TREE = '([a-f0-9]{40})'/.exec(
+    fs.readFileSync(path.join(__dirname, 'integration-governance.cjs'), 'utf8'))[1];
+  const actual = cp.execFileSync('git', ['rev-parse', 'HEAD:src/scripts'], {encoding: 'utf8'}).trim();
+  assert.equal(actual, pinned, `src/scripts tree ${actual} != pinned TRUSTED_SCRIPTS_TREE ${pinned}; re-pin the literal in .github/scripts/integration-governance.cjs to git rev-parse HEAD:src/scripts`);
+});
+
 test('real pinned helpers enforce each original member and reject missing signoff or fragment', () => {
   const root = process.cwd(), workspace = path.join(root, '.integration-governance-fixture');
   const helper = path.join(root, '.github/scripts/integration-governance.cjs');
