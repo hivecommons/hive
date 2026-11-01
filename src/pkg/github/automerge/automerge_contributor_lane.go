@@ -1470,6 +1470,10 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		if approval.AnswersVerdict && !humanApproved {
 			approver, humanApproved = approval.Login, true
 		}
+	} else if !humanApproved {
+		if login, ok := c.typedDecisionApprovalAnswer(ctx, displayRepo, owner, repo, pr, number, headSHA, verdict); ok {
+			approver, humanApproved = login, true
+		}
 	}
 	if held, err := c.hasReporterTrustHold(ctx, owner, repo, number); err != nil {
 		return eval, "reporter-trust-check", err

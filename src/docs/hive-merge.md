@@ -697,7 +697,12 @@ A PR merges through this tier only when all of the following hold:
   the tier never merges unreviewed), and `review-verdicts.json` records an
   approving aggregate verdict for the current head
   (`require_reviewer_verdict`, default `true`). Missing or failing verdicts
-  skip with `contributor-lane:no-verdict`.
+  skip with `contributor-lane:no-verdict`. A `requires_human` verdict a
+  trusted merger answered on the head clears this gate; on a PR no diff
+  fence trips, the lane itself records a trusted merger's typed
+  `/hive decision approve` posted after the head as that answer (the same
+  rule the workflow-path fence uses), so it does not wait for the un-park
+  sweep, which reads only stage-labelled PRs (hivecommons/hive#16121).
 - Sentinel has no blocking finding (`contributor-lane:sentinel-blocked`), the
   reporter-trust gate has not held the PR (`contributor-lane:reporter-trust-hold`),
   and no reviewer has an outstanding `CHANGES_REQUESTED`.

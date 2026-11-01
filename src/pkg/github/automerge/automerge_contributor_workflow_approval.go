@@ -62,6 +62,9 @@ const (
 	workflowApprovalDecisionCommand = "/hive decision approve"
 	// workflowApprovalRESTCaller tags the audit comment write.
 	workflowApprovalRESTCaller = "hive:workflow_fence_release"
+	// typedDecisionApprovalRESTCaller tags the comment read on a PR no diff
+	// fence tripped (typedDecisionApprovalAnswer).
+	typedDecisionApprovalRESTCaller = "hive:typed_decision_approval"
 	// workflowApprovalDecisionBody is the decision text a typed approval is
 	// recorded with (the un-park sweep and the dashboard record "approve").
 	workflowApprovalDecisionBody = "approve"
@@ -178,11 +181,51 @@ func (c *Engine) recordTypedApprovalDecision(displayRepo, owner, repo string, nu
 		Kind: review.HumanChangeRequestKindApprove, RecordedAt: comment.GetCreatedAt().Time,
 	}
 	if err := c.humanChangeRequests.Record(req); err != nil {
-		c.warn("workflow-path fence: could not record the typed approval as the reviewer decision", "repo", displayRepo, "pr", number, "head", headSHA, "by", approval.Login, "error", err)
+		c.warn("typed decision approve: could not record the typed approval as the reviewer decision", "repo", displayRepo, "pr", number, "head", headSHA, "by", approval.Login, "error", err)
 		return false
 	}
-	c.info("workflow-path fence: typed approval recorded as the answer to the reviewer's requires_human question", "repo", displayRepo, "pr", number, "head", headSHA, "by", approval.Login)
+	c.info("typed decision approve: typed approval recorded as the answer to the reviewer's requires_human question", "repo", displayRepo, "pr", number, "head", headSHA, "by", approval.Login)
 	return true
+}
+
+// typedDecisionApprovalAnswer is recordTypedApprovalDecision for a PR no
+// diff fence tripped (hivecommons/hive#16121): the newest typed
+// `/hive decision approve` by a trusted merger bound to headSHA — read with
+// workflowApprovalCommentActor, the same rule the fence uses — answers a
+// verdict that still asks for a person. Without it an owner's own PR that
+// touches no workflow file waited on the un-park sweep, which reads only
+// stage-labelled PRs. Returns the approver when the head now carries the
+// approval; a read failure, or a later decision on the head, answers
+// nothing.
+func (c *Engine) typedDecisionApprovalAnswer(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA string, verdict ContributorLaneVerdict) (string, bool) {
+	if c == nil || c.gh == nil || c.humanChangeRequests == nil || strings.TrimSpace(headSHA) == "" {
+		return "", false
+	}
+	if !verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true}) {
+		return "", false
+	}
+	comments, err := c.listIssueComments(hgithub.WithRESTCaller(ctx, typedDecisionApprovalRESTCaller), owner, repo, number)
+	if err != nil {
+		c.warn("typed decision approve: could not read comments", "repo", displayRepo, "pr", number, "head", headSHA, "error", err)
+		return "", false
+	}
+	headPushedAt := c.headObservedAt(owner, repo, number, headSHA, pr)
+	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
+	for i := len(comments) - 1; i >= 0; i-- {
+		login, ok := workflowApprovalCommentActor(comments[i], headSHA, headPushedAt, appLogin)
+		if !ok || !strings.EqualFold(strings.TrimSpace(hgithub.SafeGetLogin(comments[i].GetUser())), login) {
+			// The dashboard's approval records its own decision.
+			continue
+		}
+		if trusted, configured := c.isTrustedMerger(login); !configured || !trusted {
+			continue
+		}
+		if !c.recordTypedApprovalDecision(displayRepo, owner, repo, number, headSHA, workflowApproval{Login: login, Typed: comments[i]}) {
+			return "", false
+		}
+		return login, true
+	}
+	return "", false
 }
 
 // workflowFenceApproval finds the trusted merger whose explicit approval is
