@@ -1856,7 +1856,7 @@ jobs:
     - name: Scan
       working-directory: src
       continue-on-error: true
-      run: gosec -exclude-generated ./... ./crux/...
+      run: gosec -concurrency 4 -exclude-generated ./... ./crux/...
     env:
       GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
   security-golangci-lint:
