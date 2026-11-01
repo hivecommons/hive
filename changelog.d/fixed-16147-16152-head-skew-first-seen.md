@@ -1,0 +1,1 @@
+- The merge-request CI gate now clears the min_head_age hold one window after it first sees a head whose GitHub timestamp is ahead of the host clock even when the merge request omits `expect_sha`, and both merge paths log when a head time is ahead of the host clock so a skew-handled head is distinguishable from a normally aged one.
