@@ -22,6 +22,9 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 		opts      CommitCIOptions
 		wantGreen bool
 		want      string
+		// wantAheadBy is the CommitCIState.HeadTimeAheadBy the gate must
+		// report, so a skew-handled head is observable (#16147).
+		wantAheadBy time.Duration
 	}{
 		{
 			name:   "fresh head with zero slow checks waits for min age",
@@ -45,7 +48,8 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 				HeadPushedAt: now.Add(time.Hour),
 				Now:          func() time.Time { return now },
 			},
-			want: "pending: head time ahead of host clock; head first seen 0s ago (< min_head_age)",
+			want:        "pending: head time ahead of host clock; head first seen 0s ago (< min_head_age)",
+			wantAheadBy: time.Hour,
 		},
 		{
 			name:   "head time ahead of host clock still holds while first seen under min age",
@@ -56,7 +60,8 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 				HeadFirstSeenAt: now.Add(-time.Minute),
 				Now:             func() time.Time { return now },
 			},
-			want: "pending: head time ahead of host clock; head first seen 1m0s ago (< min_head_age)",
+			want:        "pending: head time ahead of host clock; head first seen 1m0s ago (< min_head_age)",
+			wantAheadBy: time.Hour,
 		},
 		{
 			name:   "head time ahead of host clock clears once first seen reaches min age",
@@ -67,7 +72,22 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 				HeadFirstSeenAt: now.Add(-3 * time.Minute),
 				Now:             func() time.Time { return now },
 			},
-			wantGreen: true,
+			wantGreen:   true,
+			wantAheadBy: time.Hour,
+		},
+		{
+			// #16147: a head cleared through the skew path must not look like
+			// a normally aged one; the state names how far ahead it was.
+			name:   "head time ahead of host clock is reported when the hold clears",
+			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
+			opts: CommitCIOptions{
+				MinHeadAge:      3 * time.Minute,
+				HeadPushedAt:    now.Add(90 * time.Minute),
+				HeadFirstSeenAt: now.Add(-10 * time.Minute),
+				Now:             func() time.Time { return now },
+			},
+			wantGreen:   true,
+			wantAheadBy: 90 * time.Minute,
 		},
 		{
 			name:   "first seen is ignored when the head time is not ahead of the host clock",
@@ -174,6 +194,9 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			}
 			if st.Green != tt.wantGreen || st.Reason != tt.want {
 				t.Fatalf("EvaluateCommitCI = (%v,%q), want (%v,%q)", st.Green, st.Reason, tt.wantGreen, tt.want)
+			}
+			if st.HeadTimeAheadBy != tt.wantAheadBy {
+				t.Fatalf("HeadTimeAheadBy = %s, want %s", st.HeadTimeAheadBy, tt.wantAheadBy)
 			}
 		})
 	}

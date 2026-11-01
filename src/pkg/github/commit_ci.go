@@ -123,6 +123,12 @@ type CommitCIState struct {
 	// Every one of them postdates the push, so it is a safe lower bound on
 	// how long the head has existed.
 	EarliestActivity time.Time
+	// HeadTimeAheadBy is how far CommitCIOptions.HeadPushedAt was ahead of
+	// the host clock when min_head_age was evaluated (#16143). Non-zero means
+	// the head's age was not evaluable from GitHub's timestamp and the hold
+	// was measured from HeadFirstSeenAt instead; callers log it so a
+	// skew-handled head is distinguishable from a normally aged one.
+	HeadTimeAheadBy time.Duration
 }
 
 // CommitCIOptions carries policy facts that are known to callers before the
@@ -667,6 +673,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		// for the whole skew.
 		skewed := age < 0
 		if skewed {
+			st.HeadTimeAheadBy = -age
 			age = 0
 			if !opts.HeadFirstSeenAt.IsZero() {
 				age = max(now().Sub(opts.HeadFirstSeenAt), 0)

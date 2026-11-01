@@ -463,6 +463,11 @@ type Client struct {
 	mergeStatePath   string
 	mergeState       map[string]mergeRequestPRState
 	mergeStateLoaded bool
+	// mergeHeadFirstSeen is the in-memory first observation of each PR head
+	// the CI gate judged without an expect_sha (no persisted wait state), so
+	// the min_head_age skew fallback has a stable start (#16152). Guarded by
+	// mergeStateMu.
+	mergeHeadFirstSeen map[string]mergeRequestPRState
 	// attribution holds the invocation-attribution hooks (trailer gate,
 	// per-agent metadata resolver, audit sink) — see attribution.go. Guarded by
 	// attribMu because the hooks are installed in stages during startup while
