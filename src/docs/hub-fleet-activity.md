@@ -150,6 +150,13 @@ The view is filtered on the hub before it is built:
   private items, and no hive owner.
 - No per-user grants: your own access never widens it.
 
+The body is served from a hub-side cache: it is built at most once every
+2 seconds per parsed filter and shared by every anonymous caller, so rows,
+`generated_at` and the `ETag` can lag the latest heartbeat by up to 2 seconds,
+and a client polling faster than that gets `304` until the next build. Query
+strings that parse to the default view share one entry. Toggling a hive's
+visibility drops the cache immediately.
+
 ## What the page does not do
 
 - It has no action menus. The hub is visibility-only: act on an item on

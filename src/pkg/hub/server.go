@@ -999,7 +999,8 @@ type HubServer struct {
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger
-	activity             activityStore // per-hive activity digests, memory only (#15951); leaf lock
+	activity             activityStore       // per-hive activity digests, memory only (#15951); leaf lock
+	publicActivity       publicActivityCache // short-TTL anonymous activity body (#16111)
 	saveCh               chan struct{}
 	githubActivityFeed   *GitHubActivityFeed
 	githubActivityMu     sync.Mutex

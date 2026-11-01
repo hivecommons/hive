@@ -1869,6 +1869,7 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	s.mu.Unlock()
+	s.publicActivity.invalidate()
 
 	s.logger.Info("audit: visibility toggled", "hive_id", id, "is_public", body.IsPublic, "by", username)
 
