@@ -188,6 +188,16 @@ WARN per agent in the same boot. That is an operator configuration condition —
 change the agents' model — not a repeated runtime defect
 (hivecommons/hive#14020).
 
+It also skips `inference model not configured; request refused`
+(`logTranslateFailure`, `src/crux/proxy/github_proxy_inference.go`): the
+inference translator refuses every request from an agent that has neither an
+agent model nor a gateway `default_model`, and names that remedy on the
+agent's dashboard `LastError`. That is an operator configuration condition —
+select a model or set the gateway default in Model Gateways — not an
+`inference_upstream_error` (hivecommons/hive#16170). Other translation
+failures still log `inference translate request failed` at ERROR and stay
+under `inference_upstream_error`.
+
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
 busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI
