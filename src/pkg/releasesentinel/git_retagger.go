@@ -204,8 +204,9 @@ func (g *GitRetagger) ensureRepo(ctx context.Context, env []string) error {
 }
 
 // git runs one git command in the scratch repository and returns its
-// trimmed combined output. Network commands get the token credential helper
-// and no hooks.
+// trimmed output as produced by the configured Runner (see
+// pushbroker.ExecRunner.Run for which streams are included). Network
+// commands get the token credential helper and no hooks.
 func (g *GitRetagger) git(ctx context.Context, env []string, network bool, args ...string) (string, error) {
 	full := []string{"-c", "core.hooksPath=/dev/null"}
 	if network {
