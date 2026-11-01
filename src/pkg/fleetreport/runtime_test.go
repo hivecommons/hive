@@ -839,6 +839,24 @@ func TestIsBenignMessageReviewPendingExpiry(t *testing.T) {
 	}
 }
 
+// #16112: a sentinel finding is the sweep working as designed; sweep failures
+// stay reportable.
+func TestIsBenignMessageSentinelAlert(t *testing.T) {
+	for _, msg := range []string{"sentinel alert", "  Sentinel Alert  "} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("sentinel finding %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"sentinel sweep failed",
+		"sentinel sweep: PR skipped",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
 func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	const msg = "policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default"
 	if !IsBenignMessage(msg) {
