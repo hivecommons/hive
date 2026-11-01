@@ -534,7 +534,7 @@ func TestDeleteHiveInvalidatesPublicActivityCache(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /api/saas/hives/{id}", srv.handleDeleteHive)
 	req := httptest.NewRequest("DELETE", "/api/saas/hives/"+hiveID, nil)
-	req.Header.Set("Authorization", "******")
+	req.Header.Set("Authorization", "Bearer ghp_cache_inv")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
