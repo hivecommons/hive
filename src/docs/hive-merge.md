@@ -669,7 +669,15 @@ A PR merges through this tier only when all of the following hold:
   reads "awaiting owner approval … re-approve after a push"; its **What to
   do** asks for that review (a `/hive approve` reply does not release the
   fence) and still lists a sentinel alert or hold label a person must clear
-  (projectbluefin/testsuite#1037). When released
+  (projectbluefin/testsuite#1037). A typed `/hive decision approve` that
+  releases the fence while the swarm's `requires_human` verdict asks for a
+  person is also recorded as the answer to that question on the head, as
+  the dashboard's approval is, so the owner of their own PR (whom GitHub
+  refuses as a reviewer) clears both gates with one command; a decision
+  recorded on the head after the comment stands instead. The audit comment
+  says whether the approval answered the verdict or which command still
+  does
+  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). When released
   the lane logs `workflow-path fence released by owner approval login=…
   head=…`, leaves one `<!-- hive:workflow-approval head=… by=… -->` audit
   comment per head, and the PR goes through every other gate below like any

@@ -27,8 +27,13 @@ import (
 //   - other `/hive decision <text>` on a hive-authored PR is a changes_requested
 //     review in comment form: the decision is recorded against the head and
 //     the review planner kicks the author agent with <text> verbatim;
-//   - `/hive decision` on a PR the hive did not open gets one reply naming
-//     the review-side equivalents, since the hive does not push to it;
+//   - a bare `/hive decision approve` on a PR the hive did not open is
+//     recorded for the head the same way: an approval routes nothing to
+//     the author, and on an owner's own PR GitHub refuses the Approve
+//     review it stands in for;
+//   - any other `/hive decision` on a PR the hive did not open gets one
+//     reply naming the review-side equivalents, since the hive does not
+//     push to it;
 //   - `/hive approve` on a hive-authored PR also lifts a `needs-human` the
 //     hive itself added and applies the reviewer hand-off transition
 //     (`reviewer-passed` on, `reviewer-handoff` off), mirroring the issue
@@ -88,8 +93,9 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 			return true, nil
 		}
 	}
+	recordsDecision := command.Kind == unparkCommandDecision && head != "" && (selfAuthored || prDecisionModeFor(command) == prDecisionApprove)
 	switch {
-	case command.Kind == unparkCommandDecision && selfAuthored && head != "":
+	case recordsDecision:
 		mode := prDecisionModeFor(command)
 		req := review.HumanChangeRequest{
 			Repo:     owner + "/" + repo,
@@ -136,7 +142,7 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), reply); err != nil {
 		return false, err
 	}
-	if command.Kind != unparkCommandDecision || !selfAuthored || head == "" {
+	if !recordsDecision {
 		result.Replies++
 	}
 	return true, nil
@@ -478,7 +484,7 @@ func renderPRDecisionNoHeadReply() string {
 }
 
 func renderPRDecisionNotHiveAuthoredReply(head string) string {
-	return fmt.Sprintf("`/hive decision` routes a fix to the hive's own author agent, and the hive did not open this PR, so it will not push to it. The PR-side equivalents are reviews: **Approve** %s to let it merge as-is, or leave a **changes requested** review and the author is nudged with your text. See <%s>.",
+	return fmt.Sprintf("`/hive decision <text>` routes a fix to the hive's own author agent, and the hive did not open this PR, so it will not push to it. Leave a **changes requested** review instead and the author is nudged with your text. To let it merge as-is, **Approve** %s or reply `/hive decision approve`. See <%s>.",
 		prHeadRef(head), maintainerCommandsDocURL)
 }
 

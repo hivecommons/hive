@@ -186,9 +186,17 @@ Issue-link repair preserves edited `Refs` bodies and PRs with a recorded
 decision, so it cannot restore auto-close over the owner's direction.
 The 085 entry comment names both actions. The commenter must hold `write` or better on the
 repo *and* be in the hive's trusted-merger set (the bar a human approval
-already meets). `/hive decision` on a PR the hive did **not** open, or `/hive
-approve` / `/hive help` on any PR, gets one reply naming the review-side
+already meets). `/hive decision <text>` on a PR the hive did **not** open, or
+`/hive approve` / `/hive help` on any PR, gets one reply naming the review-side
 equivalents instead of silence; the hive never pushes to a PR it did not open.
+A bare `/hive decision approve` on such a PR is recorded as the approval for
+the current head, as the dashboard's approval is, and answers its
+`requires_human` question: on the owner's own PR GitHub refuses the Approve
+review, so this is the owner's command. On a PR that edits workflow files it
+also releases the workflow-path fence, which `/hive approve` never does; the
+contributor lane records it as the answer when it reads the comment for the
+fence, so it counts even where the PR carries no stage label
+([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)).
 
 The self-merge sweep's review verdict hold (App-authored and trusted-author
 PRs, [review-swarm.md](review-swarm.md)) is released by a person's GitHub

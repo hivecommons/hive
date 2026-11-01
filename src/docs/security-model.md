@@ -267,7 +267,8 @@ do not.
 * **PR commands (085/070).** Bare `/hive approve` is acknowledged only.
   On an eligible Hive-authored PR, `/hive decision <instruction>` routes
   the full text to the author/fixer. `/hive decision approve <rationale>`
-  records approval for the current head and can release `requires_human`.
+  records approval for the current head and can release `requires_human`,
+  on any PR at 085/070 and on a workflow-path PR whose fence it releases.
   This requires repo write access or higher **and** configured merger trust.
   Other authors use GitHub reviews/manual merging. Commands do not waive
   CI, holds, author admission or path fences. See
@@ -376,9 +377,10 @@ until code-owner review is required in branch protection.
 * **PR decision parking is 085.** A trusted merger's GitHub **Approve**
   review must name the current head to clear the enforcing sweep gate.
   It can override any swarm outcome, including a request for changes;
-  the audit records who overrode what. On eligible Hive-authored PRs,
-  `/hive decision approve` can answer `requires_human`, while other decision
-  text sends work to the fixer. Bare `/hive approve` never releases a PR.
+  the audit records who overrode what. A trusted merger's
+  `/hive decision approve` can answer `requires_human` on any PR, while
+  other decision text sends work to the fixer on eligible Hive-authored
+  PRs. Bare `/hive approve` never releases a PR.
   The detailed [command boundaries](#7-contributor-trust) above still apply.
 * **Owner-only security settings.** Changes to `ioscan`, intent enforcement,
   review requirements and the agent sandbox require the `owner` role.

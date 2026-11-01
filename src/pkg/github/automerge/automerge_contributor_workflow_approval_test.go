@@ -291,7 +291,7 @@ func TestContributorLaneWorkflowFenceMarkerOncePerHead(t *testing.T) {
 	fx := validContributorFixture()
 	fx.files = workflowPathFiles()
 	fx.reviews = []map[string]any{ownerApprovedReview("clubanderson", "sha7")}
-	fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment("sha7", "clubanderson")}}
+	fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment("sha7", "clubanderson", workflowApprovalVerdictNone)}}
 	api := newContributorLaneAPI(t, &fx)
 	defer api.Close()
 	policy := defaultContributorLanePolicy()
