@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -511,78 +510,6 @@ func fixPermissions(logger *slog.Logger) {
 	}
 }
 
-// fixModeFiles re-widens the per-agent mode files (ModeFileGlob) to be
-// world-readable. This is the running-pod remediation for #3882/#3679: the
-// Manager only rewrites a mode file on a level change or kick, so a pod whose
-// files are 0600 (written by the #3172 build, or umask-narrowed) stays broken
-// until then; this scan repairs them within one tick.
-//
-// SECURITY: /tmp is sticky and world-writable, so an agent can pre-create a
-// name matching the glob. Only regular files owned by the hive uid are
-// touched, the only change ever made is adding read bits, and the whole
-// check-then-chmod happens on one open descriptor: O_NOFOLLOW refuses a
-// planted symlink at open time, and f.Stat/f.Chmod act on that same inode, so
-// the pathname cannot be swapped between the check and the chmod (CWE-59 /
-// CWE-367 — the same descriptor discipline writeAgentStateFile follows, #3175).
-func fixModeFiles(logger *slog.Logger) {
-	for _, glob := range []string{ModeFileGlob, CapsFileGlob} {
-		paths, err := filepath.Glob(glob)
-		if err != nil {
-			continue
-		}
-		for _, path := range paths {
-			fixModeFile(path, logger)
-		}
-	}
-}
-
-// fixModeFile applies the fixModeFiles policy to a single path.
-func fixModeFile(path string, logger *slog.Logger) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		// ELOOP for a planted symlink, EACCES for a file we do not own: skip.
-		return
-	}
-	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
-	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() {
-		return
-	}
-	stat, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Getuid()) {
-		return
-	}
-	perm := fi.Mode().Perm()
-	if perm&modeFileReadBits == modeFileReadBits {
-		permWarnDedupe.clear(dedupeKey("chmod mode file", path))
-		return
-	}
-	newPerm := perm | modeFileReadBits
-	if err := f.Chmod(newPerm); err != nil {
-		if warn, _ := permWarnDedupe.shouldWarn(dedupeKey("chmod mode file", path), err.Error(), dedupeClass("chmod mode file", err)); warn {
-			logger.Warn("permissions watcher: chmod mode file failed; agents cannot read their GitHub mode and gh/pushes will be blocked",
-				"path", path,
-				"old_mode", perm.String(),
-				"want_mode", newPerm.String(),
-				"error", err,
-				"note", "identical repeats logged at debug until this changes",
-			)
-		} else {
-			logger.Debug("permissions watcher: chmod mode file failed",
-				"path", path,
-				"error", err,
-			)
-		}
-		return
-	}
-	permWarnDedupe.clear(dedupeKey("chmod mode file", path))
-	logger.Info("permissions watcher: fixed mode file permissions",
-		"path", path,
-		"old_mode", perm.String(),
-		"new_mode", newPerm.String(),
-	)
-}
-
 // fixEntry checks a single file or directory and corrects ownership/mode
 // if needed.
 func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
@@ -601,23 +528,13 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		return
 	}
 
-	// The entry is pinned by an O_PATH descriptor and changed through its
-	// /proc/self/fd link, mirroring fixModeFile's descriptor discipline, so the
-	// entry Walk reported is the entry that is changed. O_PATH needs no read
-	// permission, so entries with unreadable modes can still be repaired. ELOOP,
-	// EACCES and ENOENT are skipped silently.
-	f, err := os.OpenFile(path, syscall.O_PATH|syscall.O_NOFOLLOW, 0)
-	if err != nil {
+	// Pin the entry with a descriptor and change it through that descriptor
+	// (see pinEntry), so the entry Walk reported is the entry that is changed.
+	f, mode, chmod, ok := pinEntry(path, fi)
+	if !ok {
 		return
 	}
-	defer func() { _ = f.Close() }() // O_PATH fd; nothing to lose on close error
-	ofi, err := f.Stat()
-	if err != nil || ofi.Mode()&os.ModeSymlink != 0 || ofi.IsDir() != fi.IsDir() || (!ofi.IsDir() && !ofi.Mode().IsRegular()) {
-		return
-	}
-	mode := ofi.Mode()
-	procPath := fmt.Sprintf("/proc/self/fd/%d", f.Fd())
-	chmod := func(m os.FileMode) error { return os.Chmod(procPath, m) }
+	defer func() { _ = f.Close() }() // nothing to lose on close error
 
 	// Fix group ownership if not in the node group — all agents share this group.
 	// Also fix root-owned files (uid 0) to the dev user.
@@ -631,7 +548,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		needsChown = true
 	}
 	if needsChown {
-		if err := os.Chown(procPath, newUID, NodeGID); err != nil {
+		if err := entryChown(f, newUID, NodeGID); err != nil {
 			warnDeduped(logger, "chown", "permissions watcher: chown failed", path, err)
 		} else {
 			permWarnDedupe.clear(dedupeKey("chown", path))
