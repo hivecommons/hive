@@ -234,11 +234,23 @@ type CommandRunner interface {
 
 type ExecRunner struct{}
 
+// Run returns stdout alone on success. Callers treat a successful command's
+// output as data — `git show HEAD:<path>` output is committed as file content
+// by the normaliser — so exit-0 stderr noise (config warnings, ambiguous-ref
+// warnings, traces) must never be mixed into it. On failure stderr is appended
+// so error messages still carry git's diagnostics.
 func (ExecRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = env
-	return cmd.CombinedOutput()
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			out = append(out, exitErr.Stderr...)
+		}
+	}
+	return out, err
 }
 
 // TokenScoper mints an installation token narrowed to a permission tier and,
@@ -809,9 +821,10 @@ func (b *Broker) gitEnv() []string {
 	env := PushEnv(os.Environ())
 	// Drop any inherited command-scope config so the overrides below are the
 	// only GIT_CONFIG_* git sees and their indices cannot collide. GIT_TRACE*
-	// goes too: the runner captures stdout and stderr together, and `git show
-	// HEAD:<path>` output is committed as file content by the normaliser, so a
-	// trace line on stderr would be amended into the pushed blob.
+	// goes too as defence in depth: the runner already keeps stderr out of a
+	// successful command's output, but `git show HEAD:<path>` output is
+	// committed as file content by the normaliser, so trace output must not
+	// get anywhere near it.
 	env = slices.DeleteFunc(env, func(entry string) bool {
 		return strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") ||
 			strings.HasPrefix(entry, "GIT_CONFIG_KEY_") ||

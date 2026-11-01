@@ -763,6 +763,50 @@ func TestBrokerStripsTrailingBlankLineBeforePush(t *testing.T) {
 	}
 }
 
+// The normaliser commits `git show HEAD:<path>` output as the file's content.
+// git writes config and ambiguous-ref warnings to stderr while still exiting
+// 0, so the runner has to keep stderr out of what the broker reads or that
+// warning text gets amended into the pushed blob.
+func TestBrokerNormalisationIgnoresRunnerStderr(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &stderrNoiseRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if !r.wrapped {
+		t.Fatal("test runner never wrapped a git show invocation")
+	}
+	want := "package main\n\nfunc main() {}\n"
+	if got := runGitOutput(t, dir, "show", "HEAD:main.go"); got != want {
+		t.Fatalf("HEAD:main.go = %q, want %q (stderr leaked into the amended blob)", got, want)
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "main.go"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != want {
+		t.Fatalf("working tree main.go = %q, want %q", got, want)
+	}
+}
+
+// stderrNoiseRunner makes every `git show` print a warning on stderr before
+// running the real command, mimicking git's exit-0 config warnings.
+type stderrNoiseRunner struct {
+	recordingRunner
+	wrapped bool
+}
+
+func (r *stderrNoiseRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" && len(args) > 0 && args[0] == "show" {
+		r.wrapped = true
+		shArgs := append([]string{"-c", `echo "warning: ignoring unknown core.fsyncMethod value 'nonsense'" 1>&2; exec git "$@"`, "git"}, args...)
+		return ExecRunner{}.Run(ctx, dir, env, "sh", shArgs...)
+	}
+	return r.recordingRunner.Run(ctx, dir, env, name, args...)
+}
+
 // The normalisation amend runs inside the agent-written workspace, whose
 // index may hold paths the agent staged but never committed. Only the
 // rewritten files may enter the amended commit: anything else staged must
