@@ -158,17 +158,43 @@ func isDestructiveRm(cmd string) bool {
 	return false
 }
 
-// shellQuoteReplacer reads an rm argv token the way the shell does: quotes are
-// dropped and backslash-escaped "/" and "*" resolve to the bare character, so
-// rm -rf \/ and rm -rf /\* are judged like rm -rf "/" and rm -rf /*. "\$" and
-// "\~" are deliberately left alone: the shell keeps those literal, so they
-// are not a home-directory expansion.
-var shellQuoteReplacer = strings.NewReplacer(`"`, "", `'`, "", `\/`, "/", `\*`, "*")
+// shellWord reads an rm argv token the way the shell does: quotes are dropped
+// and a backslash escape resolves to the character it escapes, so \rm, r\m,
+// \/, /\* and /\. are judged like rm, rm, /, /* and /. respectively. "\$" and
+// "\~" are deliberately kept escaped: the shell reads those as literal
+// characters, not a home-directory expansion, so they must not match the root
+// target set. A trailing lone backslash is kept as is.
+func shellWord(token string) string {
+	if !strings.ContainsAny(token, `"'\`) {
+		return token
+	}
+	var b strings.Builder
+	b.Grow(len(token))
+	for i := 0; i < len(token); i++ {
+		switch c := token[i]; c {
+		case '"', '\'':
+		case '\\':
+			if i+1 == len(token) {
+				b.WriteByte(c)
+				continue
+			}
+			i++
+			if next := token[i]; next == '$' || next == '~' {
+				b.WriteByte(c)
+			}
+			b.WriteByte(token[i])
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
 
 // isRmCommandWord reports whether field names the rm binary, either bare or
-// by path (/bin/rm, /usr/bin/rm, ./rm), reading the word as the shell does.
+// by path (/bin/rm, /usr/bin/rm, ./rm), reading the word as the shell does,
+// so the alias-bypass spelling \rm is an rm too.
 func isRmCommandWord(field string) bool {
-	return strings.EqualFold(path.Base(shellQuoteReplacer.Replace(field)), "rm")
+	return strings.EqualFold(path.Base(shellWord(field)), "rm")
 }
 
 func rmRemovesRoot(args []string) bool {
@@ -189,7 +215,7 @@ func rmRemovesRoot(args []string) bool {
 			}
 			continue
 		}
-		if rmRootTargetRe.MatchString(shellQuoteReplacer.Replace(arg)) {
+		if rmRootTargetRe.MatchString(shellWord(arg)) {
 			rootTarget = true
 		}
 	}
