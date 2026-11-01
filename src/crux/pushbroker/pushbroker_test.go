@@ -1094,13 +1094,15 @@ func TestBrokerSurfacesReadFailureDuringNormalisation(t *testing.T) {
 }
 
 // Uncommitted working-tree edits to a touched file must not be folded into
-// the normalisation amend: the amended commit holds only HEAD's content,
-// normalised.
+// the normalisation amend — the amended commit holds only HEAD's content,
+// normalised — and must still be on disk afterwards: normalisation may not
+// silently destroy an agent's in-progress work.
 func TestBrokerAmendExcludesWorkingTreeEditsOfTouchedFile(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
 	edited := "package main\n\nfunc main() { leaked() }\n\n"
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(edited), 0o644); err != nil {
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r := &recordingRunner{}
@@ -1111,6 +1113,38 @@ func TestBrokerAmendExcludesWorkingTreeEditsOfTouchedFile(t *testing.T) {
 	got := runGitOutput(t, dir, "show", "HEAD:main.go")
 	if want := "package main\n\nfunc main() {}\n"; got != want {
 		t.Fatalf("amended blob = %q, want %q (working-tree edit must not be committed)", got, want)
+	}
+	onDisk, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(onDisk) != edited {
+		t.Fatalf("working-tree file = %q, want the uncommitted edit %q preserved on disk", onDisk, edited)
+	}
+}
+
+// The uncommitted edit must come back even when the amend itself fails:
+// the broker's error path may not leave HEAD's blob sitting over the
+// agent's work.
+func TestBrokerRestoresWorkingTreeEditWhenAmendFails(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	edited := "package main\n\nfunc main() { wip() }\n\n"
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &failingRunner{failSubstr: "commit --amend", failErr: errors.New("hook rejected")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+	onDisk, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(onDisk) != edited {
+		t.Fatalf("working-tree file = %q after failed amend, want the uncommitted edit %q restored", onDisk, edited)
 	}
 }
 

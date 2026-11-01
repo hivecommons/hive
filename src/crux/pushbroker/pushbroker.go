@@ -664,10 +664,22 @@ func shortSHA(sha string) string {
 //
 // The content normalised is HEAD's blob (`git show HEAD:<path>`), never the
 // working-tree file, so uncommitted edits to a touched path cannot be folded
-// into the amended commit. The normalised blob replaces the working-tree copy,
-// then `git add` and `git commit --amend --only` record exactly that content.
-func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (bool, error) {
+// into the amended commit. The normalised blob is written over the
+// working-tree copy only for as long as `git add` and `git commit --amend
+// --only` need to record it: a file the agent had edited since HEAD is
+// snapshotted first and put back on disk — whether or not the amend
+// succeeds — so no uncommitted edit is lost. A file still identical to HEAD
+// is simply left normalised, keeping the workspace clean after the amend.
+func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (amended bool, err error) {
 	var touched []string
+	var edited []workingTreeSnapshot
+	defer func() {
+		for _, snap := range edited {
+			if werr := os.WriteFile(snap.abs, snap.data, snap.perm); werr != nil {
+				err = errors.Join(err, fmt.Errorf("restoring uncommitted edit to %s: %w", snap.rel, werr))
+			}
+		}
+	}()
 	for _, rel := range files {
 		abs := filepath.Join(b.Workspace, rel)
 		// Lstat, not Stat: a committed symlink is a path the agent chose, and
@@ -687,6 +699,13 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (b
 		normalized, changed := trimTrailingBlankLines(data)
 		if !changed {
 			continue
+		}
+		onDisk, err := os.ReadFile(abs)
+		if err != nil {
+			return false, fmt.Errorf("reading %s: %w", rel, err)
+		}
+		if !bytes.Equal(onDisk, data) {
+			edited = append(edited, workingTreeSnapshot{rel: rel, abs: abs, data: onDisk, perm: info.Mode().Perm()})
 		}
 		if err := os.WriteFile(abs, normalized, info.Mode().Perm()); err != nil {
 			return false, fmt.Errorf("writing %s: %w", rel, err)
@@ -712,6 +731,16 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (b
 		b.Logger.Info("pushbroker normalised trailing blank lines", "repo", b.Repo, "branch", b.Branch, "files", touched)
 	}
 	return true, nil
+}
+
+// workingTreeSnapshot is an agent's uncommitted edit to a file that
+// stripTrailingBlankLines temporarily overwrites with HEAD's normalised blob,
+// kept so the edit can be put back on disk once the amend has run.
+type workingTreeSnapshot struct {
+	rel  string
+	abs  string
+	data []byte
+	perm os.FileMode
 }
 
 func isEmptyAmendError(err error) bool {
