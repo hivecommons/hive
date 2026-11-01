@@ -190,6 +190,31 @@ precise buckets:
   are kept in the actor matrix as unrecorded evidence but are excluded from the
   trend share math so missing attribution is never mislabeled as automation.
 
+Where each row's counts come from:
+
+- **Created** counts only what the hive opened (`agent_pr_created`,
+  `agent_issue_created`, `hive_issue_created`), so its human and other columns
+  stay `0`. PRs and issues people open are not counted.
+- **Reviewed** — PRs: the hive's own reviews (`agent_pr_reviewed`) fill the
+  hive column. The human and other columns come from `pr_review_observed`:
+  when the merged-PR settle scan first sees a PR merged or closed inside its
+  window, it reads that PR's reviews once (one extra GitHub read per newly
+  terminal PR, cached for later scans) and records every submitted review the
+  hive did not write — approved, changes requested, commented or dismissed —
+  at the review's `submitted_at`, classed like merges (`human`, or `other` for
+  `*[bot]` logins). The hive's own reviews are skipped there so they are never
+  counted twice, pending reviews are ignored, and each review counts once by
+  its GitHub review ID across rescans and restarts. Issues: the hive's issue
+  comments and claims.
+- **Merged·Closed** counts the hive's audited merge/close paths plus the
+  settle scan's forge-observed terminal PRs, attributed by `merged_by`.
+
+A person's review is therefore counted once its PR merges or closes, not when
+it is submitted: a review on a PR that is still open appears later, in the
+bucket of its own `submitted_at`. The settle scan is used rather than the
+`pull_request_review` webhook because deliveries can be missed and have no
+per-delivery record to reconcile against.
+
 The merged-PR and closed-issue totals that feed the Cost section's
 cost-per-merged-PR and cost-per-closed-issue figures (`/api/cost`
 `merged_prs` / `closed_issues`) are not re-queried from `/search/issues` on

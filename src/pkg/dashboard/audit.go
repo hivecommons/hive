@@ -266,7 +266,7 @@ func (a *AuditLog) logRecordAt(timestamp, user, action, detail, agent, repo stri
 	if len(a.ring) >= auditRingCap {
 		a.ring = a.ring[1:]
 	}
-	if prThroughputActions[entry.Action] && !a.notePRThroughput(entry) && prThroughputTerminalAction(entry.Action) {
+	if prThroughputActions[entry.Action] && !a.notePRThroughput(entry) && prThroughputDedupedAction(entry.Action) {
 		a.mu.Unlock()
 		return
 	}
