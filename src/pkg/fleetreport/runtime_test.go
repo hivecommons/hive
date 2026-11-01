@@ -927,6 +927,18 @@ func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#16170: an agent with no inference model configured is an
+// operator configuration condition; real translate failures stay classified.
+func TestIsBenignMessageInferenceModelNotConfigured(t *testing.T) {
+	const msg = "inference model not configured; request refused"
+	if !IsBenignMessage(msg) || LogFedClass(msg) != "" {
+		t.Errorf("missing-model notice %q reportable", msg)
+	}
+	if IsBenignMessage("inference translate request failed") || LogFedClass("inference translate request failed") != ClassInferenceUpstreamError {
+		t.Error("translate failure no longer reported as inference_upstream_error")
+	}
+}
+
 func TestIsBenignMessageKnowledgePrimerBytecap(t *testing.T) {
 	const msg = "knowledge primer: dropped facts over the byte cap"
 	if !IsBenignMessage(msg) {

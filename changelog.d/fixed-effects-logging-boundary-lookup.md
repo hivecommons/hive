@@ -1,0 +1,1 @@
+- `LoggingBoundary` now forwards `LookupApplied` to its wrapped boundary, so idempotency lookups through a logging wrapper see the journal.
