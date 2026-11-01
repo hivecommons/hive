@@ -158,6 +158,13 @@ type CommitCIOptions struct {
 	SkippedByDesign map[string]bool
 	MinHeadAge      time.Duration
 	HeadPushedAt    time.Time
+	// HeadFirstSeenAt is the host-clock time the caller first observed this
+	// head. It is consulted only when HeadPushedAt is ahead of the host clock
+	// (GitHub's server-generated timestamps running ahead of this host,
+	// #16143): the hold is then measured from it instead of being skipped. A
+	// zero value is the first observation, so the head is held for one
+	// min_head_age window from now.
+	HeadFirstSeenAt time.Time
 	Now             func() time.Time
 	// RequireEvidence fails closed when no real successful CI check-run evidence
 	// exists. It is used when GitHub reports a known empty required-check set or
@@ -652,12 +659,26 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		age := now().Sub(opts.HeadPushedAt)
 		// A head time ahead of the host clock is skew between GitHub's
 		// server-generated timestamps and this host (#16143), not a fresh
-		// push: min_head_age is not evaluable, and every check above has
-		// already been judged on the exact head SHA.
+		// push, and the host cannot measure age from it. The hold is not
+		// skipped: when the required set is unknown it is the only cover for
+		// slow check-runs that have not registered yet. Age is measured from
+		// the host-clock first observation instead, which can over-hold by at
+		// most one min_head_age window and never clamps to "pushed 0s ago"
+		// for the whole skew.
 		skewed := age < 0
+		if skewed {
+			age = 0
+			if !opts.HeadFirstSeenAt.IsZero() {
+				age = max(now().Sub(opts.HeadFirstSeenAt), 0)
+			}
+		}
 		configRequiredAllGreen := opts.RequiredKnownFromConfig && len(required) > 0 && len(requiredSuccess) == len(required) && len(st.MissingRequired) == 0
-		if !skewed && age < opts.MinHeadAge && !configRequiredAllGreen {
-			block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
+		if age < opts.MinHeadAge && !configRequiredAllGreen {
+			if skewed {
+				block(fmt.Sprintf("pending: head time ahead of host clock; head first seen %s ago (< min_head_age)", age.Round(time.Second)))
+			} else {
+				block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
+			}
 		}
 	}
 	st.Green = st.Reason == ""
