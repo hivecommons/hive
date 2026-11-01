@@ -114,12 +114,21 @@ jobs:
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
     - name: Download Go modules (retry transient proxy resets)
       uses: ./.github/actions/go-mod-download-retry
+    - name: Restore pinned gosec binary
+      id: gosec-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/hive-ci-tools/gosec
+        key: hive-gosec-${{ runner.os }}-${{ runner.arch }}-v2.29.0-${{ hashFiles('src/go.mod') }}
     - name: Install gosec
+      if: steps.gosec-cache.outputs.cache-hit != 'true'
+      env:
+        GOBIN: ${{ runner.temp }}/hive-ci-tools
       run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
     - name: Scan
       working-directory: src
       continue-on-error: true
-      run: gosec -exclude-generated ./... ./crux/...
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency "${HIVE_CI_GOSEC_CONCURRENCY:-2}" -exclude-generated ./...'
   golangci-lint:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}

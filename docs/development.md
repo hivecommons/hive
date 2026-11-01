@@ -152,6 +152,47 @@ Two flags that appear in CI but are *not* part of the PR gate:
   report. Coverage is scored, but it is not the required merge gate; a failing
   test is.
 
+### CI wall clock and required checks
+
+The `v2 CI` workflow runs Go build/vet, deployment and shell contracts, and
+Node/runtime contracts as three independent lanes. The protected
+`build-and-test` check aggregates **all three** and fails if any lane fails,
+is cancelled, or unexpectedly skips. This changes scheduling, not which
+contracts run. The separate race/shuffle matrix and per-package coverage
+checks remain required and unchanged.
+As before, a transient build scope-preflight failure falls back to executing
+the full actual build/contract/runtime lanes. Scope failure is not itself a
+new build gate: all three actual lanes must succeed, and skipped or cancelled
+lanes cannot create a green aggregate.
+
+The Podman cleanup contract reads every tracked file once, checking all
+forbidden literal patterns together rather than spawning a grep for each
+pattern in each file. Go security CI caches the version-pinned gosec binary;
+the scan itself still runs every time. Gosec's recursive discovery includes
+nested modules, so its `./...` scan covers Crux without scanning it twice.
+Other Go tools still need both `./...` and `./crux/...`.
+Gosec uses two package-loading workers by default rather than the host CPU
+count (which can exceed a runner container's CPU quota); operators can set
+`HIVE_CI_GOSEC_CONCURRENCY` in the runner environment to tune it.
+The coverage scorer only lists packages and reads shard profiles; it does not
+archive shared Go caches in a serial post-step after scoring.
+Package discovery runs alongside the scope preflight; test shards still wait
+for both, and neither test nor coverage can pass a failed scope verdict.
+Out-of-scope PRs may perform discovery but still execute no test shards.
+The Docker PR freshness reload also keeps the matrix platform, so an ARM64
+job reuses and probes its ARM64 build instead of rebuilding a host-architecture
+image.
+Public PR image builds default to the free `ubuntu-24.04-arm` native runner
+already used by the Podman ARM64 lane; an explicit `HIVE_ARM64_RUNNER` override
+still wins. Private repositories and release/push events retain their existing
+runner selection, and QEMU is installed only when the selected host needs it.
+
+Measure PR turnaround from workflow creation to the **last required check**
+completing, including runner queues and aggregate/coverage jobs, not just
+the slowest test shard's execution. Cache misses and shared runner load
+can change this substantially; a short shard alone is not a five-minute
+pipeline.
+
 ### Affected-package selection on pull requests
 
 On a pull request the gate does not always run every package. The

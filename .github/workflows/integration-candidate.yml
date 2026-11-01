@@ -202,7 +202,7 @@ jobs:
     env:
       ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
       GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
-  ci-build-and-test:
+  ci-build-go:
     needs:
     - subject
     - ci-required-context-scope
@@ -280,6 +280,31 @@ jobs:
       run: go vet ./... ./crux/...
     - name: Price table staleness guard
       run: go run ./internal/tools/pricetable --check-age 60
+    name: build-go
+    env:
+      ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
+  ci-contract-tests:
+    needs:
+    - subject
+    - ci-required-context-scope
+    if: ${{ always() && needs.subject.result == 'success' && (always() && (needs.ci-required-context-scope.result != 'success' || needs.ci-required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Ensure PyYAML on self-hosted runners
+      run: |
+        python3 -c "import yaml" 2>/dev/null && exit 0
+        sudo apt-get update -qq || true
+        sudo apt-get install -y -qq python3-yaml && exit 0
+        python3 -m pip install --user -q --break-system-packages pyyaml \
+          || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
     - name: Entrypoint runtime-config migration tests
       run: bash deploy/test_entrypoint_runtime_config.sh
     - name: Entrypoint NET_ADMIN ambient-cap tests (#3760)
@@ -440,6 +465,31 @@ jobs:
     - name: Every bin/ test suite is wired into something (#4363)
       working-directory: .
       run: bash bin/test_bin_suites_wired.sh
+    name: contract-tests
+    env:
+      ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
+  ci-runtime-tests:
+    needs:
+    - subject
+    - ci-required-context-scope
+    if: ${{ always() && needs.subject.result == 'success' && (always() && (needs.ci-required-context-scope.result != 'success' || needs.ci-required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Ensure PyYAML on self-hosted runners
+      run: |
+        python3 -c "import yaml" 2>/dev/null && exit 0
+        sudo apt-get update -qq || true
+        sudo apt-get install -y -qq python3-yaml && exit 0
+        python3 -m pip install --user -q --break-system-packages pyyaml \
+          || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: '22'
@@ -590,6 +640,37 @@ jobs:
     - name: Runner labels are fork-portable (#6083)
       working-directory: .
       run: bash src/deploy/test_runner_labels_portable.sh
+    - name: Build aggregate preserves scope fallback and rejects skipped lanes
+      working-directory: .
+      run: bash src/deploy/test_ci_build_lane_aggregate.sh
+    name: runtime-tests
+    env:
+      ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
+  ci-build-and-test:
+    needs:
+    - subject
+    - ci-required-context-scope
+    - ci-build-go
+    - ci-contract-tests
+    - ci-runtime-tests
+    if: ${{ always() && needs.subject.result == 'success' && (always() && !cancelled() && (needs.ci-required-context-scope.result != 'success' || needs.ci-required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - name: Require every build and contract lane
+      env:
+        SCOPE_RESULT: ${{ needs.ci-required-context-scope.result }}
+        GO_RESULT: ${{ needs.ci-build-go.result }}
+        CONTRACT_RESULT: ${{ needs.ci-contract-tests.result }}
+        RUNTIME_RESULT: ${{ needs.ci-runtime-tests.result }}
+      run: |
+        for result in "$GO_RESULT" "$CONTRACT_RESULT" "$RUNTIME_RESULT"; do
+          if [ "$result" != success ]; then
+            echo "::error::build-and-test requires successful Go, contract and runtime lanes (scope=$SCOPE_RESULT go=$GO_RESULT contracts=$CONTRACT_RESULT runtime=$RUNTIME_RESULT)"
+            exit 1
+          fi
+        done
     name: build-and-test
     env:
       ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
@@ -1224,10 +1305,7 @@ jobs:
       ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
       GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
   tests-list-packages:
-    needs:
-    - subject
-    - tests-required-context-scope
-    if: ${{ always() && needs.subject.result == 'success' && ((needs.tests-required-context-scope.result != 'success' || needs.tests-required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/'))) }}
+    if: ${{ always() && needs.subject.result == 'success' && (!(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -1300,6 +1378,8 @@ jobs:
     - name: Partition packages into balanced buckets
       id: partition
       run: "R=4\n# Drop only the monolithic packages that have function-sliced jobs\n# of their own: pkg/hub (test-hub), pkg/dashboard and pkg/scheduler\n# (test-sliced). All their subpackages belong in the rest buckets\n# so coverage floors and the no-test-files gate apply to them too.\n# pkg/hubbackup, pkg/dashboard/webstatic et al. stay here.\n# ./internal/... carries the shared test helpers (internal/testutil)\n# and their contract tests, such as the time.Sleep ratchet in\n# sleep_ratchet_test.go. ./crux/... is the nested Crux module\n# (#13536), reachable from src/ through src/go.work; its manager\n# package crux/agent has the dedicated agent slices.\ngo list ./pkg/... ./cmd/... ./internal/... ./crux/... \\\n  | awk '$0 == \"github.com/hivecommons/hive/pkg/hub\" { next }\n         $0 == \"github.com/hivecommons/hive/pkg/dashboard\" { next }\n         $0 == \"github.com/hivecommons/hive/pkg/scheduler\" { next }\n         { print }' \\\n  | grep -Ev '^github\\.com/hivecommons/hive/crux/agent$' \\\n  | LC_ALL=C sort > rest-pkgs.txt\nif [ ! -s rest-pkgs.txt ]; then\n  echo \"::error::go list produced no rest packages \u2014 failing closed\"\n  exit 1\nfi\n# Affected-package selection narrows membership only after the\n# fail-closed check above ran on the full list. The bucket count\n# stays R, so every `test (rest i/R)` context still reports; a\n# bucket left empty succeeds without running (see test-rest).\nif [ \"$(head -n1 ../affected-pkgs.txt)\" != all ]; then\n  grep -Fx -f ../affected-pkgs.txt rest-pkgs.txt > rest-selected.txt || true\n  echo \"affected-package selection: $(wc -l < rest-selected.txt) of $(wc -l < rest-pkgs.txt) rest packages\"\n  mv rest-selected.txt rest-pkgs.txt\nfi\n\n# Weights = measured -short -race package wall seconds on the\n# hive-runners fleet, mean of two v5 push runs (40383615331 and\n# 40382244011, 2026-10-26, rounded). Re-measure with: for each\n# `test (rest i/R)` job log, grep the\n# `ok  github.com/hivecommons/hive/<pkg>  <N>s` lines. Anything\n# under ~5s is noise and takes the 1s default. Packages inside a\n# bucket run concurrently under one go test, so a bucket's wall\n# clock is its heaviest package plus compile time \u2014 the table\n# mainly has to keep the big ones apart, and the sum-based greedy\n# below does that while spreading the compile load. pkg/hub/spoke\n# is the floor now that pkg/dashboard and pkg/scheduler are sliced\n# (test-sliced above): the widest bucket can never be faster than\n# it. pkg/dashboard and pkg/scheduler are listed so a stale\n# exclusion above still yields a sane partition. pkg/github is\n# ~1s with ~1% coverage on push runs but 70s on pull requests (PR\n# 14407's run 40387365403), where it is weighed \u2014 measure it from a\n# PR run, not a push run.\nweight() {\n  case \"$1\" in\n    */pkg/dashboard)  echo 219 ;;\n    */pkg/scheduler)  echo 199 ;;\n    */pkg/hub/spoke)  echo 85 ;;\n    */pkg/config)     echo 82 ;;\n    */pkg/github)     echo 70 ;;\n    */cmd/hive)       echo 69 ;;\n    */crux/proxy)     echo 56 ;;\n    */pkg/dashboard/webstatic) echo 35 ;;\n    */pkg/hubbackup)  echo 30 ;;\n    */pkg/advisory)   echo 29 ;;\n    */internal/testutil) echo 22 ;;\n    */pkg/ioscan)     echo 16 ;;\n    */pkg/hivectl)    echo 15 ;;\n    */pkg/tui)        echo 14 ;;\n    */pkg/discord)    echo 12 ;;\n    */pkg/fleetreport) echo 11 ;;\n    */pkg/hivectl/commands) echo 10 ;;\n    */pkg/stageengine) echo 10 ;;\n    */pkg/apphealth)  echo 9 ;;\n    */pkg/rotation)   echo 9 ;;\n    */pkg/beads)      echo 8 ;;\n    */pkg/github/automerge) echo 8 ;;\n    */crux/api/callback) echo 6 ;;\n    */crux/inference) echo 6 ;;\n    */cmd/hive-backup) echo 5 ;;\n    */pkg/mint)       echo 5 ;;\n    */pkg/policies)   echo 5 ;;\n    *)                echo 1  ;;\n  esac\n}\n\n# Deterministic greedy LPT: stable-sort by weight desc (name asc on\n# ties), assign each package to the currently lightest bucket\n# (lowest index on ties).\nwhile read -r p; do\n  echo \"$(weight \"$p\") $p\"\ndone < rest-pkgs.txt | sort -k1,1nr -k2,2 > weighted.txt\n\ndeclare -a LOAD BUCKET\nfor ((i=0; i<R; i++)); do LOAD[i]=0; BUCKET[i]=\"\"; done\nwhile read -r w p; do\n  best=0\n  for ((i=1; i<R; i++)); do\n    if [ \"${LOAD[i]}\" -lt \"${LOAD[best]}\" ]; then best=$i; fi\n  done\n  BUCKET[best]=\"${BUCKET[best]} $p\"\n  LOAD[best]=$(( LOAD[best] + w ))\ndone < weighted.txt\n\nINCLUDE=\"\"\nfor ((i=0; i<R; i++)); do\n  pkgs=\"${BUCKET[i]# }\"\n  echo \"bucket $((i+1))/$R (weight ${LOAD[i]}): $pkgs\"\n  [ -n \"$INCLUDE\" ] && INCLUDE=\"$INCLUDE,\"\n  INCLUDE=\"$INCLUDE{\\\"idx\\\":$((i+1)),\\\"total\\\":$R,\\\"pkgs\\\":\\\"$pkgs\\\"}\"\ndone\necho \"matrix={\\\"include\\\":[$INCLUDE]}\" >> \"$GITHUB_OUTPUT\"\n"
+    needs:
+    - subject
     name: list-packages
     env:
       CGO_ENABLED: '1'
@@ -1684,10 +1764,8 @@ jobs:
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       if: ${{ steps.cov-scope.outputs.score == 'true' }}
       with:
+        cache: false
         go-version-file: src/go.mod
-        cache-dependency-path: |
-          src/go.sum
-          src/crux/go.sum
     - name: Download Go modules (retry transient proxy resets)
       if: ${{ steps.cov-scope.outputs.score == 'true' }}
       uses: ./.github/actions/go-mod-download-retry
@@ -1851,12 +1929,21 @@ jobs:
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
     - name: Download Go modules (retry transient proxy resets)
       uses: ./.github/actions/go-mod-download-retry
+    - name: Restore pinned gosec binary
+      id: gosec-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/hive-ci-tools/gosec
+        key: hive-gosec-${{ runner.os }}-${{ runner.arch }}-v2.29.0-${{ hashFiles('src/go.mod') }}
     - name: Install gosec
+      if: steps.gosec-cache.outputs.cache-hit != 'true'
+      env:
+        GOBIN: ${{ runner.temp }}/hive-ci-tools
       run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
     - name: Scan
       working-directory: src
       continue-on-error: true
-      run: gosec -exclude-generated ./... ./crux/...
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency "${HIVE_CI_GOSEC_CONCURRENCY:-2}" -exclude-generated ./...'
     env:
       GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
   security-golangci-lint:
@@ -2081,6 +2168,9 @@ jobs:
     needs:
     - subject
     - ci-required-context-scope
+    - ci-build-go
+    - ci-contract-tests
+    - ci-runtime-tests
     - ci-build-and-test
     - ci-docker
     - ci-overlayfs-exec-guard
