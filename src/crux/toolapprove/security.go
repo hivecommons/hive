@@ -140,9 +140,11 @@ const rmRootTargetPattern = `(/+\.{0,2})+\*?|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,
 // any spelling: -r/-R or --recursive mark the removal recursive, -- ends the
 // options, and every other option (--force, --no-preserve-root, -v, ...) is
 // skipped. GNU rm refuses "rm -rf /" by default; "rm -rf --no-preserve-root /"
-// is the spelling that actually removes it, and it must not pass clean. The
-// command word is matched by its base name, so /bin/rm and /usr/bin/rm are
-// read the same way as a bare rm.
+// is the spelling that actually removes it, and it must not pass clean. Every
+// token is read through shellWord first, so an escaped or quoted option such
+// as \-rf or "-rf" counts as the -rf the shell hands rm, and the command word
+// is matched by its base name, so /bin/rm and /usr/bin/rm are read the same
+// way as a bare rm.
 func isDestructiveRm(cmd string) bool {
 	for _, simple := range shellSeparatorRe.Split(cmd, -1) {
 		fields := strings.Fields(simple)
@@ -199,7 +201,8 @@ func isRmCommandWord(field string) bool {
 
 func rmRemovesRoot(args []string) bool {
 	recursive, rootTarget, endOfOptions := false, false, false
-	for _, arg := range args {
+	for _, raw := range args {
+		arg := shellWord(raw)
 		if !endOfOptions && len(arg) > 1 && strings.HasPrefix(arg, "-") {
 			switch {
 			case arg == "--":
@@ -215,7 +218,7 @@ func rmRemovesRoot(args []string) bool {
 			}
 			continue
 		}
-		if rmRootTargetRe.MatchString(shellWord(arg)) {
+		if rmRootTargetRe.MatchString(arg) {
 			rootTarget = true
 		}
 	}
