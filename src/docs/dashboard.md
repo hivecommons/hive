@@ -196,16 +196,21 @@ Where each row's counts come from:
   `agent_issue_created`, `hive_issue_created`), so its human and other columns
   stay `0`. PRs and issues people open are not counted.
 - **Reviewed** — PRs: the hive's own reviews (`agent_pr_reviewed`) fill the
-  hive column. The human and other columns come from `pr_review_observed`:
-  when the merged-PR settle scan first sees a PR merged or closed inside its
-  window, it reads that PR's reviews once (one extra GitHub read per newly
-  terminal PR, cached for later scans) and records every submitted review the
-  hive did not write — approved, changes requested, commented or dismissed —
-  at the review's `submitted_at`, classed like merges (`human`, or `other` for
-  `*[bot]` logins). The hive's own reviews are skipped there so they are never
-  counted twice, pending reviews are ignored, and each review counts once by
-  its GitHub review ID across rescans and restarts. Issues: the hive's issue
-  comments and claims.
+  hive column. The human, other and unknown columns come from
+  `pr_review_observed`: when the merged-PR settle scan first sees a PR merged
+  or closed inside its window, it reads that PR's reviews (one extra GitHub
+  read per newly terminal PR) and records every submitted review the hive did
+  not write — approved, changes requested, commented or dismissed — at the
+  review's `submitted_at`, classed like merges (`human`, `other` for `*[bot]`
+  logins, or `unknown` for a review whose account has since been deleted and
+  has no login). The list is cached for later scans of the window and read
+  again only when the PR's `updated_at` has moved since — GitHub bumps it on
+  review submission, so a review that lands after the first read is picked
+  up on the next scan and only the not-yet-seen reviews are recorded. The
+  hive's own reviews are
+  skipped there so they are never counted twice, pending reviews are ignored,
+  and each review counts once by its GitHub review ID across rescans and
+  restarts. Issues: the hive's issue comments and claims.
 - **Merged·Closed** counts the hive's audited merge/close paths plus the
   settle scan's forge-observed terminal PRs, attributed by `merged_by`.
 

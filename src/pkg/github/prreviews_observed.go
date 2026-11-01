@@ -63,7 +63,11 @@ func (c *Client) prReviewObserved() PRReviewObservedHook {
 // saw merged or closed. The reviews are read from GitHub once per PR and
 // served from cache on every later scan of the window while the PR's
 // updated_at is unchanged; when it moved, the list is read again and only
-// the reviews not seen before are emitted. The dashboard sink de-duplicates
+// the reviews not seen before are emitted. GitHub bumps a PR's updated_at
+// when a review is submitted (verified against the API: a PR's updated_at
+// equals its latest review's submitted_at when the review is the last
+// event), so a review that lands after the first read is caught by the
+// next scan. The dashboard sink de-duplicates
 // repeats by review ID. A failed read emits nothing, is
 // not cached, and does not fail the scan: the next scan retries it.
 func (c *Client) emitTerminalPRReviews(ctx context.Context, owner, repoName, repo string, number int, updatedAt time.Time, identity HiveIdentity) {
