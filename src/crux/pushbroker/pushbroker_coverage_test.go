@@ -60,6 +60,10 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 		return nil, nil
 	case key == "merge-base --is-ancestor origin/main HEAD" || strings.HasPrefix(key, "merge-base --is-ancestor refs/remotes/"):
 		return nil, nil
+	case key == "ls-tree -r -z --name-only HEAD":
+		// A fake workspace has no files on disk, so an empty HEAD tree keeps
+		// the normaliser out of these scenarios exactly as before.
+		return nil, nil
 	}
 	return nil, errors.New("unscripted git invocation: " + name + " " + key)
 }
