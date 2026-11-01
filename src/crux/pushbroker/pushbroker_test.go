@@ -1306,6 +1306,22 @@ func TestGitEnvCarriesWorkspaceConfigOverrides(t *testing.T) {
 	}
 }
 
+// The normaliser commits the bytes `git show HEAD:<path>` returns, and the
+// runner captures stderr alongside stdout. An inherited GIT_TRACE* variable
+// would therefore prepend "trace: built-in: git show …" to every normalised
+// blob and push it as file content, so the broker env must not carry one.
+func TestGitEnvDropsInheritedGitTrace(t *testing.T) {
+	t.Setenv("GIT_TRACE", "1")
+	t.Setenv("GIT_TRACE_SETUP", "1")
+	t.Setenv("GIT_TRACE_PERFORMANCE", "/tmp/perf.log")
+	env := (&Broker{Repo: "hivecommons/hive"}).gitEnv()
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_TRACE") {
+			t.Fatalf("inherited %q survived into the broker env:\n%s", entry, strings.Join(env, "\n"))
+		}
+	}
+}
+
 // The trailing-blank-line normaliser amends HEAD with `git add` + `git commit
 // --amend` inside the agent-written workspace. Those commands used to run
 // without any hook override, so a pre-commit hook the agent dropped into

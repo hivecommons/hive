@@ -808,12 +808,16 @@ func (b *Broker) git(ctx context.Context, args ...string) ([]byte, error) {
 func (b *Broker) gitEnv() []string {
 	env := PushEnv(os.Environ())
 	// Drop any inherited command-scope config so the overrides below are the
-	// only GIT_CONFIG_* git sees and their indices cannot collide.
+	// only GIT_CONFIG_* git sees and their indices cannot collide. GIT_TRACE*
+	// goes too: the runner captures stdout and stderr together, and `git show
+	// HEAD:<path>` output is committed as file content by the normaliser, so a
+	// trace line on stderr would be amended into the pushed blob.
 	env = slices.DeleteFunc(env, func(entry string) bool {
 		return strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") ||
 			strings.HasPrefix(entry, "GIT_CONFIG_KEY_") ||
 			strings.HasPrefix(entry, "GIT_CONFIG_VALUE_") ||
-			strings.HasPrefix(entry, "GIT_CONFIG_PARAMETERS=")
+			strings.HasPrefix(entry, "GIT_CONFIG_PARAMETERS=") ||
+			strings.HasPrefix(entry, "GIT_TRACE")
 	})
 	env = append(env, configEnv(workspaceConfigOverrides(b.remote(), b.Repo))...)
 	if name, email, ok := gitidentity.AgentIdentity(strings.TrimSpace(b.AgentName)); ok {
