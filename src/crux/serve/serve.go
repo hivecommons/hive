@@ -41,8 +41,6 @@ const (
 	// DefaultPollInterval is how often followed logs and the state watcher
 	// re-read the runtime.
 	DefaultPollInterval = time.Second
-	// followWindow is how many ring-buffer lines each follow poll asks for.
-	followWindow = 200
 	// maxRequestBody bounds a JSON request body; a definition is a few KB.
 	maxRequestBody = 1 << 20
 	// subscriberBuffer is how many events a slow subscriber can lag before
