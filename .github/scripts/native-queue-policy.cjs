@@ -22,6 +22,8 @@ const SHA = /^[a-f0-9]{40}$/;
 const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.*)?)$/i;
 const MAX_QUEUE_PAGES = 10;
 
+const closedNoop = (pr) => `PR #${pr.number} is closed; nothing to evaluate`;
+
 class PendingEvidence extends Error {}
 
 function membersForGroup(entries, group) {
@@ -173,11 +175,11 @@ async function evaluate({ github, context }) {
     const event = context.payload.pull_request;
     const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
     // Post-merge label/comment edits re-fire this event; a closed PR has nothing to gate.
-    if (pr.state === 'closed') return `PR #${pr.number} is closed; nothing to evaluate`;
+    if (pr.state === 'closed') return closedNoop(pr);
     assertEligible(pr, event.head.sha, event.base.ref);
     await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS);
     const { data: current } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
-    if (current.state === 'closed') return `PR #${current.number} is closed; nothing to evaluate`;
+    if (current.state === 'closed') return closedNoop(current);
     assertEligible(current, event.head.sha, event.base.ref);
     return `PR #${pr.number}: five existing policy providers succeeded on ${pr.head.sha}`;
   }
@@ -219,5 +221,5 @@ async function evaluate({ github, context }) {
 
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
-  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, evaluate,
+  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
 };
