@@ -34,6 +34,16 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "pending: head pushed 1m0s ago (< min_head_age)",
 		},
 		{
+			name:   "head time ahead of host clock is skew, not a fresh push",
+			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
+			opts: CommitCIOptions{
+				MinHeadAge:   3 * time.Minute,
+				HeadPushedAt: now.Add(time.Hour),
+				Now:          func() time.Time { return now },
+			},
+			wantGreen: true,
+		},
+		{
 			name:   "expected name missing no longer blocks unknown required set",
 			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
 			opts: CommitCIOptions{

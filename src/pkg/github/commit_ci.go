@@ -650,11 +650,13 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			now = time.Now
 		}
 		age := now().Sub(opts.HeadPushedAt)
-		if age < 0 {
-			age = 0
-		}
+		// A head time ahead of the host clock is skew between GitHub's
+		// server-generated timestamps and this host (#16143), not a fresh
+		// push: min_head_age is not evaluable, and every check above has
+		// already been judged on the exact head SHA.
+		skewed := age < 0
 		configRequiredAllGreen := opts.RequiredKnownFromConfig && len(required) > 0 && len(requiredSuccess) == len(required) && len(st.MissingRequired) == 0
-		if age < opts.MinHeadAge && !configRequiredAllGreen {
+		if !skewed && age < opts.MinHeadAge && !configRequiredAllGreen {
 			block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
 		}
 	}
