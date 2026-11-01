@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -493,5 +494,58 @@ func TestKubectlUnreachableHiveIsNotReaped(t *testing.T) {
 	srv.mu.RUnlock()
 	if stillOnline {
 		t.Error("expected the hive to be marked offline (but retained), not left online")
+	}
+}
+
+// TestDeleteHiveInvalidatesPublicActivityCache pins that handleDeleteHive
+// invalidates the public activity cache so a deleted public hive's rows do not
+// linger in the anonymous /api/hub/activity/public body until the TTL expires.
+// Before the fix, deleting a public hive left the cache stale, showing deleted
+// hive rows for up to publicActivityCacheTTL (2 seconds).
+func TestDeleteHiveInvalidatesPublicActivityCache(t *testing.T) {
+	cleanup := helperSetupAuthUser(t, "ghp_cache_inv", "cache-inv-owner")
+	defer cleanup()
+	cleanup2 := helperSetupTempDirs(t)
+	defer cleanup2()
+
+	srv := newActivityHub()
+
+	const hiveID = "hive-with-activity"
+	if err := saveSaaSHive(&SaaSHive{
+		ID:        hiveID,
+		Owner:     "cache-inv-owner",
+		ClusterID: defaultClusterID,
+		IsPublic:  true,
+	}); err != nil {
+		t.Fatalf("seed hive: %v", err)
+	}
+	srv.mu.Lock()
+	srv.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: "cache-inv-owner", Online: true, IsPublic: true}}
+	srv.mu.Unlock()
+
+	// Post activity and verify it appears in the public cache.
+	postActivityHeartbeat(t, srv, hiveID, activityDigest("o/a", 1))
+	before := getPublicActivity(t, srv, "", "").Body.String()
+	if !strings.Contains(before, hiveID) {
+		t.Fatalf("public hive missing from activity before delete: %s", before)
+	}
+
+	// Delete the hive via the handler.
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /api/saas/hives/{id}", srv.handleDeleteHive)
+	req := httptest.NewRequest("DELETE", "/api/saas/hives/"+hiveID, nil)
+	req.Header.Set("Authorization", "******")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete failed: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// Verify the cache was invalidated: the deleted hive should not appear in the
+	// public activity anymore (rather than lingering until TTL expiry).
+	after := getPublicActivity(t, srv, "", "").Body.String()
+	if strings.Contains(after, hiveID) {
+		t.Fatalf("deleted hive still shows in public activity after delete (cache not invalidated): %s", after)
 	}
 }

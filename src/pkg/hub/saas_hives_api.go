@@ -1745,6 +1745,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		// leave a status:"available" husk that resurrects in the listing.
 		s.removeRegistryEntry(id, username)
 		removeHiveRecord(id, s.logger)
+		s.publicActivity.invalidate()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 		return
@@ -1788,6 +1789,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 	// handler. So purging the record here cannot break placeholder recycling.
 	removeHiveRecord(id, s.logger)
 	s.removeRegistryEntry(id, username)
+	s.publicActivity.invalidate()
 	s.upgradeHistory.forget(id)
 
 	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username,
