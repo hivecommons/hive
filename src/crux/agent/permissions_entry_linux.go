@@ -8,17 +8,14 @@ import (
 	"syscall"
 )
 
-// entryOpenPath is O_PATH, which the syscall package does not export. An
-// O_PATH descriptor pins the entry without needing read permission, so the
-// watcher can still repair entries whose owner read bits are missing — the
-// very modes it exists to fix. The descriptor cannot be used with fchmod or
-// fchown, so changes go through its /proc/self/fd link instead.
-const entryOpenPath = 0x200000
-
 // openEntry pins path with an O_PATH descriptor that refuses to follow a
-// symlink (CWE-59 / CWE-367).
+// symlink (CWE-59 / CWE-367). An O_PATH descriptor pins the entry without
+// needing read permission, so the watcher can still repair entries whose
+// owner read bits are missing — the very modes it exists to fix. The
+// descriptor cannot be used with fchmod or fchown, so changes go through its
+// /proc/self/fd link instead.
 func openEntry(path string) (*os.File, error) {
-	return os.OpenFile(path, entryOpenPath|syscall.O_NOFOLLOW, 0)
+	return os.OpenFile(path, syscall.O_PATH|syscall.O_NOFOLLOW, 0)
 }
 
 func entryChmod(f *os.File, mode os.FileMode) error {
