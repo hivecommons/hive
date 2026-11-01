@@ -386,7 +386,7 @@
         ['open_to_merge_h', 'Open → merge', 'Hours from the issue opening on GitHub to the fixing PR merging.'],
       ];
       return `<div class="config-field mb-7">
-          <label>Delivery SLA targets (hours) ${settingHelpMark('operator-reference', 'delivery-sla', 'Delivery SLA targets', `Per-span budgets the Throughput section's Delivery SLA tiles and sparklines are coloured against: green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. 0 restores the default (${defaults.start_to_pr_h} / ${defaults.pr_to_merge_h} / ${defaults.open_to_merge_h} h).`)}</label>
+          <label>Delivery SLA targets (hours) ${settingHelpMark('operator-reference/sweeps-and-operations', 'delivery-sla', 'Delivery SLA targets', `Per-span budgets the Throughput section's Delivery SLA tiles and sparklines are coloured against: green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. 0 restores the default (${defaults.start_to_pr_h} / ${defaults.pr_to_merge_h} / ${defaults.open_to_merge_h} h).`)}</label>
           <div class="config-field-row">${fields.map(([key, label, tip]) => {
             const v = dirty[key] !== undefined ? dirty[key] : (eff[key] !== undefined ? eff[key] : defaults[key]);
             return `<div class="config-field" data-setting-key="sla.targets.${esc(key)}"><label for="cfg-sla-${esc(key)}" title="${esc(tip)}">${esc(label)}</label><input type="number" min="0" max="8760" step="0.5" id="cfg-sla-${esc(key)}" value="${esc(String(v))}" data-input-action="markDirty" data-arg0="sla" data-arg1="${esc(key)}" data-arg-types="s,s,N" data-setting-path="sla.targets.${esc(key)}" aria-label="${esc(label)} target in hours"></div>`;
@@ -1131,15 +1131,15 @@
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
             <div class="config-toggle-switch ${ldApproval.trustOrgMembers !== false ? 'on' : ''} ${ldLocked ? 'disabled' : ''}" data-action="${ldLocked ? '' : 'toggleLabelDrivenTrustOrgMembers'}" data-arg-types="t" title="Prow's own rule: public members of the repo's org may apply the approval label. Off: only triage/write/maintain/admin collaborators and trusted bots."></div>
-            <span class="config-toggle-label">Label-driven repos: trust public org members to apply approval labels ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trust org members', 'When on (default), a public member of the repository owner org who applies the approval label is trusted, matching Prow. Collaborators with the triage role or higher are always trusted.')}</span>
+            <span class="config-toggle-label">Label-driven repos: trust public org members to apply approval labels ${settingHelpMark('operator-reference/README', 'label-driven-approval', 'Trust org members', 'When on (default), a public member of the repository owner org who applies the approval label is trusted, matching Prow. Collaborators with the triage role or higher are always trusted.')}</span>
           </div>
           <div class="config-field-row">
             <div class="config-field">
-              <label>Default approval labels ${settingHelpMark('operator-reference', 'label-driven-approval', 'Default approval labels', 'Comma-separated. Applies to every label-driven repo without its own list. Empty restores triage/accepted.')}</label>
+              <label>Default approval labels ${settingHelpMark('operator-reference/README', 'label-driven-approval', 'Default approval labels', 'Comma-separated. Applies to every label-driven repo without its own list. Empty restores triage/accepted.')}</label>
               <input type="text" id="cfg-label-driven-approval-labels" ${ldLocked ? 'disabled' : ''} value="${esc(ldDefaultLabels.join(', '))}" placeholder="triage/accepted" data-change-action="setLabelDrivenApprovalDefault" data-arg-types="v">
             </div>
             <div class="config-field">
-              <label>Trusted bots ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trusted bots', 'Comma-separated bot logins (for example kubestellar-prow[bot]) whose label additions count as a trusted triager. Empty restores the built-in list.')}</label>
+              <label>Trusted bots ${settingHelpMark('operator-reference/README', 'label-driven-approval', 'Trusted bots', 'Comma-separated bot logins (for example kubestellar-prow[bot]) whose label additions count as a trusted triager. Empty restores the built-in list.')}</label>
               <input type="text" id="cfg-label-driven-trusted-bots" ${ldLocked ? 'disabled' : ''} value="${esc((ldApproval.trustedBots || []).join(', '))}" placeholder="kubestellar-prow[bot]" data-change-action="setLabelDrivenTrustedBots" data-arg-types="v">
             </div>
           </div>
