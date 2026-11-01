@@ -337,17 +337,8 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 		return b.fail(res, err)
 	}
 
-	files, err := b.changedFiles(ctx)
-	if err != nil {
+	if err := b.guardChangedFiles(ctx, &res); err != nil {
 		return b.fail(res, err)
-	}
-	res.ChangedFiles = files
-	if len(files) == 0 {
-		return b.fail(res, errors.New("pushbroker: no committed changes to push"))
-	}
-	if rejected := ProtectedPathViolations(files, b.protectedPaths()); len(rejected) > 0 {
-		res.ProtectedReject = rejected
-		return b.fail(res, fmt.Errorf("pushbroker: protected paths changed: %s", strings.Join(rejected, ", ")))
 	}
 	// The coding CLI running inside the sandbox writes files with its own
 	// tools, not hive's — hive has no writer of its own in this path, so it
@@ -357,7 +348,7 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// the final newline (kubestellar/hive#5116). Fixing it here, once, covers
 	// every backend and every target-repo language instead of teaching each
 	// coding CLI's own formatter to run first.
-	if amended, err := b.stripTrailingBlankLines(ctx, files); err != nil {
+	if amended, err := b.stripTrailingBlankLines(ctx, res.ChangedFiles); err != nil {
 		return b.fail(res, fmt.Errorf("normalising trailing newlines: %w", err))
 	} else if amended {
 		commit, err = b.git(ctx, "rev-parse", "HEAD")
@@ -368,13 +359,9 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 		if err := b.rejectEmptyOutgoingCommits(ctx, res.Commit); err != nil {
 			return b.fail(res, err)
 		}
-		files, err = b.changedFiles(ctx)
-		if err != nil {
+		// The amend rewrote HEAD, so judge the commit that actually leaves.
+		if err := b.guardChangedFiles(ctx, &res); err != nil {
 			return b.fail(res, err)
-		}
-		res.ChangedFiles = files
-		if len(files) == 0 {
-			return b.fail(res, errors.New("pushbroker: no committed changes to push"))
 		}
 	}
 	diff, err := b.outgoingDiff(ctx)
@@ -710,7 +697,9 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (b
 	if _, err := b.git(ctx, addArgs...); err != nil {
 		return false, err
 	}
-	if _, err := b.git(ctx, "commit", "--amend", "--no-edit"); err != nil {
+	// --only keeps the agent's staged-but-uncommitted paths out of the amend.
+	amendArgs := append([]string{"commit", "--amend", "--no-edit", "--only", "--"}, touched...)
+	if _, err := b.git(ctx, amendArgs...); err != nil {
 		if isEmptyAmendError(err) {
 			return false, errors.New("pushbroker: refusing to push a commit made empty by broker normalisation; retrigger CI with gh run rerun --failed or workflow_dispatch instead of pushing to the PR branch")
 		}
@@ -828,12 +817,6 @@ func (b *Broker) remote() string {
 	return DefaultRemote
 }
 func (b *Broker) remoteRef() string { return "refs/remotes/" + b.remote() + "/" + b.Branch }
-func (b *Broker) protectedPaths() []string {
-	if len(b.ProtectedPaths) > 0 {
-		return b.ProtectedPaths
-	}
-	return DefaultProtectedPaths
-}
 func (b *Broker) now() time.Time {
 	if b.Now != nil {
 		return b.Now()
@@ -856,29 +839,6 @@ func PushEnv(env []string) []string {
 		}
 	}
 	return out
-}
-
-func ProtectedPathViolations(files, protected []string) []string {
-	var rejected []string
-	for _, file := range files {
-		clean := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(file)), "./")
-		for _, guard := range protected {
-			g := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(guard)), "./")
-			if strings.HasSuffix(guard, "/") || strings.HasSuffix(g, "/") {
-				g = strings.TrimSuffix(g, "/") + "/"
-				if strings.HasPrefix(clean, g) {
-					rejected = append(rejected, clean)
-					break
-				}
-				continue
-			}
-			if clean == g || strings.HasPrefix(clean, strings.TrimSuffix(g, "/")+"/") && strings.HasSuffix(guard, "/") {
-				rejected = append(rejected, clean)
-				break
-			}
-		}
-	}
-	return rejected
 }
 
 func splitLines(out []byte) []string {
