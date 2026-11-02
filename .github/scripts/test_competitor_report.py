@@ -87,6 +87,15 @@ class GroundingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "blanket GitHub-only"):
             self.validate()
 
+    def test_long_go_excerpts_keep_engine_and_enumeration_anchors(self):
+        for path, anchor in (
+                ("src/crux/config/agent_runtime.go", "var CLIBackends = []string{\"copilot\"}"),
+                ("src/cmd/hive/main_eval_cycle.go", "ghClient.EnumerateActionable(enumCtx)")):
+            with self.subTest(path=path):
+                self.bundle["files"][path] = "\n".join(
+                    [f"// GitHub context {index}" for index in range(500)] + [anchor])
+                self.assertIn(f"501: {anchor}", report.readable(self.bundle))
+
     def test_default_branch_and_dispatched_source_revision_are_distinct(self):
         self.bundle["sha"] = "1479fd23fe09017b042b9d84f311daccfdd9b57b"
         self.ledger["sha"] = self.bundle["sha"]
@@ -254,6 +263,16 @@ class GroundingTests(unittest.TestCase):
         payload = self.payload()
         payload["items"][1]["message"] += " Unsupported extra claim."
         with self.assertRaisesRegex(ValueError, "reports differ"):
+            self.validate(payload)
+
+    def test_collection_errors_and_extra_output_handlers_cannot_bypass_gate(self):
+        payload = self.payload()
+        payload["errors"] = ["A requested output was rejected"]
+        with self.assertRaisesRegex(ValueError, "partial publication"):
+            self.validate(payload)
+        payload = self.payload()
+        payload["items"].append({"type": "report_incomplete", "body": "Create unvalidated work"})
+        with self.assertRaisesRegex(ValueError, "Unexpected output type"):
             self.validate(payload)
 
     def test_preparation_reads_git_revision_not_default_branch_tip(self):

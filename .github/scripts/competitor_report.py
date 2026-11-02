@@ -26,6 +26,9 @@ MAX_SEARCH_RESULTS = 20
 MAX_CLAIMS = 50
 MAX_RECOMMENDATIONS = 5
 MAX_QUOTE_LINES = 80
+MAX_EXCERPT_LINES = 240
+EXCERPT_BEFORE = 3
+EXCERPT_AFTER = 12
 LEDGER_START = "**Report evidence ledger (mechanical provenance)**\n```json\n"
 LEDGER_END = "\n```"
 SOURCE_PATHS = (
@@ -146,13 +149,20 @@ def readable(bundle):
         selected = set(range(len(lines)))
         if path.endswith(".go"):
             selected = set()
+            priority = set()
+            critical = re.compile(r"CLIBackends|EnumerateActionable|^type .*interface")
             anchors = re.compile(
                 r"CLIBackends|EnumerateActionable|^type .*interface|^func |"
                 r"forge\.|[Ff]allback|GitHub|GitLab|Forgejo")
             for index, line in enumerate(lines):
                 if anchors.search(line):
-                    selected.update(range(max(0, index - 3), min(len(lines), index + 12)))
-            selected = set(sorted(selected)[:240])
+                    context = range(max(0, index - EXCERPT_BEFORE),
+                                    min(len(lines), index + EXCERPT_AFTER))
+                    selected.update(context)
+                    if critical.search(line):
+                        priority.update(context)
+            selected = set(sorted(priority)[:MAX_EXCERPT_LINES]) | set(
+                sorted(selected - priority)[:max(0, MAX_EXCERPT_LINES - len(priority))])
         sections.extend([
             f"\n## {path}",
             f"https://github.com/hivecommons/hive/blob/{bundle['sha']}/{path}",
@@ -197,7 +207,11 @@ def check_source_url(url, bundle):
 
 
 def validate(payload, bundle, fetch=api, open_issues=False, today=None):
+    require(not payload.get("errors") and not payload.get("collectorFailureCause"),
+            "Agent output collection failed; refuse partial publication")
     items = payload.get("items", [])
+    require(all(item.get("type") in ("add_comment", "create_issue", "post_to_discord")
+                for item in items), "Unexpected output type; refuse unvalidated publication")
     comments = [item for item in items if item.get("type") == "add_comment"]
     discord = [item for item in items if item.get("type") == "post_to_discord"]
     require(len(comments) == 1 and len(discord) == 1,
