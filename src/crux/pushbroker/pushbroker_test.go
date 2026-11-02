@@ -1248,6 +1248,30 @@ func TestBrokerSkipsUnmergedIndexEntriesOfTouchedFile(t *testing.T) {
 	}
 }
 
+// A staged deletion (`git rm --cached`) of a touched path has no index entry
+// for stagedEntries to snapshot, so `git add` would silently re-track it; the
+// broker has to put the deletion back after the amend.
+func TestBrokerRestoresStagedDeletionOfTouchedFile(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	runGit(t, dir, "rm", "--cached", "--quiet", "main.go")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	want := "package main\n\nfunc main() {}\n"
+	if got := runGitOutput(t, dir, "show", "HEAD:main.go"); got != want {
+		t.Fatalf("amended blob = %q, want %q", got, want)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, dir, "ls-files", "-s", "--", "main.go")); got != "" {
+		t.Fatalf("index entry = %q, want main.go still staged for deletion", got)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, dir, "diff", "--cached", "--name-only")); got != "main.go" {
+		t.Fatalf("staged paths = %q, want main.go listed as a staged deletion", got)
+	}
+}
+
 // Each git call stagedEntries makes, and the restore of the snapshot it
 // took, must fail attributably: the broker may not guess at the index state
 // it is about to overwrite, nor report success when it could not put it back.
