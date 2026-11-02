@@ -41,6 +41,35 @@ func TestEvidenceCardsEmptySummary(t *testing.T) {
 	}
 }
 
+func TestEvidenceBoundaryObservations(t *testing.T) {
+	now := time.Date(2026, 11, 2, 14, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		activity EvidenceWriteActivity
+		hits     int
+		status   string
+	}{
+		{"high refusal rate", EvidenceWriteActivity{TotalWrites: 652, Blocked: 77}, 0, "Enforcement demonstrated"},
+		{"one attempt", EvidenceWriteActivity{TotalWrites: 1, Blocked: 1}, 0, "Enforcement demonstrated"},
+		{"zero blocks", EvidenceWriteActivity{TotalWrites: 1000}, 0, "Enforcement not observed"},
+		{"Sentinel only", EvidenceWriteActivity{}, 4, "Enforcement not observed"},
+		{"missing direct counters", EvidenceWriteActivity{TotalWrites: 5, Mediated: EvidenceMediatedWrites{N: 5}}, 0, "Enforcement not observed"},
+		{"partial direct coverage", EvidenceWriteActivity{TotalWrites: 10, Blocked: 1, Direct: EvidenceDirectWrites{Recorded: true, PartialCoverage: true, Since: "2026-11-02", Attempted: 10, Blocked: 1}}, 2, "Enforcement demonstrated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := EvidenceSummary{
+				WriteActivity:   tc.activity,
+				SentinelPerWeek: EvidenceSentinelSeries{Weeks: []EvidenceSentinelWeek{{Hits: tc.hits}}},
+			}
+			card := evidenceCards(&resp, evidenceWindow{Hours: 24}, now)[evidenceCardBoundary]
+			want := evidence.BoundaryStats{TotalWrites: tc.activity.TotalWrites, Blocked: tc.activity.Blocked, SentinelHits: tc.hits}
+			if card.Grade != evidence.GradeBoundary(want) || card.PlainSummary != evidence.SummarizeBoundary(want) || !strings.HasPrefix(card.PlainSummary, tc.status) {
+				t.Fatalf("unexpected boundary card: %+v", card)
+			}
+		})
+	}
+}
+
 // TestEvidenceCardsFromSummaryFields pins the mapping from summary fields to
 // the grade inputs: reverts, calibration buckets summed across perspectives,
 // the rework-based accuracy ledger, write activity, the CI gate, work balance
@@ -87,7 +116,7 @@ func TestEvidenceCardsFromSummaryFields(t *testing.T) {
 		evidenceCardCalibration:     {"A", "Not enough data to compare slopes: each series needs two bins with at least five known outcomes."},
 		evidenceCardAccuracy:        {"A", "Reviewers wrongly approved 3% and wrongly blocked 0% of 40 PRs with a known result."},
 		evidenceCardMaintainability: {"A", "Code complexity across 1 repo: median flat, 12 complex functions (was 14)."},
-		evidenceCardBoundary:        {"A+", "4210 agent writes to GitHub; 3 were refused by the proxy (0.07%). 1 sentinel hit."},
+		evidenceCardBoundary:        {evidence.NoGradeLetter, "Enforcement demonstrated — 3 prohibited writes blocked; 4210 observed writes (0.07%). Sentinel detections: 1 (informational)."},
 		evidenceCardCIGate:          {"A+", "All 58 merged PRs with a known state had green required checks. Agent PRs needed a median 1 CI pass."},
 		evidenceCardWorkBalance:     {"A-", "120 issues opened, 130 closed. 90 PRs opened, 80 merged. The issue queue is shrinking."},
 		evidenceCardShadow:          {"A", "The shadow gates would have held 4 of 60 PRs; nothing was actually blocked."},
@@ -100,7 +129,7 @@ func TestEvidenceCardsFromSummaryFields(t *testing.T) {
 		if c.PlainSummary != w.summary {
 			t.Errorf("%s: summary\n got %q\nwant %q", key, c.PlainSummary, w.summary)
 		}
-		if !c.Grade.EnoughData || c.Grade.Band != evidence.BandOf(w.letter) {
+		if c.Grade.EnoughData != (w.letter != evidence.NoGradeLetter) || c.Grade.Band != evidence.BandOf(w.letter) {
 			t.Errorf("%s: grade %+v", key, c.Grade)
 		}
 	}
