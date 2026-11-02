@@ -19,7 +19,7 @@ func mergeReconcileServer(t *testing.T, mergeStatuses []int, merged bool, puts *
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /repos/o/r/pulls/7", func(w http.ResponseWriter, _ *http.Request) {
-		pr := map[string]any{"number": 7, "merged": merged, "head": map[string]any{"ref": "feature/x"}}
+		pr := map[string]any{"number": 7, "merged": merged, "head": map[string]any{"ref": "feature/x", "sha": "headsha"}, "base": map[string]any{"ref": "main"}}
 		if merged {
 			pr["merge_commit_sha"] = "reconciledsha"
 		}

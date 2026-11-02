@@ -122,13 +122,12 @@
       // disagree: the pill is the default view's row count (owner: rows,
       // not items — a covering PR shares its issue's row); needs-attention
       // is the warn-coloured header suffix and the pill's tooltip, counted
-      // over every item regardless of filter.
+      // over every item regardless of filter. The same count lands on the
+      // monitor header's own pill, the one chrome-less views can see.
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
       const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll, stageTrackerFoldedCount(d.items, ctx));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
-      const badge = document.getElementById('activity-monitor-sidebar-badge');
-      if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
-      navCountDelta(badge, counts.badge, counts.badgeTitle, !!data || countRefresh);
+      navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));

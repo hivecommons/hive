@@ -447,7 +447,7 @@
     .ham-plan-details > summary:hover { color: var(--text); }
     .ham-plan-details > :not(summary) { margin: var(--sp-3) 0 0; }
     .ham-plan-details .ham-plan-label { margin-top: var(--sp-4); }
-    .ham-plan-finding { color: var(--status-error); }
+    .ham-plan-finding { color: var(--status-error); white-space: pre-line; }
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
     /* The preview opens as a skeleton while the plan is gathered

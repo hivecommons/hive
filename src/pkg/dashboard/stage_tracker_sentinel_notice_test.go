@@ -39,6 +39,8 @@ func TestStageTrackerSentinelNoticePreservesActualReviewerDecision(t *testing.T)
 	}
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+stageTrackerRowsFixtureJS+
+		jsFunc(t, html, "stageTrackerSentinelPathLines")+
+		jsFunc(t, html, "stageTrackerSentinelTipWithPaths")+
 		jsFunc(t, html, "stageTrackerSentinelPreface")+
 		"\nconst notice = "+string(payload)+";\n"+`
 assert.strictEqual(stageTrackerSentinelInLane(notice), false);

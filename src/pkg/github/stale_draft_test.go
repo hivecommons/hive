@@ -124,3 +124,76 @@ func TestFetchPRs_HumanStaleDraftNotSurfaced(t *testing.T) {
 		t.Errorf("staleDrafts = %v, want empty for a human-authored draft", staleDrafts)
 	}
 }
+
+// TestFetchPRs_StaleAppDraftWithWIPMirrorLabelIsSurfaced: prow's wip plugin
+// adds do-not-merge/work-in-progress to every draft. Because that prefix is in
+// PermanentExemptLabels and the exempt check ran before the draft check, every
+// hive-authored draft was filtered as "Exempt label" and never reached the
+// stale-draft rule (#16246). The WIP mirror alone must not shield a draft.
+func TestFetchPRs_StaleAppDraftWithWIPMirrorLabelIsSurfaced(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widget/pulls", prsHandler(t, []wirePR{
+		{
+			Number:    43,
+			Title:     "fix: deferred, stacked on another PR",
+			User:      wireUser{Login: "acme-bot[bot]"},
+			Labels:    []wireLabel{{Name: "do-not-merge/work-in-progress"}, {Name: "size/L"}},
+			Draft:     true,
+			CreatedAt: hoursAgo(72),
+			HTMLURL:   "https://github.com/acme/widget/pull/43",
+		},
+	}))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "acme", []string{"widget"})
+	c.appBotLogin = "acme-bot[bot]"
+
+	actionable, _, _, staleDrafts, _, _, breakdown, err := c.fetchPRs(t.Context(), "widget", nil)
+	if err != nil {
+		t.Fatalf("fetchPRs: %v", err)
+	}
+	if len(actionable) != 0 {
+		t.Errorf("actionable = %v, want empty", actionable)
+	}
+	if len(staleDrafts) != 1 || staleDrafts[0].Number != 43 {
+		t.Fatalf("staleDrafts = %+v, want exactly PR 43", staleDrafts)
+	}
+	if breakdown.Filtered != 0 || breakdown.Draft != 1 {
+		t.Errorf("breakdown filtered=%d draft=%d, want 0/1", breakdown.Filtered, breakdown.Draft)
+	}
+}
+
+// TestFetchPRs_StaleAppDraftWithOtherExemptLabelStaysExempt: a deliberate
+// do-not-merge/* label other than the WIP mirror (hold is handled earlier as a
+// held draft) still exempts a draft from the stale-draft nag.
+func TestFetchPRs_StaleAppDraftWithOtherExemptLabelStaysExempt(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widget/pulls", prsHandler(t, []wirePR{
+		{
+			Number:    44,
+			Title:     "fix: blocked on purpose",
+			User:      wireUser{Login: "acme-bot[bot]"},
+			Labels:    []wireLabel{{Name: "do-not-merge/work-in-progress"}, {Name: "do-not-merge/blocked-paths"}},
+			Draft:     true,
+			CreatedAt: hoursAgo(72),
+			HTMLURL:   "https://github.com/acme/widget/pull/44",
+		},
+	}))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "acme", []string{"widget"})
+	c.appBotLogin = "acme-bot[bot]"
+
+	_, _, _, staleDrafts, _, _, breakdown, err := c.fetchPRs(t.Context(), "widget", nil)
+	if err != nil {
+		t.Fatalf("fetchPRs: %v", err)
+	}
+	if len(staleDrafts) != 0 {
+		t.Errorf("staleDrafts = %+v, want empty — a non-WIP do-not-merge label must still exempt", staleDrafts)
+	}
+	if breakdown.Filtered != 1 {
+		t.Errorf("breakdown.Filtered = %d, want 1", breakdown.Filtered)
+	}
+}
