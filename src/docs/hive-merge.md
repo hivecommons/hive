@@ -154,6 +154,29 @@ sweep lanes whatever the intent tier. If the changed-file list for a configured
 repo cannot be fetched completely, the merge is withheld (fail closed). See
 [operator-reference.md](operator-reference.md).
 
+**Pin-only exception rollout (#16242).** The proposed opt-in key is
+`auto_merge.human_merge_pin_only`; see the
+[operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
+for its configuration and deployment prerequisites. The schema/classifier
+(#16262), relay admission (#16265), and sweep admission (#16266) are separate
+changes: this attribution change alone does **not** enable the exception.
+New path-hold comments retain `<!-- hive-human-merge-path -->` and append
+`<!-- hive-human-merge-path-head: <40-character SHA> -->` only when Hive
+observes that exact head without a pre-existing hold. Legacy comments and
+pre-existing holds are not retroactively attributed.
+
+The shared release API requires a later, qualifying exact head, the configured
+App identity, an unedited App marker, and complete label-event history proving
+one App-applied path hold immediately before the notice. Human-applied or
+re-added holds, ambiguous history, and timeline errors keep the hold. Admission
+callers must supply their live writeback gate (a missing gate or denied
+hold-gate notice leaves the hold intact), wire that API after pin-only
+qualification, and re-read labels;
+that wiring remains part of the rollout, not an authorization to clear labels
+manually. Required checks and their producer bindings, strict freshness,
+current reviews and substantive objections, other holds, and configured soak
+remain mandatory. Neither a pin-looking diff nor this API authorizes a merge.
+
 **Contributor PRs are held to the contributor-lane policy.** A merge request
 for a PR whose author is not the hive App, a configured trusted bot, or a
 trusted-author role is evaluated against the same `auto_merge.contributor_lane`
