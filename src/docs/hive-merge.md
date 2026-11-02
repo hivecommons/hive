@@ -160,19 +160,10 @@ repo cannot be fetched completely, the merge is withheld (fail closed). See
 classifier for #16242 / #16262. **It does not currently enable an exception:**
 relay, sweep, `/approve` and native-queue gates still require the existing
 human-merge path policy. Do not remove `human_merge_paths` or manually clear a
-hold to simulate this feature.
-
-```yaml
-auto_merge:
-  human_merge_paths:
-    owner/repo: [".github/workflows/*.yml", "Containerfile"]
-  human_merge_pin_only:
-    owner/repo:
-      enabled: true
-      paths: [".github/workflows/*.yml", "Containerfile"]
-      kinds: [action-sha, image-digest, version-pin]
-      trusted_authors: [maintainer-login]
-```
+hold to simulate this feature. The YAML example, per-field contract and seed
+reload instructions live in the
+[operator reference](operator-reference/README.md#human-merge-pin-only-rollout);
+this section covers only the grammar and restrictions of the classifier.
 
 Repository keys are case-insensitive; duplicate normalized keys are rejected.
 Absent/disabled entries have no effect. Enabled entries require nonempty paths,
@@ -195,16 +186,15 @@ required checks and producer bindings, freshness, current reviews, substantive
 objections, unrelated holds and configured soak must remain independent gates.
 
 Operators stage the key in the controller's configured `hive.yaml` seed, not in
-the image repository. The existing config-file watcher reloads the seed with the
-dashboard overlay via `LoadWithDashboardOverlay`; invalid configuration is not
-installed. Reloading this schema alone still does **not** enable admission. The
-integration PRs must wire live policy updates into every merge path.
+the image repository (reload behaviour is documented in the operator reference
+linked above). Reloading this schema alone still does **not** enable admission.
+The integration PRs must wire live policy updates into every merge path.
 
 There is **no minimum deployable version enabling this lane yet**. Utah rollout
 and current-head positive/negative deployment evidence remain tracked by
 projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authorized.
 
-**Pin-only exception rollout (#16242).** The proposed opt-in key is
+**Pin-only exception rollout (#16242).** The opt-in key is
 `auto_merge.human_merge_pin_only`; see the
 [operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
 for its configuration and deployment prerequisites. The schema/classifier

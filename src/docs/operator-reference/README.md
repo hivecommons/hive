@@ -505,7 +505,7 @@ supported version: the first deployed v5 release containing the schema/classifie
 digest/version and live positive/negative evidence in projectbluefin/utah#1082
 before enabling that rollout.
 
-The planned additive configuration (requires the schema change) is:
+The additive configuration (schema landed in #16262; not yet enforced) is:
 
 ```yaml
 auto_merge:
