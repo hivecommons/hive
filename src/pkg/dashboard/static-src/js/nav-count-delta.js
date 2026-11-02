@@ -47,8 +47,29 @@
       state.timer = setTimeout(state.clear, NAV_COUNT_CUE_MS);
     }
 
+    // One count, several pills. The tracker's item count is shown in the
+    // sidebar and again in the monitor's own header (hivecommons/hive#16243)
+    // so the chrome-less views — kiosk, pop-out, display, full screen —
+    // which hide the sidebar still show it. Every bound element receives
+    // the same text, tooltip, zero marker and delta cue from one call; a
+    // target that is not in the DOM is skipped, the others still update.
+    function navCountBind(ids, count, label, live = true) {
+      const known = Number.isSafeInteger(count) && count >= 0;
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (known) {
+          el.textContent = String(count);
+          el.title = label;
+          if (count) el.removeAttribute('data-zero'); else el.setAttribute('data-zero', '');
+        }
+        navCountDelta(el, count, label, live);
+      }
+    }
+    const STAGE_TRACKER_COUNT_BADGE_IDS = Object.freeze(['activity-monitor-sidebar-badge', 'activity-monitor-header-badge']);
+
     function stageTrackerSidebarCountsUnknown() {
-      for (const id of ['activity-monitor-sidebar-badge', 'activity-monitor-waiting-badge']) {
+      for (const id of STAGE_TRACKER_COUNT_BADGE_IDS.concat('activity-monitor-waiting-badge')) {
         navCountDelta(document.getElementById(id), null);
       }
     }
