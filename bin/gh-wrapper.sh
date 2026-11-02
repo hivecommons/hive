@@ -1647,6 +1647,53 @@ if [[ -n "$AGENT_NAME" ]]; then
     fi
   }
 
+  # _keep_pr_attribution keeps the `— hive: agent=… backend=… model=…` line on
+  # a body edit of the hive's OWN PR. The PR-request watcher appends that line
+  # when it opens the PR, and `gh pr edit --body` replaces the whole body, so
+  # an agent that rewrote its description a few seconds later deleted it
+  # (Danathar/arch-bootc#625, Danathar/atomic-image-builder#795). The line is
+  # the audit trail's "opened by the hive" record and the clanker test
+  # (pkg/github.HasAttributionTrailer); nothing put it back, and the repos'
+  # monthly Agent audit trail then failed on those PRs. The PR's current line
+  # is re-appended, the way ReconcilePRAttribution appends one: only when the
+  # new body carries no `— hive:` line of its own, and nothing when the
+  # current body has none. Callers run it after _settle_edit_body, so a file
+  # or stdin body is already a `--body <text>`, and only on a PR
+  # _pr_labels_csv said the hive owns.
+  _keep_pr_attribution() {
+    local i arg idx=-1 n=0 form="" val="" old trailer
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      arg="${args[$i]}"
+      case "$arg" in
+        --body|-b)
+          ((i + 1 < ${#args[@]})) || return 0
+          idx=$i; form=sep; val="${args[$((i + 1))]}"; n=$((n + 1)); i=$((i + 1)) ;;
+        --body=*) idx=$i; form=eq; val="${arg#--body=}"; n=$((n + 1)) ;;
+        -b?*)     idx=$i; form=short; val="${arg#-b}"; n=$((n + 1)) ;;
+        # An unreadable body file is left for gh to report.
+        --body-file|--body-file=*|-F|-F?*) return 0 ;;
+        -*) if gh_flag_takes_value "$arg"; then i=$((i + 1)); fi ;;
+      esac
+    done
+    ((n == 1)) || return 0
+    [[ "$val" == *"— hive:"* ]] && return 0
+    _extract_item
+    local view_args=(pr view)
+    [[ -n "$item_num" ]] && view_args+=("$item_num")
+    [[ -n "$item_repo" ]] && view_args+=(--repo "$item_repo")
+    old="$("$REAL_GH" "${view_args[@]}" --json body --jq '.body' 2>/dev/null)" || return 0
+    trailer="$(printf '%s\n' "$old" | tr -d '\r' | sed -n 's/^[[:space:]]*\(— hive: [^[:space:]].*\)$/\1/p' | tail -n 1)"
+    trailer="${trailer%"${trailer##*[![:space:]]}"}"
+    [[ -n "$trailer" ]] || return 0
+    val="${val%"${val##*[![:space:]]}"}"
+    val="${val}"$'\n\n'"${trailer}"
+    case "$form" in
+      sep)   args[idx + 1]="$val" ;;
+      eq)    args[idx]="--body=$val" ;;
+      short) args[idx]="-b$val" ;;
+    esac
+  }
+
   case "$subcmd/$action" in
     issue/create|pr/create)
       _inject_identity true
@@ -1824,6 +1871,7 @@ if [[ -n "$AGENT_NAME" ]]; then
         if [[ -z "$edit_labels" ]]; then
           exec "$REAL_GH" "${args[@]}"
         fi
+        _keep_pr_attribution
       fi
       _ensure_labels
       # Label injection is provenance metadata, not a security gate. gh applies

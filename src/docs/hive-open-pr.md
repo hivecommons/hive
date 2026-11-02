@@ -175,6 +175,14 @@ partial failure will not gain a second trailer. Do not write a `— hive:` line
 into your own body — the watcher will treat it as an existing trailer and skip
 its own.
 
+A later `gh pr edit <n> --body …` (or `--body-file`, or `-F -`) on a PR the hive
+opened keeps the trailer. gh replaces the whole body, so the `gh` wrapper
+re-appends the PR's current `— hive:` line to the new text when that text has
+none of its own. A PR another account opened is edited exactly as written, and
+a PR whose body has no trailer gets none. An edit made any other way, such as
+`gh api` against the pulls endpoint, bypasses the wrapper and can still drop
+the line.
+
 ### `requested_by` credits the human who asked
 
 Since [#7208](https://github.com/hivecommons/hive/issues/7208), the trailer
