@@ -346,6 +346,7 @@ type Client struct {
 	// prreviews_observed.go.
 	prReviewObservedHook atomic.Pointer[PRReviewObservedHook]
 	prTerminalReviews    prTerminalReviewCache
+	prTerminalEnrichment terminalEnrichmentState
 	prRepoPolicyGate     atomic.Pointer[PRRepoPolicyGate]
 	// agentStartHook is told when an agent's own relay request shows it
 	// working an issue (#10527). See agent_start_hook.go.

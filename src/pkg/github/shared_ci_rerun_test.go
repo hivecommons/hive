@@ -47,6 +47,7 @@ type sharedCIRerunFake struct {
 	posted       map[int][]string
 	commentLists map[int]int
 	forbidRerun  bool
+	forbidAfter  int
 }
 
 func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*sharedCIRerunPR) (*httptest.Server, *sharedCIRerunFake) {
@@ -135,7 +136,7 @@ func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*shar
 		case rerunRE.MatchString(r.URL.Path) && r.Method == http.MethodPost:
 			id, _ := strconv.ParseInt(rerunRE.FindStringSubmatch(r.URL.Path)[1], 10, 64)
 			f.reruns = append(f.reruns, id)
-			if f.forbidRerun {
+			if f.forbidRerun || (f.forbidAfter > 0 && len(f.reruns) > f.forbidAfter) {
 				w.WriteHeader(http.StatusForbidden)
 				_ = json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"})
 				return
@@ -317,5 +318,77 @@ func TestSweepSharedCIReruns_ForbiddenStopsAndIsRememberedPerRepo(t *testing.T) 
 	}
 	if len(res.Rerun) != 0 || len(posted[1]) != 0 || len(posted[2]) != 0 {
 		t.Fatalf("expected no rerun result or marker comment: result=%+v posted=%v", res, posted)
+	}
+	if block, ok := c.SharedCIRerunBlocked("org/repo", 1, "aaaaaaaaaa"); !ok || block.RunID == 0 {
+		t.Fatalf("permission refusal was not recorded: %+v %v", block, ok)
+	}
+	if _, ok := c.SharedCIRerunBlocked("org/repo", 1, "new-head"); ok {
+		t.Fatal("old-head refusal applied to a new head")
+	}
+	if _, err := c.SweepSharedCIReruns(context.Background(), SharedCIRerunOptions{Now: sharedCIRerunNow}); err != nil {
+		t.Fatal(err)
+	}
+	reruns, _, _ = fake.snap()
+	if len(reruns) != 1 {
+		t.Fatalf("cooldown allowed another POST: %v", reruns)
+	}
+
+	fake.mu.Lock()
+	fake.forbidRerun = false
+	fake.mu.Unlock()
+	c.sharedCIRerunMu.Lock()
+	c.sharedCIRerunForbidden["org/repo"] = time.Now().Add(-sharedCIRerunForbiddenTTL - time.Second)
+	c.sharedCIRerunMu.Unlock()
+	res, err = c.SweepSharedCIReruns(context.Background(), SharedCIRerunOptions{Now: sharedCIRerunNow})
+	if err != nil || len(res.Rerun) != 2 {
+		t.Fatalf("unchanged PRs did not recover after permission change: %+v %v", res, err)
+	}
+	if _, ok := c.SharedCIRerunBlocked("org/repo", 1, "aaaaaaaaaa"); ok {
+		t.Fatal("successful recovery retained permission block")
+	}
+}
+
+func TestSharedCIRerunManualRecoveryClearsBlockDuringCooldown(t *testing.T) {
+	now := sharedCIRerunNow()
+	pr := &sharedCIRerunPR{Number: 1, SHA: "aaa", Comments: []string{"<!-- hive-shared-ci-800 -->"}, Runs: []sharedCIRerunRun{failedRun(11, 1)}}
+	srv, fake := newSharedCIRerunFake(t, []sharedCIRerunIssue{{Number: 800, Title: "[shared-ci] incident", ClosedAt: now.Add(-time.Hour)}}, []*sharedCIRerunPR{pr})
+	fake.forbidRerun = true
+	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	opts := SharedCIRerunOptions{Now: sharedCIRerunNow}
+	if _, err := c.SweepSharedCIReruns(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	pr.Runs[0].Conclusion = "success"
+	fake.mu.Unlock()
+	opts.Now = func() time.Time { return now.Add(DefaultSharedCIRerunLookback + time.Hour) }
+	if _, err := c.SweepSharedCIReruns(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.SharedCIRerunBlocked("org/repo", 1, "aaa"); ok {
+		t.Fatal("manual recovery must clear the block without a PR edit or TTL expiry")
+	}
+	reruns, posted, _ := fake.snap()
+	if len(reruns) != 1 || len(posted[1]) != 0 {
+		t.Fatalf("manual recovery retried or stamped an automated success: %v %v", reruns, posted)
+	}
+}
+
+func TestSharedCIRerunPartialPermissionFailureDoesNotFinishIncident(t *testing.T) {
+	now := sharedCIRerunNow()
+	pr := &sharedCIRerunPR{Number: 1, SHA: "aaa", Comments: []string{"<!-- hive-shared-ci-800 -->"}, Runs: []sharedCIRerunRun{failedRun(11, 1), failedRun(12, 2)}}
+	srv, fake := newSharedCIRerunFake(t, []sharedCIRerunIssue{{Number: 800, Title: "[shared-ci] incident", ClosedAt: now.Add(-time.Hour)}}, []*sharedCIRerunPR{pr})
+	fake.forbidAfter = 1
+	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	res, err := c.SweepSharedCIReruns(context.Background(), SharedCIRerunOptions{Now: sharedCIRerunNow})
+	if err != nil || len(res.Rerun) != 1 || len(res.Rerun[0].RunIDs) != 1 {
+		t.Fatalf("partial recovery audit = %+v, %v", res, err)
+	}
+	_, posted, _ := fake.snap()
+	if len(posted[1]) != 0 {
+		t.Fatalf("partial recovery stamped incident complete: %v", posted)
+	}
+	if _, ok := c.SharedCIRerunBlocked("org/repo", 1, "aaa"); !ok {
+		t.Fatal("partial recovery hid outstanding permission block")
 	}
 }

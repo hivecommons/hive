@@ -260,6 +260,7 @@ func restampAggregate(prior Aggregate, pr PullRequest, ctx DeltaContext, now tim
 	agg.HeadSHA = pr.HeadSHA
 	agg.BodyDigest = pr.BodyDigest
 	agg.RecordedAt = now
+	agg.ReportReceipts = nil
 	note := fmt.Sprintf("re-stamped from %s: delta touches %d file(s), %d line(s), none previously flagged", shortSHA(ctx.PreviousHead), len(ctx.Files), ctx.ChangedLines)
 	if ctx.DiffKnown && len(ctx.Files) == 0 {
 		note = fmt.Sprintf("re-stamped from %s: identical tree", shortSHA(ctx.PreviousHead))
@@ -353,6 +354,8 @@ func RecordDeltaRestamps(path string, restamps []DeltaRestamp, now time.Time) (i
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	artifactMergeMu.Lock()
+	defer artifactMergeMu.Unlock()
 	target := path
 	if target == "" {
 		target = ReviewVerdictsPath
@@ -371,17 +374,27 @@ func RecordDeltaRestamps(path string, restamps []DeltaRestamp, now time.Time) (i
 		replaced := false
 		for i, item := range artifact.Items {
 			if reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest) == key {
+				if item.RecordedAt.After(agg.RecordedAt) {
+					replaced = true
+					break
+				}
 				artifact.Items[i] = agg
 				replaced = true
+				written++
 				break
 			}
 		}
 		if !replaced {
 			artifact.Items = append(artifact.Items, agg)
+			written++
 		}
-		written++
 	}
-	artifact.GeneratedAt = now
+	if written == 0 {
+		return 0, nil
+	}
+	if artifact.GeneratedAt.Before(now) {
+		artifact.GeneratedAt = now
+	}
 	if err := WriteArtifact(target, artifact); err != nil {
 		return 0, err
 	}

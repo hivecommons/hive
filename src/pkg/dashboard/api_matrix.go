@@ -81,6 +81,12 @@ type matrixLinesResponse struct {
 	Seq    uint64       `json:"seq"`
 	Source string       `json:"source"`
 	Lines  []matrixLine `json:"lines"`
+	// LastIngestAt is when the pass that feeds this source last finished
+	// (RFC 3339), or null before the first; NextIngestInS is the whole
+	// seconds until the next pass is due, 0 when unknown. Together they let
+	// the kiosk distinguish "nothing was pushed" from "nothing was ingested".
+	LastIngestAt  *time.Time `json:"last_ingest_at"`
+	NextIngestInS int        `json:"next_ingest_in_s"`
 }
 
 // handleMatrixLines serves GET /api/matrix/lines?since=<seq>&max=<n>
@@ -128,6 +134,10 @@ func (s *Server) handleMatrixLines(w http.ResponseWriter, r *http.Request) {
 		Seq:    latest,
 		Source: "pushed-lines",
 		Lines:  lines,
+	}
+	if last, nextS := src.ingestStatus(src.now()); !last.IsZero() {
+		resp.LastIngestAt = &last
+		resp.NextIngestInS = nextS
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
