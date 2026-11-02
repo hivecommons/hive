@@ -1,0 +1,1 @@
+- Refresh persisted triage acceptance into the work queue and activity monitor on first acceptance and idempotent retries, reporting handoff failures instead of showing an unconfirmed success.
