@@ -402,6 +402,7 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	client.SetPRReviewObservedHook(func(obs github.PRReviewObservation) {
 		recordObservedReview(b.dashSrv, obs)
 	})
+	client.StartPRTerminalEnrichment(b.ctx)
 	client.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 		b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
 		// Same typed hook feeds the lifecycle timeline: the watcher fires

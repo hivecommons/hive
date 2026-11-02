@@ -1,0 +1,1 @@
+- Keep historical terminal-PR accounting off current-work claim evaluation with cancellable bounded review batches, retained retries, and idempotent timeline persistence; preserve synchronous fail-closed claim safety and durable first observations.
