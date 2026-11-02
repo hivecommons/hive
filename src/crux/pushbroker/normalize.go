@@ -34,10 +34,11 @@ import (
 // working tree and, for a path the agent had a modified blob staged, the
 // index: `git add` of the normalised blob replaces the staged entry, so the
 // exact pre-operation stage-0 entry is put back with `git update-index
-// --cacheinfo`. Only that shape of staged state is restored: a staged
-// deletion (`git rm --cached`) has no index entry to snapshot and an
-// unmerged path has only conflict stages, so for both the normalised blob
-// is what `git add` leaves staged. A file still identical to HEAD is simply
+// --cacheinfo`. A path the agent had staged for deletion (`git rm --cached`)
+// has no index entry to snapshot, so it is recorded separately and removed
+// from the index again with `git rm --cached` afterwards. An unmerged path
+// has only conflict stages and is not restored: the normalised blob is what
+// `git add` leaves staged for it. A file still identical to HEAD is simply
 // left normalised, keeping the workspace clean after the amend.
 func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (amended bool, err error) {
 	if len(files) == 0 {
@@ -49,11 +50,17 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 	}
 	var touched []string
 	var edited []workingTreeSnapshot
-	var staged []string
+	var staged, deleted []string
 	defer func() {
 		for _, entry := range staged {
 			if _, uerr := b.git(ctx, "update-index", "--add", "--cacheinfo", entry); uerr != nil {
 				err = errors.Join(err, fmt.Errorf("restoring staged edit: %w", uerr))
+			}
+		}
+		if len(deleted) > 0 {
+			rmArgs := append([]string{"rm", "--cached", "--quiet", "--"}, deleted...)
+			if _, uerr := b.git(ctx, rmArgs...); uerr != nil {
+				err = errors.Join(err, fmt.Errorf("restoring staged deletion: %w", uerr))
 			}
 		}
 		for _, snap := range edited {
@@ -100,7 +107,7 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 	if len(touched) == 0 {
 		return false, nil
 	}
-	if staged, err = b.stagedEntries(ctx, touched); err != nil {
+	if staged, deleted, err = b.stagedEntries(ctx, touched); err != nil {
 		return false, err
 	}
 	addArgs := append([]string{"add", "--"}, touched...)
@@ -123,35 +130,45 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 
 // stagedEntries returns, as `--cacheinfo` arguments (mode,blob,path), the
 // stage-0 index entries of the files that have staged changes relative to
-// HEAD, so they can be restored exactly after `git add` overwrites them. A
-// staged deletion has no entry to return and an unmerged path contributes
-// only conflict stages, which are skipped — neither can be put back with
-// --cacheinfo, and `git add` leaves the normalised blob staged instead.
-func (b *Broker) stagedEntries(ctx context.Context, files []string) ([]string, error) {
+// HEAD, so they can be restored exactly after `git add` overwrites them. It
+// also returns the staged deletions: paths that differ from HEAD in the index
+// but have no index entry at all, which --cacheinfo cannot express and which
+// must instead be removed from the index again. An unmerged path contributes
+// only conflict stages, which are skipped, and `git add` leaves the
+// normalised blob staged for it.
+func (b *Broker) stagedEntries(ctx context.Context, files []string) (entries, deleted []string, err error) {
 	diffArgs := append([]string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--"}, files...)
 	out, err := b.git(ctx, diffArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("listing staged paths: %w", err)
+		return nil, nil, fmt.Errorf("listing staged paths: %w", err)
 	}
 	paths := splitNUL(out)
 	if len(paths) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	lsArgs := append([]string{"ls-files", "-s", "-z", "--"}, paths...)
 	out, err = b.git(ctx, lsArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("reading staged entries: %w", err)
+		return nil, nil, fmt.Errorf("reading staged entries: %w", err)
 	}
-	var entries []string
+	indexed := make(map[string]struct{})
 	for _, rec := range splitNUL(out) {
 		meta, path, ok := strings.Cut(rec, "\t")
+		if ok {
+			indexed[path] = struct{}{}
+		}
 		fields := strings.Fields(meta)
 		if !ok || len(fields) != 3 || fields[2] != "0" {
 			continue
 		}
 		entries = append(entries, fields[0]+","+fields[1]+","+path)
 	}
-	return entries, nil
+	for _, p := range paths {
+		if _, ok := indexed[p]; !ok {
+			deleted = append(deleted, p)
+		}
+	}
+	return entries, deleted, nil
 }
 
 // headPaths returns the subset of files that HEAD's tree contains, so the
