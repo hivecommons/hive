@@ -56,6 +56,7 @@ package automerge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -1486,9 +1487,24 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 }
 
 func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {
+	ctx, unlock, err := c.acquireDestinationMerge(ctx, owner, repo, number)
+	if err != nil {
+		if isGitHubStatus(err, http.StatusNotFound) {
+			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		var response *gh.ErrorResponse
+		if errors.As(err, &response) {
+			return AutoMergeSweepEvent{}, "fetch-pr", err
+		}
+		return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
+	}
+	defer unlock()
 	eval, reason, err := c.evaluateContributorLanePR(ctx, displayRepo, owner, repo, number, policy, false)
 	if err != nil || reason != "" {
 		return AutoMergeSweepEvent{}, reason, err
+	}
+	if !hgithub.DestinationMergeHeld(ctx, destinationDirectory(c), owner+"/"+repo, eval.pr.GetBase().GetRef()) {
+		return AutoMergeSweepEvent{}, basePreparationPrefix + "snapshot-changed", nil
 	}
 	author, headSHA, claim, verdict, method, mergeClaim := eval.author, eval.headSHA, eval.claim, eval.verdict, eval.method, eval.mergeClaim
 	fullRepo := owner + "/" + repo

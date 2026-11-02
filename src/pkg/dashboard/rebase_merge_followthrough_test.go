@@ -81,7 +81,7 @@ func TestRepoItemDecisionMergeNowOnDirtyPRArmsRebaseThenMerge(t *testing.T) {
 // fails with the files and the two options, and the PR gets the note.
 func TestDriveRebaseMergeGreenMergesAndConflictFails(t *testing.T) {
 	store := useRebaseMergeStore(t)
-	mock := &repoItemDecisionMock{prForeign: true, commitBy: map[string]string{"0123456789abcdef0123456789abcdef01234567": "hive[bot]"}}
+	mock := &repoItemDecisionMock{prForeign: true, prHeadSHA: "0123456789abcdef0123456789abcdef01234567", commitBy: map[string]string{"0123456789abcdef0123456789abcdef01234567": "hive[bot]"}}
 	srv := newRepoItemDecisionServer(t, mock)
 	srv.operatorActionStore = newOperatorActionStore(filepath.Join(t.TempDir(), "ops.json"))
 	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)

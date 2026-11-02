@@ -17,13 +17,17 @@ import (
 )
 
 func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int, branchUpdateAllowed bool) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
+	pr, ctx, unlock, err := c.guardedPR(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
 		}
+		if errors.Is(err, hgithub.ErrDestinationMergeBusy) {
+			return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
+		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	defer unlock()
 	c.noteStagePR(owner, repo, number, pr)
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil
@@ -575,13 +579,17 @@ func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 }
 
 func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner, repo string, number int, policy TrustedAuthorPolicy) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:trusted_author_automerge_sweep"), owner, repo, number)
+	pr, ctx, unlock, err := c.guardedPR(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
 		}
+		if errors.Is(err, hgithub.ErrDestinationMergeBusy) {
+			return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
+		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	defer unlock()
 	c.noteStagePR(owner, repo, number, pr)
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	if lane, _ := c.sweepLaneForAuthor(author); lane == stageLaneSelf {
