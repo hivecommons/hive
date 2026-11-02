@@ -38,6 +38,55 @@ monitor. Two knobs:
 Nothing here touches Twitch or the cluster until **you** create the Secrets and
 apply the overlay — the steps below are all yours to run.
 
+### Call-to-action overlay
+
+Every kiosk view — this stream's Activity Monitor, the [Matrix](#matrix-mode-separate-channel)
+and the hub's [public fleet page](#the-hivecommonsfleet-broadcast) — carries a
+small pill bottom-right: "🐝 Want this for your repos?", the URL
+`hive.hivecommons.dev/get-started` in 24px amber, and a 110px QR code of it, so
+a viewer on a phone or a 720p transcode can get to **Request a Hive** without
+typing. It appears only with `?kiosk=1` (never in the operator dashboard,
+pop-out or display mode) and `&cta=off` in `DASHBOARD_PATH` removes it. On a
+spoke the destination and the copy are `dashboard.kiosk_cta_url` and
+`dashboard.kiosk_cta_text` in `hive.yaml` (read at start-up); on the hub they
+are `HIVE_HUB_KIOSK_CTA_URL` and `HIVE_HUB_KIOSK_CTA_TEXT`. The QR code is
+rendered server-side (`src/pkg/webassets/kioskcta`) as an inline `data:` PNG, so
+nothing external is loaded and the pages' Content-Security-Policy is unchanged.
+In Matrix mode the pill sits above the canvas at 85 % opacity so it does not
+fight the effect.
+
+### Channel title, category, tags
+
+[`src/scripts/twitch-channel-cta.sh`](../scripts/twitch-channel-cta.sh) sets
+the title, category and tags of `hivecommons`, `hivecommonsfleet` and
+`hivecommonsmatrix` through Helix `PATCH /channels` so each channel page
+carries the same call to action as the overlay; `--dry-run` shows the diff
+without writing, and a channel that already matches is skipped. Twitch needs a
+**user** access token per channel with the `channel:manage:broadcast` scope —
+an app token cannot edit channel info — obtained once with the
+[device-code grant](https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/#device-code-grant-flow):
+
+1. In the [Twitch developer console](https://dev.twitch.tv/console/apps) register
+   an application (category "Broadcasting Suite", OAuth redirect
+   `http://localhost`) and note its **Client ID** (`TWITCH_CLIENT_ID`).
+2. For each channel, while logged in to Twitch as that channel: request a device
+   code — `curl -sX POST https://id.twitch.tv/oauth2/device -d client_id=$TWITCH_CLIENT_ID -d scopes=channel:manage:broadcast` —
+   open the returned `verification_uri`, enter the `user_code`, then exchange it:
+   `curl -sX POST https://id.twitch.tv/oauth2/token -d client_id=$TWITCH_CLIENT_ID -d device_code=<device_code> -d grant_type=urn:ietf:params:oauth:grant-type:device_code`.
+   Keep the `access_token` (and `refresh_token`) out of the shell history, for
+   example in a password manager.
+3. Export the tokens as `TWITCH_TOKEN_HIVECOMMONS`, `TWITCH_TOKEN_HIVECOMMONSFLEET`
+   and `TWITCH_TOKEN_HIVECOMMONSMATRIX`, then run
+   `src/scripts/twitch-channel-cta.sh --dry-run` and, when the diff is right,
+   without the flag. The script verifies that category id `1469308723` is
+   "Software and Game Development" against `/search/categories` before it writes
+   and never prints a token.
+
+Panels (the About tab under the player) have no API: upload the three images
+produced for #16236 — "Request a Hive" → `hive.hivecommons.dev/get-started`,
+"What is Hive?" → the docs, "Discord" → the invite — by hand on each channel's
+**About → Edit panels**.
+
 ## 1. Twitch side (once)
 
 Open the Creator Dashboard at `dashboard.twitch.tv` while logged in as

@@ -60,6 +60,7 @@ func (s *HubServer) serveActivityShell(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("Content-Security-Policy", activityPageCSP)
+	page = s.activityShellWithKioskCTA(page)
 	webstatic.ApplyDocumentScriptSrcElem(w, page)
 	if webstatic.WriteCacheHeaders(w, r, webstatic.ETagFor(page)) {
 		return

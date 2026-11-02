@@ -47,6 +47,13 @@
   window.HIVE_DISPLAY_DENSITY=window.HIVE_DISPLAY?density:'';
   window.HIVE_DISPLAY_SHIFT=window.HIVE_DISPLAY&&shift;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
+  // Kiosk call-to-action badge (#16236): shown in every kiosk view unless
+  // the URL says `cta=off`; never in the operator dashboard, pop-out or
+  // display mode. Pure so pkg/dashboard/kiosk_cta.test.js can run it.
+  window.hiveKioskCTAOn=function(href){
+    try { var q=new URL(href).searchParams; return q.get('kiosk')==='1' && q.get('cta')!=='off'; } catch(e) { return false; }
+  };
+  if(window.hiveKioskCTAOn(window.location.href)) document.body.classList.add('kiosk-cta-on');
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
   window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
   window.hiveDisplayMode=function(){ return !!window.HIVE_DISPLAY; };
