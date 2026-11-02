@@ -308,6 +308,11 @@ type AgentProcess struct {
 	// alongside LastError on every (re)launch so a corrected model re-arms
 	// detection.
 	copilotModelFallbackRequested string
+	// inferenceDefaultModelWarned gates the "agent has no model; using the
+	// inference default" WARN to once per agent per distinct fallback, so a
+	// fleet whose agents[].model are all "" logs it per agent, not per
+	// relaunch.
+	inferenceDefaultModelWarned string
 	// copilotModelFallbackWarned is the "requested\x00running" tuple already
 	// logged at Warn; unlike the field above it survives relaunches.
 	copilotModelFallbackWarned string
@@ -755,11 +760,11 @@ type Manager struct {
 	sandboxJobLauncherFactory func(config.SandboxJobConfig) sandbox.Launcher
 	sandboxRunner             sandboxCommandRunner
 	// sandboxRunPersister overrides persistSandboxRun in tests.
-	sandboxRunPersister func(workDir string, entry SandboxRunHistoryEntry) error
-	sandboxPushMinter         pushbroker.TokenMinter
-	sandboxPRClient           PRCreator
-	sandboxMutation           effects.Boundary
-	sandboxAuditCallback      atomic.Pointer[func(agent, action, detail string)]
+	sandboxRunPersister  func(workDir string, entry SandboxRunHistoryEntry) error
+	sandboxPushMinter    pushbroker.TokenMinter
+	sandboxPRClient      PRCreator
+	sandboxMutation      effects.Boundary
+	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
 
 	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux
 	// implementation, preserving zero-value Manager behavior in tests.
@@ -1219,6 +1224,13 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 	ticker := time.NewTicker(inputPromptPollInterval)
 	defer ticker.Stop()
 	menuEscapes := 0
+	dialogAnswers := 0
+	// Inference-routed agents run Claude Code too, so a permission dialog in
+	// their pane is answered on the same terms as a plain claude agent's.
+	dialogBackend := backend
+	if m.routableBackend(backend) {
+		dialogBackend = "claude"
+	}
 
 	for {
 		if abort != nil && abort() {
@@ -1230,16 +1242,21 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				"agent", agent.Name,
 				"session", agent.tmuxSession)
 			output := m.captureTmuxPaneForAgent(agent)
+			dialogTitle, hasDialog := claudePermissionDialog(output)
 			m.logger.Warn("pane content at timeout",
 				"agent", agent.Name,
 				"len", len(output),
 				"has_goose_ready", strings.Contains(output, "goose is ready"),
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
-				"has_question_form", paneShowsCopilotQuestionForm(output),
+				"has_question_form", paneShowsQuestionForm(output),
+				"permission_dialog", dialogTitle,
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
+			if hasDialog {
+				return false, claudePermissionDialogNotReadyReason(dialogTitle)
+			}
 			return false, kickPromptNotReadyReason
 		case <-ticker.C:
 			// A consent/selection screen also contains "❯" but is NOT a
@@ -1249,6 +1266,24 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 			visible := m.captureVisiblePaneForAgent(agent)
 			if paneShowsCopilotQuestionForm(visible) {
 				m.dismissCopilotQuestionFormForKick(agent)
+				continue
+			}
+			// A Claude Code permission dialog means the CLI is NOT running
+			// with --dangerously-skip-permissions despite the launch flags
+			// (a bare `--model` once swallowed the flag). When the launch
+			// posture says bypass, answer option 1 — "Yes, and keep
+			// allowing" — which only restores that posture; otherwise, or if
+			// the dialog survives the answers, give up naming the dialog.
+			if title, ok := claudePermissionDialog(visible); ok {
+				if !agentExpectsSkipPermissions(agent, dialogBackend) || dialogAnswers >= claudePermissionDialogAnswerAttempts {
+					reason := claudePermissionDialogNotReadyReason(title)
+					m.logger.Warn("kick undeliverable: CLI blocked on a Claude Code permission dialog",
+						"agent", agent.Name, "reason", reason, "answers", dialogAnswers,
+						"skip_permissions_expected", agentExpectsSkipPermissions(agent, dialogBackend))
+					return false, reason
+				}
+				dialogAnswers++
+				m.answerClaudePermissionDialogForKick(agent, title, dialogAnswers)
 				continue
 			}
 			// A Codex menu keeps a "›" selection caret that passes

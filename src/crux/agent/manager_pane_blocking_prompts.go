@@ -79,6 +79,19 @@ var blockingPrompts = []blockingPrompt{
 		label: claudeAutoModeNoticeLabel,
 	},
 	{
+		backend: "claude",
+		// Claude Code permission dialog ("Read outside the working
+		// directories?", "Do you want to proceed?" over a 1./2./3./4. list).
+		// Hive launches claude with --dangerously-skip-permissions, so this
+		// only appears when that posture failed to take effect (a bare
+		// `--model` once swallowed the flag); option 1 restores it. The
+		// watcher additionally checks agentExpectsSkipPermissions before
+		// typing, so an operator launch_cmd WITHOUT the flag is left alone.
+		match: paneShowsClaudePermissionDialog,
+		key:   claudePermissionDialogKey,
+		label: claudePermissionDialogLabel,
+	},
+	{
 		backend: "copilot",
 		// Copilot: "Confirm folder trust" → 1. Yes (THIS SESSION ONLY).
 		//

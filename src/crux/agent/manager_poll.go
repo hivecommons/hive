@@ -466,6 +466,17 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 				backend = "claude"
 			}
 			if key, label, ok := blockingPromptKey(backend, output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
+				if label == claudePermissionDialogLabel {
+					title, _ := claudePermissionDialog(output)
+					if !agentExpectsSkipPermissions(agent, backend) {
+						m.logger.Warn("Claude Code permission dialog on screen; launch_cmd does not declare --dangerously-skip-permissions, leaving it for the operator",
+							"agent", agent.Name, "dialog", title)
+						answeredAt[label] = time.Now()
+						continue
+					}
+					m.logger.Warn("Claude Code permission dialog on screen; the agent is meant to run with --dangerously-skip-permissions — answering option 1",
+						"agent", agent.Name, "dialog", title, "option", key)
+				}
 				answeredAt[label] = time.Now()
 				time.Sleep(paneCaptureSleep)
 				// An empty key means the affirmative option is already selected
