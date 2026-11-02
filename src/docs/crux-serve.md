@@ -255,8 +255,8 @@ export CRUX_SERVER=/run/user/$(id -u)/crux/crux.sock
 crux run examples/agents/customized-agent.yaml   # definition parsed here, sent as JSON; follows output; Ctrl-C stops
 crux run --detach fixer                          # a name already defined on the server
 crux ps
-crux logs fixer -n 50 --buffer
-crux logs fixer -f                               # follow the ring buffer over SSE
+crux logs -n 50 --buffer fixer
+crux logs -f fixer                               # follow the ring buffer over SSE
 crux kick fixer "look at the failing build on main"
 crux stop fixer
 ```

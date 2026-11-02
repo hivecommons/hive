@@ -33,9 +33,9 @@ Every subcommand maps onto one or two `crux.Runtime` methods and nothing else:
 |---|---|
 | `crux run <definition.yaml \| agent>` | `Definitions.AddAgent` (definition file) then `Lifecycle.Start`; streams `Observer.GetBufferOutput`; `Lifecycle.Stop` on interrupt |
 | `crux ps [--json]` | `Observer.AllStatuses` |
-| `crux logs <agent> [-n N] [--json]` | `Observer.ResolveAgent`, `Observer.GetOutput` |
-| `crux logs <agent> --buffer` | `Observer.GetBufferOutput` |
-| `crux logs <agent> --full` | `Observer.FullLogHeader`, `Observer.CaptureFullLog` |
+| `crux logs [-n N] [--json] <agent>` | `Observer.ResolveAgent`, `Observer.GetOutput` |
+| `crux logs --buffer <agent>` | `Observer.GetBufferOutput` |
+| `crux logs --full <agent>` | `Observer.FullLogHeader`, `Observer.CaptureFullLog` |
 | `crux kick <agent> <message...\|->` | `Observer.ResolveAgent`, `Kicker.SendKick` (`-` reads the message from stdin) |
 | `crux stop <agent>` | `Observer.ResolveAgent`, `Lifecycle.Stop` |
 | `crux serve [--socket P] [--listen H:P] [--token T]` | the whole surface, over HTTP+JSON ([crux-serve.md](crux-serve.md)) |
@@ -102,7 +102,7 @@ is present, so they act on the runtime that actually started the agent:
 ```sh
 crux run fixer.yaml &          # terminal 1 (or a second terminal, in the foreground)
 crux ps                        # terminal 2: fixer  running
-crux logs fixer -n 50
+crux logs -n 50 fixer
 crux kick fixer "look at the failing build on main"
 crux stop fixer
 ```
@@ -125,7 +125,7 @@ crux --config hive.yaml serve &                       # serving on unix:///run/u
 export CRUX_SERVER=/run/user/$(id -u)/crux/crux.sock
 crux run fixer.yaml                                   # parsed here, sent as JSON, output followed
 crux ps
-crux logs fixer -f
+crux logs -f fixer
 crux stop fixer
 ```
 
