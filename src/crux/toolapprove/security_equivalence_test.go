@@ -343,6 +343,11 @@ func TestDestructiveRmShellForms(t *testing.T) {
 		"echo \"$(rm -rf /)\"",
 		"echo \"`rm -rf /`\"",
 		"echo ${X:-$(rm -rf /)}",
+		"rm -rf $(true) /",
+		"rm -rf `true` /",
+		"rm -rf $(true) ~",
+		"rm $(true) -rf /",
+		"rm -rf $(echo x; rm -rf /) y",
 		"bash -c \"rm -rf $HOME\"",
 		"bash -c 'bash -c \"rm -rf /\"'",
 		"ssh host 'rm -rf ~/'",
@@ -374,6 +379,8 @@ func TestDestructiveRmShellForms(t *testing.T) {
 		"rm -rf /tmp/{a..c}",
 		"bash -c 'rm -rf /tmp/x'",
 		"echo \"$(rm -rf /tmp/x)\"",
+		"rm -rf $(true)/",
+		"rm -f $(true) /tmp/x",
 	}, clean)
 }
 
@@ -411,6 +418,8 @@ func TestDestructiveRmAnalysisBounds(t *testing.T) {
 		"echo " + strings.Repeat("{a,b}", 10), // 1024 words
 		"echo " + nestedBraces(maxBraceDepth/2),
 		nestBash("echo hi", maxShellNesting),
+		// Reaches MaxInt64 without wrapping past it: 8 ordinary words.
+		"rm -rf {9223372036854775800..9223372036854775807}",
 	}
 	checkVerdicts(t, within, clean)
 	checkVerdicts(t, []string{
@@ -423,6 +432,11 @@ func TestDestructiveRmAnalysisBounds(t *testing.T) {
 		"echo " + strings.Repeat("{a,b}", 11), // 2048 words
 		"echo " + nestedBraces(maxBraceDepth+2),
 		nestBash("echo hi", maxShellNesting+1),
+		// Extreme sequence bounds overflow int64 arithmetic; each must be
+		// refused rather than looping forever.
+		"rm -rf {-9223372036854775808..9223372036854775807}",
+		"rm -rf {-9223372036854775000..9223372036854775807}",
+		"rm -rf {1..2..-9223372036854775808}",
 	}
 	checkVerdicts(t, past, func(cmd string) []string { return []string{boundsViolation(cmd)} })
 

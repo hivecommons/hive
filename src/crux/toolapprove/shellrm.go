@@ -20,11 +20,14 @@ import (
 // escapes and line continuations, brace expansion ({a,b} and {x..y[..n]}
 // sequences) before tilde and parameter expansion, tilde expansion of a
 // leading unquoted ~, and the $HOME, $PWD and $IFS parameters. Command
-// separators (; & | newline, ( ) and `) split simple commands, so
-// subshells and unquoted command substitutions are read in place, and every
-// word anywhere in a simple command may be the rm command word, so sudo rm,
-// env rm, command rm, xargs rm and /bin/rm are covered without a list of
-// wrappers. GNU rm option parsing is modelled: options may follow operands,
+// separators (; & | newline and ( )) split simple commands, so subshells
+// are read in place. A command substitution ($(…) or `…`), quoted or not,
+// leaves an unknown value in the word holding it and its text is re-read as
+// a nested command, so the enclosing simple command keeps every operand
+// around it (rm -rf $(true) / is still rm -rf /). Every word anywhere in a
+// simple command may be the rm command word, so sudo rm, env rm, command
+// rm, xargs rm and /bin/rm are covered without a list of wrappers. GNU rm
+// option parsing is modelled: options may follow operands,
 // -- ends them, a short-option cluster holding r or R and any unambiguous
 // abbreviation of --recursive (--r, --rec, …) make the removal recursive.
 //
@@ -44,8 +47,8 @@ import (
 // so it counts as recursive. Comments are read as code. Every word holding a
 // quoted or escaped character is also re-read as a command one level deeper
 // (bash -c '…', eval "…", ssh host '…' hand that text to another shell),
-// and so is the text of a command substitution inside double quotes or a
-// ${…} expansion that is not a plain name.
+// and so is the text of a command substitution or a ${…} expansion that is
+// not a plain name.
 //
 // Not resolved. The value of any other parameter ($X, ${X:-…}, $1, …),
 // command substitution output, other users' homes (~user), bracket globs,
@@ -147,14 +150,13 @@ func (a *rmAnalysis) nested(text string, depth int) bool {
 
 // shLexer splits one command string into words and simple commands.
 type shLexer struct {
-	a         *rmAnalysis
-	src       string
-	depth     int
-	args      [][]shUnit
-	word      []shUnit
-	inWord    bool
-	backticks bool
-	hit       bool
+	a      *rmAnalysis
+	src    string
+	depth  int
+	args   [][]shUnit
+	word   []shUnit
+	inWord bool
+	hit    bool
 }
 
 func (l *shLexer) stop() bool { return l.hit || l.a.overBound }
@@ -190,14 +192,7 @@ func (l *shLexer) run() {
 			l.endCommand()
 			i++
 		case '`':
-			// An opening backtick leaves an unknown value in the word it
-			// is part of; its text is then read in place as a command.
-			if !l.backticks {
-				l.add(shOpaqueUnit)
-			}
-			l.backticks = !l.backticks
-			l.endCommand()
-			i++
+			i = l.backtick(i + 1)
 		case '&':
 			if i+1 < len(src) && src[i+1] == '>' { // &> and &>> redirect
 				l.endWord()
@@ -289,16 +284,24 @@ func (l *shLexer) doubleQuoted(i int) int {
 		case '$':
 			i = l.dollar(i, true)
 		case '`':
-			end := closeIndex(src, i+1, '`')
-			l.hit = l.a.nested(src[i+1:end], l.depth)
-			l.add(shOpaqueUnit)
-			i = end + 1
+			i = l.backtick(i + 1)
 		default:
 			l.add(shUnit{c: c, kind: uQuoted})
 			i++
 		}
 	}
 	return len(src)
+}
+
+// backtick reads a `…` command substitution starting after the opening
+// backtick and returns the index after the closing one. The substitution
+// leaves an unknown value in the word holding it, so the enclosing simple
+// command keeps its other words; its text is re-read as a nested command.
+func (l *shLexer) backtick(i int) int {
+	end := closeIndex(l.src, i, '`')
+	l.hit = l.a.nested(l.src[i:end], l.depth)
+	l.add(shOpaqueUnit)
+	return end + 1
 }
 
 // dollar reads the expansion starting with the $ at i and returns the index
@@ -319,13 +322,11 @@ func (l *shLexer) dollar(i int, inDouble bool) int {
 	case n == '"' && !inDouble:
 		return l.doubleQuoted(i + 2)
 	case n == '(':
-		// Unquoted, the ( is read next as a command separator so the
-		// substitution's text is analysed in place. Inside "…" its text
-		// is re-read as a nested command.
+		// The substitution leaves an unknown value in the word holding
+		// it, so the enclosing simple command keeps its other words
+		// (rm -rf $(true) / is still rm -rf /); its text is re-read as a
+		// nested command.
 		l.add(shOpaqueUnit)
-		if !inDouble {
-			return i + 1
-		}
 		end := closeParen(src, i+2)
 		l.hit = l.a.nested(src[i+2:min(end, len(src))], l.depth)
 		return end + 1

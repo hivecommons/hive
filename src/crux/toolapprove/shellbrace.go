@@ -1,6 +1,7 @@
 package toolapprove
 
 import (
+	"math"
 	"strconv"
 	"strings"
 )
@@ -151,20 +152,27 @@ func (a *rmAnalysis) braceSequence(body []shUnit) [][]shUnit {
 			width = max(len(x), len(y))
 		}
 	}
-	span := to - from
-	if span < 0 {
-		span = -span
+	// Unsigned arithmetic: to-from and -incr overflow int64 for extreme
+	// bounds, which would let the guard pass and the loop below run
+	// forever.
+	var span uint64
+	if to >= from {
+		span = uint64(to) - uint64(from)
+	} else {
+		span = uint64(from) - uint64(to)
 	}
-	if span/incr >= maxBraceWords {
+	if incr == math.MinInt64 || span/uint64(incr) >= maxBraceWords {
 		a.overBound = true
 		return nil
 	}
+	count := span/uint64(incr) + 1
 	step := incr
 	if to < from {
 		step = -incr
 	}
 	var out [][]shUnit
-	for v := from; (step > 0 && v <= to) || (step < 0 && v >= to); v += step {
+	v := from
+	for n := uint64(0); n < count; n, v = n+1, v+step {
 		var s string
 		if char {
 			s = string(rune(v))
