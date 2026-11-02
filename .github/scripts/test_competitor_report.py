@@ -5,7 +5,7 @@ import datetime
 import json
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import competitor_report as report
 
@@ -81,6 +81,21 @@ class GroundingTests(unittest.TestCase):
         readable = report.readable(self.bundle)
         for symbol in ("GitLabForge", "GiteaForge", "EnumerateActionable"):
             self.assertIn(symbol, readable)
+
+    def test_comment_link_budget_counts_repeated_urls_and_json_ledger(self):
+        body = self.payload()["items"][0]["body"]
+        initial = len(report.re.findall(r"https?://(?=\S)", body))
+        self.ledger["extra_urls"] = ["https://example.com/repeated"] * (
+            report.MAX_COMMENT_LINKS - initial)
+        self.validate()
+        self.ledger["extra_urls"].append("https://example.com/repeated")
+        with self.assertRaisesRegex(ValueError, "50-link limit"):
+            self.validate()
+
+    def test_comment_link_budget_counts_visible_repetitions(self):
+        self.extra = "https://example.com/repeated " * report.MAX_COMMENT_LINKS
+        with self.assertRaisesRegex(ValueError, "50-link limit"):
+            self.validate()
 
     def test_known_blanket_github_only_regression(self):
         self.claim["text"] = "Hive is GitHub-only. Design a forge adapter."
@@ -335,6 +350,49 @@ class WorkflowContractTests(unittest.TestCase):
         checkout = steps[gate - 1]
         self.assertEqual(checkout["with"]["ref"], "${{ github.sha }}")
         self.assertFalse(checkout["with"]["persist-credentials"])
+        self.assertEqual(checkout["with"]["fetch-depth"], 1)
+        self.assertNotIn("sparse-checkout", checkout["with"])
+        self.assertNotIn("filter", checkout["with"])
+
+    def test_preparation_is_trusted_read_only_host_step_before_firewall(self):
+        import yaml
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/weekly-competitor-report.lock.yml").read_text())
+        job = workflow["jobs"]["agent"]
+        self.assertTrue(all(value == "read" for value in job["permissions"].values()))
+        steps = job["steps"]
+        prepare = next(i for i, step in enumerate(steps) if
+                       step.get("name") == "Prepare revision-pinned Hive source and existing work")
+        self.assertEqual(steps[prepare]["env"]["GH_TOKEN"], "${{ github.token }}")
+        self.assertEqual(steps[prepare]["run"],
+                         "python3 .github/scripts/competitor_report.py prepare")
+        inference = next(i for i, step in enumerate(steps) if
+                         step.get("id") == "agentic_execution")
+        self.assertIn("awf", steps[inference]["run"])
+        self.assertLess(prepare, inference)
+
+
+class APIContractTests(unittest.TestCase):
+    def test_token_header_get_origin_redirect_refusal_and_response_budget(self):
+        response = Mock()
+        response.read.return_value = b"{}"
+        opener = Mock()
+        opener.open.return_value.__enter__ = Mock(return_value=response)
+        opener.open.return_value.__exit__ = Mock(return_value=False)
+        with patch.dict("os.environ", {"GH_TOKEN": "fixture-only-not-a-credential"}), patch.object(
+                report.urllib.request, "build_opener", return_value=opener) as build:
+            self.assertEqual(report.api("repos/hivecommons/hive"), {})
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.github.com/repos/hivecommons/hive")
+        self.assertEqual(request.get_method(), "GET")
+        self.assertTrue(request.get_header("Authorization") ==
+                        "Bearer fixture-only-not-a-credential",
+                        "API authorization header must retain its bearer scheme")
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 30)
+        response.read.assert_called_once_with(report.MAX_API_BYTES + 1)
+        redirect_handler = build.call_args.args[0]
+        self.assertIsNone(redirect_handler.redirect_request(
+            request, None, 302, "redirect", {}, "https://example.com/"))
 
 
 if __name__ == "__main__":

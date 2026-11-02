@@ -102,7 +102,7 @@ safe-outputs:
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
-        sparse-checkout: .github
+        fetch-depth: 1
     - name: Validate source grounding before any report publication
       env:
         GH_TOKEN: ${{ github.token }}
@@ -547,7 +547,10 @@ After the visible report and sources details, append the exact heading
 fenced `json` code block containing one JSON object. The closing code fence
 must end the GitHub body. Do not use an HTML comment: gh-aw strips hidden
 comments. Do not include this ledger in the Discord message. Keep visible
-report URL occurrences within the tool's 50-link limit.
+GitHub body URL occurrences within the tool's 50-link limit, including repeated
+URLs and URLs inside the JSON ledger. Keep the entire GitHub body under 60,000
+characters to leave headroom below the collector's 65,000-character truncation
+limit, and quote only the lines each claim needs.
 The validator re-reads the
 trusted source at the run SHA; do not edit the prepared files to pass it.
 

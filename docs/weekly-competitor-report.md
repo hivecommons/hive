@@ -16,8 +16,16 @@ does not independently upgrade compiler, runtime, actions, or container pins.
 Before inference, `.github/scripts/competitor_report.py prepare` reads Git
 objects at the actual checkout SHA, verifies `GITHUB_SHA`, and records the
 repository API's actual default branch separately. A manually dispatched
-revision can differ from the default branch tip. A sparse working tree does
-not prevent reading fetched Git objects.
+revision can differ from the default branch tip. Publication validation uses a
+full depth-1 checkout so source reads do not trigger lazy anonymous blob fetches.
+
+The pre-agent preparation step intentionally runs trusted repository Python
+before the gh-aw inference firewall starts. Its step-scoped `github.token`
+inherits the agent job's read-only permissions. API requests are read-only GETs
+to `https://api.github.com/`, redirects are refused, and responses are bounded.
+Repository source and issue bodies are collected as data, never executed.
+This is a trusted host-side collection boundary, not a claim that the inference
+firewall covers preparation. No token is written to the evidence bundle.
 
 The bounded source closure contains upstream Crux configuration, forge
 interfaces and adapters, governor construction/enumeration callers, integration
@@ -58,6 +66,9 @@ Optional issues remain off by default and must exactly reproduce a grounded
 report item. Missing, invalid or incomplete output fails the run, rather than
 publishing an empty success. Reports stay on tracking issue #14613; if it is
 unavailable, publication fails rather than creating a misclassified archive.
+The gate enforces the comment handler's 50 URL-occurrence limit across the entire
+GitHub body, including repetitions and the JSON ledger. Keep the body under
+60,000 characters and quote narrowly to avoid collector truncation at 65,000.
 
 These are **mechanical provenance checks, not semantic proof**. A correct
 quotation can still be misinterpreted. The researcher must read implementation

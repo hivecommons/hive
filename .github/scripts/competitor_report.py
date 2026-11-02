@@ -25,6 +25,7 @@ MAX_API_BYTES = 2_000_000
 MAX_SEARCH_RESULTS = 20
 MAX_CLAIMS = 50
 MAX_RECOMMENDATIONS = 5
+MAX_COMMENT_LINKS = 50
 MAX_QUOTE_LINES = 80
 MAX_EXCERPT_LINES = 240
 EXCERPT_BEFORE = 3
@@ -219,7 +220,10 @@ def validate(payload, bundle, fetch=api, open_issues=False, today=None):
     record = comments[0]
     require(str(record.get("item_number", record.get("issue_number"))) == "14613",
             "Only the established report tracking issue may receive this comment")
-    report, ledger = split_report(record.get("body", ""))
+    body = record.get("body", "")
+    require(len(re.findall(r"https?://(?=\S)", body)) <= MAX_COMMENT_LINKS,
+            "GitHub body exceeds add_comment's 50-link limit (ledger URLs count too)")
+    report, ledger = split_report(body)
     require(discord[0].get("message", "").strip() == report,
             "Discord and GitHub reports differ (ledger belongs only on GitHub)")
     require(len(report.split()) >= 80, "Report is empty or implausibly short")
@@ -351,7 +355,8 @@ def main():
             print(json.dumps(verdict, indent=2))
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
         # Avoid echoing raw HTTP bodies, tokens, or report contents into command annotations.
-        print(f"Competitor report grounding FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        print(f"Competitor report grounding FAILED: {type(error).__name__}: {error!r}",
+              file=sys.stderr)
         return 1
     return 0
 
