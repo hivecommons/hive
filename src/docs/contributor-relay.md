@@ -500,6 +500,11 @@ confinement, not a claim that the process can read or exfiltrate nothing.
 The local launcher exports the resolved `AGENT_LAUNCH_CMD`, and the relay reuses
 that exact command for post-task, revoke, and recovery relaunches so the
 stricter host-mode sandbox flags cannot drift back to container defaults.
+That line carries `AGENT_MODEL` and `AGENT_REASONING_EFFORT` as the same
+`--model` and effort flags the relay's own builder adds
+(`backend_selection_flags_shell` in `config/backends.conf`). The relay reports a
+model or effort to the hub only when the line carries its flag, so a launch
+line without them is never advertised as running them (#16222).
 
 On Linux/WSL2 the native sandbox requires `bubblewrap` and `socat`; macOS uses
 Seatbelt. Missing dependencies are a hard launch failure, never a silent

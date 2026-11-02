@@ -1377,14 +1377,14 @@ contribute-hive backend="" mode="docker": check-version
         if [[ -n "${HIVE_LITELLM_API_KEY:-}" ]]; then
           LITELLM_ENV="${LITELLM_ENV} ANTHROPIC_API_KEY=${HIVE_LITELLM_API_KEY}"
         fi
-        if [[ -n "${AGENT_MODEL:-}" ]]; then
-          PERM_FLAG="${PERM_FLAG} --model ${AGENT_MODEL}"
-        fi
-      elif [[ "$BACKEND" == "pi" ]]; then
-        # Same canonical selection used by the container entrypoint and every
-        # relay restart. %q keeps model IDs with shell metacharacters one argv.
-        PERM_FLAG="${PERM_FLAG:+${PERM_FLAG} }--model $(printf %q "$AGENT_MODEL")"
       fi
+
+      # Model and effort, exactly as the relay's own launch builder would add
+      # them (#16222). The relay reuses AGENT_LAUNCH_CMD verbatim on every
+      # relaunch, so a flag missing here is missing for the whole session, and
+      # the relay reports a model or effort to the hub only when this line
+      # carries its flag. %q keeps model IDs with shell metacharacters one argv.
+      SELECTION_FLAGS=$(backend_selection_flags_shell "$BACKEND" "${AGENT_MODEL:-}" "${AGENT_REASONING_EFFORT:-}")
 
       # Create tmux session with the CLI.
       #
@@ -1468,7 +1468,7 @@ contribute-hive backend="" mode="docker": check-version
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOTMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV CCACHE_DIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/ccache")"
-      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}"
+      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}${SELECTION_FLAGS:+ $SELECTION_FLAGS}"
 
       # Registered before anything long-lived is forked below (knowledge
       # refresh, tmux session, quota publisher, relay); the PID variables it
