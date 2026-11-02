@@ -30,14 +30,15 @@
       display: flex; align-items: center; gap: var(--sp-4);
       position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 9000;
       padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-3);
-      border-radius: var(--radius-lg, 14px);
-      background: var(--surface-0, #0e0f12); color: var(--text, #f3f4f6);
-      border: 1px solid var(--brand, #f4c75f);
-      box-shadow: 0 8px 28px rgba(0, 0, 0, .55);
+      border-radius: var(--radius-lg);
+      background: var(--surface-0); color: var(--text);
+      border: 1px solid var(--brand);
+      box-shadow: var(--shadow-modal);
       font-family: var(--font-ui, system-ui, sans-serif);
       line-height: 1.2; pointer-events: none; user-select: none;
     }
-    body.kiosk-cta-on #kiosk-cta .kiosk-cta-qr { width: 110px; height: 110px; border-radius: 8px; background: #fff; padding: 4px; box-sizing: border-box; }
+    /* The QR PNG carries its own white quiet zone, so no backdrop is needed. */
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-qr { width: 110px; height: 110px; border-radius: var(--r-sm); display: block; }
     body.kiosk-cta-on #kiosk-cta .kiosk-cta-copy { display: flex; flex-direction: column; gap: var(--sp-2); }
-    body.kiosk-cta-on #kiosk-cta .kiosk-cta-text { font-size: 20px; font-weight: 600; color: var(--text-muted, #c9ccd3); }
-    body.kiosk-cta-on #kiosk-cta .kiosk-cta-url { font-size: 24px; font-weight: 800; letter-spacing: .01em; color: var(--brand, #f4c75f); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-text { font-size: var(--fs-xl); font-weight: 600; color: var(--text-muted); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-url { font-size: var(--fs-2xl); font-weight: 800; letter-spacing: .01em; color: var(--brand); }

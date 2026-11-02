@@ -57,8 +57,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// (hivecommons/hive#13536), plus pkg/hubactivity, the leaf wire contract
 	// (ceilings, urgency order, sanitiser) the spoke's heartbeat activity
 	// digest is built against from the dashboard's own stage tracker
-	// (hivecommons/hive#15963).
-	const maxDashboardInternalImports = 57
+	// (hivecommons/hive#15963), plus pkg/webassets, the browser-asset
+	// packages (tracker view, kiosk call-to-action badge) shared verbatim by
+	// the spoke dashboard and the hub's public Fleet page so the two kiosk
+	// surfaces render one markup (hivecommons/hive#16236).
+	const maxDashboardInternalImports = 58
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
