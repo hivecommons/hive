@@ -86,6 +86,7 @@ func (d attentionDelivery) History(ctx context.Context, repo string, item int) (
 	}
 	return keys, nil
 }
+
 func (d attentionDelivery) Find(ctx context.Context, e attention.Episode) (bool, error) {
 	owner, name := d.c.splitRepo(e.Key.Repo)
 	comments, err := d.c.listIssueComments(ctx, owner, name, e.Key.Item)
@@ -99,6 +100,7 @@ func (d attentionDelivery) Find(ctx context.Context, e attention.Episode) (bool,
 	}
 	return false, nil
 }
+
 func (d attentionDelivery) Post(ctx context.Context, e attention.Episode, body string) error {
 	// Recheck the live policy immediately before the notifying write.
 	if decision := d.c.WritebackAllowed(e.Key.Repo, d.item, d.kind, ""); !decision.Allowed {
@@ -109,6 +111,7 @@ func (d attentionDelivery) Post(ctx context.Context, e attention.Episode, body s
 	}
 	return d.c.CreateIssueComment(ctx, e.Key.Repo, e.Key.Item, body) // writeback:gated — live policy and admitter rechecked above
 }
+
 func attentionStatus(episodes []attention.Episode) string {
 	sort.Slice(episodes, func(i, j int) bool { return episodes[i].Key.Hash() < episodes[j].Key.Hash() })
 	var b strings.Builder

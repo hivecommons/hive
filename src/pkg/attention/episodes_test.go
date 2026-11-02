@@ -24,10 +24,12 @@ type forge struct {
 func (f *forge) History(context.Context, string, int) ([]string, error) {
 	return f.history, f.historyErr
 }
+
 func (f *forge) Find(_ context.Context, e Episode) (bool, error) {
 	f.finds++
 	return f.landed[e.Attempt], f.findErr
 }
+
 func (f *forge) Post(_ context.Context, e Episode, _ string) error {
 	f.posts = append(f.posts, e)
 	if f.landed == nil {
@@ -45,6 +47,7 @@ var testConfig = Config{Admitter: map[string]string{"org/repo": "owner"}}
 func observation() Observation {
 	return Observation{Key: Key{Repo: "org/repo", Item: 1, Action: "repair-ci", Recipient: "maintainer", Subject: CISubject("required ARM64", "download-http2")}, Actionable: true, Evidence: "sha-1/run-1", Body: "Please repair the download"}
 }
+
 func openStore(t *testing.T, path string) *Store {
 	t.Helper()
 	s, err := Open(path)
@@ -53,6 +56,7 @@ func openStore(t *testing.T, path string) *Store {
 	}
 	return s
 }
+
 func report(t *testing.T, s *Store, f *forge, owner string, obs ...Observation) []Episode {
 	t.Helper()
 	es, err := s.Report(context.Background(), testConfig, owner, "org/repo", 1, obs, f)
@@ -61,6 +65,7 @@ func report(t *testing.T, s *Store, f *forge, owner string, obs ...Observation) 
 	}
 	return es
 }
+
 func TestAcrossProducersPushesAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "episodes.json")
 	s := openStore(t, path)
@@ -78,6 +83,7 @@ func TestAcrossProducersPushesAndRestart(t *testing.T) {
 		t.Fatalf("posts=%d episodes=%+v", len(f.posts), es)
 	}
 }
+
 func TestEmptyAndCorruptStateNeverReplay(t *testing.T) {
 	for _, corrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "missing", true: "corrupt"}[corrupt], func(t *testing.T) {
@@ -106,6 +112,7 @@ func TestEmptyAndCorruptStateNeverReplay(t *testing.T) {
 		})
 	}
 }
+
 func TestRecoveryRetainsMarkersNotInFirstInventory(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "state"))
 	o := observation()
@@ -116,6 +123,7 @@ func TestRecoveryRetainsMarkersNotInFirstInventory(t *testing.T) {
 		t.Fatal("marker history replayed")
 	}
 }
+
 func TestFirstReportOfNewItemPagesOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	s := openStore(t, path)
@@ -130,6 +138,7 @@ func TestFirstReportOfNewItemPagesOnce(t *testing.T) {
 		t.Fatal("restart replayed")
 	}
 }
+
 func TestResolvedEpisodesPrunedAfterWindow(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
@@ -156,6 +165,7 @@ func TestResolvedEpisodesPrunedAfterWindow(t *testing.T) {
 		t.Fatal("aged resolution retained")
 	}
 }
+
 func TestUncertainLandedPOSTReconcilesAfterRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	s := openStore(t, path)
@@ -174,6 +184,7 @@ func TestUncertainLandedPOSTReconcilesAfterRestart(t *testing.T) {
 		t.Fatalf("reconciliation failed: %+v", es)
 	}
 }
+
 func TestUncertainAbsentRetryKeepsAttempt(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{fail: true}
@@ -185,6 +196,7 @@ func TestUncertainAbsentRetryKeepsAttempt(t *testing.T) {
 		t.Fatal("retry minted another episode/attempt")
 	}
 }
+
 func TestFailedLookupNeverRetries(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{fail: true}
@@ -195,6 +207,7 @@ func TestFailedLookupNeverRetries(t *testing.T) {
 		t.Fatal("retried without successful reconciliation")
 	}
 }
+
 func TestFlappingAndGenuineRecurrence(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
@@ -220,6 +233,7 @@ func TestFlappingAndGenuineRecurrence(t *testing.T) {
 		t.Fatal("genuine recurrence did not start a new episode")
 	}
 }
+
 func TestNonAdmitterAndUnset(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
@@ -232,6 +246,7 @@ func TestNonAdmitterAndUnset(t *testing.T) {
 		t.Fatal("unset admitter changed behavior")
 	}
 }
+
 func TestConcurrentProducers(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
@@ -251,6 +266,7 @@ func TestConcurrentProducers(t *testing.T) {
 		t.Fatalf("posts=%d", len(f.posts))
 	}
 }
+
 func TestAckAndSnoozeDoNotResetDelivery(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
@@ -266,6 +282,7 @@ func TestAckAndSnoozeDoNotResetDelivery(t *testing.T) {
 		t.Fatal("acknowledged request paged")
 	}
 }
+
 func TestCapacityFailsClosedAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	s := openStore(t, path)
@@ -282,6 +299,7 @@ func TestCapacityFailsClosedAcrossRestart(t *testing.T) {
 		t.Fatal("capacity evicted delivery history")
 	}
 }
+
 func TestPersistenceFailureNeverPosts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state")
@@ -300,6 +318,7 @@ func TestPersistenceFailureNeverPosts(t *testing.T) {
 		t.Fatal("posted without durable reservation")
 	}
 }
+
 func TestIdentityDimensions(t *testing.T) {
 	k := observation().Key
 	same := k

@@ -65,6 +65,7 @@ func TestAttentionNonAdmitterOnlyFoldsStatus(t *testing.T) {
 		}
 	}
 }
+
 func TestAttentionUnsetDoesNotWriteOrCreateLedger(t *testing.T) {
 	server := &statusCommentServer{}
 	srv := server.start(t)
@@ -77,6 +78,7 @@ func TestAttentionUnsetDoesNotWriteOrCreateLedger(t *testing.T) {
 		t.Fatal("unset admitter changed existing behavior")
 	}
 }
+
 func TestAttentionRespectsWritebackPause(t *testing.T) {
 	server := &statusCommentServer{}
 	srv := server.start(t)
@@ -90,6 +92,7 @@ func TestAttentionRespectsWritebackPause(t *testing.T) {
 		t.Fatal("paused repo received a comment")
 	}
 }
+
 func TestAttentionOwnerCreatesOneEventAcrossReports(t *testing.T) {
 	server := &statusCommentServer{}
 	srv := server.start(t)
@@ -118,6 +121,7 @@ func TestAttentionOwnerCreatesOneEventAcrossReports(t *testing.T) {
 		t.Fatalf("attention comments=%d", count)
 	}
 }
+
 func TestAttentionStatusBoundedAndMentionSafe(t *testing.T) {
 	var episodes []attention.Episode
 	for i := 0; i < 30; i++ {

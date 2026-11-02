@@ -38,6 +38,7 @@ func (c Config) Owner(repo string) string {
 	}
 	return ""
 }
+
 func (c Config) Validate() error {
 	if c.FlapWindow < 0 {
 		return errors.New("github.attention.flap_window must not be negative")
@@ -59,6 +60,7 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
 func (c Config) Window() time.Duration {
 	if c.FlapWindow > 0 {
 		return c.FlapWindow
@@ -89,6 +91,7 @@ func CISubject(job, errorClass string) string {
 	b, _ := json.Marshal([]string{"ci", strings.Join(strings.Fields(job), " "), canonical(errorClass)})
 	return string(b)
 }
+
 func FindingSubject(r findingidentity.Record) string { return findingidentity.Key(r) }
 func DecisionSubject(id string) string               { return "decision:" + strings.TrimSpace(id) }
 
@@ -149,6 +152,7 @@ type disk struct {
 	Items    map[string]bool     `json:"items"`
 	Episodes map[string]*Episode `json:"episodes"`
 }
+
 type Store struct {
 	mu    sync.Mutex
 	path  string
@@ -390,6 +394,7 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 	}
 	return s.snapshot(repo, item), nil
 }
+
 func (s *Store) snapshot(repo string, item int) []Episode {
 	out := []Episode{}
 	for _, e := range s.state.Episodes {

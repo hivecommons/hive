@@ -30,6 +30,7 @@ func TestConfigValidation(t *testing.T) {
 		t.Fatal("owner must match full repo")
 	}
 }
+
 func TestFindingIdentityUsesExistingKey(t *testing.T) {
 	r := findingidentity.Record{SubjectDigest: "subject", Predicate: "security", Location: "pkg/file.go:12"}
 	want := findingidentity.Key(r)
@@ -45,6 +46,7 @@ func TestFindingIdentityUsesExistingKey(t *testing.T) {
 		t.Fatal("new risk collapsed")
 	}
 }
+
 func TestUnknownVersionDoesNotOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	if err := os.WriteFile(path, []byte(`{"version":2,"items":{},"episodes":{}}`), 0600); err != nil {
