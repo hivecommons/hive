@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 func validHumanMergeHead(head string) bool {
@@ -32,9 +33,10 @@ func humanMergeHeadMarker(head string) string {
 //
 // Ambiguous provenance (including legacy markers, edited comments, multiple hold
 // applications, missing identity, or unavailable history) leaves the hold intact.
-// Callers must re-read labels after release and retain exact-head merge binding.
-func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, owner, repo string, number int, appLogin, expectedHead string, qualified bool) (bool, error) {
-	if !qualified || client == nil || strings.TrimSpace(appLogin) == "" || !validHumanMergeHead(expectedHead) {
+// Callers must supply the process writeback gate (nil fails closed), re-read
+// labels after release, and retain exact-head merge binding.
+func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, gate *writeback.Gate, owner, repo string, number int, appLogin, expectedHead string, qualified bool) (bool, error) {
+	if !qualified || client == nil || gate == nil || strings.TrimSpace(appLogin) == "" || !validHumanMergeHead(expectedHead) {
 		return false, nil
 	}
 	pr, _, err := client.PullRequests.Get(ctx, owner, repo, number)
@@ -141,7 +143,20 @@ func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, owner, re
 	if current.GetHead().GetSHA() != expectedHead {
 		return false, nil
 	}
-	if _, err := client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, HumanMergePathHoldLabel); err != nil {
+	item := writeback.Item{
+		Number:       number,
+		IsPR:         true,
+		Author:       current.GetUser().GetLogin(),
+		HiveAuthored: strings.EqualFold(current.GetUser().GetLogin(), appLogin) && current.GetUser().GetType() == "Bot",
+		CreatedAt:    current.GetCreatedAt().Time,
+	}
+	for _, label := range current.Labels {
+		item.Labels = append(item.Labels, label.GetName())
+	}
+	if !gate.Allowed(owner+"/"+repo, item, writeback.KindHoldGateNotice).Allowed {
+		return false, nil
+	}
+	if _, err := client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, HumanMergePathHoldLabel); err != nil { // writeback:gated
 		return false, fmt.Errorf("releasing path hold: %w", err)
 	}
 	return true, nil

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 func TestReleaseHumanMergePathHold(t *testing.T) {
@@ -23,9 +24,16 @@ func TestReleaseHumanMergePathHold(t *testing.T) {
 		legacy        bool
 		edited        bool
 		changedHead   bool
+		noGate        bool
+		mode          writeback.RepoMode
+		paused        bool
 		want          bool
 	}{
 		{name: "App-only stale path hold", actor: "hive[bot]", qualified: true, want: true},
+		{name: "missing writeback gate", actor: "hive[bot]", qualified: true, noGate: true},
+		{name: "writeback off", actor: "hive[bot]", qualified: true, mode: writeback.RepoModeOff},
+		{name: "writeback issues only", actor: "hive[bot]", qualified: true, mode: writeback.RepoModeIssuesOnly},
+		{name: "writeback paused", actor: "hive[bot]", qualified: true, paused: true},
 		{name: "human hold", actor: "person", qualified: true},
 		{name: "human re-added hold", actor: "hive[bot]", extraEvent: true, qualified: true},
 		{name: "non-qualifying head", actor: "hive[bot]"},
@@ -79,14 +87,28 @@ func TestReleaseHumanMergePathHold(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			released, err := ReleaseHumanMergePathHold(context.Background(), client, "o", "r", 1, "hive[bot]", head, tc.qualified)
+			mode := tc.mode
+			if mode == writeback.RepoModeDefault {
+				mode = writeback.RepoModeFull
+			}
+			gate := writeback.New(writeback.Config{
+				PerRepo: map[string]writeback.RepoOverride{"o/r": {Mode: mode}},
+			}, writeback.Deps{
+				RepoPause: func(string) (writeback.RepoPauseInfo, bool) {
+					return writeback.RepoPauseInfo{}, tc.paused
+				},
+			}, "")
+			if tc.noGate {
+				gate = nil
+			}
+			released, err := ReleaseHumanMergePathHold(context.Background(), client, gate, "o", "r", 1, "hive[bot]", head, tc.qualified)
 			if released != tc.want || (deletes == 1) != tc.want {
 				t.Fatalf("released=%v deletes=%d err=%v", released, deletes, err)
 			}
 			if tc.timelineError && err == nil {
 				t.Fatal("timeline failure must be reported")
 			}
-			if !tc.qualified && calls != 0 {
+			if (!tc.qualified || tc.noGate) && calls != 0 {
 				t.Fatalf("non-qualifying request made %d calls", calls)
 			}
 		})
