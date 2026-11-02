@@ -1,4 +1,4 @@
-package agent
+package panesignal
 
 import (
 	"fmt"
@@ -23,7 +23,7 @@ func referenceDeduplicateBlocks(lines []string) []string {
 			}
 			match := true
 			for j := 0; j < blockSize; j++ {
-				if normalizeLine(lines[start+j]) != normalizeLine(candidate[j]) {
+				if NormalizeLine(lines[start+j]) != NormalizeLine(candidate[j]) {
 					match = false
 					break
 				}
@@ -42,7 +42,7 @@ func referenceDeduplicateBlocks(lines []string) []string {
 // nearRepeatPane models a Copilot/Claude pane: long runs of identical spinner
 // lines punctuated by a unique line every few lines, so no block ever fully
 // repeats but every candidate block matches several lines before failing —
-// the worst case for the old per-compare normalizeLine scan.
+// the worst case for the old per-compare NormalizeLine scan.
 func nearRepeatPane(n int) []string {
 	lines := make([]string, n)
 	for i := range lines {

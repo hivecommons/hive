@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agent/panesignal"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -999,8 +1000,8 @@ const (
 	agyLaunchModeEnv         = "HIVE_AGY_LAUNCH_MODE"
 	agyLaunchModeHeadless    = "headless"
 	agyLaunchModeInteractive = "interactive"
-	agyHeadlessReadyMarker   = "HIVE_AGY_HEADLESS_READY"
-	agyHeadlessRunningMarker = "HIVE_AGY_HEADLESS_RUNNING"
+	agyHeadlessReadyMarker   = panesignal.AgyHeadlessReadyMarker
+	agyHeadlessRunningMarker = panesignal.AgyHeadlessRunningMarker
 )
 
 func agyInteractiveLaunchRequested(value string) bool {
