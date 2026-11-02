@@ -495,6 +495,63 @@ from **Settings → Features → Auto-merge**. The dashboard writes the same
 owner-only `/api/config/auto-merge` overlay as the other auto-merge controls, so
 hosted spoke changes survive restarts without editing `hive.yaml`.
 
+### Human-merge pin-only rollout
+
+**Availability:** not yet enforced by this attribution change alone. Minimum
+supported version: the first deployed v5 release containing the schema/classifier
+(#16262), relay (#16265), sweep (#16266), and hold-release admission integration
+(#16269). No released version is established here; do not assume an existing
+`candidate`, `latest`, or `stable` tag contains all four. Record the actual image
+digest/version and live positive/negative evidence in projectbluefin/utah#1082
+before enabling that rollout.
+
+The planned additive configuration (requires the schema change) is:
+
+```yaml
+auto_merge:
+  human_merge_paths:
+    projectbluefin/utah: [".github/workflows/**", "Containerfile"]
+  human_merge_pin_only:
+    projectbluefin/utah:
+      enabled: true
+      paths: [".github/workflows/*.yml", "Containerfile"]
+      kinds: [action-sha, image-digest, version-pin]
+      trusted_authors: [approved-maintenance-login] # replace with approved identities
+```
+
+| Field | Default / contract |
+| --- | --- |
+| Repository key | Case-insensitive `owner/repo`; configure each consumer separately. |
+| `enabled` | Absent/false preserves the existing human-merge-path gate. |
+| `paths` | Explicit allowed paths within the protected path matches, not a replacement for `human_merge_paths`. Required when enabled. |
+| `kinds` | Explicit subset of `action-sha`, `image-digest`, `version-pin`; unknown kinds rejected. Required when enabled. |
+| `trusted_authors` | Explicit authenticated author allowlist; required when enabled. Not permission to trust arbitrary bot-looking logins. |
+
+Edit the controller's active `hive.yaml` seed, not the consumer image repo.
+The config file watcher loads the seed plus dashboard overlay after a debounced
+file change and logs `config reloaded from file`; a rejected reload logs
+`config reload failed` and does not install the change. See
+[config layering](../config-layering.md) for seed/overlay precedence. Do not
+assume the dashboard auto-merge editor exposes this new map. Verify both relay
+and sweep lookups use the reloaded configuration before relying on it; use a
+controller restart on the verified image if the running version lacks live wiring.
+
+Qualification requires a complete exact-head diff and trusted author, not just
+SHA-shaped text. The exception never bypasses native required checks or producer
+bindings, strict freshness, current review, substantive objections, unrelated
+holds, or configured soak. Mixed logic/permissions/credential/trust-boundary
+changes remain a person's merge. A candidate such as projectbluefin/utah#1068
+must qualify again on its then-current head.
+
+Path holds carry the legacy marker plus an exact-head attribution marker only
+for newly applied holds. The shared release API fails closed on human-applied
+or re-added holds, legacy/edited/ambiguous markers, or missing label timeline.
+It only accepts one App-applied hold event immediately before the App notice;
+older hold cycles are conservatively retained. Admission integration must call
+it only after qualification, re-read labels, and keep all other gates. This is
+not a manual hold-removal runbook or evidence that automatic release is already
+wired in the running controller.
+
 **When a lane leaves the merge to a person (`stage/090-ready-for-human-merge`).**
 A PR no lane vouches for — an untrusted author (`contributor-lane:author-association`,
 `untrusted-author-role`, `author-permission-missing`, `fork-non-member`, the

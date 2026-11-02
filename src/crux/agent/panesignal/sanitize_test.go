@@ -1,4 +1,4 @@
-package agent
+package panesignal
 
 import (
 	"strings"
@@ -60,15 +60,15 @@ func TestSanitizePaneTextStripsTUIChromeSamples(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := SanitizePaneText(tt.in, 20); got != tt.want {
-				t.Fatalf("SanitizePaneText() = %q, want %q", got, tt.want)
+			if got := SanitizeText(tt.in, 20); got != tt.want {
+				t.Fatalf("SanitizeText() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestSanitizePaneTextDoesNotReturnBlankFences(t *testing.T) {
-	got := SanitizePaneText("```\n\n```", 20)
+	got := SanitizeText("```\n\n```", 20)
 	if strings.Contains(got, "```") || strings.TrimSpace(got) != "" {
 		t.Fatalf("blank fences survived: %q", got)
 	}

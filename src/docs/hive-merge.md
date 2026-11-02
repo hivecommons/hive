@@ -204,6 +204,29 @@ There is **no minimum deployable version enabling this lane yet**. Utah rollout
 and current-head positive/negative deployment evidence remain tracked by
 projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authorized.
 
+**Pin-only exception rollout (#16242).** The proposed opt-in key is
+`auto_merge.human_merge_pin_only`; see the
+[operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
+for its configuration and deployment prerequisites. The schema/classifier
+(#16262), relay admission (#16265), and sweep admission (#16266) are separate
+changes: this attribution change alone does **not** enable the exception.
+New path-hold comments retain `<!-- hive-human-merge-path -->` and append
+`<!-- hive-human-merge-path-head: <40-character SHA> -->` only when Hive
+observes that exact head without a pre-existing hold. Legacy comments and
+pre-existing holds are not retroactively attributed.
+
+The shared release API requires a later, qualifying exact head, the configured
+App identity, an unedited App marker, and complete label-event history proving
+one App-applied path hold immediately before the notice. Human-applied or
+re-added holds, ambiguous history, and timeline errors keep the hold. Admission
+callers must supply their live writeback gate (a missing gate or denied
+hold-gate notice leaves the hold intact), wire that API after pin-only
+qualification, and re-read labels;
+that wiring remains part of the rollout, not an authorization to clear labels
+manually. Required checks and their producer bindings, strict freshness,
+current reviews and substantive objections, other holds, and configured soak
+remain mandatory. Neither a pin-looking diff nor this API authorizes a merge.
+
 **Contributor PRs are held to the contributor-lane policy.** A merge request
 for a PR whose author is not the hive App, a configured trusted bot, or a
 trusted-author role is evaluated against the same `auto_merge.contributor_lane`
@@ -480,6 +503,19 @@ yielded owners retain their tickets through pending CI/review observations.
 Admission provenance prevents a different lane's non-admission from revoking
 the owning lane's reservation or FIFO ticket. An old waiting ticket reserves
 order only: its head must qualify afresh in its lane before becoming owner.
+
+The persisted owner head is the **admitted source head**, so a different live
+head is not by itself a stale reservation: an App-authored refresh preserves
+that source and its write-ahead attempt while the new head earns CI and a fresh
+review. Required-green alone does not release ownership or confer approval.
+State-changing lane observations re-read the head/base, author, policy labels
+and review inputs outside the preparation lock, then compare the persisted
+owner/attempt or exact waiting ticket before settling it. Superseded callbacks
+cannot release a newer reservation or rewind a yielded head. An accepted refresh
+whose expected head is still live remains exclusive through the existing
+mutation-reconciliation window, even if an older evaluation reports failure.
+Unavailable or changed evidence retains ownership for normal reevaluation;
+neither this validation nor a dashboard snapshot forcibly clears the queue.
 
 Audit logs use `automerge base preparation selected`, `refresh claimed`,
 `waiting`, `released` and `completed owner yielded`, with repository, base, PR,

@@ -97,9 +97,26 @@ func HumanMergePathComment(matches []string) string {
 // marker-stamped comment naming matches, unless a comment carrying
 // HumanMergePathMarker already exists. Shared by the sweep lanes and the
 // merge-request relay so both leave exactly one comment.
-func HoldForHumanMergePaths(ctx context.Context, client *gh.Client, owner, repo string, number int, matches []string) error {
+func HoldForHumanMergePaths(ctx context.Context, client *gh.Client, owner, repo string, number int, matches []string, head ...string) error {
 	if client == nil {
 		return fmt.Errorf("human-merge-path hold: no client")
+	}
+	// Never attribute an existing hold to this policy. Older callers without an
+	// exact head retain the legacy, non-releasable marker.
+	attributedHead := ""
+	if len(head) == 1 && validHumanMergeHead(head[0]) {
+		pr, _, err := client.PullRequests.Get(ctx, owner, repo, number)
+		if err != nil {
+			return fmt.Errorf("fetching human-merge-path head: %w", err)
+		}
+		if pr.GetHead().GetSHA() == head[0] {
+			attributedHead = head[0]
+			for _, label := range pr.Labels {
+				if strings.EqualFold(label.GetName(), HumanMergePathHoldLabel) {
+					attributedHead = ""
+				}
+			}
+		}
 	}
 	if _, _, err := client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanMergePathHoldLabel}); err != nil {
 		return fmt.Errorf("adding %s label: %w", HumanMergePathHoldLabel, err)
@@ -111,7 +128,11 @@ func HoldForHumanMergePaths(ctx context.Context, client *gh.Client, owner, repo 
 	if posted {
 		return nil
 	}
-	if _, _, err := client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(HumanMergePathComment(matches))}); err != nil {
+	body := HumanMergePathComment(matches)
+	if attributedHead != "" {
+		body += humanMergeHeadMarker(attributedHead) + "\n"
+	}
+	if _, _, err := client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		return fmt.Errorf("posting human-merge-path comment: %w", err)
 	}
 	return nil
@@ -195,7 +216,7 @@ func (c *Client) mergeRequestHumanMergePathRefusal(ctx context.Context, req Merg
 	if len(matches) == 0 {
 		return "", nil
 	}
-	if err := HoldForHumanMergePaths(ctx, c.client, owner, name, req.Number, matches); err != nil {
+	if err := HoldForHumanMergePaths(ctx, c.client, owner, name, req.Number, matches, pr.GetHead().GetSHA()); err != nil {
 		c.warn("merge-request watcher: human-merge-path hold failed", "repo", req.Repo, "pr", req.Number, "error", err)
 	}
 	return HumanMergePathReason(matches), nil
