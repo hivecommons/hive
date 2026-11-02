@@ -1,0 +1,1 @@
+- The permissions watcher again logs an unfixable chown or chmod once at WARN and repeats at DEBUG: on Linux its error text named the `/proc/self/fd/N` link, whose number changes between ticks, so the same failure kept re-warning; errors now name the entry's path ([#16220](https://github.com/hivecommons/hive/issues/16220)).
