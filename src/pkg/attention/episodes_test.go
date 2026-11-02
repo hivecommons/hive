@@ -3,6 +3,7 @@ package attention
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -64,7 +65,6 @@ func TestAcrossProducersPushesAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "episodes.json")
 	s := openStore(t, path)
 	f := &forge{}
-	report(t, s, f, "owner") // Initial inventory is empty: establish recovery baseline.
 	o := observation()
 	report(t, s, f, "owner", o)
 	for _, producer := range []string{"scanner", "runtime", "Actions"} {
@@ -88,20 +88,20 @@ func TestEmptyAndCorruptStateNeverReplay(t *testing.T) {
 				}
 			}
 			s := openStore(t, path)
-			f := &forge{}
+			paged := observation()
+			paged.Key.Action = "urgent-security"
+			paged.Key.Subject = "new-rule:file:location"
+			f := &forge{history: []string{paged.Key.Hash()}}
 			o := observation()
-			es := report(t, s, f, "owner", o)
-			report(t, s, f, "owner", o)
-			if len(f.posts) != 0 || !es[0].Baseline {
-				t.Fatal("history replayed", es)
+			es := report(t, s, f, "owner", o, paged)
+			report(t, s, f, "owner", o, paged)
+			if len(f.posts) != 1 || f.posts[0].Key != o.Key {
+				t.Fatalf("never-paged condition swallowed or history replayed: posts=%+v", f.posts)
 			}
-			// A genuinely new urgent risk is independent of the baseline CI episode.
-			risk := o
-			risk.Key.Action = "urgent-security"
-			risk.Key.Subject = "new-rule:file:location"
-			report(t, s, f, "owner", o, risk)
-			if len(f.posts) != 1 || f.posts[0].Key.Action != "urgent-security" {
-				t.Fatal("new security risk suppressed")
+			for _, e := range es {
+				if e.Baseline != (e.Key == paged.Key) {
+					t.Fatalf("baseline marking wrong: %+v", e)
+				}
 			}
 		})
 	}
@@ -116,11 +116,50 @@ func TestRecoveryRetainsMarkersNotInFirstInventory(t *testing.T) {
 		t.Fatal("marker history replayed")
 	}
 }
+func TestFirstReportOfNewItemPagesOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state")
+	s := openStore(t, path)
+	f := &forge{}
+	es := report(t, s, f, "owner", observation())
+	if len(f.posts) != 1 || es[0].Baseline || es[0].State != Notified {
+		t.Fatalf("first inventory of a never-seen item was swallowed: %+v", es)
+	}
+	s = openStore(t, path)
+	report(t, s, f, "owner", observation())
+	if len(f.posts) != 1 {
+		t.Fatal("restart replayed")
+	}
+}
+func TestResolvedEpisodesPrunedAfterWindow(t *testing.T) {
+	s := openStore(t, "")
+	f := &forge{}
+	now := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	for i := 0; i < MaxEpisodes-1; i++ {
+		s.state.Episodes[fmt.Sprint(i)] = &Episode{State: Resolved, ResolvedAt: now.Add(-DefaultFlapWindow - time.Second)}
+	}
+	s.state.Episodes["uncertain"] = &Episode{State: Resolved, Uncertain: true, ResolvedAt: now.Add(-DefaultFlapWindow - time.Second)}
+	es := report(t, s, f, "owner", observation())
+	if len(f.posts) != 1 || len(es) != 1 || len(s.state.Episodes) != 2 || s.state.Episodes["uncertain"] == nil {
+		t.Fatalf("pruning wrong: posts=%d episodes=%d", len(f.posts), len(s.state.Episodes))
+	}
+	o := observation()
+	o.Resolved = true
+	report(t, s, f, "owner", o)
+	report(t, s, f, "owner")
+	if len(s.state.Episodes) != 2 {
+		t.Fatal("fresh resolution pruned inside window")
+	}
+	now = now.Add(DefaultFlapWindow + time.Second)
+	report(t, s, f, "owner")
+	if len(s.state.Episodes) != 1 {
+		t.Fatal("aged resolution retained")
+	}
+}
 func TestUncertainLandedPOSTReconcilesAfterRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	s := openStore(t, path)
 	f := &forge{fail: true}
-	report(t, s, f, "owner")
 	_, err := s.Report(context.Background(), testConfig, "owner", "org/repo", 1, []Observation{observation()}, f)
 	if err == nil {
 		t.Fatal("expected timeout")
@@ -138,7 +177,6 @@ func TestUncertainLandedPOSTReconcilesAfterRestart(t *testing.T) {
 func TestUncertainAbsentRetryKeepsAttempt(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{fail: true}
-	report(t, s, f, "owner")
 	_, _ = s.Report(context.Background(), testConfig, "owner", "org/repo", 1, []Observation{observation()}, f)
 	f.landed = map[string]bool{}
 	f.fail = false
@@ -150,7 +188,6 @@ func TestUncertainAbsentRetryKeepsAttempt(t *testing.T) {
 func TestFailedLookupNeverRetries(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{fail: true}
-	report(t, s, f, "owner")
 	_, _ = s.Report(context.Background(), testConfig, "owner", "org/repo", 1, []Observation{observation()}, f)
 	f.findErr = errors.New("GitHub unavailable")
 	_, err := s.Report(context.Background(), testConfig, "owner", "org/repo", 1, []Observation{observation()}, f)
@@ -163,7 +200,6 @@ func TestFlappingAndGenuineRecurrence(t *testing.T) {
 	f := &forge{}
 	now := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	report(t, s, f, "owner")
 	o := observation()
 	report(t, s, f, "owner", o)
 	first := f.posts[0].Attempt
@@ -187,7 +223,6 @@ func TestFlappingAndGenuineRecurrence(t *testing.T) {
 func TestNonAdmitterAndUnset(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
-	report(t, s, f, "other")
 	es := report(t, s, f, "other", observation())
 	if len(f.posts) != 0 || len(es) != 1 || !es[0].WouldNotify {
 		t.Fatal("non-admitter posted or lost shadow decision")
@@ -200,7 +235,6 @@ func TestNonAdmitterAndUnset(t *testing.T) {
 func TestConcurrentProducers(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
-	report(t, s, f, "owner")
 	var wg sync.WaitGroup
 	for i := 0; i < 12; i++ {
 		wg.Add(1)
@@ -220,7 +254,6 @@ func TestConcurrentProducers(t *testing.T) {
 func TestAckAndSnoozeDoNotResetDelivery(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{}
-	report(t, s, f, "owner")
 	o := observation()
 	o.Actionable = false
 	report(t, s, f, "owner", o)
@@ -237,7 +270,6 @@ func TestCapacityFailsClosedAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	s := openStore(t, path)
 	f := &forge{}
-	report(t, s, f, "owner")
 	for i := 0; i < MaxEpisodes; i++ {
 		s.state.Episodes[string(rune(i))] = &Episode{State: Observed}
 	}
@@ -255,7 +287,7 @@ func TestPersistenceFailureNeverPosts(t *testing.T) {
 	path := filepath.Join(dir, "state")
 	s := openStore(t, path)
 	f := &forge{}
-	report(t, s, f, "owner")
+	report(t, s, f, "owner") // Creates the ledger file so it can be replaced below.
 	// A directory at the ledger destination makes atomic replacement fail.
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)

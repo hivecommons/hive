@@ -23,8 +23,9 @@ func (c *Client) SetAttention(hiveID string, cfg func() attention.Config) {
 }
 
 // ReportAttention accepts a complete current condition inventory for an item.
-// Producers must share structured subjects and action classes. Call with an empty
-// inventory after recovery to establish a baseline before observing new risks.
+// Producers must share structured subjects and action classes. Conditions with a
+// prior trusted attention comment are seeded as a baseline without sending; a
+// never-paged condition notifies on its first report.
 // This path never bypasses writeback policy, including pause and repo mode off.
 // Routing existing producers into this API is the separately opted-in pilot.
 func (c *Client) ReportAttention(ctx context.Context, repo string, item writeback.Item, kind writeback.Kind, observations []attention.Observation) ([]attention.Episode, error) {
@@ -64,7 +65,9 @@ type attentionDelivery struct {
 	item writeback.Item
 }
 
-var attentionKeyMarker = regexp.MustCompile(`<!-- hive:(?:attention|condition) key=([a-f0-9]{64})(?: attempt=[a-f0-9]{32})? -->`)
+// Only attention markers prove a delivery; status-card condition markers also
+// cover non-admitter and never-paged episodes and must not seed baselines.
+var attentionKeyMarker = regexp.MustCompile(`<!-- hive:attention key=([a-f0-9]{64}) attempt=[a-f0-9]{32} -->`)
 
 func (d attentionDelivery) History(ctx context.Context, repo string, item int) ([]string, error) {
 	owner, name := d.c.splitRepo(repo)

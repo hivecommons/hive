@@ -24,7 +24,7 @@ func TestOpenInvalidLedgers(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := openStore(t, path)
-			f := &forge{}
+			f := &forge{history: []string{observation().Key.Hash()}}
 			es := report(t, s, f, "owner", observation())
 			if len(es) != 1 || !es[0].Baseline || len(f.posts) != 0 {
 				t.Fatalf("replayed invalid ledger: %+v", es)
@@ -136,8 +136,8 @@ func TestSaveFailsOnInvalidTimeAndParent(t *testing.T) {
 
 func TestUpdateTransitionsAndQuietAcknowledgedReopen(t *testing.T) {
 	s := openStore(t, "")
-	f := &forge{}
 	o := observation()
+	f := &forge{history: []string{o.Key.Hash()}} // Seeded baseline: no page, so ack/snooze transitions are exercised from actionable.
 	now := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	if err := s.Update(o.Key, Acknowledged, time.Time{}); err == nil {
@@ -188,7 +188,6 @@ func TestUpdateTransitionsAndQuietAcknowledgedReopen(t *testing.T) {
 func TestHandoffDoesNotRetryPreviousOwnersAttempt(t *testing.T) {
 	s := openStore(t, "")
 	f := &forge{fail: true}
-	report(t, s, f, "owner")
 	if _, err := s.Report(context.Background(), testConfig, "owner", "org/repo", 1, []Observation{observation()}, f); err == nil {
 		t.Fatal("expected uncertain POST")
 	}

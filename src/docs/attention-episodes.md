@@ -62,13 +62,14 @@ The ledger lives beside the writeback state (`writeback.json.attention`, followi
 and is shared by clients using the process-wide writeback gate. Save failures
 fence POSTs. Unknown schema versions fail closed instead of being overwritten.
 
-On missing/corrupt state, the first **complete inventory per item** is a recovery
-baseline: list trusted Hive attention/status markers and seed current conditions
-without sending. A successful empty inventory establishes a baseline too. Do not
-send partial producer snapshots during recovery: aggregate the item's known
-conditions before calling this API. Conditions seeded from history are marked
-uncertain for human reconciliation in the status section. A subsequent genuinely
-new condition can notify immediately. This deliberately chooses no historical
+The first **complete inventory per item** consults delivery history: list trusted
+Hive attention comments (status-card condition markers do not count) and seed any
+matching current condition without sending. A condition with no prior attention
+comment notifies on its first report, so ledger loss never swallows a genuinely
+new risk and never replays an already-paged one. Do not send partial producer
+snapshots during recovery: aggregate the item's known conditions before calling
+this API. Conditions seeded from history are marked uncertain for human
+reconciliation in the status section. This deliberately chooses no historical
 replay over guessing which unrecorded old incident deserves another page.
 
 Before POST, persist a random attempt ID and its owner. Comments carry
@@ -80,9 +81,11 @@ the **same** ID, even if evidence/body changed. This reconciliation is only for
 the single admitter's own attempts, not cross-instance deduplication. The existing
 mutation journal remains in the GitHub write path as an additional safeguard.
 
-The file is bounded to 4096 episodes and 4096 initialized items. Capacity errors
-fail closed and retain history instead of evicting an active incident and
-replaying it. Operators must reconcile/archive old resolved inventory before
+The file is bounded to 4096 episodes and 4096 initialized items. Resolved
+episodes are pruned once the flap window has passed (recurrence would start a
+fresh episode anyway); uncertain episodes and history-seeded baselines are kept.
+Capacity errors fail closed and retain history instead of evicting an active
+incident and replaying it. Operators must reconcile/archive inventory before
 resetting a full ledger; a reset re-enters baseline recovery, never an automatic
 re-page. Status displays up to 20 active conditions with an overflow count; all
 records remain in the ledger. Status includes owner/action, last evidence,

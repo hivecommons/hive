@@ -134,9 +134,10 @@ type Observation struct {
 	Body       string
 }
 
-// Delivery is supplied by the existing write boundary. History returns trusted
-// hive marker keys (including status-card condition markers), with pagination.
-// Find must reconcile this exact attempt, not content or another hive's attempt.
+// Delivery is supplied by the existing write boundary. History returns the keys
+// of trusted hive attention markers (evidence of a real POST, not status-card
+// condition markers), with pagination. Find must reconcile this exact attempt,
+// not content or another hive's attempt.
 type Delivery interface {
 	History(context.Context, string, int) ([]string, error)
 	Find(context.Context, Episode) (bool, error)
@@ -234,9 +235,22 @@ func (s *Store) save() error {
 	return dir.Sync()
 }
 
+// prune drops resolved episodes once recurrence would start a fresh episode
+// anyway, so the capacity cap bounds live inventory rather than eventually
+// refusing every report. Uncertain episodes stay until reconciled, and
+// history-seeded hash-only baselines stay as the replay guard.
+func (s *Store) prune(now time.Time, window time.Duration) {
+	for k, e := range s.state.Episodes {
+		if e.State == Resolved && !e.Uncertain && !e.ResolvedAt.IsZero() && now.Sub(e.ResolvedAt) > window {
+			delete(s.state.Episodes, k)
+		}
+	}
+}
+
 // Report accepts the full current condition snapshot for one item. The first
-// snapshot after state loss seeds WITHOUT sending. A successful empty snapshot
-// establishes a baseline so genuinely new risks can notify on the next report.
+// snapshot per item consults delivery history: a condition with a prior trusted
+// attention marker is seeded as a baseline WITHOUT sending, while a condition
+// that was never paged notifies immediately, ledger loss or not.
 // Calls are serialized through the POST outcome, including concurrent producers.
 // Non-admitters only record would-notify. No marker lookup grants ownership.
 func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, item int, observations []Observation, d Delivery) ([]Episode, error) {
@@ -258,9 +272,11 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 			return nil, errors.New("attention: incomplete, oversized or mismatched key")
 		}
 	}
-	baseline := !s.state.Items[itemKey]
+	now := s.now().UTC()
+	s.prune(now, cfg.Window())
+	first := !s.state.Items[itemKey]
 	historical := map[string]bool{}
-	if baseline {
+	if first {
 		if len(s.state.Items) >= MaxItems {
 			return nil, errors.New("attention: item capacity reached; refusing replay-prone eviction")
 		}
@@ -274,11 +290,10 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 				if len(s.state.Episodes) >= MaxEpisodes {
 					return nil, errors.New("attention: recovery capacity reached")
 				}
-				s.state.Episodes[k] = &Episode{State: Observed, FirstSeen: s.now().UTC(), Baseline: true}
+				s.state.Episodes[k] = &Episode{State: Observed, FirstSeen: now, Baseline: true}
 			}
 		}
 	}
-	now := s.now().UTC()
 	for _, o := range observations {
 		hash := o.Key.Hash()
 		e := s.state.Episodes[hash]
@@ -286,7 +301,7 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 			if len(s.state.Episodes) >= MaxEpisodes {
 				return nil, errors.New("attention: episode capacity reached; refusing replay-prone eviction")
 			}
-			e = &Episode{Key: o.Key, State: Observed, FirstSeen: now, Baseline: baseline || historical[hash]}
+			e = &Episode{Key: o.Key, State: Observed, FirstSeen: now, Baseline: historical[hash]}
 			s.state.Episodes[hash] = e
 		} else if e.State == Resolved && !o.Resolved {
 			if now.Sub(e.ResolvedAt) > cfg.Window() && !e.Uncertain {
