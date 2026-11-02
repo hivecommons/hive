@@ -15,8 +15,8 @@ import (
 
 // Address is a parsed server address: where to dial and what URL to put in
 // front of the routes. For a unix socket BaseURL is a fixed http://crux and
-// the transport dials Path; for TCP BaseURL is the scheme and host and Path
-// is empty.
+// the transport dials Path; for TCP BaseURL is the scheme, host and any path
+// prefix (no trailing slash) and Path is empty.
 type Address struct {
 	// Network is "unix" or "tcp".
 	Network string
