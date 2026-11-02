@@ -390,9 +390,9 @@ SOFTWARE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/charmbracelet/colorprofile
-Version:  v0.3.2
+Version:  v0.4.1
 License:  MIT
-Source:   https://github.com/charmbracelet/colorprofile/blob/v0.3.2/LICENSE
+Source:   https://github.com/charmbracelet/colorprofile/blob/v0.4.1/LICENSE
 
 MIT License
 
@@ -477,9 +477,9 @@ SOFTWARE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/charmbracelet/x/cellbuf
-Version:  v0.0.13-0.20250311204145-2c3ea96c31dd
+Version:  v0.0.15
 License:  MIT
-Source:   https://github.com/charmbracelet/x/blob/2c3ea96c31dd/cellbuf/LICENSE
+Source:   https://github.com/charmbracelet/x/blob/cellbuf/v0.0.15/cellbuf/LICENSE
 
 MIT License
 
