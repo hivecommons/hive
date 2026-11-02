@@ -185,7 +185,7 @@ func run(opts options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err := os.WriteFile(mcp, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
 		return err
 	}
-	if opts.promptFile != "-" {
+	if opts.promptFile != "" && opts.promptFile != "-" {
 		file, err := os.Open(opts.promptFile)
 		if err != nil {
 			return errors.New("cannot read Cline prompt file")
@@ -246,7 +246,7 @@ func workerEnv(environ []string) []string {
 	env := make([]string, 0, len(environ))
 	for _, entry := range environ {
 		name, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(name, "CLINE_") || strings.HasPrefix(name, "AWS_") ||
+		if strings.HasPrefix(name, "CLINE_") || strings.HasPrefix(name, "HIVE_CLINE_") || strings.HasPrefix(name, "AWS_") ||
 			strings.HasSuffix(name, "_API_KEY") || strings.HasSuffix(name, "_API_TOKEN") ||
 			name == "HIVE_CLINE_PROVIDERS_B64" || name == "DATABRICKS_TOKEN" ||
 			name == "KILO_AUTH_CONTENT" || name == "KILO_CONFIG_CONTENT" ||

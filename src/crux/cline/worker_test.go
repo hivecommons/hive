@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,7 @@ func TestWorkerEnv(t *testing.T) {
 	in := []string{"PATH=/tools", "HTTPS_PROXY=http://policy", "NODE_EXTRA_CA_CERTS=/ca",
 		"OPENAI_API_KEY=unrelated", "ANTHROPIC_API_KEY=unrelated", "DATABRICKS_TOKEN=unrelated",
 		"CLINE_HUB_ADDRESS=host", "AWS_SECRET_ACCESS_KEY=unrelated", "KILO_AUTH_CONTENT=unrelated",
+		"HIVE_CLINE_CONFIG_DIR=unrelated", "HIVE_CLINE_DANGEROUSLY_RUN_UNCONFINED=unrelated",
 		"HIVE_CLINE_PROVIDERS_B64=secret", "HIVE_AGENT_TOKEN_CACHE=/scoped"}
 	got := strings.Join(workerEnv(in), "\n")
 	if strings.Contains(got, "unrelated") || strings.Contains(got, "secret") || strings.Contains(got, "CLINE_HUB") {
@@ -138,6 +140,7 @@ func TestRender(t *testing.T) {
 		{`{"type":"run_aborted"}`, "", true},
 		{`{"type":"error","message":"secret"}`, "", true},
 		{`{"type":"agent_event","event":{"type":"error"}}`, "", true},
+		{`{"type":"agent_event","event":3}`, "", true},
 		{strings.Repeat("x", maxEventBytes+1), "", true},
 	}
 	for _, tc := range cases {
@@ -149,6 +152,75 @@ func TestRender(t *testing.T) {
 		if !strings.Contains(out.String(), tc.want) || strings.Contains(out.String(), "private reasoning") {
 			t.Errorf("unexpected rendering %q", out.String())
 		}
+	}
+}
+
+type failedWriter struct{}
+
+func (failedWriter) Write([]byte) (int, error) { return 0, errors.New("closed output") }
+
+func TestPreflightAndSetupFailures(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "config")
+	credentials(t, config, providerConfig)
+	if err := CheckConfig(config, "openrouter/test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckConfig(config, "auto"); err == nil {
+		t.Fatal("implicit provider accepted")
+	}
+	if err := CheckConfig(filepath.Join(root, "missing"), "openrouter/test"); err == nil {
+		t.Fatal("missing credential source accepted")
+	}
+	binary := fakeCLI(t, `cat >/dev/null; echo '{"type":"run_result","finishReason":"completed","text":"done"}'`)
+	opts := options{binary: binary, configDir: config, model: "openrouter/test", timeout: time.Minute}
+	t.Setenv("HOME", root)
+	if err := run(opts, strings.NewReader("bounded task"), &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal("default cwd/home/state failed", err)
+	}
+	t.Setenv("HOME", "")
+	if err := run(opts, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("missing home accepted")
+	}
+	t.Setenv("HOME", root)
+	opts.configDir = ""
+	if err := run(opts, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("missing default provider config accepted")
+	}
+	opts.configDir = config
+	opts.exportConfig = true
+	if err := run(opts, nil, failedWriter{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("credential export write failure ignored")
+	}
+	opts.exportConfig = false
+	blocked := filepath.Join(root, "file")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts.stageConfig = blocked
+	if err := run(opts, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("staging directory failure ignored")
+	}
+	opts.stageConfig = filepath.Join(root, "stage")
+	if err := os.MkdirAll(filepath.Join(opts.stageConfig, "data", "settings", "providers.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(opts, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("staging write failure ignored")
+	}
+	opts.stageConfig = ""
+	opts.stateDir = blocked
+	if err := run(opts, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("state creation failure ignored")
+	}
+	opts.stateDir = filepath.Join(root, "state")
+	opts.binary = fakeCLI(t, "exit 0")
+	content := "#!/bin/sh\nif [ \"$1\" = --help ]; then echo '" + help + "'; rm -- \"$0\"; exit 0; fi\nexit 1\n"
+	if err := os.WriteFile(opts.binary, []byte(content), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(opts, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "start") {
+		t.Fatal("disappearing executable accepted", err)
 	}
 }
 

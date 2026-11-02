@@ -42,29 +42,44 @@ func TestCliPinChangeRefreshesModelOptions(t *testing.T) {
 			codex: [{value: 'gpt-6-luna', label: 'gpt-6-luna'}, {value: 'gpt-6-sol', label: 'gpt-6-sol'}],
 		};
 		function modelsForBackend(b) { return MODELS[b]; }
-		const sel = {value: '', innerHTML: ''};
-		const document = {getElementById: () => sel};
+		const makeElement = tag => ({
+			tagName: tag.toUpperCase(), value: '', innerHTML: '',
+			attributes: [{name: 'id', value: 'cfg-model'}, {name: 'data-change-action', value: 'markDirty'}],
+			setAttribute(name, value) {
+				const attribute = this.attributes.find(a => a.name === name);
+				if (attribute) attribute.value = value;
+				else this.attributes.push({name, value});
+			},
+			replaceWith(replacement) { sel = replacement; },
+		});
+		let sel = makeElement('select');
+		const document = {getElementById: () => sel, createElement: makeElement};
 		const run = (backend, current) => {
 			sel.value = current;
 			refreshModelOptions(backend);
-			return {value: sel.value, html: sel.innerHTML};
+			return {value: sel.value, html: sel.innerHTML, tag: sel.tagName};
 		};
 		console.log(JSON.stringify([
 			run('codex', 'claude-opus-5'),
 			run('codex', 'gpt-6-sol'),
 			run('codex', ''),
+			run('cline', 'openrouter/anthropic/test'),
+			run('codex', 'openrouter/anthropic/test'),
 		]));`
 
 	out, err := exec.Command("node", "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node failed: %v\n%s", err, out)
 	}
-	var got []struct{ Value, HTML string }
+	var got []struct{ Value, HTML, Tag string }
 	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &got); err != nil {
 		t.Fatalf("could not decode node output %q: %v", out, err)
 	}
 
 	for i, g := range got {
+		if g.Tag == "INPUT" {
+			continue
+		}
 		if !strings.Contains(g.HTML, `<option value="gpt-6-luna"`) || !strings.Contains(g.HTML, `<option value="gpt-6-sol"`) {
 			t.Errorf("case %d: codex models not offered: %s", i, g.HTML)
 		}
@@ -79,6 +94,12 @@ func TestCliPinChangeRefreshesModelOptions(t *testing.T) {
 	}
 	if got[2].Value != "" || strings.Contains(got[2].HTML, "(current)") {
 		t.Errorf("empty model must stay on the backend-default option: %+v", got[2])
+	}
+	if got[3].Tag != "INPUT" || got[3].Value != "openrouter/anthropic/test" || got[3].HTML != "" {
+		t.Errorf("Cline needs explicit model text without a fallback catalog: %+v", got[3])
+	}
+	if got[4].Tag != "SELECT" || got[4].Value != "openrouter/anthropic/test" {
+		t.Errorf("switching away from Cline lost the selected model/control: %+v", got[4])
 	}
 }
 

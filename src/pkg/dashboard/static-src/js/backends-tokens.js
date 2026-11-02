@@ -2,7 +2,7 @@
     // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
     // preset), so it appears in every backend/method picker even before a matching
     // Model Gateway is configured — the user picks it, then funds/configures it.
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'codex', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'codex', 'goose', 'aider', 'cline', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     let CONFIG_BACKEND_OPTIONS = [];
@@ -173,7 +173,7 @@
     // BACKEND_MODELS. Every CLI with a server-served inventory must appear
     // here; otherwise its entry is dropped and modelsForBackend falls back to
     // the pre-discovery catalog (or, for an omitted unknown CLI, Copilot's).
-    const CLI_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'goose', 'codex'];
+    const CLI_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'goose', 'codex', 'cline'];
     // BACKEND_MODELS holds the live-discovered model list for every backend
     // (inference AND cli), keyed by backend id. INFERENCE_MODELS is kept as
     // an alias to the same object for backward compatibility with existing
@@ -185,6 +185,7 @@
     // Hardcoded fallbacks per CLI backend, used only until /api/config/backends
     // responds for the first time (so a dropdown is never empty on paint).
     const CLI_FALLBACK_MODELS = {
+      cline: [],
       claude: CLAUDE_CLI_MODELS,
       copilot: COPILOT_CLI_MODELS,
       bob: BOB_CLI_MODELS,
@@ -1287,4 +1288,3 @@ function burnAreaChart() {
         detailsEl.addEventListener('toggle', () => { localStorage.setItem('hive-sessions-open', detailsEl.open ? '1' : '0'); });
       }
     }
-

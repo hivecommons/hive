@@ -79,6 +79,14 @@ func TestUsageRetentionAndErrors(t *testing.T) {
 	if err := record(json.RawMessage("{")); err == nil {
 		t.Fatal("malformed usage accepted")
 	}
+	for _, stream := range []string{
+		`{"type":"run_result","finishReason":"completed","usage":3}`,
+		`{"type":"agent_event","event":{"type":"usage","inputTokens":"invalid"}}`,
+	} {
+		if err := renderUsage(strings.NewReader(stream), &bytes.Buffer{}, record); err == nil {
+			t.Fatal("usage schema drift silently dropped spend", stream)
+		}
+	}
 	blocked := filepath.Join(root, "file")
 	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
 		t.Fatal(err)
