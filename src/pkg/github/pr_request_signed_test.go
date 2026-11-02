@@ -43,6 +43,8 @@ type signedMock struct {
 	comments  []map[string]any
 	posted    []string // bodies of POSTed issue comments
 
+	refCreateStatus int // when set, POST git/refs answers this status with an error body
+
 	calls    []string // "METHOD path"
 	graphql  map[string]any
 	refPatch map[string]any
@@ -141,6 +143,11 @@ func (m *signedMock) server() *httptest.Server {
 		case r.Method == "DELETE" && strings.Contains(p, "/git/refs/"):
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == "POST" && strings.HasSuffix(p, "/git/refs"):
+			if m.refCreateStatus != 0 {
+				w.WriteHeader(m.refCreateStatus)
+				_, _ = io.WriteString(w, `{"message":"Reference update failed"}`)
+				return
+			}
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body["sha"] != m.mergeBase {

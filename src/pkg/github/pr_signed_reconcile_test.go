@@ -2,10 +2,14 @@ package github
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/internal/testutil"
 )
 
@@ -406,6 +410,133 @@ func TestSignedReconcile_MovedHeadRetriesNextPass(t *testing.T) {
 	c.reconcileSignedCommits(context.Background())
 	if got := m.countCalls(prCommitsCall); got != 2 {
 		t.Errorf("a moved head must be retried on the next pass, commits listed %d times", got)
+	}
+}
+
+// A persistent API failure (a 422 refusing the scratch ref, #16193) is retried
+// below the cap, then settles with exactly one skip comment; a new head
+// restarts the count.
+func TestSignedReconcile_PersistentFailureSettlesAtCap(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	m.refCreateStatus = 422
+	m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+
+	for i := 1; i < signedReconcileMaxAttempts; i++ {
+		c.reconcileSignedCommits(context.Background())
+		if len(m.posted) != 0 {
+			t.Fatalf("pass %d: below the cap must not comment, got %q", i, m.posted)
+		}
+	}
+	if got := m.countCalls(prCommitsCall); got != signedReconcileMaxAttempts-1 {
+		t.Fatalf("below the cap the PR must be retried every pass, commits listed %d times", got)
+	}
+
+	c.reconcileSignedCommits(context.Background())
+	if len(m.posted) != 1 || !strings.Contains(m.posted[0], signedReconcileMarker) || !strings.Contains(m.posted[0], "422") {
+		t.Fatalf("exactly one skip comment naming the error expected at the cap, got %q", m.posted)
+	}
+	if !strings.Contains(m.posted[0], "Pushing a new commit to the branch restarts signing") || strings.Contains(m.posted[0], "never re-authors a person's work") {
+		t.Errorf("the refused-API note must carry the push-a-new-head remedy, not the squash-your-commit one:\n%s", m.posted[0])
+	}
+
+	m.resetCalls()
+	c.reconcileSignedCommits(context.Background())
+	if m.countCalls(prCommitsCall) != 0 || len(m.posted) != 1 {
+		t.Errorf("a settled head must not be retried or re-commented (posted=%d):\n%s", len(m.posted), strings.Join(m.calls, "\n"))
+	}
+}
+
+// An outage (5xx) is not a refusal: it is never counted toward the cap and the
+// head is retried on every pass, with no comment.
+func TestSignedReconcile_OutageRetriesPastCap(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	m.refCreateStatus = 502
+	m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+
+	passes := signedReconcileMaxAttempts + 2
+	for i := 0; i < passes; i++ {
+		c.reconcileSignedCommits(context.Background())
+	}
+	if len(m.posted) != 0 {
+		t.Fatalf("a 5xx must never settle the head or comment, got %q", m.posted)
+	}
+	if got := m.countCalls(prCommitsCall); got != passes {
+		t.Errorf("a 5xx head must be retried every pass, commits listed %d times, want %d", got, passes)
+	}
+	if f := c.signedReconcile.failures["o/r#77"]; f.count != 0 {
+		t.Errorf("a 5xx must not count as a refusal, got %+v", f)
+	}
+}
+
+func TestSignedAPIRefusal(t *testing.T) {
+	resp := func(code int) *gh.ErrorResponse {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: code}}
+	}
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"rest 422", fmt.Errorf("creating ref: %w", resp(422)), true},
+		{"rest 404", resp(404), true},
+		{"rest 502", resp(502), false},
+		{"graphql 422", &signedGraphQLError{status: 422, body: "x"}, true},
+		{"graphql 500", fmt.Errorf("wrapped: %w", &signedGraphQLError{status: 500}), false},
+		{"network", errors.New("dial tcp: i/o timeout"), false},
+		{"context", context.DeadlineExceeded, false},
+	}
+	for _, tc := range cases {
+		if got := signedAPIRefusal(tc.err); got != tc.want {
+			t.Errorf("%s: signedAPIRefusal = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The public note quotes only the first line of the API error, capped, so a
+// large GraphQL response body never lands in a PR comment.
+func TestSignedSkipReason_FirstLineCapped(t *testing.T) {
+	long := strings.Repeat("x", signedSkipReasonRunes+50)
+	err := &signedGraphQLError{status: 422, body: long + "\nsecond line"}
+	got := signedSkipReason(err)
+	if strings.Contains(got, "second line") {
+		t.Errorf("only the first line may be quoted, got %q", got)
+	}
+	if n := len([]rune(got)); n != signedSkipReasonRunes+3 || !strings.HasSuffix(got, "...") {
+		t.Errorf("reason must be capped at %d runes plus an ellipsis, got %d runes", signedSkipReasonRunes, n)
+	}
+	if short := signedSkipReason(errors.New("  plain  ")); short != "plain" {
+		t.Errorf("short reason must pass through trimmed, got %q", short)
+	}
+}
+
+func TestSignedReconcile_FailureCountResetsOnNewHead(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	m.refCreateStatus = 422
+	m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+	for i := 1; i < signedReconcileMaxAttempts; i++ {
+		c.reconcileSignedCommits(context.Background())
+	}
+
+	newHead := "dddd000000000000000000000000000000000030"
+	m.prCommits = []map[string]any{prCommitJSON(newHead, false, "", "quality@hive.kubestellar.io")}
+	m.openPRs = []map[string]any{reconcilePR(77, reconcileBot, newHead)}
+	c.reconcileSignedCommits(context.Background())
+	if len(m.posted) != 0 {
+		t.Fatalf("a new head must restart the failure count, got comment %q", m.posted)
+	}
+}
+
+func TestSignedReconcile_SuccessClearsFailureCount(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+	c.signedReconcile.noteFailure("o/r#77", m.headSHA)
+
+	c.reconcileSignedCommits(context.Background())
+	if m.refPatch == nil {
+		t.Fatal("expected the tail to be re-authored")
+	}
+	if f := c.signedReconcile.failures["o/r#77"]; f.count != 0 {
+		t.Errorf("success must clear the failure count, got %+v", f)
 	}
 }
 
