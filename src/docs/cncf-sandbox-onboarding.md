@@ -1,13 +1,15 @@
 # CNCF sandbox onboarding status
 
-This page is a repo-local map of Hive's CNCF sandbox onboarding. It links to the evidence rather than duplicating it; the tracker is the source of truth for status. It makes no claim of CNCF acceptance or certification.
+This page is a repo-local map of Hive's CNCF sandbox onboarding. It links to the evidence rather than duplicating it; the tracker is the source of truth for status. Sandbox status is not a certification of the software.
 
 ## Tracking
 
+- CNCF sandbox vote: passed, and the contribution agreement is signed ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
+- CNCF onboarding issue: [cncf/sandbox#545](https://github.com/cncf/sandbox/issues/545)
 - Onboarding tracker: [hivecommons/cncf-sandbox-onboarding](https://github.com/hivecommons/cncf-sandbox-onboarding)
 - Parent issue in this repository: [#9846](https://github.com/hivecommons/hive/issues/9846)
-- CNCF sandbox application and vote: linked from the tracker above.
-- Open human-only items (for example, trademark/logo transfer and foundation account steps): listed in the tracker.
+- CLOMonitor: [Hive Commons](https://clomonitor.io/projects/cncf/hivecommons)
+- Open human-only items (for example, domain transfer and foundation account steps): listed in the tracker.
 
 ## Repository evidence
 
