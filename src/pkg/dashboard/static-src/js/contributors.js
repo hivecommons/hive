@@ -93,6 +93,7 @@
     let _contributorFilters = new Set();
     // Cache the last fetched contributor list for re-rendering on filter change
     let _cachedContributors = [];
+    let _contributorFetchID = 0;
 
     const CONTRIBUTOR_FILTER_ALL = 'all';
     const CONTRIBUTOR_FILTER_ACTIVE = 'active';
@@ -154,14 +155,22 @@
     }
 
     async function fetchContributors() {
+      const requestID = ++_contributorFetchID;
       try {
         const res = await fetch('/api/contributors');
-        if (!res.ok) return;
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
-        _cachedContributors = data.contributors || [];
+        if (requestID !== _contributorFetchID) return;
+        if (!Array.isArray(data.contributors)) throw new Error('Invalid contributor roster');
+        _cachedContributors = data.contributors;
         renderContributorFilters(_cachedContributors);
         renderContributors(_cachedContributors);
-      } catch (e) { /* silently retry on next poll */ }
+        updateContributorBadge(data.contributorPool);
+      } catch (e) {
+        if (requestID !== _contributorFetchID) return;
+        console.warn('Failed to refresh contributors:', e);
+        updateContributorBadge(null);
+      }
     }
 
     const CONTRIB_TINT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -507,7 +516,10 @@
       const statusBadge = document.getElementById('contributors-status-badge');
       if (!pool || !Number.isSafeInteger(pool.online) || pool.online < 0 ||
           !Number.isSafeInteger(pool.registered) || pool.registered < 0) {
-        navCountDelta(sidebarBadge, null);
+        navCountDelta(sidebarBadge, null, 'Contributor presence unavailable');
+        const tooltip = sidebarBadge && sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (tooltip) tooltip.textContent = 'Contributor presence unavailable; showing the last loaded roster';
+        if (statusBadge) statusBadge.title = 'Contributor presence unavailable; showing the last loaded roster';
         return;
       }
       const onlineCount = pool.online;
@@ -540,13 +552,14 @@
     function contributorsOnlineTooltip(pool) {
       const online = Number(pool.online) || 0;
       const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
-      const ids = pool.online_ids;
-      if (!Array.isArray(ids) || ids.length !== online || ids.some(id => typeof id !== 'string' || !id)) {
-        return summary + '<div>Online ClankeR IDs unavailable</div>';
+      const logins = pool.online_logins;
+      if (!Array.isArray(logins) || (online > 0 && !logins.length) ||
+          logins.some(login => typeof login !== 'string' || !login.trim())) {
+        return summary + '<div>Online contributor names unavailable</div>';
       }
-      if (!ids.length) return summary + '<div>No ClankeRs online</div>';
-      return summary + '<div>Online ClankeRs</div><ul class="contributor-online-ids">' +
-        ids.map(id => '<li>' + esc(id) + '</li>').join('') + '</ul>';
+      if (!logins.length) return summary + '<div>No contributors online</div>';
+      return summary + '<div>Online contributors</div><ul class="contributor-online-ids">' +
+        logins.map(login => '<li>@' + esc(login) + '</li>').join('') + '</ul>';
     }
 
     // contributorsOnlineTitle is the presence summary: "3 online · 12 registered
