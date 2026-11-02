@@ -352,6 +352,9 @@ func TestDestructiveRmShellForms(t *testing.T) {
 		"bash -c 'bash -c \"rm -rf /\"'",
 		"ssh host 'rm -rf ~/'",
 		"find . -name x | xargs rm -rf /",
+		"git submodule foreach rm -rf /",
+		"git bisect run rm -rf ~",
+		"git status && rm -rf .",
 		"rm -rf / 'unterminated",
 		"rm -rf \\\n/",
 	}, flagged)
@@ -381,6 +384,14 @@ func TestDestructiveRmShellForms(t *testing.T) {
 		"echo \"$(rm -rf /tmp/x)\"",
 		"rm -rf $(true)/",
 		"rm -f $(true) /tmp/x",
+		"git rm -r --cached .",
+		"git rm -r .",
+		"git -C . rm -r --cached .",
+		"git --no-pager rm -rf .",
+		"sudo git rm -r --cached .",
+		"/usr/bin/git rm -r --cached .",
+		"hg rm -r .",
+		"svn rm -r .",
 	}, clean)
 }
 

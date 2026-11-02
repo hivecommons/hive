@@ -54,7 +54,9 @@ import (
 // command substitution output, other users' homes (~user), bracket globs,
 // aliases, functions and commands assembled at run time (x=rm; $x -rf /)
 // are unknown to a static reader; an operand holding one is not judged
-// destructive. rm is the only command modelled here; mkfs and dd from
+// destructive. rm is the only command modelled here, and an rm that is the
+// subcommand of a version-control tool (git rm -r --cached ., hg rm) is not
+// the binary; mkfs and dd from
 // /dev/zero are matched by destructiveCmdRe, and other deleting commands
 // (find -delete, rsync --delete, shred) are left to the host's TextScanner.
 //
@@ -531,7 +533,7 @@ func (a *rmAnalysis) simple(words [][]shUnit, depth int) bool {
 		}
 	}
 	for i, w := range argv {
-		if isRmCommandWord(w) && rmRemovesProtected(argv[i+1:]) {
+		if isRmCommandWord(w) && !isVCSSubcommand(argv, i) && rmRemovesProtected(argv[i+1:]) {
 			return true
 		}
 	}
@@ -591,6 +593,43 @@ func literalWord(w []shUnit) (string, bool) {
 func isRmCommandWord(w []shUnit) bool {
 	s, ok := literalWord(w)
 	return ok && strings.EqualFold(path.Base(s), "rm")
+}
+
+// vcsCommands are the version-control tools whose rm subcommand untracks
+// files instead of running the rm binary.
+var vcsCommands = map[string]bool{
+	"git": true, "hg": true, "svn": true, "bzr": true, "brz": true,
+	"cvs": true, "fossil": true, "darcs": true, "jj": true,
+}
+
+// isVCSSubcommand reports whether the rm word at argv[i] is the rm
+// subcommand of a version-control tool (git rm -r --cached ., hg rm,
+// svn rm): the tool's word must precede it, with only the tool's own option
+// words in between (git -C dir rm, git --no-pager rm). An rm after a
+// non-option word is still the binary (git submodule foreach rm -rf /,
+// git bisect run rm -rf /, sudo rm -rf /).
+func isVCSSubcommand(argv [][]shUnit, i int) bool {
+	for j := i - 1; j >= 0; j-- {
+		s, ok := literalWord(argv[j])
+		if !ok {
+			return false
+		}
+		if vcsCommands[strings.ToLower(path.Base(s))] {
+			return true
+		}
+		if strings.HasPrefix(s, "-") {
+			continue
+		}
+		// -C <path> and -c <name>=<value> take the next word as their operand.
+		if j > 0 {
+			if prev, ok := literalWord(argv[j-1]); ok && (prev == "-C" || prev == "-c") {
+				j--
+				continue
+			}
+		}
+		return false
+	}
+	return false
 }
 
 // rmRemovesProtected reports whether args, the words after an rm command
