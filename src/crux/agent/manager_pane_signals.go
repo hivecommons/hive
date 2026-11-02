@@ -54,6 +54,7 @@ var cliPaneMarkers = []string{
 	// without treating a bare shell as a live backend.
 	agyHeadlessReadyMarker,
 	cline.ReadyMarker,
+	cline.RunningMarker,
 }
 
 const (

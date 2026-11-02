@@ -37,7 +37,14 @@ func validateClineLaunch(ctx context.Context, binary string, agent *AgentProcess
 	if agent.UID <= 0 && os.Getenv("HIVE_CLINE_DANGEROUSLY_RUN_UNCONFINED") != "1" {
 		return fmt.Errorf("Cline has no OS sandbox: configure an isolated per-UID worker, or explicitly set HIVE_CLINE_DANGEROUSLY_RUN_UNCONFINED=1 on a disposable externally isolated host")
 	}
-	return cline.Probe(ctx, binary)
+	if err := cline.Probe(ctx, binary); err != nil {
+		return err
+	}
+	source := os.Getenv("HIVE_CLINE_CONFIG_DIR")
+	if source == "" {
+		source = filepath.Join(sharedAgentHome, ".cline")
+	}
+	return cline.CheckConfig(source, model)
 }
 
 func (m *Manager) deliverClineKickLocked(agent *AgentProcess, message, trigger string) error {

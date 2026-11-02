@@ -17,6 +17,9 @@ func TestClineLaunchAndObservation(t *testing.T) {
 	if !paneShowsInputPrompt(cline.ReadyMarker+"> ") || !paneHasCLIMarker(cline.ReadyMarker) {
 		t.Fatal("Cline ready not classified")
 	}
+	if !paneHasCLIMarker(strings.Repeat(cline.RunningMarker+" usage\n", 40)) {
+		t.Fatal("long-running Cline lost its live marker when readiness scrolled away")
+	}
 	if !paneShowsAgentWorking(cline.ReadyMarker + "\n" + cline.RunningMarker) {
 		t.Fatal("Cline turn not busy")
 	}

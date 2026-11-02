@@ -54,6 +54,17 @@ func Probe(ctx context.Context, binary string) error {
 	return nil
 }
 
+// CheckConfig validates the selected credential schema without invoking a
+// provider or returning secret bytes to the caller.
+func CheckConfig(configDir, model string) error {
+	provider, _, err := Selection(model)
+	if err != nil {
+		return err
+	}
+	_, err = selectedCredentials(configDir, provider)
+	return err
+}
+
 type options struct {
 	binary, model, effort, promptFile, cwd, configDir, stateDir, stageConfig string
 	timeout                                                                  time.Duration
