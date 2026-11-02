@@ -58,6 +58,8 @@ type HumanChangeRequest struct {
 	Repo    string `json:"repo"`
 	Number  int    `json:"number"`
 	HeadSHA string `json:"head_sha"`
+	// BodyDigest binds dashboard approval replay to the validated title/body.
+	BodyDigest string `json:"body_digest,omitempty"`
 	// Source is HumanChangeRequestSourceReview, ...Decision or ...StageLabel.
 	Source string `json:"source"`
 	// SourceID is the review ID or comment ID: with HeadSHA it is the
@@ -188,10 +190,30 @@ func (s *HumanChangeRequests) persist() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(s.path))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 // Record implements HumanChangeRequestStore.
@@ -210,7 +232,8 @@ func (s *HumanChangeRequests) Record(req HumanChangeRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.load()
-	kept := s.items[:0]
+	prior := s.items
+	kept := make([]HumanChangeRequest, 0, len(s.items)+1)
 	for _, item := range s.items {
 		if item.Number == req.Number && strings.EqualFold(item.Repo, req.Repo) {
 			if item.HeadSHA != req.HeadSHA || (item.Source == req.Source && item.SourceID == req.SourceID) {
@@ -220,7 +243,11 @@ func (s *HumanChangeRequests) Record(req HumanChangeRequest) error {
 		kept = append(kept, item)
 	}
 	s.items = append(kept, req)
-	return s.persist()
+	if err := s.persist(); err != nil {
+		s.items = prior
+		return err
+	}
+	return nil
 }
 
 // For implements HumanChangeRequestStore.

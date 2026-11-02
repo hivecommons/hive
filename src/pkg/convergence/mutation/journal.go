@@ -1,11 +1,13 @@
 package mutation
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -220,7 +222,7 @@ type persistedJournal struct {
 
 // Journal is the durable idempotent operation record: an in-memory index over
 // one JSON file, reloaded on boot, rewritten atomically on every accepted
-// transition, serialized per logical-ID under the journal mutex and across
+// transition, serialized under a transaction writer and across
 // processes under the exclusive .lock flock (refreshed from disk before every
 // transition, exactly like the claim ledger). Process memory is never
 // authority. Because every transition reloads and rewrites the whole file,
@@ -233,7 +235,11 @@ type Journal struct {
 	maxEntries  int
 	now         func() time.Time
 	mu          sync.Mutex
+	writer      chan struct{}
+	committed   map[string]*Operation
 	ops         map[string]*Operation
+	// writeSnapshot is the atomic replacement seam; nil uses the filesystem.
+	writeSnapshot func(string, []byte) error
 }
 
 // OpenJournal loads the operation journal at path, creating an empty one when
@@ -250,15 +256,44 @@ func OpenJournal(path string) (*Journal, error) {
 		maxEntries:  DefaultJournalMaxEntries,
 		now:         time.Now,
 		ops:         make(map[string]*Operation),
+		writer:      make(chan struct{}, 1),
 	}
 	if err := j.reloadLocked(); err != nil {
 		return nil, err
 	}
+	j.publish()
 	return j, nil
 }
 
-// reloadLocked replaces the in-memory index with the on-disk snapshot. Callers
-// hold j.mu.
+// Only the transaction writer owns ops. Readers see a separate, immutable
+// committed index, never a transition waiting for its durable replacement.
+func (j *Journal) publish() {
+	j.mu.Lock()
+	j.committed = j.ops
+	j.mu.Unlock()
+}
+
+func (j *Journal) transaction(ctx context.Context) (func(), error) {
+	started := time.Now()
+	select {
+	case j.writer <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	unlock, err := j.lockAndRefreshContext(ctx)
+	if err != nil {
+		<-j.writer
+		return nil, err
+	}
+	j.publish()
+	slog.Debug("mutation journal transaction admitted", "admission_duration", time.Since(started))
+	return func() {
+		unlock()
+		<-j.writer
+	}, nil
+}
+
+// reloadLocked replaces the writer's private index with the on-disk snapshot.
 func (j *Journal) reloadLocked() error {
 	data, err := os.ReadFile(j.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -282,8 +317,9 @@ func (j *Journal) reloadLocked() error {
 		if _, dup := ops[op.LogicalID]; dup {
 			return fmt.Errorf("mutation journal %s holds conflicting entries for %s", j.path, op.LogicalID)
 		}
-		cp := op.clone()
-		ops[op.LogicalID] = &cp
+		// JSON decoding already detached these maps and slices from every
+		// previous image. Keep the owned entry without a second deep copy.
+		ops[op.LogicalID] = &op
 	}
 	j.ops = ops
 	return nil
@@ -292,8 +328,8 @@ func (j *Journal) reloadLocked() error {
 // lockAndRefreshLocked takes the exclusive cross-process flock on the journal's
 // .lock sibling within the bounded wait, then reloads the on-disk snapshot so
 // the transition applies to the peer's latest persisted state. The returned
-// func releases the lock. Callers hold j.mu.
-func (j *Journal) lockAndRefreshLocked() (func(), error) {
+// func releases the lock. Callers own the transaction writer, not j.mu.
+func (j *Journal) lockAndRefreshContext(ctx context.Context) (func(), error) {
 	lockPath := j.path + journalLockFileSuffix
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o770); err != nil {
 		return nil, fmt.Errorf("creating mutation journal lock directory: %w", err)
@@ -304,6 +340,10 @@ func (j *Journal) lockAndRefreshLocked() (func(), error) {
 	}
 	deadline := time.Now().Add(j.lockTimeout)
 	for {
+		if err := ctx.Err(); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
 		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
 			break
@@ -316,7 +356,12 @@ func (j *Journal) lockAndRefreshLocked() (func(), error) {
 			_ = f.Close()
 			return nil, fmt.Errorf("%s after %s: %w", lockPath, j.lockTimeout, ErrJournalLocked)
 		}
-		time.Sleep(journalLockPollInterval)
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-time.After(journalLockPollInterval):
+		}
 	}
 	if err := j.reloadLocked(); err != nil {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
@@ -341,17 +386,45 @@ func (o Operation) clone() Operation {
 
 // Get returns a detached copy of the operation for a logical ID.
 func (j *Journal) Get(id string) (Operation, bool) {
+	// Refresh idle journals for peer-process replay, but never queue a reader
+	// behind a local writer's serialization, flock wait or filesystem I/O.
+	select {
+	case j.writer <- struct{}{}:
+		unlock, err := j.tryRefresh()
+		if err == nil {
+			j.publish()
+			unlock()
+		}
+		<-j.writer
+	default:
+	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	unlock, err := j.lockAndRefreshLocked()
-	if err == nil {
-		defer unlock()
-	}
-	op, ok := j.ops[id]
+	op, ok := j.committed[id]
 	if !ok {
 		return Operation{}, false
 	}
 	return op.clone(), true
+}
+
+func (j *Journal) tryRefresh() (func(), error) {
+	f, err := os.OpenFile(j.path+journalLockFileSuffix, os.O_RDWR, journalFileMode)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	unlock := func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+	if err := j.reloadLocked(); err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
 }
 
 // Begin persists operation INTENT — durably, BEFORE the external effect — and
@@ -370,13 +443,15 @@ func (j *Journal) Get(id string) (Operation, bool) {
 //     unchanged inputs can never mint a second logical ID because the ID is
 //     derived from the effect alone.
 func (j *Journal) Begin(e Effect, epoch uint64, holder string, now time.Time) (Operation, error) {
+	return j.BeginContext(context.Background(), e, epoch, holder, now)
+}
+
+func (j *Journal) BeginContext(ctx context.Context, e Effect, epoch uint64, holder string, now time.Time) (Operation, error) {
 	if err := e.Validate(); err != nil {
 		return Operation{}, err
 	}
 	id := e.LogicalID()
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	unlock, err := j.lockAndRefreshLocked()
+	unlock, err := j.transaction(ctx)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -414,12 +489,14 @@ func (j *Journal) Begin(e Effect, epoch uint64, holder string, now time.Time) (O
 //     IDENTICAL applied acknowledgment deduplicates silently.
 //   - status must be StatusApplied, StatusNotApplied, or StatusUnknown.
 func (j *Journal) RecordResult(id string, epoch uint64, status, result string, now time.Time) (Operation, error) {
+	return j.RecordResultContext(context.Background(), id, epoch, status, result, now)
+}
+
+func (j *Journal) RecordResultContext(ctx context.Context, id string, epoch uint64, status, result string, now time.Time) (Operation, error) {
 	if status != StatusApplied && status != StatusNotApplied && status != StatusUnknown {
 		return Operation{}, fmt.Errorf("%w: %q is not a recordable status", ErrInvalidEffect, status)
 	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	unlock, err := j.lockAndRefreshLocked()
+	unlock, err := j.transaction(ctx)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -475,9 +552,11 @@ type ExternalState struct {
 // regresses an Applied entry to NotApplied — terminal truth stands, and a
 // disagreeing later observation is a refusal, not a rewrite.
 func (j *Journal) Reconcile(id string, state ExternalState, now time.Time) (Operation, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	unlock, err := j.lockAndRefreshLocked()
+	return j.ReconcileContext(context.Background(), id, state, now)
+}
+
+func (j *Journal) ReconcileContext(ctx context.Context, id string, state ExternalState, now time.Time) (Operation, error) {
+	unlock, err := j.transaction(ctx)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -523,8 +602,16 @@ func attemptOutcome(status string) string {
 }
 
 // commit installs the updated operation and persists atomically, rolling back
-// the in-memory index when the durable write fails. Callers hold j.mu.
+// the writer's private index when persistence fails. Readers keep the last
+// committed image. Callers own the transaction writer and cross-process lock.
 func (j *Journal) commit(id string, work Operation) (Operation, error) {
+	// The refreshed index may already be visible to readers. Detach only
+	// its map before editing; entries themselves are immutable/replaced.
+	pending := make(map[string]*Operation, len(j.ops)+1)
+	for id, op := range j.ops {
+		pending[id] = op
+	}
+	j.ops = pending
 	prior, hadPrior := j.ops[id]
 	cp := work.clone()
 	j.ops[id] = &cp
@@ -537,6 +624,7 @@ func (j *Journal) commit(id string, work Operation) (Operation, error) {
 		}
 		return Operation{}, err
 	}
+	j.publish()
 	return work.clone(), nil
 }
 
@@ -560,8 +648,8 @@ func isTerminal(status string) bool {
 // pruneLocked bounds the in-memory index (and so the next persisted
 // snapshot) before a commit: terminal entries past the retention window are
 // dropped, then the oldest terminal entries are evicted until the count fits
-// maxEntries. Planned and Unknown entries are always kept. Callers hold j.mu
-// and the cross-process lock.
+// maxEntries. Planned and Unknown entries are always kept. Callers own the
+// transaction writer and the cross-process lock.
 func (j *Journal) pruneLocked(now time.Time) {
 	if j.retention > 0 {
 		cutoff := now.Add(-j.retention)
@@ -594,33 +682,48 @@ func (j *Journal) pruneLocked(now time.Time) {
 	}
 }
 
-func (j *Journal) persistLocked() error {
+func (j *Journal) persistLocked() (persistErr error) {
+	started := time.Now()
+	defer func() {
+		slog.Debug("mutation journal snapshot replacement finished", "operations", len(j.ops), "persist_duration", time.Since(started), "error", persistErr)
+	}()
 	all := make([]Operation, 0, len(j.ops))
 	for _, op := range j.ops {
-		all = append(all, op.clone())
+		// The transaction writer owns ops; immutable entries can be marshaled
+		// without another deep copy of every effect input and attempt.
+		all = append(all, *op)
 	}
 	sort.Slice(all, func(i, k int) bool { return all[i].LogicalID < all[k].LogicalID })
-	data, err := json.MarshalIndent(persistedJournal{Version: journalFormatVersion, Operations: all}, "", "  ")
+	data, err := json.Marshal(persistedJournal{Version: journalFormatVersion, Operations: all})
 	if err != nil {
 		return fmt.Errorf("marshaling mutation journal: %w", err)
 	}
-	tmpPath := j.path + ".tmp"
+	if j.writeSnapshot != nil {
+		return j.writeSnapshot(j.path, data)
+	}
+	return replaceJournalSnapshot(j.path, data)
+}
+
+func replaceJournalSnapshot(path string, data []byte) error {
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, journalFileMode); err != nil {
 		return fmt.Errorf("writing tmp mutation journal: %w", err)
 	}
-	return os.Rename(tmpPath, j.path)
+	return os.Rename(tmpPath, path)
 }
 
 // syncPersistent is opt-in for journal-required effects. Keep legacy persistence
 // unchanged, but sync both the latest snapshot and its renamed directory entry
 // before these effects run and before acknowledging their result.
 func (j *Journal) syncPersistent() error {
+	return j.syncPersistentContext(context.Background())
+}
+
+func (j *Journal) syncPersistentContext(ctx context.Context) error {
 	if j == nil || j.path == "" {
 		return fmt.Errorf("persistent mutation journal path required")
 	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	unlock, err := j.lockAndRefreshLocked()
+	unlock, err := j.transaction(ctx)
 	if err != nil {
 		return err
 	}
