@@ -22,6 +22,7 @@ const (
 var credentialEnvNames = map[string]struct{}{
 	"GITHUB_TOKEN": {}, "GH_TOKEN": {}, "HIVE_GITHUB_TOKEN": {}, "COPILOT_GITHUB_TOKEN": {},
 	"GIT_ASKPASS": {}, "SSH_ASKPASS": {},
+	"HIVE_CLINE_PROVIDERS_B64": {},
 }
 
 type LaunchSpec struct {

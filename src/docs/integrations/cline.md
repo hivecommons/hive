@@ -67,6 +67,7 @@ JSON. The existing export narrows the source without inference; this pipeline
 keeps credential bytes out of arguments and the repository:
 
 ```sh
+set -o pipefail
 crux cline-turn --model openrouter/anthropic/claude-sonnet-4-6 \
   --export-provider-config | base64 | tr -d '\n' |
   kubectl -n your-spoke-namespace create secret generic cline-provider \
@@ -106,6 +107,9 @@ ambient-provider fallback is allowed. The bounded worker, Job cancellation,
 transcript scrubbing, review spool, publish verification and push broker remain
 in charge. Structured usage appears in the captured transcript; private usage
 files in an ephemeral Job are not automatically collected from its filesystem.
+The shared sandbox credential deny-list rejects `HIVE_CLINE_PROVIDERS_B64`
+from controller environment forwarding, even if an allowlist or explicit
+environment map names it; only the Job's Secret reference can supply it.
 
 Podman support requires a separate owner decision: approve a selected-provider,
 read-only, out-of-workspace credential mount with lifecycle/UID/SELinux rules,

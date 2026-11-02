@@ -14,7 +14,9 @@ func TestClineJobUsesSecretReferenceNotHostCredentialMaterial(t *testing.T) {
 	l := &Launcher{Options: Options{WorkspaceClaim: "hive-data", EnvFromSecrets: []string{"cline-provider"}}}
 	manifest := l.manifest("spoke", "cline-kick", "kick-workspace", sandbox.LaunchSpec{
 		Image: "cline-image", Workspace: "/data/kick-workspace",
-		Command: []string{"crux", "cline-turn", "--provider-secret", "--model", "openrouter/test"},
+		Command:      []string{"crux", "cline-turn", "--provider-secret", "--model", "openrouter/test"},
+		EnvAllowlist: []string{cline.ProviderSecretEnv},
+		Env:          map[string]string{cline.ProviderSecretEnv: "must-not-copy-host-credential"},
 	})
 	raw, err := json.Marshal(manifest)
 	if err != nil {
