@@ -95,9 +95,12 @@ async function verify(kind, subject, members, github) {
   const root = process.cwd(), source = subject.preparedBy?.sourceSHA;
   if (!/^[a-f0-9]{40}$/.test(source || '') ||
       git(['rev-parse', `${source}:.github`]) !== subject.workflowTree ||
-      git(['rev-parse', `${source}:src/scripts`]) !== TRUSTED_SCRIPTS_TREE ||
-      git(['rev-parse', 'HEAD:src/scripts']) !== TRUSTED_SCRIPTS_TREE) {
+      git(['rev-parse', `${source}:src/scripts`]) !== TRUSTED_SCRIPTS_TREE) {
     throw new Error('Trusted control/helper closure unavailable; no candidate script execution');
+  }
+  const scriptsTree = git(['rev-parse', 'HEAD:src/scripts']);
+  if (scriptsTree !== TRUSTED_SCRIPTS_TREE) {
+    throw new Error(`src/scripts tree ${scriptsTree} is not the pinned TRUSTED_SCRIPTS_TREE ${TRUSTED_SCRIPTS_TREE}; a PR that edits src/scripts must re-pin the literal in .github/scripts/integration-governance.cjs to git rev-parse HEAD:src/scripts`);
   }
   if (kind === 'contents') {
     for (const pr of members) verifyContents(pr.title);

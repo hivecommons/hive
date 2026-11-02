@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -518,4 +519,45 @@ func TestActivityStoreForget(t *testing.T) {
 	st.forget("unknown")
 	var nilStore *activityStore
 	nilStore.forget("hive-a")
+}
+
+// TestRemoveRegistryEntryForgetsDigestUnderRegistryLock pins the #16010 fix:
+// the digest purge runs inside s.mu, the same critical section in which a
+// heartbeat records, so a racing beat cannot re-insert a digest after the
+// forget. With the activity store held busy, the delete must be observed
+// holding s.mu while it waits to forget.
+func TestRemoveRegistryEntryForgetsDigestUnderRegistryLock(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := pullOnlyTestServer(t)
+	s.registry.Hives = []RegistryEntry{{ID: "doomed"}}
+	s.activity.record("doomed", activityDigest("o/r", 1), activityT0)
+
+	s.activity.mu.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.removeRegistryEntry("doomed", "tester")
+	}()
+
+	held := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.mu.TryLock() {
+			s.mu.Unlock()
+			runtime.Gosched()
+			continue
+		}
+		held = true
+		break
+	}
+	s.activity.mu.Unlock()
+	<-done
+	if !held {
+		t.Fatal("removeRegistryEntry forgot the digest outside s.mu; a racing heartbeat could re-insert it")
+	}
+	if got := s.activity.snapshot([]string{"doomed"}); len(got) != 0 {
+		t.Errorf("digest survived removal: %v", got)
+	}
 }

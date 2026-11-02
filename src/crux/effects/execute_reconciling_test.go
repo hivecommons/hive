@@ -181,3 +181,14 @@ func TestLookupAppliedForwardsOnlyToLookups(t *testing.T) {
 		t.Fatalf("got (%+v, %v)", res, ok)
 	}
 }
+
+func TestLoggingBoundaryLookupAppliedForwards(t *testing.T) {
+	ctx := context.Background()
+	res, ok := LookupApplied(ctx, LoggingBoundary{Next: stubLookup{res: Result{Provenance: "p"}, ok: true}}, reconcilingClaim)
+	if !ok || res.Provenance != "p" {
+		t.Fatalf("got (%+v, %v)", res, ok)
+	}
+	if _, ok := LookupApplied(ctx, LoggingBoundary{Next: NoopBoundary{}}, reconcilingClaim); ok {
+		t.Fatal("LoggingBoundary over a non-Lookup must not report applied")
+	}
+}

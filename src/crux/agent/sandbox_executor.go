@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,11 +42,12 @@ type sandboxCommandRunner interface {
 
 type sandboxExecRunner struct{}
 
+// Run delegates to pushbroker.ExecRunner so the production broker gets the
+// same stdout-only-on-success contract the package's own runner has: the
+// normaliser commits `git show HEAD:<path>` output as file content, and a
+// CombinedOutput runner would amend exit-0 stderr warnings into the blob.
 func (sandboxExecRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	return cmd.CombinedOutput()
+	return pushbroker.ExecRunner{}.Run(ctx, dir, env, name, args...)
 }
 
 // PRCreator is crux.PRCreator, the host-provided pull-request capability.

@@ -127,6 +127,36 @@ func (c *Client) putMergeRequestState(repo string, number int, st mergeRequestPR
 	c.saveMergeStateLocked()
 }
 
+// mergeRequestHeadFirstSeen returns the watcher-clock time repo#number was
+// first seen at head sha, recording now on the first call for that head. It
+// backs the min_head_age skew fallback (#16143) for requests without
+// expect_sha: their wait state is never persisted (putMergeRequestState needs
+// a SHA), so PendingSince is zero on every poll and the hold would last as
+// long as the skew (#16152). In memory only; a restart re-holds for at most
+// one min_head_age window.
+func (c *Client) mergeRequestHeadFirstSeen(repo string, number int, sha string, now time.Time) time.Time {
+	sha = strings.TrimSpace(sha)
+	if c == nil || sha == "" {
+		return time.Time{}
+	}
+	c.mergeStateMu.Lock()
+	defer c.mergeStateMu.Unlock()
+	key := c.mergeRequestStateKey(repo, number)
+	if st, ok := c.mergeHeadFirstSeen[key]; ok && strings.EqualFold(st.SHA, sha) {
+		return st.PendingSince
+	}
+	if c.mergeHeadFirstSeen == nil {
+		c.mergeHeadFirstSeen = map[string]mergeRequestPRState{}
+	}
+	c.mergeHeadFirstSeen[key] = mergeRequestPRState{SHA: sha, PendingSince: now, At: now}
+	for k, prev := range c.mergeHeadFirstSeen {
+		if now.Sub(prev.At) > mergeRequestStateRetention {
+			delete(c.mergeHeadFirstSeen, k)
+		}
+	}
+	return now
+}
+
 func (c *Client) clearMergeRequestState(repo string, number int) {
 	if c == nil {
 		return

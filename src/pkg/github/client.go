@@ -340,7 +340,12 @@ type Client struct {
 	// handoff summary included), used by PR follow-up resume (#9583).
 	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
-	prRepoPolicyGate       atomic.Pointer[PRRepoPolicyGate]
+	// prReviewObservedHook and prTerminalReviews: other people's reviews on
+	// terminal PRs, read once per PR by the settle scan (#16116). See
+	// prreviews_observed.go.
+	prReviewObservedHook atomic.Pointer[PRReviewObservedHook]
+	prTerminalReviews    prTerminalReviewCache
+	prRepoPolicyGate     atomic.Pointer[PRRepoPolicyGate]
 	// agentStartHook is told when an agent's own relay request shows it
 	// working an issue (#10527). See agent_start_hook.go.
 	agentStartHook atomic.Pointer[AgentStartHook]
@@ -458,6 +463,11 @@ type Client struct {
 	mergeStatePath   string
 	mergeState       map[string]mergeRequestPRState
 	mergeStateLoaded bool
+	// mergeHeadFirstSeen is the in-memory first observation of each PR head
+	// the CI gate judged without an expect_sha (no persisted wait state), so
+	// the min_head_age skew fallback has a stable start (#16152). Guarded by
+	// mergeStateMu.
+	mergeHeadFirstSeen map[string]mergeRequestPRState
 	// attribution holds the invocation-attribution hooks (trailer gate,
 	// per-agent metadata resolver, audit sink) — see attribution.go. Guarded by
 	// attribMu because the hooks are installed in stages during startup while

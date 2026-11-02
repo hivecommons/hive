@@ -183,9 +183,22 @@ func (c *Client) Logs(ctx context.Context, name, source string, lines int) (Logs
 // FollowLogs is GET /v1/agents/{name}/logs?follow=1: fn is called with
 // each chunk of new lines until ctx ends, the server closes the stream, or
 // fn returns an error (which is returned). A terminal api.EventState record
-// (the server lost the agent's output) is returned as an error.
+// (the server lost the agent's output) is returned as an error. The server
+// first replays its default window of buffered lines.
 func (c *Client) FollowLogs(ctx context.Context, name string, fn func(LogChunk) error) error {
-	return c.stream(ctx, LogsPath(url.PathEscape(name))+"?"+QueryFollow+"=1", func(typ string, data []byte) error {
+	return c.FollowLogsLines(ctx, name, -1, fn)
+}
+
+// FollowLogsLines is FollowLogs with the initial replay bounded to the last
+// lines buffered lines (sent as n; 0 streams only new lines). A negative
+// lines leaves the server's default window.
+func (c *Client) FollowLogsLines(ctx context.Context, name string, lines int, fn func(LogChunk) error) error {
+	q := url.Values{}
+	q.Set(QueryFollow, "1")
+	if lines >= 0 {
+		q.Set(QueryLines, strconv.Itoa(lines))
+	}
+	return c.stream(ctx, LogsPath(url.PathEscape(name))+"?"+q.Encode(), func(typ string, data []byte) error {
 		switch typ {
 		case EventLog:
 			var chunk LogChunk

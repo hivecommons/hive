@@ -1,0 +1,1 @@
+- `toolapprove` now reads every backslash escape in an `rm` command word, option or target the way the shell does, so the alias-bypass `\rm -rf \/`, the escaped-dot root `rm -rf /\.` and the escaped or quoted options `rm \-rf /` and `rm "-rf" /` are denied like `rm -rf /`; `\$HOME` and `\~` stay literal and allowed ([#16176](https://github.com/hivecommons/hive/issues/16176)).

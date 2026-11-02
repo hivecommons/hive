@@ -1,0 +1,1 @@
+- RFC duplicate detection now ignores leading bracketed title tags such as `[v5 RFC]` or `[v6]`, so `📝 [v5 RFC] Foo` and `RFC: [v5] Foo` are recognised as duplicates of `RFC: Foo` by the same author.

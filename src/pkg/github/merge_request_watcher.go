@@ -462,7 +462,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	// the request without consuming an attempt; red and unverified verdicts
 	// are failed attempts that go through the same retry / exhaust /
 	// re-engage path a GitHub-side refusal does.
-	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA, now)
+	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA, now, prState.PendingSince)
 	if err != nil {
 		c.logCIVerdict(req, verdict, err.Error())
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)

@@ -102,6 +102,34 @@ func TestPRRequestWatcher_RejectsBodyMissingDeclaredIssue(t *testing.T) {
 	}
 }
 
+// A declared issue of 0 is the "--issues <N>" placeholder left unsubstituted
+// (#16162). No body can reference #0 — the reference parsers drop it — so the
+// generic "body never references them / re-run with the full body" remedy
+// sent an agent into five rejections in ten minutes. The rejection must name
+// the placeholder as the cause instead, and must still quarantine the request.
+func TestPRRequestWatcher_RejectsPlaceholderIssueZero(t *testing.T) {
+	reqPath, c, cleanup := writeBodyTestRequest(t, PRRequest{
+		Repo: "o/r", Head: "quality/docs-operations", Title: "[quality] docs",
+		Body: "documents the operations runbook\n\nFixes #0\n", Agent: "quality", IssueN: []int{0},
+	})
+	defer cleanup()
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if _, err := os.Stat(reqPath + ".rejected"); err != nil {
+		t.Fatalf("request should be quarantined as .rejected: %v", err)
+	}
+	res := readResult(t, reqPath)
+	if res.OK {
+		t.Fatalf("PR must not open on a placeholder issue declaration: %+v", res)
+	}
+	if !strings.Contains(res.Error, "#0") || !strings.Contains(res.Error, "placeholder") {
+		t.Errorf("rejection must name #0 as a placeholder, got %q", res.Error)
+	}
+	if strings.Contains(res.Error, "never references") {
+		t.Errorf("rejection must not blame the body for a declaration no body can satisfy, got %q", res.Error)
+	}
+}
+
 // The declared-issue check accepts both a closing keyword and an explicit
 // non-closing reference: "Fixes #N" is the normal case, and "Refs #N" with a
 // stated reason is the sanctioned exception — neither may be rejected.

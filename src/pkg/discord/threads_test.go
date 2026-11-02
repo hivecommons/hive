@@ -274,3 +274,123 @@ func TestStartThreadFromMessage_ExistingThreadSharesTheMessageID(t *testing.T) {
 		t.Fatalf("id=%q err=%v, want the message id as the existing thread", id, err)
 	}
 }
+
+func TestEditMessage_PatchesTheMessageWithoutPings(t *testing.T) {
+	var method, path string
+	var got map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		_, _ = w.Write([]byte(`{"id":"m-1"}`))
+	}))
+	defer ts.Close()
+
+	if err := newTestBot(ts, "status").EditMessage("rfc", "m-1", "RFC opened: #3 renamed"); err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	if method != http.MethodPatch || !strings.HasSuffix(path, "/channels/rfc/messages/m-1") {
+		t.Fatalf("%s %s", method, path)
+	}
+	if got["content"] != "RFC opened: #3 renamed" {
+		t.Fatalf("payload = %v", got)
+	}
+	if mentions, _ := got["allowed_mentions"].(map[string]any); mentions == nil {
+		t.Fatalf("allowed_mentions missing: %v", got)
+	}
+}
+
+func TestEditMessage_Errors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":10008}`))
+	}))
+	defer ts.Close()
+	b := newTestBot(ts, "status")
+	if err := b.EditMessage(" ", "m", "x"); err == nil {
+		t.Fatal("empty channel must error")
+	}
+	if err := b.EditMessage("rfc", "", "x"); err == nil {
+		t.Fatal("empty message id must error")
+	}
+	if err := b.EditMessage("rfc", "m", "x"); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("err = %v, want the 404 surfaced", err)
+	}
+}
+
+func TestRenameChannel_PatchesTheNameTruncatedTo100(t *testing.T) {
+	var method, path string
+	var got map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		_, _ = w.Write([]byte(`{"id":"thr-1"}`))
+	}))
+	defer ts.Close()
+
+	if err := newTestBot(ts, "status").RenameChannel("thr-1", "  #3 "+strings.Repeat("é", 200)); err != nil {
+		t.Fatalf("RenameChannel: %v", err)
+	}
+	if method != http.MethodPatch || !strings.HasSuffix(path, "/channels/thr-1") {
+		t.Fatalf("%s %s", method, path)
+	}
+	name, _ := got["name"].(string)
+	if len([]rune(name)) != threadNameLimit || !strings.HasPrefix(name, "#3 ") {
+		t.Fatalf("name = %q (%d runes)", name, len([]rune(name)))
+	}
+}
+
+func TestRenameChannel_Errors(t *testing.T) {
+	b := newTestBot(nil, "status")
+	if err := b.RenameChannel("", "n"); err == nil {
+		t.Fatal("empty channel must error")
+	}
+	if err := b.RenameChannel("thr", "  "); err == nil {
+		t.Fatal("empty name must error")
+	}
+}
+
+func TestEditAndRename_RetryOn429ThenSucceed(t *testing.T) {
+	slept := noRateLimitSleep(t)
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1)%2 == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"retry_after":0.5}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+	b := newTestBot(ts, "status")
+	if err := b.EditMessage("rfc", "m", "x"); err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	if err := b.RenameChannel("thr", "n"); err != nil {
+		t.Fatalf("RenameChannel: %v", err)
+	}
+	if calls.Load() != 4 || len(*slept) != 2 || (*slept)[0] != 500*time.Millisecond {
+		t.Fatalf("calls=%d slept=%v, want one 0.5s wait per call", calls.Load(), *slept)
+	}
+}
+
+func TestEditAndRename_GiveUpAfterBoundedRetries(t *testing.T) {
+	noRateLimitSleep(t)
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer ts.Close()
+	b := newTestBot(ts, "status")
+	if err := b.EditMessage("rfc", "m", "x"); err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("edit err = %v, want the 429 surfaced", err)
+	}
+	if err := b.RenameChannel("thr", "n"); err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("rename err = %v, want the 429 surfaced", err)
+	}
+	if want := int32(2 * (maxRateLimitRetries + 1)); calls.Load() != want {
+		t.Fatalf("%d requests, want %d", calls.Load(), want)
+	}
+}

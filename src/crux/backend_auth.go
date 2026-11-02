@@ -39,7 +39,7 @@ const (
 // — read as ok, identical to an explicit BackendAuthOK.
 type BackendAuthState struct {
 	Status    string    `json:"status,omitempty"`
-	Since     time.Time `json:"since,omitempty"`
+	Since     time.Time `json:"since,omitzero"`
 	LastError string    `json:"lastError,omitempty"`
 }
 

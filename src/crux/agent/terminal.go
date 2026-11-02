@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -43,6 +44,21 @@ func (t tmuxTerminal) CaptureVisiblePane(agent *AgentProcess) string {
 		return ""
 	}
 	return string(out)
+}
+
+// CaptureVisiblePaneContext is CaptureVisiblePane bounded by ctx (#16097). It
+// returns an error only when ctx ended the capture, so a wedged tmux server is
+// reported as unobservable rather than as an empty pane.
+func (t tmuxTerminal) CaptureVisiblePaneContext(ctx context.Context, agent *AgentProcess) (string, error) {
+	cmd := t.manager.tmuxCmdContext(ctx, agent, "capture-pane", "-t", agent.tmuxSession, "-p")
+	out, err := cmd.Output()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("tmux capture-pane: %w", ctxErr)
+		}
+		return "", nil
+	}
+	return string(out), nil
 }
 
 // SessionAttached reports whether a human may currently be interacting with

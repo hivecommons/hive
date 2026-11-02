@@ -215,6 +215,18 @@ check_exit "non-numeric --issues token exits 2" 2 \
 check_exit "rejected --issues writes no request" 0 \
   test -z "$(find_req a5)"
 
+# "0" is digits-only but is not an issue GitHub can have: it is the "<N>"
+# placeholder left unsubstituted. Refuse it here so the watcher never sees a
+# declared #0 (whose "re-run with the full body" remedy cannot fix it).
+check_exit "--issues 0 exits 2" 2 \
+  run_script a5 --repo o/r --head h --title T --body B --issues 0
+check_exit "--issues '#0' exits 2" 2 \
+  run_script a5 --repo o/r --head h --title T --body B --issues '#0'
+check_exit "--issues with a 0 among real numbers exits 2" 2 \
+  run_script a5 --repo o/r --head h --title T --body B --issues '12,0'
+check_exit "rejected --issues 0 writes no request" 0 \
+  test -z "$(find_req a5)"
+
 # --- Section 6: Flag tolerance ---
 echo ""
 echo "--- Flag tolerance ---"

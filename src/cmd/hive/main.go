@@ -4887,12 +4887,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						}
 						return 0
 					})
-					for _, w := range selfUpgradeWedgedKicks.fresh(wedged) {
-						b.logger.Warn("self-upgrade drain: ignoring wedged agent kick that never reported a turn end",
-							"agent", w.Agent,
-							"kick_at", w.KickAt.UTC().Format(time.RFC3339),
-							"age", w.Age.Round(time.Second),
-							"ceiling", w.Ceiling,
+					// One line per pass, not per agent: the fleet self-report
+					// slogfeed keys WARNs on the message alone, so a fleet-wide
+					// wedge must not count N times (#16079).
+					if fresh := selfUpgradeWedgedKicks.fresh(wedged); len(fresh) > 0 {
+						b.logger.Warn("self-upgrade drain: ignoring wedged agent kicks that never reported a turn end",
+							"agents", wedgedKickAgents(fresh),
+							"kicks", wedgedKickSummaries(fresh),
+							"count", len(fresh),
 						)
 					}
 					ignoredWedged := wedgedKickAgents(wedged)
@@ -5685,6 +5687,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						return nil, false
 					}
 					return b.dashSrv.HubActivityItems(ctx)
+				},
+				// Snapshot supersedes Items and adds recent merges, from
+				// which the publisher derives merge events (#15964).
+				Snapshot: func(ctx context.Context) (hubactivity.Snapshot, bool) {
+					if b.dashSrv == nil {
+						return hubactivity.Snapshot{}, false
+					}
+					return b.dashSrv.HubActivitySnapshot(ctx)
 				},
 				Subscribe: func(notify func()) {
 					if b.dashSrv != nil {

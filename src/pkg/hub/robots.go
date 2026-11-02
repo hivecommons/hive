@@ -46,6 +46,7 @@ var hubNoIndexPrefixes = []string{
 	"/access-denied",
 	"/error/",
 	"/fleet",
+	"/activity",
 	"/my-hives",
 	"/gh-setup",
 	"/ws",

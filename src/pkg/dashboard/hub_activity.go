@@ -46,26 +46,48 @@ func (s *Server) notifyStageTrackerPublish() {
 // while the spoke has no status or the tracker cannot be built. Reading
 // does not count as a tracker client, so it adds no SSE nudges.
 func (s *Server) HubActivityItems(ctx context.Context) ([]hubactivity.Item, bool) {
+	snap, ok := s.HubActivitySnapshot(ctx)
+	return snap.Items, ok
+}
+
+// HubActivitySnapshot is HubActivityItems plus the tracker's recently
+// merged pull requests (RecentlyMerged), which the heartbeat publisher
+// turns into merge events (#15964). Merges carry Private the same way.
+func (s *Server) HubActivitySnapshot(ctx context.Context) (hubactivity.Snapshot, bool) {
 	if s == nil {
-		return nil, false
+		return hubactivity.Snapshot{}, false
 	}
 	s.statusMu.RLock()
 	status := s.status
 	s.statusMu.RUnlock()
 	if status == nil {
-		return nil, false
+		return hubactivity.Snapshot{}, false
 	}
 	body, _, _, _ := s.stageTrackerPayloadFrom(ctx, status, time.Now().UTC(), false)
 	if body == nil {
-		return nil, false
+		return hubactivity.Snapshot{}, false
 	}
 	var tracker struct {
-		Items []StageTrackerItem `json:"items"`
+		Items          []StageTrackerItem   `json:"items"`
+		RecentlyMerged []StageTrackerMerged `json:"recently_merged"`
 	}
 	if err := json.Unmarshal(body, &tracker); err != nil {
-		return nil, false
+		return hubactivity.Snapshot{}, false
 	}
-	return hubActivityItems(tracker.Items, s.publicRepos()), true
+	public := s.publicRepos()
+	return hubactivity.Snapshot{
+		Items:  hubActivityItems(tracker.Items, public),
+		Merged: hubActivityMerges(tracker.RecentlyMerged, public),
+	}, true
+}
+
+// hubActivityMerges maps the tracker's recently merged list to merge rows.
+func hubActivityMerges(merged []StageTrackerMerged, public publicRepoSet) []hubactivity.Merge {
+	out := make([]hubactivity.Merge, 0, len(merged))
+	for _, m := range merged {
+		out = append(out, hubactivity.Merge{Repo: m.Repo, Number: m.Number, MergedAt: m.MergedAt, Private: !public.allows(m.Repo)})
+	}
+	return out
 }
 
 // hubActivityItems maps tracker rows to digest rows. A row the tracker

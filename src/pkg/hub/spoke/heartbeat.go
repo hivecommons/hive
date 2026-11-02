@@ -1875,6 +1875,7 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 		}
 		if pub != nil {
 			pub.acknowledgeLocked(hbResp.ActivityETag)
+			pub.acknowledgeEventsLocked(hbResp.ActivityEventsAck)
 		}
 		return &hbResp
 	}
@@ -2890,6 +2891,9 @@ type HeartbeatResponse struct {
 	// ActivityETag is the activity digest etag the hub acknowledged ("" =
 	// it holds none), decoded from hub.HeartbeatResponse.ActivityETag.
 	ActivityETag string `json:"activity_etag,omitempty"`
+	// ActivityEventsAck is the highest activity event sequence number the
+	// hub acknowledged, decoded from hub.HeartbeatResponse.ActivityEventsAck.
+	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

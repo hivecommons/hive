@@ -131,11 +131,16 @@ func (c *Client) repoNoCIOK(owner, name string) bool {
 // repo may be "owner/repo" or a bare name (resolved against c.org, like
 // MergePR). expectSHA, when set, is the SHA whose CI is judged; when empty the
 // PR's current head is used. now is the watcher's clock, used to age the head
-// for the never-created required-check verdict. The returned reason is a human-readable
+// for the never-created required-check verdict. firstSeen is the watcher's
+// clock when it first parked this head on a pending verdict (zero on the
+// first poll); min_head_age falls back to it when GitHub's head time is ahead
+// of the host clock (#16143). Without expectSHA that wait state is never
+// persisted, so the gate keeps its own first observation of the resolved head
+// instead (#16152). The returned reason is a human-readable
 // explanation suitable for the result file and the log. A non-nil error means
 // the verdict could not be computed (API failure) and the caller must treat
 // that as a failed attempt, never as a pass.
-func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number int, expectSHA string, now time.Time) (mergeCIVerdict, string, error) {
+func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number int, expectSHA string, now, firstSeen time.Time) (mergeCIVerdict, string, error) {
 	if c == nil || c.client == nil {
 		return mergeCIUnverified, "no GitHub client", ErrNoGitHubClient
 	}
@@ -195,6 +200,9 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 			minHeadAgeFrom = at
 		}
 	}
+	if minHeadAge > 0 && firstSeen.IsZero() && strings.TrimSpace(expectSHA) == "" {
+		firstSeen = c.mergeRequestHeadFirstSeen(owner+"/"+name, number, sha, now)
+	}
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, CommitCIOptions{
 		PRNumber:                number,
 		Required:                required,
@@ -204,12 +212,17 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		ExpectedChecks:          expected,
 		MinHeadAge:              minHeadAge,
 		HeadPushedAt:            minHeadAgeFrom,
+		HeadFirstSeenAt:         firstSeen,
 	})
 	if err != nil {
 		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)
 	}
 	if cfgKnown && actualKnown {
 		c.warnRequiredChecksMismatch(owner, name, cfgSet, actualRequired, st.Observed)
+	}
+	if st.HeadTimeAheadBy > 0 {
+		c.info("merge-request CI head time ahead of host clock; min_head_age not evaluable from it, measured from first observation", "repo", owner+"/"+name, "pr", number,
+			"sha", sha, "ahead_by", st.HeadTimeAheadBy.Round(time.Second), "first_seen", firstSeen, "green", st.Green, "reason", st.Reason)
 	}
 	if len(st.Reporting) > 0 {
 		c.info("merge-request CI reporting observation", "repo", owner+"/"+name, "pr", number,

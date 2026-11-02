@@ -51,9 +51,13 @@ assert.ok(!stageTrackerExecutionHtml(item).includes('<script>'));
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("execution caption regression: %v\n%s", err, output)
 	}
-	layout, err := os.ReadFile("static-src/js/tracker-row-layout.js")
-	if err != nil {
-		t.Fatal(err)
+	var layout []byte
+	for _, part := range []string{"static-src/js/tracker-row-layout.js", "static-src/js/tracker-row-render.js"} {
+		b, err := os.ReadFile(part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		layout = append(layout, b...)
 	}
 	for _, seam := range []string{"stageTrackerExecutionHtml(pr)", "stageTrackerExecutionHtml(shown)", "stageTrackerPreparationNodeHtml", "stageTrackerPreparationCommentHtml"} {
 		if !strings.Contains(string(layout), seam) {
