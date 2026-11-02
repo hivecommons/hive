@@ -75,6 +75,8 @@ type boot struct {
 	// racing the fast agent-status tick crashed the process with "concurrent
 	// map read and map write" in buildConfiguredAgents.
 	cfgReloadMu sync.Mutex
+	// sweepConfig is an immutable copy published outside long-running eval IO.
+	sweepConfig atomic.Pointer[config.Config]
 
 	// ghClientLive is the GitHub client provider that long-lived consumers
 	// (collectors, the scheduler's triage commenter) read on every use, and
@@ -246,7 +248,7 @@ type boot struct {
 	lastPriorArtResumeSweep time.Time
 	lastSentinelSweep       time.Time
 	// matrixIngestSt gates the incremental Matrix ingest pass (#16276),
-	// shared by its ticker goroutine and the per-cycle call in runSweeps.
+	// owned by its independent ticker goroutine.
 	matrixIngestSt      *matrixIngestState
 	matrixIngestStarted bool
 	lastGFISweep        time.Time
