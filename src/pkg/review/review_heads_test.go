@@ -99,7 +99,7 @@ func TestHeadsDispatchEveryPerspectiveToEveryHead(t *testing.T) {
 	answered := AggregateReports([]PerspectiveReport{
 		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness, Verdict: VerdictApprove, Head: "cr-sol"},
 	}, AggregateOptions{Perspectives: headsOpts().Perspectives, ExpectedHeads: []string{"cr-sol", "cr-sonnet"}})
-	answered.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Head: "cr-sol", ReceivedAt: headsOpts().Now}}
+	answered.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Agent: "cr-sol-1", Head: "cr-sol", ReceivedAt: headsOpts().Now}}
 	next := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{answered}}, plan.State, headsOpts())
 	if len(next.ReviewKicks) != 1 || next.ReviewKicks[0].Agent != "cr-sol-1" || next.ReviewKicks[0].Perspective != PerspectiveSecurity {
 		t.Fatalf("freed sol replica was not given security: %+v", next.ReviewKicks)
@@ -194,9 +194,9 @@ func TestHeadsReaskOnlyTheHeadThatHasNotReported(t *testing.T) {
 		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveSecurity, Verdict: VerdictApprove, Head: "cr-sonnet"},
 	}, AggregateOptions{Perspectives: opts.Perspectives, ExpectedHeads: []string{"cr-sol", "cr-sonnet"}})
 	agg.ReportReceipts = []ReportReceipt{
-		{Perspective: PerspectiveCorrectness, Head: "cr-sonnet", ReceivedAt: opts.Now},
-		{Perspective: PerspectiveCorrectness, Head: "cr-sol", ReceivedAt: opts.Now},
-		{Perspective: PerspectiveSecurity, Head: "cr-sonnet", ReceivedAt: opts.Now},
+		{Perspective: PerspectiveCorrectness, Agent: "cr-sonnet-1", Head: "cr-sonnet", ReceivedAt: opts.Now},
+		{Perspective: PerspectiveCorrectness, Agent: "cr-sol-1", Head: "cr-sol", ReceivedAt: opts.Now},
+		{Perspective: PerspectiveSecurity, Agent: "cr-sonnet-1", Head: "cr-sonnet", ReceivedAt: opts.Now},
 	}
 	if agg.Verdict != VerdictIncomplete || !strings.Contains(strings.Join(agg.Reasons, " "), "security/cr-sol") {
 		t.Fatalf("aggregate = %s %v, want incomplete waiting on security/cr-sol", agg.Verdict, agg.Reasons)
@@ -330,7 +330,7 @@ func TestCombinedHeadsReaskOnlyMissingPerspectives(t *testing.T) {
 	}
 	agg := AggregateReports(reports, AggregateOptions{Perspectives: opts.Perspectives, ExpectedHeads: []string{"cr-sol", "cr-sonnet"}})
 	for _, report := range reports {
-		agg.ReportReceipts = append(agg.ReportReceipts, ReportReceipt{Perspective: report.Perspective, Head: report.Head, ReceivedAt: opts.Now})
+		agg.ReportReceipts = append(agg.ReportReceipts, ReportReceipt{Perspective: report.Perspective, Agent: report.Head + "-1", Head: report.Head, ReceivedAt: opts.Now})
 	}
 	if agg.Verdict != VerdictIncomplete {
 		t.Fatalf("aggregate = %s, want incomplete while sol owes two perspectives", agg.Verdict)

@@ -104,7 +104,7 @@ func TestPlanDispatchIncompleteAggregateDispatchesOnlyMissing(t *testing.T) {
 	pr := dispatchPR("sha1")
 	agg := incompleteAggregate(PerspectiveCorrectness, PerspectiveSecurity, PerspectiveIntentAlignment, PerspectiveStyle)
 	for perspective := range agg.Perspectives {
-		agg.ReportReceipts = append(agg.ReportReceipts, ReportReceipt{Perspective: perspective, ReceivedAt: now.Add(-time.Minute)})
+		agg.ReportReceipts = append(agg.ReportReceipts, ReportReceipt{Perspective: perspective, Agent: "r1", ReceivedAt: now.Add(-time.Minute)})
 	}
 	if agg.Verdict != VerdictIncomplete {
 		t.Fatalf("fixture aggregate = %s, want incomplete", agg.Verdict)

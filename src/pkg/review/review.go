@@ -147,6 +147,9 @@ type PerspectiveReport struct {
 	// never from the reviewer's JSON. When a PR has review heads, only decided
 	// reports drive routing; the heads' raw reports are evidence.
 	Decided bool `json:"decided,omitempty"`
+	// ReporterAgent is the actual sender, overwritten by the relay. A sibling
+	// may answer a perspective without completing the assigned worker's kick.
+	ReporterAgent string `json:"reporter_agent,omitempty"`
 	// Dispositions is the decision step's call on each finding the heads
 	// raised for this perspective: confirmed, not_reproducible or
 	// out_of_scope, with a reason.
@@ -325,6 +328,7 @@ type PerspectiveFinding struct {
 
 type ReportReceipt struct {
 	Perspective Perspective `json:"perspective"`
+	Agent       string      `json:"agent,omitempty"`
 	Head        string      `json:"head,omitempty"`
 	Decided     bool        `json:"decided,omitempty"`
 	ReceivedAt  time.Time   `json:"received_at"`
@@ -1323,7 +1327,7 @@ func collectForPRs(dir string, opts AggregateOptions, prs []PullRequest) (Artifa
 		opts.ModelStamps.apply(report)
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
-		receipts[key] = append(receipts[key], ReportReceipt{Perspective: report.Perspective,
+		receipts[key] = append(receipts[key], ReportReceipt{Perspective: report.Perspective, Agent: report.ReporterAgent,
 			Head: report.Head, Decided: report.Decided, ReceivedAt: receivedAt})
 		stats.FilesRead++
 	}
@@ -1511,7 +1515,7 @@ func mergeCollected(fresh Artifact, dir, path string, now time.Time) (Artifact, 
 		for _, receipt := range item.ReportReceipts {
 			seen := false
 			for _, prior := range merged[key].ReportReceipts {
-				if receipt.Perspective == prior.Perspective && receipt.Head == prior.Head &&
+				if receipt.Perspective == prior.Perspective && receipt.Agent == prior.Agent && receipt.Head == prior.Head &&
 					receipt.Decided == prior.Decided && !receipt.ReceivedAt.After(prior.ReceivedAt) {
 					seen = true
 					break

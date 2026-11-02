@@ -56,6 +56,7 @@ func TestCollectBeforeDispatchSchedulesOnlyMissingCurrentWorkOnce(t *testing.T) 
 	now := time.Now().UTC()
 	report := baseReport(PerspectiveSecurity, VerdictApprove)
 	report.Repo, report.Number, report.HeadSHA, report.BodyDigest = "acme/hive", 7, "head", "body"
+	report.ReporterAgent = "r1"
 	writeHandoffReport(t, dir, ReportFilePrefix(report.Repo, report.Number)+"security.json", report)
 	pr := dispatchPR(report.HeadSHA)
 	pr.Repo, pr.Number, pr.BodyDigest = report.Repo, report.Number, report.BodyDigest
@@ -90,6 +91,7 @@ func TestRecollectingOldReportDoesNotReleaseNewDispatch(t *testing.T) {
 	now := time.Now().UTC()
 	report := baseReport(PerspectiveSecurity, VerdictApprove)
 	report.Repo, report.Number, report.HeadSHA, report.BodyDigest = "acme/hive", 7, "head", "body"
+	report.ReporterAgent = "new-owner"
 	name := ReportFilePrefix(report.Repo, report.Number) + "security.json"
 	writeHandoffReport(t, dir, name, report)
 	received := now.Add(-time.Hour)

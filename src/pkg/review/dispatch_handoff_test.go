@@ -37,7 +37,7 @@ func TestDispatchCollectsCompletedWorkersBeforePriorityWalk(t *testing.T) {
 	agg := Aggregate{Repo: later.Repo, Number: later.Number, HeadSHA: later.HeadSHA,
 		BodyDigest: later.BodyDigest, Verdict: VerdictIncomplete, RecordedAt: now,
 		Perspectives:   map[Perspective]Verdict{PerspectiveCorrectness: VerdictApprove},
-		ReportReceipts: []ReportReceipt{{Perspective: PerspectiveCorrectness, ReceivedAt: now}}}
+		ReportReceipts: []ReportReceipt{{Perspective: PerspectiveCorrectness, Agent: "r1", ReceivedAt: now}}}
 	state := DispatchState{Pending: []PendingReview{{
 		Repo: later.Repo, Number: later.Number, HeadSHA: later.HeadSHA, BodyDigest: later.BodyDigest,
 		Perspective: PerspectiveCorrectness, Agent: "r1", Dispatched: now.Add(-time.Minute),
@@ -59,7 +59,7 @@ func TestCompletedReviewCannotReleaseAnotherIdentity(t *testing.T) {
 		BodyDigest: pending.BodyDigest, RecordedAt: now.Add(time.Second),
 		Perspectives:   map[Perspective]Verdict{PerspectiveCorrectness: VerdictApprove},
 		Heads:          map[Perspective][]string{PerspectiveCorrectness: {"model-a"}},
-		ReportReceipts: []ReportReceipt{{Perspective: PerspectiveCorrectness, Head: "model-a", ReceivedAt: now.Add(time.Second)}}}
+		ReportReceipts: []ReportReceipt{{Perspective: PerspectiveCorrectness, Agent: "r1", Head: "model-a", ReceivedAt: now.Add(time.Second)}}}
 	tests := []struct {
 		name   string
 		change func(*Aggregate)
@@ -71,11 +71,17 @@ func TestCompletedReviewCannotReleaseAnotherIdentity(t *testing.T) {
 			a.Heads = map[Perspective][]string{PerspectiveCorrectness: {"model-b"}}
 		}},
 		{"missing receipt", func(a *Aggregate) { a.ReportReceipts = nil }},
+		{"unknown legacy sender", func(a *Aggregate) {
+			a.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Head: "model-a", ReceivedAt: now.Add(time.Second)}}
+		}},
+		{"fresh sibling completion", func(a *Aggregate) {
+			a.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Agent: "other-owner", Head: "model-a", ReceivedAt: now.Add(time.Second)}}
+		}},
 		{"old receipt freshly collected", func(a *Aggregate) {
-			a.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Head: "model-a", ReceivedAt: now.Add(-time.Minute)}}
+			a.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Agent: "r1", Head: "model-a", ReceivedAt: now.Add(-time.Minute)}}
 		}},
 		{"other receipt head", func(a *Aggregate) {
-			a.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Head: "model-b", ReceivedAt: now.Add(time.Second)}}
+			a.ReportReceipts = []ReportReceipt{{Perspective: PerspectiveCorrectness, Agent: "r1", Head: "model-b", ReceivedAt: now.Add(time.Second)}}
 		}},
 	}
 	for _, tt := range tests {

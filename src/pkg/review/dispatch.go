@@ -1984,7 +1984,8 @@ func removeCompletedReviews(pending []PendingReview, artifact Artifact) []Pendin
 		}
 		fresh := false
 		for _, receipt := range agg.ReportReceipts {
-			if receipt.Perspective == p.Perspective && receipt.Head == p.Head &&
+			if receipt.Agent != "" && receipt.Agent == p.Agent &&
+				receipt.Perspective == p.Perspective && receipt.Head == p.Head &&
 				receipt.Decided == p.Decision && !receipt.ReceivedAt.IsZero() &&
 				!receipt.ReceivedAt.Before(p.Dispatched) {
 				fresh = true
