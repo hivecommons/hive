@@ -620,7 +620,10 @@ func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts 
 // re-request for the same head is refused quietly and the classified message
 // is logged once per head. It logs at INFO: the blocker is the target repo's
 // configuration, not a hive defect, and a WARN per head would surface as an
-// unclassified_error_repeated selfreport.
+// unclassified_error_repeated selfreport. It deliberately does not call
+// raiseMergeFailureAlert: classifyMergeFailureForOperator has no merge-queue
+// case, so no alert was ever raised for this error; add one there before
+// routing this path through the alert if that changes.
 func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
 	now := nowFn()
 	reason := mergeQueueRequiredReason + ": " + errMsg
