@@ -251,6 +251,8 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
+	source.WriteString(jsFunc(t, html, "formatNumber"))
+	source.WriteByte('\n')
 	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\nconst EV_OM_DRAIN_MAX = 1, EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2, EV_OM_PARITY_TOLERANCE = 0.25, EV_OM_ROLLING_DAYS = 30, EV_OM_SPARK_TRAIL_DAYS = 7, EV_OM_BAR_MAX_RATIO = 3, EV_OM_SPARK_MAX_RATIO = 3;\nconst EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };\n")
 	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "evOmStatusLabel", "evOmRatioText", "evOmVerdict", "evOmSparkline", "evOpensMergesHtml", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
