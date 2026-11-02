@@ -140,7 +140,6 @@ func (c *Engine) preparationClaimsClear(ctx context.Context, owner, repo string,
 }
 
 func (c *Engine) preparationIndependent(ctx context.Context, owner, repo string, a, b *gh.PullRequest) bool {
-	fullRepo := owner + "/" + repo
 	if mergeTrainAdoptionPair(a, b) || a.GetHead().GetSHA() == b.GetHead().GetSHA() {
 		return false
 	}
