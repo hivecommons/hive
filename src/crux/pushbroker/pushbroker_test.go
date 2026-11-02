@@ -1176,6 +1176,41 @@ func TestBrokerAmendExcludesWorkingTreeEditsOfTouchedFile(t *testing.T) {
 	}
 }
 
+// An edit the agent had staged for a touched path must still be staged after
+// normalisation: `git add` of the normalised blob replaces the index entry, so
+// the broker has to put the exact entry back.
+func TestBrokerRestoresStagedEditOfTouchedFile(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	edited := "package main\n\nfunc main() { staged() }\n\n"
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "main.go")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, dir, "diff", "--cached", "--name-only")); got != "main.go" {
+		t.Fatalf("staged paths = %q, want main.go still staged", got)
+	}
+	if got := runGitOutput(t, dir, "show", ":main.go"); got != edited {
+		t.Fatalf("index blob = %q, want the staged edit %q", got, edited)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, dir, "diff", "--name-only")); got != "" {
+		t.Fatalf("unstaged paths = %q, want working tree to match the index", got)
+	}
+	onDisk, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(onDisk) != edited {
+		t.Fatalf("working-tree file = %q, want %q", onDisk, edited)
+	}
+}
+
 // The uncommitted edit must come back even when the amend itself fails:
 // the broker's error path may not leave HEAD's blob sitting over the
 // agent's work.
