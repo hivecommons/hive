@@ -390,7 +390,7 @@ class APIContractTests(unittest.TestCase):
                         "API authorization header must retain its bearer scheme")
         self.assertEqual(opener.open.call_args.kwargs["timeout"], 30)
         response.read.assert_called_once_with(report.MAX_API_BYTES + 1)
-        redirect_handler = build.call_args.args[0]
+        redirect_handler = build.call_args.args[0]()
         self.assertIsNone(redirect_handler.redirect_request(
             request, None, 302, "redirect", {}, "https://example.com/"))
 
