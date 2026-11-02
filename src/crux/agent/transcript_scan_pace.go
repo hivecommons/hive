@@ -31,6 +31,10 @@ func (p *transcriptScanPace) observe(took, interval time.Duration) bool {
 	case took*100 < interval*transcriptScanRecoverPercent:
 		p.slowRun = 0
 		p.warned = false
+	default:
+		// Marginal pass: breaks the consecutive-slow streak without
+		// re-arming the warning, so flapping around the interval stays quiet.
+		p.slowRun = 0
 	}
 	return false
 }
