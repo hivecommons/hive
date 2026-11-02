@@ -93,8 +93,9 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if agent.ModelOverride != "" {
 		model = agent.ModelOverride
 	}
-	modelIn := model
 	isInference := m.routableBackend(backend)
+	model = m.resolveLaunchModel(agent, backend, model, isInference)
+	modelIn := model
 	model = normalizeModelNameForBackend(model, backend, isInference)
 
 	bootstrapPrompt := agent.BootstrapOverride
@@ -152,6 +153,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if mcpFlags := connectionMCPFlags(agent.Config.Connections, backend); mcpFlags != "" {
 		launchCmd += mcpFlags
 	}
+	launchCmd = m.dropDanglingModelFlag(agent, backend, launchCmd)
 
 	if bootstrapPrompt == "" && isInference {
 		bootstrapPrompt = "You are an AI agent. Await further instructions."
@@ -823,7 +825,7 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 		if isInference {
 			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
 		}
-		cmd := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s%s", binary, model, bareFlag, claudeEffortFlag(effort))
+		cmd := fmt.Sprintf("%s%s --dangerously-skip-permissions%s%s", binary, config.ModelFlag(model), bareFlag, claudeEffortFlag(effort))
 		for _, p := range denies {
 			cmd += fmt.Sprintf(" --disallowed-tools '%s'", p)
 		}
@@ -833,7 +835,7 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 		// MCP server is READ-ONLY BY DEFAULT (v0.0.350+), so the write tools are
 		// never registered and read tools stay available. Enabling it would turn
 		// writes on and let agents author as the login USER via the MCP.
-		cmd := fmt.Sprintf("%s --model %s --no-auto-update --allow-all", binary, model)
+		cmd := fmt.Sprintf("%s%s --no-auto-update --allow-all", binary, config.ModelFlag(model))
 		for _, p := range denies {
 			// Translate claude-style `mcp__github__<tool>` deny patterns to
 			// copilot's built-in server syntax `github-mcp-server(<tool>)`. The
@@ -852,11 +854,7 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 		// apply, matching backendLaunchCmd. The hub tmux path is unattended
 		// and has the pod/egress proxy as its boundary, so mirror Claude's
 		// bypass posture rather than letting Codex prompt in an unwatched pane.
-		cmd := codexUnattendedLaunchCmd(binary)
-		if model != "" {
-			cmd = fmt.Sprintf("%s --model %s", cmd, model)
-		}
-		return cmd + codexEffortFlag(effort)
+		return codexUnattendedLaunchCmd(binary) + config.ModelFlag(model) + codexEffortFlag(effort)
 	case "agy":
 		// agy has no deny-tool flag, so ToolsConfig cannot be expressed here.
 		// Keep launch-mode selection centralized with the default path rather
@@ -866,11 +864,7 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 	case "omp":
 		return ompLaunchCmd(binary, model, effort)
 	default:
-		cmd := binary
-		if model != "" {
-			cmd = fmt.Sprintf("%s --model %s", binary, model)
-		}
-		return cmd
+		return binary + config.ModelFlag(model)
 	}
 }
 
@@ -896,7 +890,7 @@ func backendLaunchCmdWithBobSession(binary, model, backend string, isInference b
 		if isInference {
 			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
 		}
-		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s%s", binary, model, bareFlag, claudeEffortFlag(effort))
+		base := fmt.Sprintf("%s%s --dangerously-skip-permissions%s%s", binary, config.ModelFlag(model), bareFlag, claudeEffortFlag(effort))
 		// Deny ALL GitHub MCP write tools in EVERY mode: agents author via the
 		// App-gated gh wrapper, never as the user via the MCP. Mode governs the
 		// gh-wrapper/proxy layer only, not what the MCP may write.
@@ -923,22 +917,19 @@ func backendLaunchCmdWithBobSession(binary, model, backend string, isInference b
 		// advisory — the mode never changes what the MCP can write (it never
 		// legitimately should), it only governs the separate, unchanged
 		// gh-wrapper/proxy layer that still reads Mode for the App-gated writes.
-		launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all%s",
-			binary, model, copilotGitHubWriteDenyFlags)
+		launchCmd = fmt.Sprintf("%s%s --no-auto-update --allow-all%s",
+			binary, config.ModelFlag(model), copilotGitHubWriteDenyFlags)
 	case "gemini":
-		launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+		launchCmd = binary + config.ModelFlag(model)
 	case "agy":
 		launchCmd = agyLaunchCmd(binary, model, effort)
 	case "pi":
 		// pi takes the model as a CLI flag, not a subcommand. Without
 		// this case the launch command never receives the configured
 		// model (previously it also hit the goose binary via the alias).
-		launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+		launchCmd = binary + config.ModelFlag(model)
 	case "goose":
-		launchCmd = fmt.Sprintf("%s run -s", binary)
-		if model != "" {
-			launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
-		}
+		launchCmd = fmt.Sprintf("%s run -s", binary) + config.ModelFlag(model)
 	case bobBackend:
 		launchCmd = bobLaunchCmd(binary, bobLabel)
 	case codexBackend:
@@ -954,11 +945,7 @@ func backendLaunchCmdWithBobSession(binary, model, backend string, isInference b
 		// dedicated flag for it — and is valid with OR without --model
 		// (effort alone runs codex's default model at that effort, the same
 		// contract as AGENT_REASONING_EFFORT on the relay path).
-		launchCmd = codexUnattendedLaunchCmd(binary)
-		if model != "" {
-			launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
-		}
-		launchCmd += codexEffortFlag(effort)
+		launchCmd = codexUnattendedLaunchCmd(binary) + config.ModelFlag(model) + codexEffortFlag(effort)
 	case "omp":
 		launchCmd = ompLaunchCmd(binary, model, effort)
 	default:
@@ -975,8 +962,6 @@ const (
 	agyLaunchModeEnv         = "HIVE_AGY_LAUNCH_MODE"
 	agyLaunchModeHeadless    = "headless"
 	agyLaunchModeInteractive = "interactive"
-	agyHeadlessReadyMarker   = "HIVE_AGY_HEADLESS_READY"
-	agyHeadlessRunningMarker = "HIVE_AGY_HEADLESS_RUNNING"
 )
 
 func agyInteractiveLaunchRequested(value string) bool {
@@ -1018,8 +1003,8 @@ func agyInteractiveLaunchCmd(binary, model, effort string) string {
 	// effect. The configured reasoning effort is used when agy accepts it, else
 	// agyDefaultEffort — "low", the effort agy itself falls back to.
 	launchCmd := fmt.Sprintf("%s --dangerously-skip-permissions", binary)
-	if model != "" {
-		launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyLaunchEffort(model, effort))
+	if modelFlag := config.ModelFlag(model); modelFlag != "" {
+		launchCmd = fmt.Sprintf("%s%s --effort %s", launchCmd, modelFlag, agyLaunchEffort(strings.TrimSpace(model), effort))
 	}
 	return launchCmd
 }
@@ -1115,7 +1100,7 @@ var agyTurnRunnerBinary = func() string {
 // file and reaches agy on stdin (see agy_turn.go for why not argv).
 func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFile string, newConversation bool) string {
 	args := []string{shellQuote(hiveBinary), agyTurnSubcommand, "--agy", shellQuote(agyBinary)}
-	if model != "" {
+	if model = strings.TrimSpace(model); model != "" {
 		args = append(args, "--model", shellQuote(model), "--effort", shellQuote(agyLaunchEffort(model, effort)))
 	}
 	args = append(args, "--prompt-file", shellQuote(promptFile),
@@ -1134,10 +1119,7 @@ func ompLaunchCmd(binary, model, effort string) string {
 	if approval == "" {
 		approval = ompDefaultApprovalMode
 	}
-	cmd := fmt.Sprintf("%s --approval-mode %s", binary, approval)
-	if model != "" {
-		cmd += fmt.Sprintf(" --model %s", model)
-	}
+	cmd := fmt.Sprintf("%s --approval-mode %s", binary, approval) + config.ModelFlag(model)
 	if effort != "" {
 		cmd += fmt.Sprintf(" --thinking %s", effort)
 	}

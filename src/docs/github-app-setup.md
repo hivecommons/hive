@@ -101,6 +101,27 @@ Organization permission:
 | --- | --- | --- |
 | Members | Read-only | Identify contributors and owners where configured. |
 
+### Optional shared-CI recovery
+
+The shared-CI rerun sweep (`shared_ci_rerun.enabled`, default on) can inspect
+failed runs with Actions read, but `rerun-failed-jobs` requires **Actions: Read
+and write** on the repository's recovery identity. This is optional, not a new
+baseline permission for every Hive App. A refusal is an operator handoff, not
+a source-code defect: Hive records `unauthorized:rerun-shared-ci`, posts one
+head-scoped actionable note using the existing unauthorized mechanism, and
+retries no more than once per repository per permission cooldown (one hour).
+An unchanged PR remains eligible after the cooldown; a successful rerun or
+observing no failed runs clears the recovery block.
+
+A maintainer may re-run the named workflow with their already-authorized
+identity. That manual recovery does **not** change the App's permissions. For
+automatic recovery, the App owner must explicitly request Actions read and
+write for the intended recovery installation, and its installation owner must
+accept the update in **Settings → GitHub Apps → Configure**. Do not broaden
+unrelated Apps or repositories or silently substitute a PAT. Leaving the grant
+at read is supported; an operator may disable the optional sweep instead.
+Neither action grants merge approval or bypasses required checks.
+
 ### The optional Visual Hive App (#4030)
 
 Visual Hive needs two grants the Hive App does not otherwise require — Actions

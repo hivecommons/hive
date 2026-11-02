@@ -554,7 +554,6 @@
       renderSwarm(data.swarm || {});
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
-      updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
       renderHiveAdvice(data.hiveAdvice || null);
       renderFleetReport(data.fleetReport || null);
@@ -605,4 +604,3 @@
         if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       }
     }
-

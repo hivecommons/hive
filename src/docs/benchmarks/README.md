@@ -38,15 +38,24 @@ Each report's "What the README shows and leaves out" section records, per card, 
 
 ## Regenerate
 
+For the fail-closed monthly schedule, owner-supplied input contract and reviewed
+PR process, see [monthly automation](monthly-automation.md). Hosted runners
+do not have the spoke's evidence; scheduling alone does not collect it.
+
 ```sh
 # on a spoke, or anywhere with a copy of its evidence tree
 src/scripts/outcome-benchmark.sh --root /data/evidence --month 2026-10 \
-  --spend cost-2026-10.json  # saved GET /api/cost, for cost per merged PR
-  --stories stories-2026-10.json   # curated caught → fixed → merged examples
-  --red-team red-team-2026-10.json # prompt-injection evaluation counts
-  --hub hub.json             # saved GET /api/hub/evidence (admin session), optional
+  --now 2026-10-27T00:00:00Z \
+  --spend docs/benchmarks/cost-2026-10.json \
+  --stories docs/benchmarks/stories-2026-10.json \
+  --red-team docs/benchmarks/red-team-2026-10.json \
   --source "hive-oke spoke snapshot 2026-10-27"
 ```
+
+The example preserves the historical observation time, not a completed-month
+snapshot. `--hub` is optional and requires a separately saved, authorized
+`GET /api/hub/evidence` response. Saved input paths above are relative to `src/`,
+where the wrapper runs; `--root` must point to the actual private evidence copy.
 
 The script wraps `hivectl evidence benchmark`; see [hivectl.md](../hivectl.md#evidence--benchmark) for every flag. Redraw the committed report and legacy cards without the evidence tree using `src/scripts/outcome-benchmark.sh --rerender`. The wrapper rejects `--readme` with instructions for the separate README renderer. The underlying CLI still supports marked legacy documents, but the root README deliberately has no legacy outcomes markers. To take a read-only copy of a spoke's evidence: `kubectl exec deploy/hive -c hive -- tar czf - -C /data evidence | tar xzf -`.
 

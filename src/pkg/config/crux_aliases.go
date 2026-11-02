@@ -162,10 +162,13 @@ var (
 var (
 	APIKeySHA256              = cruxconfig.APIKeySHA256
 	AllowSecretFileRoot       = cruxconfig.AllowSecretFileRoot
+	DropDanglingModelFlag     = cruxconfig.DropDanglingModelFlag
 	IsCLIBackend              = cruxconfig.IsCLIBackend
 	IsInferenceBackend        = cruxconfig.IsInferenceBackend
 	LiteLLMChatCompletionsURL = cruxconfig.LiteLLMChatCompletionsURL
 	LocalLiteLLMProxyURL      = cruxconfig.LocalLiteLLMProxyURL
+	ModelArgs                 = cruxconfig.ModelArgs
+	ModelFlag                 = cruxconfig.ModelFlag
 	NormalizeKickLogSource    = cruxconfig.NormalizeKickLogSource
 	ProxyInjectGHAuth         = cruxconfig.ProxyInjectGHAuth
 	QualifyRepo               = cruxconfig.QualifyRepo

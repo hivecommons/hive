@@ -611,33 +611,44 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 	// between the approval landing and the merge (hivecommons/hive#15136).
 	admitted := s.admitPullRequestHead(repoFull, number, state.HeadSHA, user)
 	if decision == repoItemDecisionQueueMerge {
-		queued, err := gh.QueuePRAutoMergeWithNoteResult(ctx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment))
+		event, err := gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
+			HumanChangeRequests: repoItemDecisionChangeRequests(), LiftNeedsHuman: true,
+			ExpectedHead: state.HeadSHA, ExpectedAuthor: author, GuardSentinelLabel: s.sentinelLabel(), VerifyActorWrite: true,
+			Recorded: func(ghpkg.PullRequestApprovalEvent) { s.invalidateStageTrackerForWebhook() },
+		})
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadGateway)
+			jsonError(w, "recording validated queue approval: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		released := []string{"admitted"}
-		if !queued.ReviewSubmitted {
-			// The hive's own PR: the App cannot review it, so the operator's
-			// approval is recorded in the hive's store exactly as the plain
-			// Approve decision records it; the self-authored lane merges on
-			// that record once CI is green (hivecommons/hive#15666).
-			event, err := gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
-				HumanChangeRequests: repoItemDecisionChangeRequests(),
-				LiftNeedsHuman:      true,
-				SentinelLabel:       s.sentinelLabel(),
-			})
-			if err != nil {
-				jsonError(w, "recording approval on the hive's own pull request: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			released = append(repoItemApprovalReleased(event), released...)
-		}
+		reportCtx, cancel := context.WithTimeout(ctx, delegatedApprovalReportingTimeout)
+		defer cancel()
+		queued, queueErr := gh.QueuePRAutoMergeWithNoteResultAtHead(reportCtx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment), event.HeadSHA)
+		released := append(repoItemApprovalReleased(event), "admitted")
 		label := gh.AutoMergeLabel()
 		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label, "admitted_by", admitted, "review_submitted", strconv.FormatBool(queued.ReviewSubmitted)), "", repoFull, number)
 		s.invalidateStageTrackerForWebhook()
-		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA, AdmittedBy: admitted, Released: released,
-			Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)})
+		status := "queued-for-merge"
+		result := repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)
+		var reporting []string
+		if event.ReportingError != "" {
+			reporting = append(reporting, event.ReportingError)
+		}
+		if queueErr != nil {
+			reporting = append(reporting, queueErr.Error())
+		}
+		if queued.ReportingError != "" {
+			reporting = append(reporting, queued.ReportingError)
+		}
+		if len(reporting) > 0 {
+			detail := strings.Join(reporting, "; ")
+			status = "approval-recorded-reporting-incomplete"
+			result.Action = rowActionApproved
+			result.Outcome = "Native approval recorded for head `" + shortHead(event.HeadSHA) + "`; queue reporting is incomplete."
+			result.Next = detail + ". Current merge gates still apply; the recorded approval does not need another model decision."
+			s.audit.LogRecord(user, auditRepoItemDecisionQueue+"_reporting_failed", auditDetail("repo", repoFull, "number", numStr, "head", event.HeadSHA, "error", detail), "", repoFull, number)
+		}
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Label: label, Head: event.HeadSHA, AdmittedBy: admitted, Released: released,
+			Result: result})
 		return
 	}
 	// A head GitHub reports behind or conflicting cannot merge (405): the
@@ -725,7 +736,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		err  error
 	)
 	var released []string
-	stage, commandsSkipped := "", ""
+	stage, commandsSkipped, reportingError := "", "", ""
 	sentinelOpen, prow := false, false
 	toContributor := ""
 	if decision == repoItemDecisionApprove {
@@ -738,6 +749,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		head = event.HeadSHA
 		released, stage, sentinelOpen, prow = repoItemApprovalReleased(event), event.Stage, event.SentinelLabelOpen, event.ProwManaged
 		commandsSkipped = event.CommandsSkipped
+		reportingError = event.ReportingError
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
 		event, err = gh.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, comment, repoItemDecisionChangeRequests())
@@ -779,6 +791,10 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	result := repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
 		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ToContributor: toContributor,
 	})
+	if reportingError != "" {
+		s.audit.LogRecord(user, auditRepoItemDecisionApprove+"_reporting_failed", auditDetail("repo", repoFull, "number", numStr, "head", head, "error", reportingError), "", repoFull, number)
+		result.Next = "Native approval is recorded; external reporting is incomplete: " + reportingError + ". Current merge gates still apply."
+	}
 	var rebase *StageTrackerRebase
 	if decision == repoItemDecisionApprove {
 		// An approval on a PR that is behind or conflicting does not

@@ -1944,6 +1944,10 @@ jobs:
       working-directory: src
       continue-on-error: true
       run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+    - name: Scan crux module
+      working-directory: src/crux
+      continue-on-error: true
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
     env:
       GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
   security-golangci-lint:
