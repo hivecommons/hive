@@ -407,14 +407,14 @@ func (m *Manager) StartTranscriptActivityRefresh(ctx context.Context) {
 // tick; scans never overlap because they run on this goroutine alone.
 func (m *Manager) runTranscriptActivityRefresh(ctx context.Context, ticks <-chan time.Time, now func() time.Time) {
 	caches := map[string]*transcriptSessionCache{}
-	slow := &transcriptScanPace{}
-	m.refreshTranscriptActivity(caches, now, slow)
+	pace := &transcriptScanPace{}
+	m.refreshTranscriptActivity(caches, now, pace)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticks:
-			m.refreshTranscriptActivity(caches, now, slow)
+			m.refreshTranscriptActivity(caches, now, pace)
 		}
 	}
 }
@@ -422,9 +422,9 @@ func (m *Manager) runTranscriptActivityRefresh(ctx context.Context, ticks <-chan
 // refreshTranscriptActivity runs one scan pass: pick the stale agents under
 // a short read lock, stat their sessions with no lock held, then publish
 // the results under a short write lock. Returns how many agents were
-// scanned. slow debounces the overrun warning: it fires once after
+// scanned. pace debounces the overrun warning: it fires once after
 // several consecutive slow passes, and re-arms only after a clearly fast one.
-func (m *Manager) refreshTranscriptActivity(caches map[string]*transcriptSessionCache, now func() time.Time, slow *transcriptScanPace) int {
+func (m *Manager) refreshTranscriptActivity(caches map[string]*transcriptSessionCache, now func() time.Time, pace *transcriptScanPace) int {
 	started := now()
 	m.mu.RLock()
 	scans := m.pendingTranscriptActivityScansLocked(started)
@@ -445,9 +445,10 @@ func (m *Manager) refreshTranscriptActivity(caches map[string]*transcriptSession
 			delete(caches, name)
 		}
 	}
-	if slow != nil && slow.observe(now().Sub(started), transcriptLivenessScanInterval) && m.logger != nil {
+	took := now().Sub(started)
+	if pace != nil && pace.observe(took, transcriptLivenessScanInterval) && m.logger != nil {
 		m.logger.Warn("copilot transcript activity scan outlived its interval; agent liveness reads may lag",
-			"took", now().Sub(started).Round(time.Millisecond).String(), "agents", len(scans), "interval", transcriptLivenessScanInterval.String())
+			"took", took.Round(time.Millisecond).String(), "agents", len(scans), "interval", transcriptLivenessScanInterval.String())
 	}
 	return len(results)
 }
