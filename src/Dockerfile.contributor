@@ -47,11 +47,13 @@ COPY src/ .
 RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -o /hive-quota-publisher ./cmd/hive-quota-publisher
+    go build -o /hive-quota-publisher ./cmd/hive-quota-publisher && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /crux ./crux/cmd/crux
 
 FROM ${BASE_REGISTRY}/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
 ARG NODE_MAJOR=24
+ARG CLINE_VERSION=3.0.74
 
 # Layering below is deliberately stable-to-mutable (issue #2613, Observation 2):
 # base apt packages change rarely, Node changes occasionally, and each agent
@@ -548,6 +550,10 @@ COPY bin/hive-config.sh /usr/local/bin/
 # entrypoint starts it alongside the relay so an unattended contributor gets
 # proactive quota protection with no custom reader and no local hive server.
 COPY --from=quota-publisher-builder /hive-quota-publisher /usr/local/bin/hive-quota-publisher
+COPY --from=quota-publisher-builder /crux /usr/local/bin/crux
+RUN npm install -g --ignore-scripts --no-fund --no-audit cline@${CLINE_VERSION} \
+    && ln -sf "$(npm root -g)/cline/bin/cline" /usr/local/bin/cline \
+    && cline --version
 COPY config/backends.conf /usr/local/etc/hive/
 COPY config/restrictions/contributor-default.json /etc/hive/restrictions/
 

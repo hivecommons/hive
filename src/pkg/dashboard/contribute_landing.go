@@ -1615,6 +1615,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <label style="font-size:.9rem;color:var(--text-muted)">Choose your CLI / inference engine:</label>
 <!-- Keep this curated contributor list cross-checked with config/backends.conf KNOWN_BACKENDS; not every registered backend is ready for this picker. -->
 <select id="cli-select" style="background:var(--surface-2);color:var(--text);border:1px solid var(--line-strong);border-radius:var(--r);padding:var(--sp-3) var(--sp-5);font-size:.9rem;cursor:pointer">
+<option value="cline" data-install="npm install -g cline@3.0.74" data-host-install="npm install -g cline@3.0.74\ncline auth # configure a dedicated API-key provider; current crux with cline-turn required" data-model-flag="--model" data-default-model="" data-env="# Explicit provider/model required; no implicit provider fallback\nexport AGENT_MODEL=openrouter/anthropic/claude-sonnet-4-6">Cline (bounded CLI worker)</option>
 <option value="claude" data-install="npm i -g @anthropic-ai/claude-code" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="">Claude Code</option>
 <option value="codex" data-install="npm i -g @openai/codex" data-host-install="npm i -g @openai/codex\ncodex login --device-auth   # or export CODEX_API_KEY / OPENAI_API_KEY for API-key mode" data-model-flag="--model" data-default-model="" data-env="# Optional: Codex reasoning effort — the relay passes it as -c model_reasoning_effort.\n# export AGENT_REASONING_EFFORT=high">OpenAI Codex</option>
 <option value="copilot" data-install="" data-host-install="npm install -g @github/copilot # uses your existing gh auth" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
@@ -1761,7 +1762,7 @@ var k8sTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/
 // safely. Pi's relay supports headless execution, but this generator does not
 // yet stage its provider-specific credentials or canonical model. A pod has no
 // TTY, so anything outside this list refuses work at startup.
-var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1};
+var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1,cline:1};
 // Backends that can only run on the contributor's own host. "other" has no
 // image by definition; OpenHands needs Python 3.12 and is not in the stock
 // contributor image. Selecting one flips Mode to Host
@@ -1945,6 +1946,7 @@ claude:{name:'Claude Code',tag:'Anthropic',peer:true,
     desc:'Opens Claude Desktop with a setup prompt prefilled.'}},
 codex:{name:'Codex',tag:'OpenAI',peer:true},
 copilot:{name:'GitHub Copilot',tag:'GitHub',peer:true},
+cline:{name:'Cline',tag:'bounded CLI worker',peer:true},
 pi:{name:'Pi',tag:'pi.dev',peer:true},
 mlx:{name:'Apple MLX',tag:'local · Apple Silicon · Pi',peer:true},
 goose:{name:'Goose',tag:'Block (Ollama)',peer:true},

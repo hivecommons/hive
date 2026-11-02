@@ -500,6 +500,7 @@ GOOSECFG
 # TTY — suitable for an unattended / future Kubernetes contributor (#2549).
 # Only the two literals are accepted; anything else falls back to interactive.
 CONTRIBUTOR_MODE="${CONTRIBUTOR_MODE:-interactive}"
+if [[ "${AGENT_BACKEND:-}" == "cline" ]]; then CONTRIBUTOR_MODE="headless"; fi
 if [[ "$CONTRIBUTOR_MODE" != "headless" ]]; then
   CONTRIBUTOR_MODE="interactive"
 fi
@@ -687,6 +688,13 @@ detect_cli() {
   fi
 
   case "$backend" in
+    cline)
+      if "${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --check >/dev/null 2>&1; then
+        echo "UNVERIFIED"
+      else
+        echo "NOT_AUTHED"
+      fi
+      ;;
     claude)
       if claude --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
       ;;
@@ -872,6 +880,16 @@ if [[ "$AGENT_BACKEND" == "pi" ]]; then
 fi
 
 # Check CLI readiness
+if [[ "$AGENT_BACKEND" == "cline" ]]; then
+  if [[ -n "${HIVE_CLINE_PROVIDERS_B64:-}" ]]; then
+    CLINE_SETTINGS="${HOME}/.cline/data/settings"
+    mkdir -p "$CLINE_SETTINGS"
+    (umask 077; printf '%s' "$HIVE_CLINE_PROVIDERS_B64" | base64 -d > "$CLINE_SETTINGS/providers.json") || exit 1
+    chmod 600 "$CLINE_SETTINGS/providers.json"
+    unset HIVE_CLINE_PROVIDERS_B64 CLINE_SETTINGS
+  fi
+  "${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --check || exit 1
+fi
 STATUS=$(detect_cli "$AGENT_BACKEND")
 case "$STATUS" in
   NOT_INSTALLED)
@@ -916,7 +934,7 @@ case "$STATUS" in
     exit 1
     ;;
   UNVERIFIED)
-    echo "$AGENT_BACKEND CLI is installed; authentication will be checked in its interactive pane."
+    echo "$AGENT_BACKEND CLI is installed; authentication remains unverified until its first request."
     ;;
   OK)
     if [[ "$AGENT_BACKEND" == "pi" ]]; then
