@@ -79,6 +79,10 @@ const (
 	// waiting on a person's approval.
 	workflowRunConclusionActionRequired   = "action_required"
 	workflowApprovalWorkflowMissingPrefix = "workflow-approval-required:missing-workflow:"
+	// workflowApprovalGraceWarnKey keys the once-per-head grace warning in
+	// terminalHoldLogged separately from the hold reason itself, so the sweep
+	// loop's "automerge hold" line (keyed on the bare reason) still fires.
+	workflowApprovalGraceWarnKey = "workflow-approval-grace-warned:"
 	// workflowApprovalUntrustedPrefix: the repository's merge bot (Prow) owns
 	// `/ok-to-test` and only honours it from its trusted users, which a
 	// GitHub App login never is. Posting again cannot succeed; a person must
@@ -224,7 +228,7 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
 	}
 	if !firstSeen.IsZero() && headOlderThan(c.now, firstSeen, workflowApprovalGrace) {
-		if c.markTerminalHoldLogged(owner, repo, number, headSHA, workflowApprovalWorkflowMissingPrefix+contextName) {
+		if c.markTerminalHoldLogged(owner, repo, number, headSHA, workflowApprovalGraceWarnKey+contextName) {
 			c.warn("automerge workflow approval still required after ok-to-test grace; install the self-contained hive ok-to-test workflow",
 				"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
 		}

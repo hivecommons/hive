@@ -424,6 +424,11 @@ func TestTrySweepTrustedBotWorkflowApprovalMissingWorkflowAfterGrace(t *testing.
 	if n := strings.Count(logs.String(), "still required after ok-to-test grace"); n != 1 {
 		t.Fatalf("grace warning logged %d times across repeat ticks, want once per head", n)
 	}
+	// The grace warning must not claim the hold reason's own dedupe key, or the
+	// sweep loop's once-per-head "automerge hold" line would never fire.
+	if !c.markTerminalHoldLogged("acme", "widget", 23, "sha23", reason) {
+		t.Fatalf("hold reason %q already marked logged by the grace warning; sweep loop would skip its automerge hold line", reason)
+	}
 }
 
 func TestTrySweepTrustedBotSentinelBlocksWorkflowApprovalAttention(t *testing.T) {
