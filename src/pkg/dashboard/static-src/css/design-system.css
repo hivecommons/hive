@@ -110,7 +110,7 @@
     /* The header pill's cue rides inside the pill ("57 ↑ +3") rather than
        floating above it: the card edge is right there, and the number must
        still read from across a room on a wall display. */
-    .ham-header-count[data-count-delta]::after { position: static; margin-left: var(--sp-2); font-size: .85em; white-space: nowrap; }
+    .ham-header-count[data-count-delta]::after { position: static; margin-left: var(--sp-2); white-space: nowrap; }
     [data-count-direction="up"] { --nav-count-start: 3px; }
     [data-count-direction="down"] { --nav-count-start: -3px; }
     [data-count-phase="a"]::after { animation: nav-count-a 220ms ease-out; }

@@ -39,7 +39,8 @@
     /* The title's count pill is the only count a wall can see: at 1920x1080
        it reads from across a room. Kiosk sets no ham-chromeless, so it is
        named too. 1.375rem is 22px at the default root size. */
-    body.kiosk-mode .ham-header-count, body.ham-chromeless .ham-header-count { font-size: 1.375rem; min-height: 1.6em; padding: 0 var(--sp-3); }
+    body.kiosk-mode .ham-header-count, body.ham-chromeless .ham-header-count { font-size: var(--fs-2xl); min-height: 1.6em; padding: 0 var(--sp-3); }
+    body.kiosk-mode .ham-header-count[data-count-delta]::after, body.ham-chromeless .ham-header-count[data-count-delta]::after { font-size: var(--fs-lg); }
     /* Header tools: ⧉ pop out, ⛶ full screen and 📺 display sit beside the gear and
        share its chip styling; the return link is a pop-out-only text pill. */
     .ham-header-tool { width: auto; min-width: 15px; padding: 0 var(--sp-1); font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; }
