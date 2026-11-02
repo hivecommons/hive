@@ -37260,8 +37260,6 @@ function burnAreaChart() {
     const EV_THROUGHPUT_GOOD = 0.85;        // ≥ → Good
     const EV_THROUGHPUT_FAIR = 0.70;        // ≥ → Fair, below → Weak
     const EV_QUEUE_GROWTH_MAX = 0.10;       // week-end queue depth growing more than this week over week → Weak regardless of ratio
-    const EV_BLOCKED_STRONG = 0.01;         // proxy-blocked share of ALL agent writes (direct + hive-mediated) ≤ → Strong
-    const EV_BLOCKED_FAIR = 0.05;           // ≤ → Fair, above → Weak
     // CI gate, grade A (integrity): breaches ÷ merged PRs with a known merge-time check state.
     const EV_GATE_BREACH_GOOD = 0.01;       // 0 breaches → Excellent; ≤ this share → Good
     const EV_GATE_BREACH_FAIR = 0.03;       // ≤ this share → Fair, above → Weak
@@ -37553,15 +37551,14 @@ function burnAreaChart() {
         const sentinelWeeks = Array.isArray(sentinel.weeks) ? sentinel.weeks : [];
         const sentinelHits = sentinelWeeks.reduce((sum, wk) => sum + (Number(wk && wk.hits) || 0), 0);
         const blockedRate = evRate(blocked, total);
-        const grade = evGrade(blockedRate, total, EV_BLOCKED_STRONG, EV_BLOCKED_FAIR, false);
         const coverage = direct.recorded === false ? 'Direct-write counters have not been recorded on this hive yet, so the total only holds hive-mediated writes.' : direct.partial_coverage ? `Direct-write counters have only been recorded since ${direct.since}, so earlier weeks in this window hold hive-mediated writes only.` : '';
         return {
-          matters: 'Agents change GitHub either through the hive (comments, issues, PRs, reviews it files on their behalf, all audited) or directly through a proxy that enforces the trust tiers. A handful of refusals out of thousands of writes means the boundary is doing its job quietly; a refusal rate in the percent range means agents are repeatedly trying things they are not allowed to do.',
-          measured: 'The headline is blocked ÷ ALL agent GitHub writes in the window: every hive-mediated write from the audit log plus every direct write the proxy saw, per trust tier, and how many the proxy refused and why. Separately: how many evidence records per week carry a "sentinel hit", a canary that fires when an agent touched something it should not have.',
+          matters: 'A recorded block is positive evidence that enforcement worked on that attempt. Attempted-agent compliance is a separate question: frequent prohibited attempts do not make successful blocking a failure, and generating more prohibited attempts is not a goal.',
+          measured: 'Observed prohibited writes blocked, with ALL observed agent GitHub writes as denominator context. Separately, Sentinel detections are informational observations, not proof that a write was blocked.',
           how: `Denominator = hive-mediated writes (audit entries for agent comments, issues, PRs, reviews, labels, closes and pushes) + direct proxied writes (the proxy’s weekly tally per tier, kept under /data so it survives restarts). Numerator = writes the proxy refused (plus audited refusals of mediated writes). Per-tier bars show blocked ÷ direct writes for that tier. Would-block counts from intent verification are shown separately and are never in the blocked count. ${coverage}`,
-          good: `Blocked at or below ${Math.round(EV_BLOCKED_STRONG * 100)}% of all agent writes is Strong — a boundary that is exercised but rarely needed — ${Math.round(EV_BLOCKED_FAIR * 100)}% or less is Fair, above that Weak. The sentinel line should sit at zero; any hit is worth reading the record for.`,
+          good: 'One or more observed blocks demonstrates enforcement on those attempts, even in a small window. Zero means enforcement was not observed, not that it failed. There is no target refusal rate or reward for more prohibited attempts. These counts do not establish that bypasses or false positives are absent.',
           ours: `${formatNumber(total)} agent writes in this window (${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct across ${tiers.length} tier(s)), ${blocked} blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})${topReason ? `, most often for ${topReason[0]} (${topReason[1]})` : ''}.${evaluated ? ` Intent verification evaluated ${evaluated} write(s) and would have blocked ${wouldBlock} (not counted above).` : ''} ${sentinel.n ? `${sentinel.n} record(s) with ${sentinelHits} sentinel hit(s)` : 'No sentinel hits'} in this window. ${coverage} Direct writes that bypass both the hive and the proxy are not seen at all.`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent writes` : `${blocked} of ${formatNumber(total)} agent writes blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})`,
+          grade: 'ungraded', reason: blocked > 0 ? `Enforcement demonstrated — ${blocked} prohibited write(s) blocked` : 'Enforcement not observed — 0 blocked writes',
         };
       },
       'opens-merges': (dto) => {
@@ -37601,7 +37598,9 @@ function burnAreaChart() {
       const section = (h, body) => body ? `<h4>${h}</h4><p>${escapeHtml(body)}</p>` : '';
       const sc = evServerCard(dto, key);
       const g = sc && sc.grade && typeof sc.grade === 'object' ? sc.grade : null;
-      const gradeHtml = g
+      const gradeHtml = key === 'boundary-enforcement'
+        ? `<div class="ev-grade-rubric"><b>Not graded:</b> ${escapeHtml(g ? String(g.reason || '') : x.reason)}.${g && g.rubric ? ` ${escapeHtml(String(g.rubric))}.` : ''}</div>`
+        : g
         ? `<div class="ev-grade-rubric"><b>${g.enough_data ? `Grade ${escapeHtml(String(g.letter || '—'))}` : 'Not graded yet'}:</b> ${escapeHtml(String(g.reason || ''))}.${g.rubric ? ` Rubric: ${escapeHtml(String(g.rubric))}.` : ''}</div>`
         : evGradeLine(x.grade, x.reason);
       const button = `<button type="button" class="ev-info" data-action="toggleEvidenceExplainer" data-arg0="${key}" data-stop="1" data-prevent="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${id}" aria-label="Explain ${escapeHtml(title)}">ⓘ</button>`;
@@ -37641,7 +37640,9 @@ function burnAreaChart() {
       const band = g && ['a', 'b', 'c'].includes(g.band) ? g.band : 'none';
       const letter = g && g.letter ? String(g.letter) : '—';
       const why = g ? (g.enough_data ? String(g.reason || '') : `Not enough data yet: ${g.reason || ''}`) : 'Grade not reported by this hive';
-      const grade = `<span class="ev-letter ev-band-${band}" title="${escapeHtml(why)}" aria-label="Grade ${escapeHtml(letter)}: ${escapeHtml(why)}">${escapeHtml(letter)}</span>`;
+      const grade = key === 'boundary-enforcement'
+        ? `<span class="ev-letter ev-band-none" title="Observed enforcement, not a refusal-rate grade" aria-label="Boundary enforcement is not graded">Not graded</span>`
+        : `<span class="ev-letter ev-band-${band}" title="${escapeHtml(why)}" aria-label="Grade ${escapeHtml(letter)}: ${escapeHtml(why)}">${escapeHtml(letter)}</span>`;
       const plain = sc && sc.plain_summary ? `<div class="ev-plain">${escapeHtml(String(sc.plain_summary))}</div>` : '';
       return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}${ex.button}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span>${grade}</summary>${plain}${ex.body}${bodyHtml}</details>`;
     }
@@ -37917,7 +37918,8 @@ function burnAreaChart() {
       const total = Number(act.total_writes) || 0, blocked = Number(act.blocked) || 0;
       const rate = evRate(blocked, total);
       evDetails['boundary-enforcement'] = `${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct through the proxy${direct.recorded === false ? ' · direct-write counters not recorded yet' : direct.partial_coverage ? ` · direct-write counters recorded since ${String(direct.since || '')}` : ''}.`;
-      const headline = `<div class="ev-headline"><b>${blocked} of ${formatNumber(total)} agent writes blocked</b> · ${rate == null ? '—' : (rate * 100).toFixed(2) + '%'}</div>`;
+      const status = blocked > 0 ? 'Enforcement demonstrated' : 'Enforcement not observed';
+      const headline = `<div class="ev-headline"><b>${status} — ${blocked} prohibited write(s) blocked</b> · ${formatNumber(total)} observed agent writes · ${rate == null ? '—' : (rate * 100).toFixed(2) + '%'}</div>`;
       const tiers = EV_WRITE_TIERS.concat(Object.keys(byTier).filter((k) => !EV_WRITE_TIERS.includes(k)).sort());
       const rows = tiers.map((tier) => {
         const c = byTier[tier] || {};
@@ -38327,7 +38329,6 @@ function burnAreaChart() {
         renderEvidenceSummary(dto);
       } catch (e) { if (!evLast) renderEvidenceSummary(null); }
     }
-
     // ---- Approvals desk (RFC #4000) -------------------------------------
     // Pending operator-lane approvals. The panel stays hidden entirely unless
     // the desk is enabled, so a hive that has not opted in sees no new chrome.

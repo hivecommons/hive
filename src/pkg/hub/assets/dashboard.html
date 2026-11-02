@@ -1711,14 +1711,14 @@
           var att = 0, blk = 0, wh = 0;
           wrows.forEach(function(r) { att += Number(r.attempted) || 0; blk += Number(r.blocked) || 0; wh = Math.max(wh, Number(r.hives) || 0); });
           if (wrows.length) {
-            ours = 'Across ' + wh + ' reporting hive' + (wh === 1 ? '' : 's') + ': ' + att + ' agent write attempts, ' + blk + ' blocked (' + (att ? evidencePct(blk / att) : EVIDENCE_NULL) + ') over ' + wrows.length + ' tier' + (wrows.length === 1 ? '' : 's') + '. Not graded: there is no \u201Cgood\u201D block rate \u2014 it depends on what agents attempt. Zero blocks with many attempts means agents stayed inside their lane; many blocks means the guardrail did its job.';
+            ours = (blk > 0 ? 'Enforcement demonstrated' : 'Enforcement not observed') + ' \u2014 ' + blk + ' prohibited write(s) blocked. Across ' + wh + ' reporting hive' + (wh === 1 ? '' : 's') + ': ' + att + ' observed agent write attempts (' + (att ? evidencePct(blk / att) : EVIDENCE_NULL) + ' blocked) over ' + wrows.length + ' tier' + (wrows.length === 1 ? '' : 's') + '. Not graded: refusal frequency describes attempted-agent compliance, not enforcement quality. Zero means not observed, not failure; counts do not rule out bypasses or false positives.';
             grade = 'none';
           } else {
             ours = EVIDENCE_UPGRADE_NOTE + ' Technically: the heartbeat block write_counters is absent (the proxy write counters feed it).';
           }
           return {
             measured: 'Every write (push, comment, label, merge\u2026) an agent tried to make through the proxy, per intent tier, and how many the proxy refused.',
-            why: 'These are the guardrails working. A blocked write is a change an agent tried to make outside what its tier allows \u2014 it never reached GitHub.',
+            why: 'A recorded block demonstrates enforcement on that attempt: the refused write never reached GitHub. More prohibited attempts are not a goal. Sentinel detections alone are informational, not proof of a blocked write.',
             how: 'Running counters since each spoke\u2019s proxy started (not a time window). Block rate = blocked \u00F7 attempted. A blocked write says nothing about whether the PR could merge. ' + EVIDENCE_CI_NOTE,
             ours: ours, grade: grade
           };
@@ -2283,8 +2283,7 @@
       if (Array.isArray(v.write_counters)) {
         var att = 0, blk = 0;
         v.write_counters.forEach(function(t) { att += Number(t.attempted) || 0; blk += Number(t.blocked) || 0; });
-        out.writes = att === 0 ? 'No agent write attempts have been recorded by the guardrail proxy yet.' :
-          'Agents attempted ' + att + ' writes to GitHub through the guardrail proxy and ' + blk + ' (' + evidencePct(blk / att) + ') ' + evidencePlural(blk, 'was', 'were') + ' blocked; a blocked write never reached GitHub.';
+        out.writes = (blk > 0 ? 'Enforcement demonstrated' : 'Enforcement not observed') + ' \u2014 ' + blk + ' prohibited write(s) blocked; ' + att + ' observed agent write attempts through the guardrail proxy (' + (att ? evidencePct(blk / att) : EVIDENCE_NULL) + ' blocked). Counts do not rule out bypasses or false positives.';
       } else out.writes = '';
 
       var fam = v.family_false_approve_rate || {}, fparts = [];

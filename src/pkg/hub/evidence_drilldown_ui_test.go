@@ -622,7 +622,7 @@ func TestEvidenceFleetPanelsRender(t *testing.T) {
 		`<tr><td>Review gate</td><td>would have passed</td><td>15</td><td>12</td><td>3</td><td class="evidence-rate"><span class="evidence-rate-main">0.0% of 12</span>`,
 		// Findings generated from the fleet fixture, one per panel with data.
 		"<li>AI agents wrote 32 PRs: 25 merged (78.1%) and 3 of those were reverted within 14 days. Humans wrote 12 PRs: 10 merged (83.3%) and 1 of those was reverted within 14 days.</li>",
-		`<p class="evidence-finding">Agents attempted 53 writes to GitHub through the guardrail proxy and 5 (9.4%) were blocked; a blocked write never reached GitHub.</p>`,
+		`<p class="evidence-finding">Enforcement demonstrated — 5 prohibited write(s) blocked; 53 observed agent write attempts through the guardrail proxy (9.4% blocked). Counts do not rule out bypasses or false positives.</p>`,
 		`class="evidence-bar merged"`, `class="evidence-bar reverted"`, `class="evidence-bar open"`,
 		"no merge was held or blocked anywhere in the fleet",
 	} {

@@ -812,7 +812,13 @@ func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string
 	}
 	c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
 		WriteTarget{Repo: owner + "/" + repo, Number: number}, "label", HumanAckLabel)
-	return c.StageFacts().Unparked(ctx, c.IssueStageRef(owner+"/"+repo, number), actor)
+	if err := c.StageFacts().Unparked(ctx, c.IssueStageRef(owner+"/"+repo, number), actor); err != nil {
+		return err
+	}
+	// The stage store is now newer than the enumeration's parking labels.
+	// Re-read our write so the tracker does not combine 010 with an old ask.
+	notifyItemRefresh(owner+"/"+repo, number, false)
+	return nil
 }
 
 func labelPresent(labels []string, want string) bool {
