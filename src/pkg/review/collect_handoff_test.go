@@ -59,8 +59,11 @@ func TestOlderCollectionCannotOverwriteNewerResult(t *testing.T) {
 	}
 
 	older := newer
-	older.Verdict = VerdictIncomplete
-	older.Perspectives = map[Perspective]Verdict{PerspectiveCorrectness: VerdictApprove}
+	older.Verdict = VerdictApprove
+	older.Perspectives = map[Perspective]Verdict{}
+	for _, perspective := range DefaultPerspectives {
+		older.Perspectives[perspective] = VerdictApprove
+	}
 	artifact, err := mergeCollected(Artifact{Items: []Aggregate{older}}, dir, path, now.Add(-time.Minute))
 	if err != nil {
 		t.Fatal(err)
