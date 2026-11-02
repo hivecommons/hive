@@ -3086,6 +3086,8 @@ func (c *Client) QueuePRAutoMergeWithNote(ctx context.Context, repo string, numb
 // operator's approval in the hive's own store so the self-authored lane
 // merges on it (hivecommons/hive#15666).
 type PRAutoMergeQueueResult struct {
+	// ReportingError is optional Prow bridge failure, not a lost approval.
+	ReportingError  string
 	HeadSHA         string
 	ReviewSubmitted bool
 	SelfAuthored    bool
@@ -3129,6 +3131,12 @@ func (c *Client) pullRequestSelfAuthored(pr *gh.PullRequest) bool {
 // applied. The same fallback runs when GitHub answers that 422 for an
 // author the hive did not recognise as itself.
 func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string, number int, queuedBy, note string) (PRAutoMergeQueueResult, error) {
+	return c.QueuePRAutoMergeWithNoteResultAtHead(ctx, repo, number, queuedBy, note, "")
+}
+
+// QueuePRAutoMergeWithNoteResultAtHead refuses a queue write if the head moved
+// after the operator's decision was validated.
+func (c *Client) QueuePRAutoMergeWithNoteResultAtHead(ctx context.Context, repo string, number int, queuedBy, note, expectedHead string) (PRAutoMergeQueueResult, error) {
 	if c == nil {
 		return PRAutoMergeQueueResult{}, ErrNoGitHubClient
 	}
@@ -3147,6 +3155,9 @@ func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string
 	}
 	if headSHA == "" {
 		return PRAutoMergeQueueResult{}, errors.New("PR head SHA is required for auto-merge approval")
+	}
+	if expectedHead != "" && headSHA != expectedHead {
+		return PRAutoMergeQueueResult{}, errors.New("PR head changed since approval; queue reporting deferred")
 	}
 	full := owner + "/" + repoName
 	res := PRAutoMergeQueueResult{HeadSHA: headSHA, SelfAuthored: c.pullRequestSelfAuthored(pr)}
@@ -3213,7 +3224,9 @@ func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string
 		return res, fmt.Errorf("adding %s label: %w", label, err)
 	}
 	if strings.EqualFold(label, prowLgtmLabel) {
-		c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy)
+		if err := c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy); err != nil {
+			res.ReportingError = err.Error()
+		}
 	}
 	return res, nil
 }
@@ -3271,7 +3284,7 @@ const (
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
 // the queue review approved. The label and review are already in place, so a
 // failure is logged and surfaced on the PR but never returned.
-func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, number int, headSHA, queuedBy string) {
+func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, number int, headSHA, queuedBy string) error {
 	sha7 := headSHA
 	if len(sha7) > 7 {
 		sha7 = sha7[:7]
@@ -3294,17 +3307,21 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 		return effects.Result{Provenance: owner + "/" + repoName + "@" + headSHA}, apiErr
 	})
 	if err == nil {
-		return
+		return nil
 	}
 	if c.logger != nil {
 		c.logger.Warn("could not set the prow/lgtm commit status; the GitHub App likely lacks the statuses: write permission",
 			"repo", owner+"/"+repoName, "number", number, "error", err)
 	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
-	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil && c.logger != nil {
-		c.logger.Warn("could not post the prow/lgtm status warning comment",
-			"repo", owner+"/"+repoName, "number", number, "error", cerr)
+	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil {
+		if c.logger != nil {
+			c.logger.Warn("could not post the prow/lgtm status warning comment",
+				"repo", owner+"/"+repoName, "number", number, "error", cerr)
+		}
+		return fmt.Errorf("Prow status reporting: %w; warning comment: %v", err, cerr)
 	}
+	return fmt.Errorf("Prow status reporting: %w", err)
 }
 
 func (c *Client) ensureLabel(ctx context.Context, owner, repo, name string) error {

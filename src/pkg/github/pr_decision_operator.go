@@ -88,6 +88,9 @@ type PullRequestApprovalEvent struct {
 	// so posting again would only draw the same "NOT APPROVED" reply. The
 	// hive's own approval record is unaffected.
 	CommandsSkipped string
+	// ReportingError preserves partial progress: the native approval stands,
+	// but comments, labels or stage reporting must be retried/reconciled.
+	ReportingError string
 }
 
 // PRApprovalCommandsSkippedProw is the CommandsSkipped reason for a Prow
@@ -166,6 +169,17 @@ func (c *Client) prowRejectedHiveCommands(ctx context.Context, owner, name strin
 // posts the commands only, which is what the delegated "Let hive decide"
 // path keeps: a recommendation must not clear a person's gate.
 type PullRequestApprovalOptions struct {
+	// Expected identity binds an asynchronous decision to the facts it read.
+	ExpectedHead       string
+	ExpectedBodyDigest string
+	ExpectedAuthor     string
+	// Delegated decisions may not clear a newly arrived hold or sentinel.
+	GuardSentinelLabel string
+	VerifyActorWrite   bool
+	// Recorded runs after the durable approval, before optional reporting.
+	Recorded func(PullRequestApprovalEvent)
+	// ReportingTimeout bounds lock admission and network reporting, not fsync.
+	ReportingTimeout time.Duration
 	// HumanChangeRequests, when set, records the approval against the head
 	// as a bare `approve` decision — the fact withRecordedDecision and the
 	// stage engine read as "the requires_human verdict on this head has
@@ -272,6 +286,7 @@ type prDecisionTarget struct {
 	clanker      bool
 	author       string
 	labels       []string
+	bodyDigest   string
 }
 
 // SetAuthorKindLabels installs the live governor.labels.author resolver.
@@ -294,6 +309,7 @@ func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name 
 		return prDecisionTarget{}, ErrPullRequestClosed
 	}
 	t := prDecisionTarget{author: strings.TrimSpace(safeGetLogin(pr.GetUser()))}
+	t.bodyDigest = review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody())
 	if pr.GetHead() != nil {
 		t.head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
@@ -340,9 +356,9 @@ func (c *Client) RecordOperatorPullRequestApproval(ctx context.Context, repo str
 }
 
 // RecordOperatorPullRequestApprovalWith is RecordOperatorPullRequestApproval
-// plus what opts asks the person's approval to release, in this order: the
-// commands are posted first (the durable, visible record), then the
-// approval is recorded against the head, the park labels the person just
+// plus what opts asks the person's approval to release: the validated native
+// approval is recorded against the head BEFORE optional external reporting.
+// Then the commands are posted, the park labels the person just
 // answered come off, the sentinel acknowledgment is written, and the stage
 // engine is given the decision so the row moves now rather than on the
 // next sweep. A failed label or stage write after the record is logged and
@@ -354,47 +370,78 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		return PullRequestApprovalEvent{}, err
 	}
 	actor = strings.TrimSpace(actor)
-	head, selfAuthored, labels, err := c.openPullRequestHeadLabels(ctx, owner, name, number)
+	target, err := c.openPullRequestDecisionTarget(ctx, owner, name, number)
 	if err != nil {
 		return PullRequestApprovalEvent{}, err
 	}
+	head, selfAuthored, labels := target.head, target.selfAuthored, target.labels
+	if opts.ExpectedHead != "" && head != opts.ExpectedHead ||
+		opts.ExpectedBodyDigest != "" && target.bodyDigest != opts.ExpectedBodyDigest ||
+		opts.ExpectedAuthor != "" && !strings.EqualFold(target.author, opts.ExpectedAuthor) {
+		return PullRequestApprovalEvent{}, errors.New("approval target changed since the decision; gather and validate again")
+	}
+	if opts.VerifyActorWrite {
+		if labelPresent(labels, "hold") || opts.GuardSentinelLabel != "" && labelPresent(labels, opts.GuardSentinelLabel) {
+			return PullRequestApprovalEvent{}, errors.New("approval target gained a hold or sentinel; delegate must not release it")
+		}
+		permission, _, err := c.client.Repositories.GetPermissionLevel(ctx, owner, name, actor)
+		if err != nil {
+			return PullRequestApprovalEvent{}, fmt.Errorf("revalidating approval actor: %w", err)
+		}
+		switch strings.ToLower(permission.GetPermission()) {
+		case "admin", "maintain", "write":
+		default:
+			return PullRequestApprovalEvent{}, errors.New("approval actor no longer has write access")
+		}
+	}
 	full := owner + "/" + name
 	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: prowManagedLabels(labels)}
-	prowRejected, err := c.prowRejectedHiveCommands(ctx, owner, name, number)
-	if err != nil {
-		return PullRequestApprovalEvent{}, fmt.Errorf("reading comments of %s/%s#%d before posting approval commands: %w", owner, name, number, err)
-	}
-	if prowRejected {
-		event.CommandsSkipped = PRApprovalCommandsSkippedProw
-		if c.logger != nil {
-			c.logger.Info("pull request approval commands not posted: Prow rejected the hive's earlier commands on this PR (bot is not an approver); the hive's own approval record stands", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+	if opts.HumanChangeRequests != nil {
+		if head == "" {
+			return event, ErrPullRequestHeadUnknown
 		}
-	} else {
-		for _, command := range PRApprovalCommands {
-			if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
-				return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
-			}
-		}
-		if c.logger != nil {
-			c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
-		}
-	}
-	if opts.HumanChangeRequests != nil && head != "" {
 		req := review.HumanChangeRequest{
-			Repo:     full,
-			Number:   number,
-			HeadSHA:  head,
-			Source:   review.HumanChangeRequestSourceDecision,
-			SourceID: operatorDecisionMarkerID,
-			Actor:    actor,
-			Body:     prDecisionApproveBody,
-			Kind:     review.HumanChangeRequestKindApprove,
+			Repo: full, Number: number, HeadSHA: head, BodyDigest: target.bodyDigest,
+			Source: review.HumanChangeRequestSourceDecision, SourceID: operatorDecisionMarkerID,
+			Actor: actor, Body: prDecisionApproveBody, Kind: review.HumanChangeRequestKindApprove,
 		}
+		start := time.Now()
 		if err := opts.HumanChangeRequests.Record(req); err != nil {
 			return event, fmt.Errorf("recording dashboard approval on %s#%d: %w", full, number, err)
 		}
 		event.Recorded = true
+		if c.logger != nil {
+			c.logger.Info("native operator approval recorded; external reporting pending", "repo", full, "pr", number, "head", head, "actor", actor, "record_duration", time.Since(start))
+		}
+		if opts.Recorded != nil {
+			opts.Recorded(event)
+		}
 	}
+	timeout := opts.ReportingTimeout
+	if timeout <= 0 {
+		timeout = defaultApprovalReportingTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	reportStarted := time.Now()
+	reportErr := c.reportOperatorPullRequestApproval(ctx, owner, name, number, actor, head, selfAuthored, labels, opts, &event)
+	if c.logger != nil {
+		c.logger.Info("operator approval external reporting finished", "repo", full, "pr", number, "head", head, "approval_recorded", event.Recorded, "report_duration", time.Since(reportStarted), "error", reportErr)
+	}
+	if reportErr != nil {
+		if !event.Recorded {
+			return event, reportErr
+		}
+		event.ReportingError = reportErr.Error()
+		c.warnOperatorApproval("native approval stands; external reporting incomplete", full, number, head, reportErr)
+	}
+	return event, nil
+}
+
+const defaultApprovalReportingTimeout = 15 * time.Second
+
+func (c *Client) reportOperatorPullRequestApproval(ctx context.Context, owner, name string, number int, actor, head string, selfAuthored bool, labels []string, opts PullRequestApprovalOptions, event *PullRequestApprovalEvent) error {
+	full := owner + "/" + name
 	if opts.LiftNeedsHuman {
 		event.NeedsHumanLifted = slices.Contains(c.liftPRDecisionParkLabels(ctx, full, number, head, labels), issueNeedsHumanLabel)
 	}
@@ -417,7 +464,26 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		event.Stage = c.applyPRDecisionStage(ctx, owner, name, number, head, actor, prDecisionApprove, selfAuthored)
 		c.logPRDecision(full, number, head, actor, prDecisionApprove, event.Stage, false)
 	}
-	return event, nil
+	prowRejected, err := c.prowRejectedHiveCommands(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("reading comments of %s/%s#%d before posting approval commands: %w", owner, name, number, err)
+	}
+	if prowRejected {
+		event.CommandsSkipped = PRApprovalCommandsSkippedProw
+		if c.logger != nil {
+			c.logger.Info("pull request approval commands not posted: Prow rejected the hive's earlier commands on this PR (bot is not an approver); the hive's own approval record stands", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+		}
+	} else {
+		for _, command := range PRApprovalCommands {
+			if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
+				return fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
+			}
+		}
+		if c.logger != nil {
+			c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+		}
+	}
+	return ctx.Err()
 }
 
 // prowManagedLabels reports whether labels carry Prow's plugin markers:

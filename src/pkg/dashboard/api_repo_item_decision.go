@@ -725,7 +725,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		err  error
 	)
 	var released []string
-	stage, commandsSkipped := "", ""
+	stage, commandsSkipped, reportingError := "", "", ""
 	sentinelOpen, prow := false, false
 	toContributor := ""
 	if decision == repoItemDecisionApprove {
@@ -738,6 +738,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		head = event.HeadSHA
 		released, stage, sentinelOpen, prow = repoItemApprovalReleased(event), event.Stage, event.SentinelLabelOpen, event.ProwManaged
 		commandsSkipped = event.CommandsSkipped
+		reportingError = event.ReportingError
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
 		event, err = gh.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, comment, repoItemDecisionChangeRequests())
@@ -779,6 +780,10 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	result := repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
 		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ToContributor: toContributor,
 	})
+	if reportingError != "" {
+		s.audit.LogRecord(user, auditRepoItemDecisionApprove+"_reporting_failed", auditDetail("repo", repoFull, "number", numStr, "head", head, "error", reportingError), "", repoFull, number)
+		result.Next = "Native approval is recorded; external reporting is incomplete: " + reportingError + ". Current merge gates still apply."
+	}
 	var rebase *StageTrackerRebase
 	if decision == repoItemDecisionApprove {
 		// An approval on a PR that is behind or conflicting does not
