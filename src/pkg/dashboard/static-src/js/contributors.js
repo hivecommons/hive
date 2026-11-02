@@ -519,6 +519,7 @@
         navCountDelta(sidebarBadge, null, 'Contributor presence unavailable');
         const tooltip = sidebarBadge && sidebarBadge.querySelector('.contributor-online-tooltip');
         if (tooltip) tooltip.textContent = 'Contributor presence unavailable; showing the last loaded roster';
+        if (tooltip && _configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
         if (statusBadge) statusBadge.title = 'Contributor presence unavailable; showing the last loaded roster';
         return;
       }
@@ -553,7 +554,7 @@
       const online = Number(pool.online) || 0;
       const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
       const logins = pool.online_logins;
-      if (!Array.isArray(logins) || (online > 0 && !logins.length) ||
+      if (!Array.isArray(logins) || logins.length > online || (online > 0 && !logins.length) ||
           logins.some(login => typeof login !== 'string' || !login.trim())) {
         return summary + '<div>Online contributor names unavailable</div>';
       }
