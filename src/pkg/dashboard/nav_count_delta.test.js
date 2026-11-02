@@ -39,11 +39,14 @@ function load() {
   vm.runInContext(source('nav-count-delta'), ctx);
   vm.runInContext(`
     var _kbCache = null, _kbInitialLoad = true, _kbRendered = false, _kbSetupView = 'none';
-    var _cachedContributors = [], _stageTracker = null, _stageTrackerMoves = {}, _stageTrackerEvents = [];
+    var _cachedContributors = [], _contributorFetchID = 0, _stageTracker = null, _stageTrackerMoves = {}, _stageTrackerEvents = [];
     var _stageTrackerFilter = {repo: 'filtered-out'}, _stageTrackerGroup = 'none', _stageTrackerCelebrating = {};
     function refreshSectionCardShell() {}
     function setSectionSummary() {}
     function contributorsSectionSummary() { return ''; }
+    function renderContributorFilters() {}
+    function renderContributors(rows) { renderedContributors = rows; }
+    var renderedContributors = null;
     function formatNumber(n) { return Number(n).toLocaleString('en-US'); }
     var knowledgeRenders = 0;
     function renderKnowledge() { knowledgeRenders++; }
@@ -76,7 +79,7 @@ function load() {
   `, ctx);
   for (const [file, names] of [
     ['knowledge', ['sidebarPairBadgeText', 'setSidebarPairBadge', 'setSidebarCountBadge', 'kbTotalFactsFromStats', 'kbFactsLabel', 'kbSidebarFactCount', 'fetchKnowledgeStats']],
-    ['contributors', ['contributorsOnlineTitle', 'contributorsOnlineTooltip', 'updateContributorBadge']],
+    ['contributors', ['contributorsOnlineTitle', 'contributorsOnlineTooltip', 'updateContributorBadge', 'fetchContributors']],
     ['tracker-waiting', ['stageTrackerWaitingOnYou', 'stageTrackerWaitingTitle', 'stageTrackerWaitKindWords', 'stageTrackerRenderWaiting']],
     ['tracker-words-stage', ['stageTrackerDefaultFilter']],
     ['tracker-filter-render', ['renderStageTracker']],
@@ -284,6 +287,79 @@ test('contributors use online only, not active sockets or denominator changes', 
   assert.equal(badge.textContent, '0/12', 'unknown does not replace display with a fabricated zero');
   write(4);
   assert.equal(delta(badge), undefined);
+});
+
+test('contributor tooltip lists people only, with no relay IDs or repeated branding', () => {
+  const api = load();
+  const tooltip = api.ctx.contributorsOnlineTooltip({
+    online: 3, registered: 12, presence_window: '15m',
+    online_ids: ['c-first', 'c-second', 'c-third'], online_logins: ['amy', 'zed'],
+  });
+  assert.match(tooltip, /3 online/);
+  assert.match(tooltip, /<li>@amy<\/li><li>@zed<\/li>/);
+  assert.doesNotMatch(tooltip, /ClankeR|c-first|c-second|c-third/);
+  const unavailable = api.ctx.contributorsOnlineTooltip({ online: 1, registered: 12, online_ids: ['c-private'] });
+  assert.match(unavailable, /names unavailable/);
+  assert.doesNotMatch(unavailable, /c-private|ClankeR/);
+  assert.match(api.ctx.contributorsOnlineTooltip({ online: 0, registered: 12, online_logins: [] }), /No contributors online/);
+});
+
+test('contributor cards and badge refresh from the same roster response', async () => {
+  const api = load(), badge = api.badge(IDS[2]);
+  const rows = [{ github_username: 'amy', online: true }, { github_username: 'zed', online: true }];
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: rows, contributorPool: { online: 2, registered: 2, online_logins: ['amy', 'zed'] },
+  }) });
+  await api.ctx.fetchContributors();
+  assert.equal(api.ctx.renderedContributors, rows);
+  assert.equal(badge.textContent, '2/2');
+  assert.match(badge.children[0].innerHTML, /@amy/);
+  assert.match(badge.children[0].innerHTML, /@zed/);
+  assert.doesNotMatch(source('refresh'), /updateContributorBadge\(/, 'status polling must not overwrite roster presence');
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: [], contributorPool: { online: 0, registered: 0, online_logins: [] },
+  }) });
+  await api.ctx.fetchContributors();
+  assert.equal(api.ctx.renderedContributors.length, 0, 'removing the final contributor clears the roster');
+  assert.equal(badge.textContent, '0/0');
+  assert.match(badge.children[0].innerHTML, /No contributors online/);
+});
+
+test('out-of-order contributor responses cannot replace a newer roster or badge', async () => {
+  const api = load(), badge = api.badge(IDS[2]);
+  let releaseOld;
+  api.ctx.fetch = () => new Promise(resolve => { releaseOld = resolve; });
+  const old = api.ctx.fetchContributors();
+  const rows = [{ github_username: 'new', online: true }];
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: rows, contributorPool: { online: 1, registered: 1, online_logins: ['new'] },
+  }) });
+  await api.ctx.fetchContributors();
+  releaseOld({ ok: true, json: async () => ({
+    contributors: [], contributorPool: { online: 0, registered: 0, online_logins: [] },
+  }) });
+  await old;
+  assert.equal(api.ctx.renderedContributors, rows);
+  assert.equal(badge.textContent, '1/1');
+  assert.match(badge.children[0].innerHTML, /@new/);
+});
+
+test('failed contributor refresh reports unknown without replacing the last roster with zero', async () => {
+  const api = load(), badge = api.badge(IDS[2]);
+  const rows = [{ github_username: 'amy', online: true }];
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: rows, contributorPool: { online: 1, registered: 1, online_logins: ['amy'] },
+  }) });
+  await api.ctx.fetchContributors();
+  const warnings = [];
+  api.ctx.console = { warn: (...args) => warnings.push(args) };
+  api.ctx.fetch = async () => ({ ok: false, status: 503 });
+  await api.ctx.fetchContributors();
+  assert.equal(warnings.length, 1);
+  assert.equal(api.ctx.renderedContributors, rows);
+  assert.equal(badge.textContent, '1/1');
+  assert.match(badge.attrs['aria-label'], /presence unavailable/);
+  assert.match(badge.children[0].textContent, /presence unavailable/);
 });
 
 test('knowledge uses numeric layer fact totals, independent of formatting and disabled priming', async () => {
