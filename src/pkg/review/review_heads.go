@@ -88,7 +88,8 @@ func pendingMissingHeadPerspectives(state DispatchState, pr PullRequest, perspec
 		}
 	}
 	for _, p := range state.Pending {
-		if !samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+		if !samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) ||
+			strings.TrimSpace(p.BodyDigest) != strings.TrimSpace(pr.BodyDigest) {
 			continue
 		}
 		if p.Head == "" {
