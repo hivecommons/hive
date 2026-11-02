@@ -110,3 +110,23 @@ body.kiosk-mode .activity-playlist { display: none !important; }
   .activity-playlist-track { display: none; }
   .activity-playlist-next { display: inline-block; }
 }
+
+/* Kiosk call-to-action badge (#16236), the same pkg/webassets/kioskcta
+   markup the spoke shows: hidden unless activity.js set body.kiosk-cta-on
+   (kiosk=1 and not cta=off). Bottom-right, sized to read off a 720p Twitch
+   transcode of a 1920x1080 capture. */
+#kiosk-cta { display: none; }
+body.kiosk-cta-on #kiosk-cta {
+  display: flex; align-items: center; gap: var(--sp-4);
+  position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 30;
+  padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-3);
+  border-radius: var(--r-lg, 14px);
+  background: var(--surface-0); color: var(--text);
+  border: 1px solid var(--brand);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .55);
+  line-height: 1.2; pointer-events: none; user-select: none;
+}
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-qr { width: 110px; height: 110px; border-radius: 8px; background: #fff; padding: 4px; }
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-copy { display: flex; flex-direction: column; gap: var(--sp-2); }
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-text { font-size: 20px; font-weight: 600; color: var(--text-muted); }
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-url { font-size: 24px; font-weight: 800; letter-spacing: .01em; color: var(--brand); }

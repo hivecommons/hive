@@ -6838,6 +6838,31 @@
     body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
     body.kiosk-mode .ham-sticky { top: 0; }
     body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }
+
+/* ---- kiosk call-to-action badge (#16236) ----
+   pkg/webassets/kioskcta markup, injected by the server where
+   html/faq.html leaves the hive-kiosk-cta placeholder comment. Hidden unless
+   boot.js set body.kiosk-cta-on (kiosk=1 and not cta=off), so the operator
+   dashboard never shows it. Bottom-right, under the toast stack's corner
+   and above the tracker; sized to read off a 720p Twitch transcode of a
+   1920x1080 capture (URL >= 22px). The Matrix view (css/matrix.css) lifts
+   it above its fixed canvas and dims it. */
+    #kiosk-cta { display: none; }
+    body.kiosk-cta-on #kiosk-cta {
+      display: flex; align-items: center; gap: var(--sp-4);
+      position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 9000;
+      padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-3);
+      border-radius: var(--radius-lg, 14px);
+      background: var(--surface-0, #0e0f12); color: var(--text, #f3f4f6);
+      border: 1px solid var(--brand, #f4c75f);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, .55);
+      font-family: var(--font-ui, system-ui, sans-serif);
+      line-height: 1.2; pointer-events: none; user-select: none;
+    }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-qr { width: 110px; height: 110px; border-radius: 8px; background: #fff; padding: 4px; box-sizing: border-box; }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-copy { display: flex; flex-direction: column; gap: var(--sp-2); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-text { font-size: 20px; font-weight: 600; color: var(--text-muted, #c9ccd3); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-url { font-size: 24px; font-weight: 800; letter-spacing: .01em; color: var(--brand, #f4c75f); }
 /* ---- pop-out & full screen: the activity monitor on its own (#15829) ----
    `?popout=1` (see js/boot.js) is what the ⧉ header button opens in a
    named popup window so an operator can park the tracker on a second
@@ -6990,6 +7015,10 @@ body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; overf
 body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 1rem; }
 body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
 body.matrix-mode #hive-matrix [hidden] { display: none !important; }
+/* The kiosk call-to-action badge (#16236) sits above the fixed Matrix
+   canvas (z-index 100000) and a little dimmer so it does not fight the
+   effect. Display stays owned by css/kiosk.css (body.kiosk-cta-on). */
+body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -7390,6 +7419,13 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
   window.HIVE_DISPLAY_DENSITY=window.HIVE_DISPLAY?density:'';
   window.HIVE_DISPLAY_SHIFT=window.HIVE_DISPLAY&&shift;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
+  // Kiosk call-to-action badge (#16236): shown in every kiosk view unless
+  // the URL says `cta=off`; never in the operator dashboard, pop-out or
+  // display mode. Pure so pkg/dashboard/kiosk_cta.test.js can run it.
+  window.hiveKioskCTAOn=function(href){
+    try { var q=new URL(href).searchParams; return q.get('kiosk')==='1' && q.get('cta')!=='off'; } catch(e) { return false; }
+  };
+  if(window.hiveKioskCTAOn(window.location.href)) document.body.classList.add('kiosk-cta-on');
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
   window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
   window.hiveDisplayMode=function(){ return !!window.HIVE_DISPLAY; };
@@ -8610,6 +8646,11 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
   </div>
 
 </div><!-- /#hive-dashboard-root -->
+<!-- Kiosk call-to-action badge (#16236). The server replaces this comment
+     with pkg/webassets/kioskcta markup at start-up; it sits outside
+     #hive-dashboard-root because the Matrix view hides the root. Visible
+     only with body.kiosk-cta-on (kiosk=1 and not cta=off, see js/boot.js). -->
+<!-- hive-kiosk-cta -->
 
   <script>
     // Wrap fetch to inject auth token for mutation requests (PUT/POST/PATCH/DELETE)

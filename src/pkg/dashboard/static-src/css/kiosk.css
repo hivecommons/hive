@@ -16,3 +16,28 @@
     body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
     body.kiosk-mode .ham-sticky { top: 0; }
     body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }
+
+/* ---- kiosk call-to-action badge (#16236) ----
+   pkg/webassets/kioskcta markup, injected by the server where
+   html/faq.html leaves the hive-kiosk-cta placeholder comment. Hidden unless
+   boot.js set body.kiosk-cta-on (kiosk=1 and not cta=off), so the operator
+   dashboard never shows it. Bottom-right, under the toast stack's corner
+   and above the tracker; sized to read off a 720p Twitch transcode of a
+   1920x1080 capture (URL >= 22px). The Matrix view (css/matrix.css) lifts
+   it above its fixed canvas and dims it. */
+    #kiosk-cta { display: none; }
+    body.kiosk-cta-on #kiosk-cta {
+      display: flex; align-items: center; gap: var(--sp-4);
+      position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 9000;
+      padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-3);
+      border-radius: var(--radius-lg, 14px);
+      background: var(--surface-0, #0e0f12); color: var(--text, #f3f4f6);
+      border: 1px solid var(--brand, #f4c75f);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, .55);
+      font-family: var(--font-ui, system-ui, sans-serif);
+      line-height: 1.2; pointer-events: none; user-select: none;
+    }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-qr { width: 110px; height: 110px; border-radius: 8px; background: #fff; padding: 4px; box-sizing: border-box; }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-copy { display: flex; flex-direction: column; gap: var(--sp-2); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-text { font-size: 20px; font-weight: 600; color: var(--text-muted, #c9ccd3); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-url { font-size: 24px; font-weight: 800; letter-spacing: .01em; color: var(--brand, #f4c75f); }
