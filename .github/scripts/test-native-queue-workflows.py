@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Structural contracts for required native queue workflows (not a Go runner)."""
 import pathlib
+import re
 import unittest
 
 import yaml
@@ -68,6 +69,30 @@ class NativeQueueWorkflows(unittest.TestCase):
         self.assertNotIn("if", job)
         self.assertEqual(job["name"], "verify PR contents")
         self.assertIn("docker run --rm", job["steps"][-1]["run"])
+
+    def test_gosec_concurrency_fits_the_runner_cpu_limit(self):
+        # gosec defaults -concurrency to runtime.NumCPU(), which inside a
+        # runner pod is the NODE's vCPU count, not the pod's cgroup limit.
+        # Unbounded, every worker type-checks and builds SSA for its own
+        # package at once, and the pod is OOM-killed or evicted mid-Scan:
+        # "runner lost communication", hivecommons/hive#16040. The pod CPU
+        # limit is a ceiling, not a memory proof: it only guarantees gosec
+        # never runs more workers than the pod can schedule.
+        values = yaml.safe_load(
+            (ROOT / "src/deploy/ci-runners/lke/hive-runners-lke-values.yaml").read_text())
+        runner = next(c for c in values["template"]["spec"]["containers"]
+                      if c["name"] == "runner")
+        cpu = str(runner["resources"]["limits"]["cpu"])
+        cpu_limit = int(cpu[:-1]) // 1000 if cpu.endswith("m") else int(float(cpu))
+        for file in ("go-security-analysis.yml",
+                     "integration-technical-go-security-analysis.yml"):
+            with self.subTest(file=file):
+                steps = workflow(file)["jobs"]["gosec"]["steps"]
+                scan = next(s for s in steps if s.get("name") == "Scan")["run"]
+                match = re.search(r"\bgosec\b.*\s-concurrency[ =](\d+)\b", scan)
+                self.assertIsNotNone(match, f"gosec must pass an explicit -concurrency: {scan!r}")
+                self.assertGreaterEqual(int(match.group(1)), 1)
+                self.assertLessEqual(int(match.group(1)), cpu_limit)
 
 
 if __name__ == "__main__":

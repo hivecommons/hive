@@ -252,10 +252,18 @@ jobs:
       # of the triage issue #4903; do not flip it before the
       # HIGH-severity findings are resolved, and do not delete the step to make
       # the summary look clean.
+      #
+      # -concurrency 4: gosec defaults to runtime.NumCPU(), which in a runner
+      # pod is the NODE's 32 vCPUs, not the pod's 6-CPU limit
+      # (src/deploy/ci-runners/lke/hive-runners-lke-values.yaml). Each worker
+      # type-checks and builds SSA for its own package, so 32 at once pushed
+      # the pod far past its 3Gi request and it was killed mid-Scan — the
+      # "runner lost communication" failures of #16040. Keep this at or below
+      # the runner CPU limit (test-native-queue-workflows.py enforces it).
       - name: Scan
         working-directory: src
         continue-on-error: true
-        run: gosec -exclude-generated ./... ./crux/...
+        run: gosec -concurrency 4 -exclude-generated ./... ./crux/...
 
   golangci-lint:
     needs: required-context-scope
