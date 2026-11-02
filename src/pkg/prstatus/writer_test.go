@@ -39,7 +39,7 @@ func (f *fakeForge) enter() func() {
 		f.overlap.Store(true)
 	}
 	if f.pause > 0 {
-		time.Sleep(f.pause)
+		<-time.After(f.pause)
 	}
 	return func() { f.inFlight.Add(-1) }
 }
