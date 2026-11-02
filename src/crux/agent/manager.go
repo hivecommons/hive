@@ -1268,22 +1268,10 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				m.dismissCopilotQuestionFormForKick(agent)
 				continue
 			}
-			// A Claude Code permission dialog means the CLI is NOT running
-			// with --dangerously-skip-permissions despite the launch flags
-			// (a bare `--model` once swallowed the flag). When the launch
-			// posture says bypass, answer option 1 — "Yes, and keep
-			// allowing" — which only restores that posture; otherwise, or if
-			// the dialog survives the answers, give up naming the dialog.
 			if title, ok := claudePermissionDialog(visible); ok {
-				if !agentExpectsSkipPermissions(agent, dialogBackend) || dialogAnswers >= claudePermissionDialogAnswerAttempts {
-					reason := claudePermissionDialogNotReadyReason(title)
-					m.logger.Warn("kick undeliverable: CLI blocked on a Claude Code permission dialog",
-						"agent", agent.Name, "reason", reason, "answers", dialogAnswers,
-						"skip_permissions_expected", agentExpectsSkipPermissions(agent, dialogBackend))
+				if reason := m.handleClaudePermissionDialogForKick(agent, dialogBackend, title, &dialogAnswers); reason != "" {
 					return false, reason
 				}
-				dialogAnswers++
-				m.answerClaudePermissionDialogForKick(agent, title, dialogAnswers)
 				continue
 			}
 			// A Codex menu keeps a "›" selection caret that passes
