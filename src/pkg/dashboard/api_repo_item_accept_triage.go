@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -96,23 +97,6 @@ func acceptTriagePlan(labels []string, accept string, awaiting []string) (add, r
 	return add, remove
 }
 
-// acceptTriageLabelsAfter is pure: the labels an item carries once the plan
-// has been applied.
-func acceptTriageLabelsAfter(labels, add, remove []string) []string {
-	out := make([]string, 0, len(labels)+len(add))
-	for _, l := range labels {
-		if !acceptTriageHasLabel(remove, l) {
-			out = append(out, l)
-		}
-	}
-	for _, l := range add {
-		if !acceptTriageHasLabel(out, l) {
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
 // stageTrackerAcceptedTriageRecord reports whether rec parks the issue at
 // 015 while its labels already say triage was accepted (the accept label is
 // on, no awaiting label and no 015 stage label remain). The labels are the
@@ -149,6 +133,10 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 		ctx = s.deps.Ctx
 	}
 	repoFull := owner + "/" + repoName
+	if !s.watchesRepo(repoFull) {
+		jsonError(w, "repository is not configured for this hive", http.StatusForbidden)
+		return
+	}
 	issue, resp, err := s.deps.GHClient.GoGitHub().Issues.Get(ctx, owner, repoName, number)
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
@@ -170,6 +158,11 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 	add, remove := acceptTriagePlan(labels, accept, awaiting)
 	out := repoAcceptTriageResponse{OK: true, Repo: repoFull, Number: number, AcceptLabel: accept, Added: []string{}, Removed: []string{}}
 	if len(add) == 0 && len(remove) == 0 {
+		out.MinStatusSeq, err = s.refreshAcceptedTriage(ctx, repoFull, number)
+		if err != nil {
+			jsonError(w, "Triage is already accepted on GitHub, but the work handoff could not be refreshed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 		out.AlreadyAccepted = true
 		res := rowActionNoopResult(rowActionTarget(repoFull, rowActionTargetIssue, number), "triage was already accepted (`"+accept+"` is on)", time.Time{}, "")
 		res.Next = "The reporter-trust gate admits the issue on its next poll."
@@ -196,7 +189,11 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 	}
 	out.Removed = remove
 	s.auditFromRequest(r, acceptTriageAuditAction, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "added", strings.Join(add, ","), "removed", strings.Join(remove, ",")), "")
-	out.MinStatusSeq = s.applyAcceptTriageToStatus(repoFull, number, add, remove)
+	out.MinStatusSeq, err = s.refreshAcceptedTriage(ctx, repoFull, number)
+	if err != nil {
+		jsonError(w, "Triage labels were saved on GitHub, but the work handoff could not be refreshed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
 	outcome := "Triage accepted: `" + accept + "` added"
 	if len(remove) > 0 {
 		outcome += ", `" + strings.Join(remove, "`, `") + "` removed"
@@ -204,6 +201,44 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 	out.Result = &RowActionResult{Action: rowActionTriaged, Target: rowActionTarget(repoFull, rowActionTargetIssue, number), Outcome: outcome + ".",
 		Next: acceptTriageNextText(s.governorNextPassIn(time.Now()))}
 	jsonResponse(w, out)
+}
+
+// Re-read and classify the persisted labels, rather than only painting them in
+// the dashboard. This also repairs a retry after a restart or failed refresh,
+// without treating the operator-action ledger as lasting admission authority.
+func (s *Server) refreshAcceptedTriage(ctx context.Context, repo string, number int) (uint64, error) {
+	// ActionableResult keys use project.repos entries (often bare names),
+	// whereas dashboard routes use owner/repo.
+	if cfg := s.deps.Config; cfg != nil {
+		for _, watched := range cfg.Project.Repos {
+			if strings.EqualFold(config.QualifyRepo(cfg.Project.Org, watched), repo) {
+				repo = watched
+				break
+			}
+		}
+	}
+	snap, err := s.deps.GHClient.FetchWebhookItemSnapshot(ctx, repo, number, false)
+	if err != nil {
+		return 0, err
+	}
+	accept, awaiting := s.acceptTriageLabels()
+	_, remove := acceptTriagePlan(snap.Labels, accept, awaiting)
+	if snap.IsPR || !snap.Open() || !acceptTriageHasLabel(snap.Labels, accept) || len(remove) > 0 {
+		return 0, fmt.Errorf("issue changed during acceptance; reload its current state before retrying")
+	}
+	s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{snap})
+	s.statusMu.Lock()
+	s.statusMutationEpoch++
+	s.statusSeq++
+	seq := s.statusSeq
+	if s.status != nil {
+		next := *s.status
+		next.StatusSeq = seq
+		s.status = &next
+	}
+	s.statusMu.Unlock()
+	s.invalidateStageTrackerForWebhook()
+	return seq, nil
 }
 
 // acceptTriageNextText is the result's "next" line: the hive picks the
@@ -232,78 +267,4 @@ func (s *Server) governorNextPassIn(now time.Time) string {
 		return ""
 	}
 	return formatETA(t.Sub(now))
-}
-
-// applyAcceptTriageToStatus patches the issue's labels in the status
-// snapshot so the activity monitor's next reconcile (and the stage tracker
-// it is built from) reads the accepted state before the next GitHub poll.
-func (s *Server) applyAcceptTriageToStatus(repoFull string, number int, add, remove []string) uint64 {
-	s.statusMu.Lock()
-	defer s.statusMu.Unlock()
-	s.statusMutationEpoch++
-	minStatusSeq := s.statusSeq + 1
-	status := s.status
-	if status == nil {
-		return minStatusSeq
-	}
-	patch := func(items []any) {
-		for i, raw := range items {
-			if repoHoldItemNumber(raw) != number && acceptTriageWorkIssueNumber(raw) != number {
-				continue
-			}
-			items[i] = acceptTriageSetItemLabels(raw, acceptTriageLabelsAfter(acceptTriageItemLabels(raw), add, remove))
-		}
-	}
-	for ri := range status.Repos {
-		repo := &status.Repos[ri]
-		if !repoHoldStatusRepoMatches(*repo, repoFull) {
-			continue
-		}
-		patch(repo.ActionableIssues)
-		patch(repo.NonActionableIssues)
-		patch(repo.HeldIssues)
-		break
-	}
-	s.statusSeq++
-	status.StatusSeq = s.statusSeq
-	return minStatusSeq
-}
-
-func acceptTriageWorkIssueNumber(raw any) int {
-	switch v := raw.(type) {
-	case github.RepoWorkIssue:
-		return v.Number
-	case *github.RepoWorkIssue:
-		if v != nil {
-			return v.Number
-		}
-	}
-	return 0
-}
-
-func acceptTriageItemLabels(raw any) []string {
-	switch v := raw.(type) {
-	case github.RepoWorkIssue:
-		return append([]string(nil), v.Labels...)
-	case *github.RepoWorkIssue:
-		if v != nil {
-			return append([]string(nil), v.Labels...)
-		}
-	}
-	return repoHoldItemLabels(raw)
-}
-
-func acceptTriageSetItemLabels(raw any, labels []string) any {
-	switch v := raw.(type) {
-	case github.RepoWorkIssue:
-		v.Labels = append([]string(nil), labels...)
-		return v
-	case *github.RepoWorkIssue:
-		if v != nil {
-			cp := *v
-			cp.Labels = append([]string(nil), labels...)
-			return cp
-		}
-	}
-	return repoHoldSetItemLabels(raw, labels)
 }
