@@ -1,8 +1,8 @@
 # Hive landscape and positioning
 
-Last reviewed: 2026-10-28
+Last reviewed: 2026-11-02 (focused update: gh-aw GA, Entire, Devin and five engine releases)
 
-> **Conducted: 2026-10-23. This document will rot.** Tools for AI coding
+> **Baseline conducted: 2026-10-23; focused update: 2026-11-02. This document will rot.** Tools for AI coding
 > agents change fast. Treat every product detail here as time-sensitive and
 > update it by pull request when public docs change.
 
@@ -12,8 +12,9 @@ decide which checks must pass before it merges. This live management layer is
 the **operations plane**. A **fleet** is the group being managed; a **hub**
 registers and observes running hives (**spokes**).
 
-Each comparison below names the public page checked on the conducted date
-above. This is evaluation reference, not a setup guide.
+Each comparison below names the public page checked. Sections outside the
+focused update retain their earlier observation dates; this is not a fresh
+audit of every vendor. This is evaluation reference, not a setup guide.
 
 ## Choose a starting point
 
@@ -124,6 +125,12 @@ Checked: [github/gh-aw](https://github.com/github/gh-aw),
 [docs](https://github.github.com/gh-aw/),
 [githubnext/agentics](https://github.com/githubnext/agentics).
 
+**Updated 2026-11-02:** GitHub announced
+[general availability on 2026-10-28][gh-aw-ga] on github.com for Free, Team
+and Enterprise. Its default Copilot CLI engine requires a Copilot license.
+This is the Markdown-to-Actions product, not the separate Agent HQ or
+Copilot parallel-agent announcements.
+
 gh-aw compiles Markdown plus YAML frontmatter into a normal GitHub Actions
 workflow: an Actions-native on-ramp, not a fleet scheduler. Since August its
 engine list added **Pi** alongside Copilot, Claude Code, Codex and Gemini.
@@ -134,7 +141,7 @@ Agent jobs are read-only and sandboxed by default; writes go through
 | --- | --- | --- |
 | Execution | Event, dispatch and scheduled Actions runs | Long-running fleet with queue-depth cadence |
 | Authoring | Markdown prompt plus frontmatter | Project config, fixed pipeline, agent policies |
-| Policy | Engine judgment with declared tools and safe outputs | Fixed filtering before judgment, gated merge rights after |
+| Policy | Read-only agent, integrity filter, firewall, threat detection and permission-scoped safe outputs | Fixed filtering before judgment, proxy write checks, gated merge rights after |
 | Operations | Per-workflow logs and artifacts | Live dashboard, budgets, hub/spoke, contributor compute |
 | Best start | A repo on Actions that wants bounded agent jobs | Operators running continuous work across repos |
 
@@ -143,6 +150,160 @@ report-only issue triage with no merge rights. Keep existing gh-aw workflows
 when adopting Hive. Hive dispatching gh-aw as an external host is **not
 implemented**; see
 [backend support tiers](backend-support-tiers.md#github-agentic-workflows-on-ramp-not-a-cli-backend).
+
+## Focused comparison: maintenance, forge and managed agents
+
+Checked **2026-11-02** against the primary sources below. **Documented** means
+the vendor describes the capability, not that Hive tested it. **Unknown**
+means this assessment did not establish it, not that the vendor lacks it.
+Hive's source baseline is v5
+[`ddf4a56fc1a66f379b97f9fa64c834fd7896a034`](https://github.com/hivecommons/hive/commit/ddf4a56fc1a66f379b97f9fa64c834fd7896a034),
+committed 2026-11-02. This update does not establish v6 or deployed-fleet parity.
+
+| Actual job | Hive at that baseline | GitHub Agentic Workflows GA | Entire / Devin, documented as checked |
+| --- | --- | --- | --- |
+| Execute tasks and maintain repositories | Standing governor and role-based fleet; operator owns deployment and policy ([architecture][hive-architecture]) | Event/scheduled Actions jobs can perform ongoing triage, CI analysis, docs and tests; not just one-off coding ([GA][gh-aw-ga]) | **Devin:** event/schedule automations can start or message sessions and run persistent triage; not merely a single worker ([automations][devin-automations]). **Entire:** a forge hosting agent-human work, not evidence of a Hive-like maintenance scheduler ([launch][entire-launch]). |
+| Admit work and enforce writes | ACMM modes and GitHub proxy controls; enforcement depends on lane/config; shadow evaluation is not a blocking gate ([policy comparison][hive-policy]) | Read-only agent by default, integrity filtering, sandbox/firewall, threat detection, then separate permission-controlled jobs ([GA][gh-aw-ga], [safe outputs][gh-aw-outputs]) | **Devin:** mandatory security profiles intersect network/MCP/git restrictions and can remove the `gh` token. Running sessions pick up profile changes at next wake, not immediately ([profiles][devin-profiles]). **Entire:** launch describes evals, not an equivalent out-of-agent write-policy contract. |
+| Review and merge authority | CI, holds and configured review gates; L6 eligibility is not unconditional merge permission ([policy][hive-policy]) | Safe outputs can merge PRs when configured; applicable policy gates still matter ([safe outputs][gh-aw-outputs]). Do not describe gh-aw as having no merge authority. | **Entire:** Trails evaluate each push, expose findings through CLI/web and let developers merge when evals are satisfied ([launch][entire-launch]). **Devin:** review comments/approvals and optional beta Autoapprover; availability varies. This is not proof of Hive-equivalent merge policy ([review][devin-review]). |
+| Orchestrate many agents | Live hub/spoke fleet, budgets, operator controls ([architecture][hive-architecture]) | Actions runners/policies and per-workflow engine/model routing; cross-repo isolation is documented ([GA][gh-aw-ga]) | **Devin:** deterministic Python Dynamic Workflows fan out sessions, record calls and resume; enterprise admin enablement required ([workflows][devin-workflows]). **Entire:** Trails/CI integration are not evidence of a fleet scheduler. |
+| Preserve provenance and measure outcomes | Review/merge evidence and scoped observational outcomes; no cross-vendor causal benchmark ([evidence][hive-evidence], [October outcomes][hive-outcomes]) | Actions artifacts/logs and validated output jobs; Accenture figures in GA announcement are a customer account, not a controlled Hive comparison ([GA][gh-aw-ga]) | **Entire:** Trails preserve intent/trace/outcome; Continuous Memory syncs sessions into Git, with graph/brain components. Speed/token savings are vendor claims, not reproduced here ([launch][entire-launch]). **Devin:** test recordings and workflow call history are documented evidence, not directly comparable outcome rates ([testing][devin-testing], [workflows][devin-workflows]). |
+| Source and forge scope | Apache-2.0 source; GitHub operational path, GitLab and Gitea/Forgejo adapters with substantial end-to-end gaps ([license][hive-license], [forge contract][hive-forge], [limits][hive-forges]) | Open-source project running on GitHub Actions; GA announcement establishes github.com availability, not general forge portability ([GA][gh-aw-ga]) | **Entire:** independent Git-compatible private-repo hosting; launch lists public repositories and self-hosted Git nodes as upcoming, not delivered ([launch][entire-launch]). **Devin:** documented GitHub, GitLab, Bitbucket and Azure DevOps integrations; this is broader documented forge coverage than Hive's complete operation today, not tested parity ([integrations][devin-integrations]). |
+
+Entire's **2026-10-26** launch is a direct primary source for Trails,
+Continuous Memory and Buildkite/Depot CI. Its open-source CLI/graph/brain
+components do not make the hosted forge an open-source Hive replacement.
+Git compatibility alone does not establish an adapter for Trails.
+
+Devin's readable official docs establish meaningful governance and
+orchestration overlap. The weekly report's specific **2026-10-30 Cognition
+enterprise-governance announcement remains unconfirmed** in this assessment.
+Undated live docs prove the documented capability as observed, not its release
+date. A guessed URL returning 404 is not evidence that an announcement is false.
+
+### Forge correction and existing decision
+
+Neither “Hive is GitHub-only” without qualification nor “Hive supports all
+three forges end-to-end” is accurate. The existing
+[`Forge` interface and `NewForge` factory][hive-forge] already select GitHub,
+GitLab and Gitea/Forgejo. However,
+[`main_eval_cycle.go`][hive-enumeration] and
+[`repos_rescan.go`][hive-rescan] still call `ghClient.EnumerateActionable`.
+Some writes consume the adapter, but discovery, agent operations, merge and
+proxy limitations remain ([full list][hive-forges]). This assessment supplies
+no deployed non-GitHub Hive evidence.
+
+Do not redesign the interface. [ADR-0005](adr/0005-forge-abstraction.md),
+[#6170](https://github.com/hivecommons/hive/issues/6170) and the
+[roadmap sequencing decision][hive-roadmap] already cover it.
+The September 9 decision recorded under #6177/#6167 deferred enumeration-policy
+extraction until after the GA cut unless it would not reset the required-gate
+soak. A closed design issue is not proof of delivered end-to-end support.
+Revisit that decision explicitly with an adopter need and acceptance evidence;
+this comparison does not reverse it.
+
+### Five report releases: integration compatibility
+
+**Method:** read published, non-draft release notes and the source contracts
+linked below; inspect Hive launch/config and existing test/CI definitions.
+**No vendor binary, authenticated task, launcher smoke, build or local test
+suite was executed for this assessment.** These are source-contract results,
+not certifications of runtime compatibility. Release dates are publication
+dates; linked upstream source revisions have their own commit dates.
+
+| Report release (published, 2026) | Hive contract and source result | Action / remaining uncertainty |
+| --- | --- | --- |
+| [OpenHands v1.34.0](https://github.com/OpenHands/OpenHands/releases/tag/v1.34.0) — Oct 27 | Tagged [manifest][openhands-manifest] (source Oct 27) is `@openhands/agent-canvas`, binary `agent-canvas`. Hive's [experimental contract][hive-backends] is the separate legacy `openhands` CLI, previously checked at CLI 1.16.0, using `--always-approve --override-with-envs`; its support page says headless-only. | **Different surface; not a CLI upgrade instruction.** No demonstrated launcher break attributable to this release. Retain T3; Canvas Docker/runtime features do not confer confinement on Hive's legacy CLI. That CLI's continued viability needs separate evidence before promotion. |
+| [Claude Code v2.1.316](https://github.com/anthropics/claude-code/releases/tag/v2.1.316) — Oct 31 | Hive already pins 2.1.316 in [main image][hive-image] and [contributor image][hive-contributor-image]. [Launcher][hive-launch] uses `--model`, unattended permissions and write/host deny flags. Notes fix process cleanup and `claude -p` reporting; they do not establish removal of those launch flags. | **No release-note break identified; already pinned.** Do not bump again. Permission honoring, readiness and output behavior still require executed CI smoke evidence; an existing pin is not a passing smoke result. |
+| [Goose v1.57.0](https://github.com/aaif-goose/goose/releases/tag/v1.57.0) — Oct 28 | Already pinned in both images above. Hive emits `goose run -s [--model …]` ([launcher][hive-launch]); tagged [CLI source][goose-cli] (source Oct 27) retains run input, model override and `-s` interactive behavior. Release's supplied-session-ID and ACP changes do not demonstrate removal of that path. | **Inspected launch contract retained.** No version change. Resume/log extraction is a separate seam, previously verified against 1.52.0 ([Hive resume contract][hive-resume]); 1.57.0 resume and confinement were not smoke-tested here. T1 pod credentials do not imply local sandboxing. |
+| [OpenCode v2.2.5](https://github.com/anomalyco/opencode/releases/tag/v2.2.5) — Oct 30 | Hive's [shell contract][hive-backends] uses `--auto` and local `OPENCODE_PERMISSION` host-state denials. Tagged [run handler][opencode-run] (source Oct 30) still passes model and auto/yolo settings into execution. Notes describe `bash` → `shell` tool-name handling with the same permissions. | **Inspected model/auto seam retained; denial semantics unverified.** Check existing local-posture tests and a credential-free permission fixture before promoting a new pin; do not infer that a tool alias bypasses denials or that deny-listing is an OS sandbox. |
+| [Cline SDK `sdk/sdk/v0.2.0`](https://github.com/cline/cline/releases/tag/sdk/sdk/v0.2.0) — Oct 26 | No `cline` in Hive's [15 CLI backend identities][hive-cli-list]. Notes change session reattachment, capability routing and SDK packaging; none is an implemented Hive SDK contract. | **Not an integrated engine; no current launcher to break.** No automatic SDK adoption. Any future integration must satisfy the [existing backend acceptance bar](backend-support-tiers.md) or external-host admission contract, including credentials, cancellation and evidence. |
+
+Existing guards include launch-command fixtures, backend list parity and
+contributor-local posture tests. The
+[scheduled live backend smoke][hive-smoke] currently covers **Claude/Codex**,
+not these five releases as a group. Its pinned and latest lanes must not be
+conflated. This review did not retrieve a version-bound passing run for any of
+the five; doc-PR CI is not evidence that vendor CLI tasks succeeded.
+No release-specific launcher defect was established, so this update makes no
+engine, dependency, configuration or pin changes.
+
+### Ranked decisions: keep, integrate, defer, drop
+
+These are recommendations as of **2026-11-02**, not measured ROI or approved
+roadmap changes.
+
+1. **Keep the governed maintenance plane; replace “single-worker competitors”
+   framing.** Low documentation cost; preserves a useful operator choice
+   without pretending gh-aw/Devin lack ongoing automation or policy. Use the
+   jobs table above and existing [ACMM policy](acmm-policy-matrix.md), not a
+   claimed universal quality/cost advantage.
+2. **Integrate with existing gh-aw jobs rather than replace them.** Lowest-risk
+   entry is the [report-only sample](../deploy/gh-aw/README.md). Broader dispatch
+   stays behind the existing [external-workflow admission design](design/external-workflow-admission.md)
+   and [acceptance bar](backend-support-tiers.md#github-agentic-workflows-on-ramp-not-a-cli-backend):
+   verified receipts, cancellation and refusal of write-capable stages.
+   Benefit: reuse Actions investments; cost: real admission/identity work,
+   not a CLI name added to a list. No dispatch adapter is shipped by this doc.
+3. **Revisit forge sequencing only for a concrete adopter requirement.**
+   Reuse [#6167](https://github.com/hivecommons/hive/issues/6167) and the
+   [recorded decision][hive-roadmap]. Benefit: actual portability; high cost:
+   enumerate/filter policy, write/merge/proxy/auth paths and deployment proof.
+   Entire makes provenance/forge portability worth evaluating, not a reason to
+   implement a fourth adapter before the existing three work end-to-end.
+4. **Keep evidence tied to heads, populations and provenance.** Reuse
+   [evidence](evidence.md) and [outcomes](benchmarks/outcomes-2026-10.md);
+   evaluate whether Trail-style intent/session context helps reviewers before
+   importing external transcripts (privacy and retention review required).
+   No vendor benchmark was reproduced. Hive's historical estimated cost per
+   merge is not a current universal competitive metric. Comparative trials
+   and transcript integrations have real collection/review cost; not promised
+   by this documentation update.
+5. **Drop speculative release churn and SDK parity work.** Keep current tiers
+   and use the five-release assessment above. Benefit: avoid mistaking app/SDK
+   releases for launcher contracts; cost: unresolved seams still need targeted
+   CI evidence before a future pin or support promotion.
+
+**Licensing and maintenance:** Hive's [Apache-2.0 source license][hive-license]
+does not license vendor models, binaries or hosted services. Check the exact
+component/version license and service terms before redistribution; GitHub API
+`license: null`/`NOASSERTION` is not a product-license determination. Crux is
+maintained under `src/crux` here, not by changing the generated standalone
+repository ([sync marker, source revision 2026-11-02][crux-sync]).
+Backend-list membership is not a support/service guarantee.
+When updating this section, record the observation date, release publication
+date, immutable source revision and whether evidence is documented, tested or
+unknown; recheck it before procurement or a roadmap decision.
+
+[gh-aw-ga]: https://github.blog/changelog/2026-10-28-github-agentic-workflows-generally-available/
+[gh-aw-outputs]: https://github.github.com/gh-aw/reference/safe-outputs/
+[entire-launch]: https://entire.com/news/entire-launches-an-independent-git-forge-for-agent-human-collaboration.md
+[devin-automations]: https://docs.devin.ai/product-guides/automations.md
+[devin-profiles]: https://docs.devin.ai/product-guides/security-profiles.md
+[devin-workflows]: https://docs.devin.ai/work-with-devin/dynamic-workflows.md
+[devin-review]: https://docs.devin.ai/work-with-devin/devin-review.md
+[devin-testing]: https://docs.devin.ai/work-with-devin/testing-and-recordings.md
+[devin-integrations]: https://docs.devin.ai/integrations/overview.md
+[hive-architecture]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/docs/architecture.md
+[hive-policy]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/docs/copilot-permissions-comparison.md#what-hive-does
+[hive-evidence]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/docs/evidence.md
+[hive-outcomes]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/docs/benchmarks/outcomes-2026-10.md
+[hive-license]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/LICENSE
+[hive-forge]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/pkg/forge/forge.go#L182-L295
+[hive-enumeration]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/cmd/hive/main_eval_cycle.go#L559
+[hive-rescan]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/cmd/hive/repos_rescan.go#L56
+[hive-forges]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/docs/integrations/forges.md
+[hive-roadmap]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/docs/roadmap.md#L120-L122
+[hive-backends]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/config/backends.conf#L635-L655
+[hive-launch]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/crux/agent/manager_launch.go#L911-L965
+[hive-image]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/Dockerfile#L324-L345
+[hive-contributor-image]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/Dockerfile.contributor#L240-L366
+[hive-resume]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/crux/agent/backend_resume.go#L156-L173
+[hive-cli-list]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/src/crux/config/agent_runtime.go#L1136-L1163
+[hive-smoke]: https://github.com/hivecommons/hive/blob/ddf4a56fc1a66f379b97f9fa64c834fd7896a034/.github/workflows/backend-smoke.yml#L1-L39
+[openhands-manifest]: https://github.com/OpenHands/OpenHands/blob/6c120073f5a1e1c838ba6fdd9a075c79ff997b98/package.json#L1-L20
+[goose-cli]: https://github.com/aaif-goose/goose/blob/30bba95105e59bc3e7df624cf6b4d433690cfe12/crates/goose-cli/src/cli.rs#L335-L385
+[opencode-run]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/cli/src/commands/handlers/run.ts#L15-L28
+[crux-sync]: https://github.com/hivecommons/crux/blob/9952e1127f1859bff2b406a71b2eb60db9fba7b8/.hive-sync#L1-L9
 
 ## New since August 2026
 
@@ -222,8 +383,8 @@ itself runs on it. Symphony is Linear-first; Fullsend, gh-aw and Agent HQ
 are forge-first. Hive states this as a differentiator: the same fleet,
 policy and dashboard apply whichever tracker holds the work.
 
-That claim covers **trackers**, not **forges**. The code still has to live on
-GitHub.com or GitHub Enterprise. Hive has GitLab and Gitea/Forgejo adapters
+That claim covers **trackers**, not **forges**. Complete Hive operation still
+requires GitHub.com or GitHub Enterprise. Hive has GitLab and Gitea/Forgejo adapters
 (`project.forge`) that read, comment, label and hold, and GitLab's can merge,
 but the governor, merge gate and agent `gh` path are not yet forge-neutral
 ([#14096](https://github.com/hivecommons/hive/issues/14096)). Fullsend
@@ -234,11 +395,12 @@ with its status.
 ## Related projects and vendors
 
 **GitHub Copilot coding agent** hands one issue to one hosted agent inside
-GitHub; it is now one of the agents under Agent HQ (below). **Devin-class
-hosted services** sell a managed worker with a vendor UX for teams that do
-not want to run orchestration. **SWE-agent and research harnesses** are
-built for benchmarks and single-task repair loops. Hive differs from all
-three: open-source, self-hosted, fleet-scale, with explicit policy.
+GitHub; it is now one of the agents under Agent HQ. **Devin** also documents
+ongoing automations, multi-session orchestration and mandatory security
+profiles; see the [focused comparison](#focused-comparison-maintenance-forge-and-managed-agents).
+**SWE-agent and research harnesses** target benchmarks and repair loops.
+Choose on deployment ownership, integration contracts and enforcement needs,
+not an assumption that hosted services lack fleets or explicit policy.
 
 ## When to choose what
 
