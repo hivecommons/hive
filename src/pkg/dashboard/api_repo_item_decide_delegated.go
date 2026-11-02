@@ -661,6 +661,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		}
 		in.CIGreen, in.CIPending = ci.green, ci.pending
 		s.gatherDelegatedRecordedPark(repoFull, number, pr.GetHead().GetSHA(), &in)
+		in.SentinelReason = s.delegatedSentinelReason(repoFull, number, pr.GetHead().GetSHA(), req.SentinelReason)
 		if files, _, err := api.PullRequests.ListFiles(ctx, owner, repoName, number, &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}); err == nil && len(files) > 0 {
 			in.LowRiskPaths = true
 			for _, f := range files {
@@ -687,7 +688,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 			in.SentinelAlert = true
 		}
 	}
-	in.SentinelReason = strings.TrimSpace(req.SentinelReason)
+	if in.SentinelReason == "" {
+		in.SentinelReason = strings.TrimSpace(req.SentinelReason)
+	}
 	lowerReason := strings.ToLower(reason)
 	if in.Kind == delegatedecision.KindPR && in.HiveAuthored && s.hiveSupersedingAutoMerge() {
 		in.HiveSuperseding = ghpkg.HiveSupersedingPR(true, in.Body)
@@ -728,6 +731,24 @@ func (s *Server) delegatedAdoptionGraceElapsed(repoFull string, number int) bool
 		return false
 	}
 	return rec.AdoptionBlocked(rec.NudgeHead) != ""
+}
+
+// delegatedSentinelReason is the sentinel reason the decider and its comment
+// carry: the tracker row's own words ("changes 1 sensitive path(s)") followed
+// by the paths the hive recorded for head, so the "reviewed, intended"
+// rationale names the files, as the operator asked. The row's words stand
+// alone when the hive holds no findings for that head.
+func (s *Server) delegatedSentinelReason(repoFull string, number int, head, rowReason string) string {
+	reason := strings.TrimSpace(rowReason)
+	text := sentinelDetailsText(s.sentinelDetailsForHead(repoFull, number, head))
+	switch {
+	case text == "":
+		return reason
+	case reason == "":
+		return text
+	default:
+		return reason + " — " + text
+	}
 }
 
 // delegatedHeadCIState is what the head's checks say: green (every
