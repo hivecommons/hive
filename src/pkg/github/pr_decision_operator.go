@@ -166,8 +166,8 @@ func (c *Client) prowRejectedHiveCommands(ctx context.Context, owner, name strin
 // beyond posting the commands (hivecommons/hive: #14821, #14822, crux#30
 // sat at stage/085 after the owner approved from the dashboard — the
 // comments were read by nobody but the workflow-path fence). The zero value
-// posts the commands only, which is what the delegated "Let hive decide"
-// path keeps: a recommendation must not clear a person's gate.
+// posts the commands only: a recommendation without release authority must
+// not clear a person's gate.
 type PullRequestApprovalOptions struct {
 	// Expected identity binds an asynchronous decision to the facts it read.
 	ExpectedHead       string
@@ -358,12 +358,11 @@ func (c *Client) RecordOperatorPullRequestApproval(ctx context.Context, repo str
 // RecordOperatorPullRequestApprovalWith is RecordOperatorPullRequestApproval
 // plus what opts asks the person's approval to release: the validated native
 // approval is recorded against the head BEFORE optional external reporting.
-// Then the commands are posted, the park labels the person just
-// answered come off, the sentinel acknowledgment is written, and the stage
-// engine is given the decision so the row moves now rather than on the
-// next sweep. A failed label or stage write after the record is logged and
-// reported on the event, not returned: the record stands, and the lanes
-// derive the same answer from it on their next pass.
+// Park labels and sentinel acknowledgment are reconciled, then the stage
+// engine is given the decision and the command comments are reported.
+// Reporting is bounded; its failures do not undo a recorded approval.
+// Failed label/stage writes remain logged and reflected in the event, and
+// transport failures appear in ReportingError for the caller's audit/receipt.
 func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo string, number int, actor string, opts PullRequestApprovalOptions) (PullRequestApprovalEvent, error) {
 	owner, name, err := c.operatorPRTarget(repo, number, actor, "RecordOperatorPullRequestApproval")
 	if err != nil {

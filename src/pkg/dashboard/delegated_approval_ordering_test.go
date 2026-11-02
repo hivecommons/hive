@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -173,6 +174,72 @@ func TestDelegatedChangedApprovalTargetFailsBeforeDecisionComment(t *testing.T) 
 				t.Fatalf("changed target got native approval or success-shaped comment: comments=%v", mock.comments)
 			}
 		})
+	}
+}
+
+func TestOperatorQueueApprovalCommitsBeforeForbiddenReporting(t *testing.T) {
+	for _, mode := range []string{"comment", "prow"} {
+		t.Run(mode, func(t *testing.T) {
+			mock := &repoItemDecisionMock{}
+			if mode == "comment" {
+				mock.commentError = http.StatusForbidden
+			} else {
+				mock.statusError = http.StatusForbidden
+			}
+			s := newRepoItemDecisionServer(t, mock)
+			s.deps.GHClient.SetAutoMergeLabel("lgtm")
+			w := postRepoItemDecisionAs(t, s, 8, "writer", "merger", `{"decision":"queue-merge","type":"pr"}`)
+			var response repoItemDecisionResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != http.StatusOK || response.Status != "approval-recorded-reporting-incomplete" ||
+				response.Result == nil || response.Result.Action != rowActionApproved || !strings.Contains(response.Result.Next, "merge gates still apply") {
+				t.Fatalf("native queue approval was withheld or falsely claimed queued: %d %+v", w.Code, response)
+			}
+			if approval, ok := repoItemDecisionChangeRequests().For("testorg/testrepo", 8, delegatedOrderingHead); !ok || !approval.IsApproval() || approval.Actor != "writer" {
+				t.Fatal("optional queue reporting prevented exact-head operator approval")
+			}
+			if len(mock.merges) != 0 {
+				t.Fatal("queue approval bypassed the merge engine")
+			}
+		})
+	}
+}
+
+func TestOperatorQueueApprovalCompletesAfterHungBridgeCancellation(t *testing.T) {
+	started := make(chan struct{})
+	mock := &repoItemDecisionMock{statusError: http.StatusForbidden, commentBlockText: "could not set the `prow/lgtm`", commentStarted: started}
+	s := newRepoItemDecisionServer(t, mock)
+	s.deps.GHClient.SetAutoMergeLabel("lgtm")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.deps.Ctx = ctx
+	done := make(chan []byte, 1)
+	go func() {
+		w := postRepoItemDecisionAs(t, s, 8, "writer", "merger", `{"decision":"queue-merge","type":"pr"}`)
+		done <- w.Body.Bytes()
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("operator queue did not reach optional bridge")
+	}
+	if approval, ok := repoItemDecisionChangeRequests().For("testorg/testrepo", 8, delegatedOrderingHead); !ok || !approval.IsApproval() {
+		t.Fatal("operator queue still records approval after optional bridge")
+	}
+	cancel()
+	select {
+	case body := <-done:
+		var response repoItemDecisionResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Status != "approval-recorded-reporting-incomplete" || response.Result == nil || response.Result.Action != rowActionApproved {
+			t.Fatalf("operator queue did not report applied decision separately: %s", body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("operator queue remained blocked after lifecycle cancellation")
 	}
 }
 
