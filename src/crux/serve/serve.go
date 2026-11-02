@@ -29,8 +29,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/hivecommons/hive/crux/internal/privatedir"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
@@ -181,29 +182,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// ownedPrivateDir refuses a socket directory this user does not own
-// outright: MkdirAll is silent about a directory that already existed, and
-// on a shared temp dir another user could have created it first and could
-// then swap the socket. The directory must be a real directory (not a
-// symlink), owned by this uid, with no group or other permission bits.
+// ownedPrivateDir refuses a socket directory this user does not own outright.
 func ownedPrivateDir(dir string) error {
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return errors.New("is a symlink")
-	}
-	if !fi.IsDir() {
-		return errors.New("is not a directory")
-	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return fmt.Errorf("mode %04o is readable by others; want %04o", perm, config.ServeSocketDirMode)
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("owned by uid %d, not this user (uid %d)", st.Uid, os.Getuid())
-	}
-	return nil
+	return privatedir.Check(dir, config.ServeSocketDirMode)
 }
 
 // Listeners is what Listen opened: the unix socket and, when configured, the
