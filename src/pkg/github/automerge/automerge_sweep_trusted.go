@@ -22,6 +22,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
 		}
+		if errors.Is(err, hgithub.ErrDestinationMergeBusy) {
+			return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
+		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
 	defer unlock()
@@ -580,6 +583,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		if errors.Is(err, hgithub.ErrDestinationMergeBusy) {
+			return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}

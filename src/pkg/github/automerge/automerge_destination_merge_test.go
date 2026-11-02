@@ -15,6 +15,25 @@ import (
 )
 
 func TestQueuedSweepDestinationGuardReasons(t *testing.T) {
+	testSweepDestinationGuardReasons(t, func(c *Engine, ctx context.Context) (AutoMergeSweepEvent, string, error) {
+		return c.trySweepQueuedPR(ctx, "acme/widget", "acme", "widget", 2, hgithub.AutoMergeQueuedLabel)
+	})
+}
+
+func TestSelfAuthoredSweepDestinationGuardReasons(t *testing.T) {
+	testSweepDestinationGuardReasons(t, func(c *Engine, ctx context.Context) (AutoMergeSweepEvent, string, error) {
+		return c.trySweepSelfAuthoredPR(ctx, "acme/widget", "acme", "widget", 2, true)
+	})
+}
+
+func TestTrustedAuthorSweepDestinationGuardReasons(t *testing.T) {
+	testSweepDestinationGuardReasons(t, func(c *Engine, ctx context.Context) (AutoMergeSweepEvent, string, error) {
+		return c.trySweepTrustedAuthorPR(ctx, "acme/widget", "acme", "widget", 2, TrustedAuthorPolicy{})
+	})
+}
+
+func testSweepDestinationGuardReasons(t *testing.T, sweep func(*Engine, context.Context) (AutoMergeSweepEvent, string, error)) {
+	t.Helper()
 	for _, scenario := range []struct {
 		name        string
 		status      int
@@ -61,7 +80,7 @@ func TestQueuedSweepDestinationGuardReasons(t *testing.T) {
 				}
 				defer release()
 			}
-			_, reason, err := c.trySweepQueuedPR(ctx, "acme/widget", "acme", "widget", 2, hgithub.AutoMergeQueuedLabel)
+			_, reason, err := sweep(c, ctx)
 			if reason != scenario.wantReason {
 				t.Fatalf("reason=%q, want %q (err=%v)", reason, scenario.wantReason, err)
 			}

@@ -5,8 +5,8 @@ lane gates on the exact head before requesting a base refresh. An unresolved
 refresh, ambiguous mutation outcome, or active repair retains exclusive
 preparation ownership.
 
-A completed refresh can yield while its new head has a known pending CI
-verdict.
+A completed refresh can yield while its new head has a known pending CI or
+review verdict.
 Observed `status-pending`/`check-pending` on an explicitly unprotected base
 is a known pending verdict too; missing required contexts, absent evidence,
 stale conclusions and failed API reads cannot establish readiness.
@@ -32,7 +32,7 @@ larger or ambiguous fronts retain FIFO instead of spending unbounded API work.
 Final sweep admission and merge calls share a per-repository/base guard with
 the GitHub merge-request relay. Production uses stable flock inodes under
 `/data/destination-merges`, shared by writers using the same durable volume;
-isolated test engines use process-local locks. Queued-lane contention returns
+isolated test engines use process-local locks. Across sweep lanes, contention returns
 `base-preparation:merge-guard` with `ErrDestinationMergeBusy`, not a `fetch-pr`
 failure; the caller retries on a later sweep rather than retaining stale
 evidence while waiting. Unrelated fetch failures keep their existing reasons.
