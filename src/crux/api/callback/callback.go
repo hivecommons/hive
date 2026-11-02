@@ -583,7 +583,7 @@ type AgentMintRequest struct {
 // mint at all answers 404 not_configured.
 type AgentMintResponse struct {
 	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 // String prints the response with the token redacted.

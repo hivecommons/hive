@@ -397,6 +397,11 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 				github.AttributionAgentGovernor, obs.Repo, obs.Number)
 		}
 	})
+	// #16116: the reviews people and other bots submitted on the PRs the same
+	// settle scan saw merge or close feed the throughput card's Reviewed row.
+	client.SetPRReviewObservedHook(func(obs github.PRReviewObservation) {
+		recordObservedReview(b.dashSrv, obs)
+	})
 	client.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 		b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
 		// Same typed hook feeds the lifecycle timeline: the watcher fires

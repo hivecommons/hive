@@ -21,7 +21,7 @@ import (
 )
 
 func TestIntegrationCandidateObserverBindsActualRunJobCheckArtifactAndOrderedSubject(t *testing.T) {
-	for _, scenario := range []string{"passed", "rejected", "latest_attempt", "changed_during_read", "wrong_app", "wrong_tree", "missing_job", "digest", "unknown_job_cohort", "wrong_receipt_subject", "materialized", "materialized_partial", "materialized_wrong_closure"} {
+	for _, scenario := range []string{"passed", "rejected", "latest_attempt", "changed_during_read", "wrong_app", "wrong_tree", "missing_job", "digest", "unknown_job_cohort", "wrong_receipt_subject", "materialized", "materialized_partial", "materialized_wrong_closure", "v2_passed", "v2_missing", "v2_context_app", "v2_metadata"} {
 		t.Run(scenario, func(t *testing.T) {
 			key, binding, claims := producerIdentityFixture(t)
 			subject := forgestate.IntegrationCandidateSubject{
@@ -35,6 +35,15 @@ func TestIntegrationCandidateObserverBindsActualRunJobCheckArtifactAndOrderedSub
 				WorkflowID: 7, CheckAppID: 9, RunID: 3, Attempt: 1, RequiredJobs: []string{"ci / build-and-test"}}
 			materializer := strings.HasPrefix(scenario, "materialized")
 			names := []string{"ci / build-and-test", integrationCandidateFinalizer}
+			v2 := strings.HasPrefix(scenario, "v2_")
+			memberPR := &gh.PullRequest{Number: gh.Int(10), State: gh.String("open"), Title: gh.String("✨ feature"),
+				User: &gh.User{ID: gh.Int64(42), Login: gh.String("author")},
+				Base: &gh.PullRequestBranch{Ref: gh.String("v5"), Repo: &gh.Repository{FullName: gh.String(subject.Repo)}},
+				Head: &gh.PullRequestBranch{SHA: gh.String(subject.Members[0].Head), Ref: gh.String("feature"), Repo: &gh.Repository{FullName: gh.String(subject.Repo)}}}
+			if v2 {
+				expected.RequiredJobs = forgestate.IntegrationRequiredContexts()
+				names = append(forgestate.IntegrationRequiredContexts(), integrationCandidateFinalizer)
+			}
 			workflowPath, event, artifactPrefix, filename := integrationCandidateWorkflow, "workflow_dispatch", integrationReceiptArtifact, integrationReceiptFile
 			preparation := IntegrationPreparationRequest{
 				Schema: 1, Protocol: subject.Protocol, Engine: subject.Engine, Repo: subject.Repo,
@@ -51,6 +60,32 @@ func TestIntegrationCandidateObserverBindsActualRunJobCheckArtifactAndOrderedSub
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if v2 {
+				contexts := map[string]forgestate.IntegrationContextReceipt{}
+				for i, name := range forgestate.IntegrationRequiredContexts() {
+					contexts[name] = forgestate.IntegrationContextReceipt{JobID: int64(80 + i), CheckID: int64(100 + i), AppID: 9, SuiteID: 8, Conclusion: "success"}
+				}
+				if scenario == "v2_missing" {
+					delete(contexts, "DCO")
+				}
+				if scenario == "v2_context_app" {
+					record := contexts["DCO"]
+					record.AppID++
+					contexts["DCO"] = record
+				}
+				row, rowErr := json.Marshal([][]any{integrationGovernanceRow(memberPR)})
+				if rowErr != nil {
+					t.Fatal(rowErr)
+				}
+				payload, err = json.Marshal(map[string]any{"schema": 2, "protocol": "integration-producer-receipt-v2", "subject": subject,
+					"runID": "3", "runAttempt": "1", "metadataDigest": integrationGovernanceHash(string(row)), "contexts": contexts})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "v2_metadata" {
+					memberPR.Body = gh.String("changed after signed governance")
+				}
 			}
 			if materializer {
 				workflowPath, event = integrationMaterializerWorkflow, "repository_dispatch"
@@ -135,6 +170,12 @@ func TestIntegrationCandidateObserverBindsActualRunJobCheckArtifactAndOrderedSub
 						if i == 1 {
 							checkID = 4
 						}
+						if v2 {
+							checkID = 100 + i
+							if i == len(names)-1 {
+								checkID = 4
+							}
+						}
 						result := "success"
 						if scenario == "rejected" && i == 0 {
 							result = "failure"
@@ -160,6 +201,12 @@ func TestIntegrationCandidateObserverBindsActualRunJobCheckArtifactAndOrderedSub
 						if i == 1 {
 							id = 4
 						}
+						if v2 {
+							id = 100 + i
+							if i == len(names)-1 {
+								id = 4
+							}
+						}
 						if scenario == "rejected" && i == 0 {
 							result = "failure"
 						}
@@ -167,6 +214,8 @@ func TestIntegrationCandidateObserverBindsActualRunJobCheckArtifactAndOrderedSub
 							"status": "completed", "conclusion": result, "check_suite": map[string]int{"id": 8}, "app": map[string]int{"id": app}})
 					}
 					emit(map[string]any{"total_count": len(checks), "check_runs": checks})
+				case "/repos/owner/repo/pulls/10":
+					emit(memberPR)
 				case "/repos/owner/repo/actions/runs/3/artifacts":
 					emit(map[string]any{"total_count": 1, "artifacts": []any{map[string]any{"id": 10,
 						"name": artifactPrefix + "1", "size_in_bytes": buffer.Len(), "digest": digest,
@@ -231,6 +280,15 @@ func TestIntegrationCandidateObserverBindsActualRunJobCheckArtifactAndOrderedSub
 			}
 			result, err := observer.ReadIntegrationCandidateObservation(context.Background(), expected, verifier, binding.ObservedAt)
 			switch scenario {
+			case "v2_passed":
+				if err != nil || result.State != "passed" || len(result.Jobs) != len(names) ||
+					len(result.CheckIDs) != len(names) || result.Identity.FinalizerCheckRunID != 4 {
+					t.Fatalf("complete actual v2 subject not verified: %+v %v", result, err)
+				}
+			case "v2_metadata":
+				if err == nil || result.State == "passed" {
+					t.Fatal("metadata drift accepted as passing exact proof")
+				}
 			case "passed", "rejected":
 				if err != nil || result.State != scenario || result.ArtifactID != 10 ||
 					result.Identity.FinalizerCheckRunID != 4 || len(result.Jobs) != 2 || result.JobCompleteness != "complete" {

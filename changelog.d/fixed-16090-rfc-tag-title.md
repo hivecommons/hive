@@ -1,0 +1,1 @@
+- RFC lifecycle notices now recognise an RFC issue whose title carries the RFC marker inside a leading bracketed tag (for example `📝 [v5 RFC] ...`), so newly opened RFCs written that way are posted to the RFC Discord channel and get a thread ([#16090](https://github.com/hivecommons/hive/issues/16090)).

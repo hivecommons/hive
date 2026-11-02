@@ -381,8 +381,9 @@ type StageTrackerRebase struct {
 }
 
 // applyRebaseAttempts stamps rebase onto PR rows with an open conflict
-// episode in the fixer's attempts ledger.
-func applyRebaseAttempts(items []StageTrackerItem) {
+// episode in the fixer's attempts ledger; a dispatched attempt names the
+// fixer and how long it has waited at now (hivecommons/hive#16023).
+func applyRebaseAttempts(items []StageTrackerItem, now time.Time) {
 	attempts := rebaseAttemptsStore()
 	if attempts == nil {
 		return
@@ -396,7 +397,7 @@ func applyRebaseAttempts(items []StageTrackerItem) {
 		if !ok {
 			continue
 		}
-		it.Rebase = &StageTrackerRebase{Attempt: min(max(a.Count(), 1), rebasemerge.MaxRebaseAttempts), Max: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), Head: rebaseMergeShortSHA(a.Head()), Text: rebasemerge.AttemptText(a)}
+		it.Rebase = &StageTrackerRebase{Attempt: min(max(a.Count(), 1), rebasemerge.MaxRebaseAttempts), Max: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), Head: rebaseMergeShortSHA(a.Head()), Text: rebasemerge.AttemptTextAt(a, now)}
 	}
 }
 

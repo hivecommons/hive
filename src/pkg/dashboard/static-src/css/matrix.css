@@ -1,0 +1,16 @@
+body.matrix-mode #hive-dashboard-root { display: none !important; }
+body.matrix-mode #hive-matrix {
+  --matrix-bg: #000804;
+  --matrix-fg: #52ed86;
+  --matrix-surface: #000000;
+  --matrix-text: #e8f5eb;
+  --matrix-muted: #b8ccbb;
+  position: fixed; inset: 0; z-index: 100000; background: var(--matrix-bg); color: var(--matrix-color, var(--matrix-fg)); font: 16px monospace;
+}
+body.matrix-mode .matrix-canvas { width: 100%; height: 100%; }
+body.matrix-mode .matrix-labels { position: absolute; bottom: 1rem; left: 1rem; right: 1rem; padding: var(--sp-3); background: var(--matrix-surface); color: var(--matrix-text); font-size: var(--fs-base); overflow-wrap: anywhere; }
+body.matrix-mode .matrix-notice { position: absolute; top: 2rem; left: 1rem; right: 1rem; color: var(--matrix-text); }
+body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; overflow: hidden; }
+body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 1rem; }
+body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
+body.matrix-mode #hive-matrix [hidden] { display: none !important; }

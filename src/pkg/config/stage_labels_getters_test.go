@@ -13,6 +13,7 @@ func TestStageLabelsConfigGetterDefaults(t *testing.T) {
 	}
 	if s.Adoption.EffectiveAfterOffline() != DefaultAdoptAfterOffline ||
 		s.Adoption.EffectiveAfterUnregistered() != DefaultAdoptAfterUnregistered ||
+		s.Adoption.EffectiveRebaseAttemptTimeout() != 15*time.Minute ||
 		s.EffectiveContributorGraceOnline() != DefaultContributorGraceOnline ||
 		s.EffectiveContributorGraceOffline() != DefaultContributorGraceOffline ||
 		s.EffectivePresenceWindow() != DefaultPresenceWindow ||
@@ -33,7 +34,7 @@ func TestStageLabelsConfigGetterDefaults(t *testing.T) {
 		ContributorNudge:        ContributorNudgeConfig{Enabled: &off, RenudgeInterval: "30m"},
 		Adoption: StageAdoptionConfig{
 			Enabled: &off, InPlace: &off, StrictAttribution: &off, AutoMerge: &off,
-			AfterOffline: "2m", AfterUnregistered: "0s",
+			AfterOffline: "2m", AfterUnregistered: "0s", RebaseAttemptTimeout: "20m",
 		},
 		Stalled: StageStalledConfig{RequireQuiet: &off},
 	}
@@ -42,6 +43,7 @@ func TestStageLabelsConfigGetterDefaults(t *testing.T) {
 		t.Fatal("explicit false turns each toggle off")
 	}
 	if s.EffectivePresenceWindow() != time.Minute || s.Adoption.EffectiveAfterOffline() != 2*time.Minute ||
+		s.Adoption.EffectiveRebaseAttemptTimeout() != 20*time.Minute ||
 		s.ContributorNudge.EffectiveRenudgeInterval() != 30*time.Minute {
 		t.Fatal("valid durations parse")
 	}

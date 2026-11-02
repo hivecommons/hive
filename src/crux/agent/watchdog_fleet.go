@@ -73,8 +73,20 @@ func (f WatchdogFleet) AgentNames() []string {
 	return names
 }
 
+// ObserveProbeTimeout bounds the tmux round-trips (has-session, visible-pane
+// capture) one Observe call makes. A healthy tmux answers in milliseconds;
+// past this the agent is reported unobservable for the sweep instead of
+// stalling the reconciler and the governor tick hosting it (#16097).
+const ObserveProbeTimeout = 5 * time.Second
+
+// observeProbeTimeout is ObserveProbeTimeout as a variable solely so tests can
+// shrink it.
+var observeProbeTimeout = ObserveProbeTimeout
+
 // Observe gathers one agent's observed truth using the manager's existing
-// capture and classification helpers.
+// capture and classification helpers. Its tmux probes are bounded by
+// ObserveProbeTimeout; a probe that times out returns an error, which the
+// reconciler treats as "agent unobservable".
 func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 	f.M.mu.RLock()
 	agent, ok := f.M.agents[name]
@@ -84,13 +96,24 @@ func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 	}
 
 	// Pane capture and session probe run OUTSIDE m.mu: they shell out to
-	// tmux and must never block AllStatuses()/the heartbeat.
-	sessionExists := f.M.tmuxSessionExistsForAgent(agent)
+	// tmux and must never block AllStatuses()/the heartbeat. They also share
+	// one deadline: Reconciler.Tick runs inline in the governor tick, so a
+	// wedged tmux server must surface as "unobservable" rather than stall
+	// the whole control plane (#16097).
+	ctx, cancel := context.WithTimeout(context.Background(), observeProbeTimeout)
+	defer cancel()
+	sessionExists, err := tmuxSessionProbe(ctx, f.M, agent)
+	if err != nil {
+		return watchdog.Observation{}, fmt.Errorf("agent %s: %w", name, err)
+	}
 	pane := ""
 	if sessionExists {
 		// Visible pane only — stale ready markers in scrollback must not
 		// vouch for a dead CLI (same rule as tmuxPaneHasCLIForAgent).
-		pane = f.M.captureVisiblePaneForAgent(agent)
+		pane, err = f.M.captureVisiblePaneForAgentContext(ctx, agent)
+		if err != nil {
+			return watchdog.Observation{}, fmt.Errorf("agent %s: %w", name, err)
+		}
 	}
 
 	agent.paneMu.RLock()

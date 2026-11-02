@@ -215,18 +215,24 @@ func TestRebaseAttemptsPillAndFollowThroughExhaustion(t *testing.T) {
 	t.Cleanup(func() { rebaseMergeNow = time.Now })
 
 	items := []StageTrackerItem{{Repo: "hivecommons/hive", Number: 15087, Kind: "pr", Stage: 90, Modifiers: []string{modNeedsRebase}}, {Repo: "hivecommons/hive", Number: 1, Kind: "pr", Stage: 90}}
-	applyRebaseAttempts(items)
+	applyRebaseAttempts(items, now)
 	if items[0].Rebase != nil || items[1].Rebase != nil {
 		t.Fatalf("no episode, no pill: %+v %+v", items[0].Rebase, items[1].Rebase)
 	}
 	attempts.Observe("hivecommons/hive", 15087, "aaa1111aaa1111", now)
-	applyRebaseAttempts(items)
+	applyRebaseAttempts(items, now)
 	if r := items[0].Rebase; r == nil || r.Attempt != 1 || r.Max != 2 || r.Exhausted || r.Head != "aaa1111" || r.Text != "Rebasing · attempt 1/2" {
 		t.Fatalf("attempt 1 pill = %+v", r)
 	}
+	// hivecommons/hive#16023: a dispatched attempt shows who it waits on.
+	attempts.Dispatch("hivecommons/hive", 15087, "scanner", now)
+	applyRebaseAttempts(items, now.Add(12*time.Minute))
+	if r := items[0].Rebase; r == nil || r.Attempt != 1 || r.Text != "Rebasing · attempt 1/2 · waiting for scanner 12m" {
+		t.Fatalf("waiting pill = %+v", r)
+	}
 	attempts.Observe("hivecommons/hive", 15087, "bbb2222", now)
 	attempts.Observe("hivecommons/hive", 15087, "ccc3333", now)
-	applyRebaseAttempts(items)
+	applyRebaseAttempts(items, now)
 	if r := items[0].Rebase; r == nil || !r.Exhausted || r.Attempt != 2 || r.Text != "Rebase failed · 2/2 — needs a person" {
 		t.Fatalf("exhausted pill = %+v", r)
 	}
@@ -299,7 +305,7 @@ func TestRepoItemDecisionApproveOnDirtyPRQueuesRebase(t *testing.T) {
 		t.Fatalf("a dirty head gets no update-branch: %d", mock.updates)
 	}
 	items := []StageTrackerItem{{Repo: "testorg/testrepo", Number: 8, Kind: "pr", Stage: 85}}
-	applyRebaseAttempts(items)
+	applyRebaseAttempts(items, time.Now())
 	if items[0].Rebase == nil || items[0].Rebase.Text != "Rebasing · attempt 1/2" {
 		t.Fatalf("row = %+v", items[0].Rebase)
 	}

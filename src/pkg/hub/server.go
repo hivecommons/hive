@@ -999,7 +999,8 @@ type HubServer struct {
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger
-	activity             activityStore // per-hive activity digests, memory only (#15951); leaf lock
+	activity             activityStore       // per-hive activity digests, memory only (#15951); leaf lock
+	publicActivity       publicActivityCache // short-TTL anonymous activity body (#16111)
 	saveCh               chan struct{}
 	githubActivityFeed   *GitHubActivityFeed
 	githubActivityMu     sync.Mutex
@@ -1790,6 +1791,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.registerOAuth()
 	s.registerSaaSRoutes()
 	s.registerOpenRouterRoutes()
+	// Fleet activity page (#16063): signed-in, read-only board over
+	// GET /api/hub/activity.
+	s.registerActivityPageRoutes()
 	go s.saveLoop()
 	go s.refreshActiveMyHivesSnapshotsLoop()
 
@@ -2730,11 +2734,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.registry.Hives = append(s.registry.Hives, entry)
 	}
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	s.mu.Unlock()
-
-	// Activity digest (#15951): stored after s.mu is released (leaf lock),
-	// only once the beat is authenticated and accepted into the registry.
+	// Activity digest (#15951): stored only once the beat is authenticated and
+	// accepted into the registry. Recorded while still holding s.mu so a
+	// concurrent delete (which forgets under s.mu) cannot leave a stale digest
+	// behind (#16010). activityStore.mu is a leaf lock, so taking it here is safe.
 	activityAck := s.activity.record(payload.HiveID, payload.Activity, time.Now().UTC())
+	s.mu.Unlock()
 
 	// Timeline: record whatever changed on this beat. Nothing is written when
 	// nothing changed, which is the common case — at ~2 min per beat and 42
@@ -2824,6 +2829,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
 	resp.ActivityETag = activityAck
+	resp.ActivityEventsAck = s.activity.eventsAck(payload.HiveID)
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic
@@ -4289,6 +4295,10 @@ func (s *HubServer) removeRegistryEntry(id, by string) {
 			break
 		}
 	}
+	// Memory-only activity digests must not outlive the hive (#16002). Forgotten
+	// under s.mu so a heartbeat (which records under s.mu too) cannot slip a
+	// digest in between the removal and the purge (#16010).
+	s.activity.forget(id)
 	s.mu.Unlock()
 	if !removed {
 		return
@@ -4353,6 +4363,10 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 			break
 		}
 	}
+	// Memory-only activity digests must not outlive the hive (#16002). Forgotten
+	// under s.mu so a heartbeat (which records under s.mu too) cannot slip a
+	// digest in between the removal and the purge (#16010).
+	s.activity.forget(id)
 	s.mu.Unlock()
 	if removed {
 		// Synchronous flush for the same durability reason as removeRegistryEntry.

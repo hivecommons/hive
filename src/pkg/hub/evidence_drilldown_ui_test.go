@@ -170,6 +170,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		jsFunc(t, "fleetQuadrantScopeLabel"),
 		jsFunc(t, "fleetQuadrantDrillAttrs"),
 		jsFunc(t, "fleetQuadrantEvidenceButtonHTML"),
+		jsFunc(t, "fleetActivityLinkHTML"),
 		jsFunc(t, "fleetQuadrantHintHTML"),
 		jsFunc(t, "fleetQuadrantHeaderHTML"),
 		"_isAdmin = true; var admin = fleetQuadrantHeaderHTML();",
@@ -196,6 +197,16 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		if !strings.Contains(got.Admin, want) {
 			t.Errorf("admin fleet card is missing %q:\n%s", want, got.Admin)
 		}
+	}
+	// The Fleet activity page (#16063) is linked next to Evidence for every
+	// signed-in viewer: GET /api/hub/activity scopes per hive, so members
+	// get the link too.
+	const activityLink = `<a class="fleet-activity-link" href="/activity" title="Open the Fleet activity board for the hives you can see" onclick="event.stopPropagation()">📡 Fleet activity</a>`
+	if !strings.Contains(got.Admin, activityLink) || !strings.Contains(got.Member, activityLink) {
+		t.Errorf("fleet card must link the Fleet activity page for admins and members:\nadmin: %s\nmember: %s", got.Admin, got.Member)
+	}
+	if strings.Index(got.Admin, activityLink) < strings.Index(got.Admin, "🔬 Evidence</button>") {
+		t.Errorf("Fleet activity belongs right after the Evidence button:\n%s", got.Admin)
 	}
 	if strings.Count(got.Admin, "openEvidenceModal()") != 3 {
 		t.Errorf("admin fleet card should wire the drill click, its keydown and the button, got:\n%s", got.Admin)

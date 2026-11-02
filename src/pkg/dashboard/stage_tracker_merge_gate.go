@@ -226,6 +226,13 @@ func stageTrackerMergeAttemptStale(a github.MergeAttempt, head string, stage sta
 	if a.Head != "" && head != "" && !strings.EqualFold(a.Head, head) {
 		return true
 	}
+	if stage == stagelabels.ReviewPending || stage == stagelabels.Reviewed {
+		if kind, _, _ := stageTrackerMergeRefusal(a.Error); kind == MergeRefusalChecksPending {
+			// A refused early merge call is history, not queue admission
+			// or current CI proof while this head is still under review.
+			return true
+		}
+	}
 	if !hasRec || stage == stagelabels.None || stage.Number() >= stagelabels.AwaitingMergeAdmission.Number() {
 		return false
 	}

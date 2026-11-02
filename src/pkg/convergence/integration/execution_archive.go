@@ -190,20 +190,39 @@ func validateExecutionArchiveBody(proof ExecutionProof) error {
 		return err
 	}
 	var payload struct {
-		Schema   int                                    `json:"schema"`
-		Protocol string                                 `json:"protocol"`
-		Subject  forgestate.IntegrationCandidateSubject `json:"subject"`
-		RunID    string                                 `json:"runID"`
-		Attempt  string                                 `json:"runAttempt"`
-		Outcomes struct{ CI, Tests, Security string }   `json:"outcomes"`
+		Schema         int                                             `json:"schema"`
+		Protocol       string                                          `json:"protocol"`
+		Subject        forgestate.IntegrationCandidateSubject          `json:"subject"`
+		RunID          string                                          `json:"runID"`
+		Attempt        string                                          `json:"runAttempt"`
+		Outcomes       struct{ CI, Tests, Security string }            `json:"outcomes"`
+		MetadataDigest string                                          `json:"metadataDigest"`
+		Contexts       map[string]forgestate.IntegrationContextReceipt `json:"contexts"`
 	}
 	if err := json.NewDecoder(bytes.NewReader(a.Payload)).Decode(&payload); err != nil {
 		return err
 	}
-	if payload.Schema != 1 || payload.Protocol != "integration-producer-receipt-v1" ||
+	passed := payload.Schema == 1 && payload.Protocol == "integration-producer-receipt-v1" &&
+		payload.Outcomes.CI == "success" && payload.Outcomes.Tests == "success" && payload.Outcomes.Security == "success"
+	if payload.Schema == 2 && payload.Protocol == "integration-producer-receipt-v2" {
+		passed = forgestate.IntegrationContextsPassed(payload.Contexts, payload.MetadataDigest)
+		for _, record := range payload.Contexts {
+			found := false
+			for _, checkID := range a.CheckIDs {
+				if record.CheckID == checkID {
+					found = true
+				}
+			}
+			if !found || record.SuiteID != a.SuiteID {
+				return fmt.Errorf("archived signed governance check differs from retained actual cohort")
+			}
+		}
+	}
+	if !(payload.Schema == 1 && payload.Protocol == "integration-producer-receipt-v1" ||
+		payload.Schema == 2 && payload.Protocol == "integration-producer-receipt-v2") ||
 		!payload.Subject.SameCore(proof.Subject) || payload.RunID != strconv.FormatInt(proof.RunID, 10) ||
 		payload.Attempt != strconv.Itoa(proof.Attempt) ||
-		proof.State == Passed && (payload.Outcomes.CI != "success" || payload.Outcomes.Tests != "success" || payload.Outcomes.Security != "success") {
+		(proof.State == Passed || proof.ObservedState == Passed) && !passed {
 		return fmt.Errorf("archived payload changed exact candidate/outcome binding")
 	}
 	return nil

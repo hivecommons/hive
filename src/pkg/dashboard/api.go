@@ -188,6 +188,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerCopilotAuthRoutes()
 	s.mux.HandleFunc("GET /api/summaries", s.handleSummaries)
 	s.mux.HandleFunc("GET /api/stage-tracker", s.handleStageTracker)
+	s.mux.HandleFunc("GET /api/matrix/lines", s.handleMatrixLines)
 	s.mux.HandleFunc("POST /api/prs/{owner}/{repo}/{number}/queue-automerge", s.handleQueuePRAutoMerge)
 
 	s.mux.HandleFunc("GET /api/config/agent/{name}", s.handleAgentConfigGet)

@@ -189,16 +189,40 @@ full-screen Activity Monitor.
 
 ## Matrix mode (separate channel)
 
+When `dashboard.matrix.enabled` is set, the Activity Monitor header also shows a **Matrix** tab that opens `?kiosk=1&view=matrix` in the same window.
+
 Matrix is an experimental, default-off code display for a separate channel,
 [`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).
-It shows pushed added lines only, from positively identified hive identities,
-on public repositories explicitly allowlisted in `dashboard.matrix.repos`.
+It depends on the Matrix display renderer (`/?kiosk=1&view=matrix`,
+[#15936](https://github.com/hivecommons/hive/issues/15936)); without that
+renderer the dashboard ignores `view=matrix` and the kiosk serves the ordinary
+Activity Monitor. When active it shows pushed added lines only, from positively
+identified hive identities, on public repositories explicitly allowlisted in
+`dashboard.matrix.repos`.
 Private patches, unverified authors and excluded paths are never shown. Lines
 touched by scrubbing are dropped entirely rather than displayed with redactions;
 the built-in secret/path filters and `dashboard.matrix.exclude_paths` apply.
 Dashboard authentication alone does not make a code stream safe for public
 Twitch broadcasting: the public allowlist, author restriction and scrub/drop
 rules are required.
+
+The display's look is chosen with `mx.*` URL parameters; each value is also
+remembered in the browser (`hive.matrix.*` in local storage) for later visits.
+Every effect renders only lines already delivered by `/api/matrix/lines`.
+
+| `mx.effect` | Display |
+|---|---|
+| `rain` (default) | Falling columns built from the characters of the latest lines. Unknown values fall back to `rain`. |
+| `cascade` | Whole lines drift down the screen, each with its `repo#PR · path` caption. |
+| `ghost` | Ghost coder: a fake editor with one tab per PR (`repo#PR`), titled with the file path; at most six tabs, the oldest closes first. Lines are typed character by character behind a blinking cursor, with light keyword/string/comment/number colouring by file extension. |
+| `terminal` | An endless `git log -p`-style scroll: each line printed as a green `+ <line>`, with a `repo#PR · path` header whenever the PR or file changes. |
+
+`mx.speed` (0.1–5, default 1) and `mx.fps` (1–60, default 30) set the
+animation and typing speed, `mx.palette` is `green` (default), `amber` or
+`gold`, and `mx.captions=off` hides the `repo#PR · path` captions and headers
+on the canvas. `p` or Space pauses; a hidden tab pauses too. With the
+operating system's *reduce motion* setting on, every effect is replaced by
+static pages of the latest lines with their captions.
 
 [`overlays/hive-hosted-matrix/`](../deploy/stream/overlays/hive-hosted-matrix/kustomization.yaml)
 reuses the streamer image and base as a separate instance. It renders Deployment,
@@ -213,16 +237,19 @@ unaffected.
 channel.** The overlay has `replicas: 0`; applying it starts no streamer.
 Channel availability alone does not authorize activation. The owner must:
 
-1. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
+1. Confirm the deployed dashboard build serves the Matrix display for
+   `view=matrix` (#15936). A build without it broadcasts the ordinary kiosk
+   Activity Monitor on the Matrix channel, not code lines.
+2. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
    and verify the Matrix display and its author restriction and scrub/drop rules
    before any broadcast. An empty allowlist captures nothing.
-2. Provision `hivecommonsmatrix` independently, create namespace
+3. Provision `hivecommonsmatrix` independently, create namespace
    `hive-stream-matrix`, and create the out-of-band
    `twitch-stream-matrix` Secret there with its
    `TWITCH_STREAM_KEY`. Provision a separate `dashboard-token` Secret there
    for the dashboard source. Never reuse the main channel's `twitch-stream`
    Secret, or put key values in source, issues or documentation.
-3. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
+4. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
    zero only after authorization and readiness checks. Applying the overlay,
    creating the Twitch Secret and scaling up are all owner-only actions;
    this configuration does not authorize deployment or activation.
@@ -265,12 +292,36 @@ It reuses the same `hive-stream` image. Its ConfigMap sets
   holds the `CHANGE-ME` placeholder; and `TWITCH_STREAM_KEY` is installed (a
   local dry run with `STREAM_OUTPUT=null` or an absolute local `*.flv` path
   needs no key; a URL such as `rtmp://…/x.flv` or any other raw
-  `STREAM_OUTPUT` is refused). Shipped defaults fail every one of
-  these, and the Deployment is at `replicas: 0` on top.
+  `STREAM_OUTPUT` is refused). Shipped defaults fail the enable,
+  acknowledgement and stream-key checks, and the Deployment is at
+  `replicas: 0` on top.
 - **The auth proxy runs anonymous.** It refuses to start with a token, strips
   any `Authorization` or `Cookie` header the browser sends and drops
   `Set-Cookie` from responses, so no session can form. The kiosk sees exactly
   what an anonymous visitor of the hub sees, and nothing else.
+
+### The public-safe hub view
+
+The source is the hub's anonymous public-safe Fleet activity view,
+`/activity/public?kiosk=1` (`DASHBOARD_PATH` in `fleet/configmap.yaml`). It is
+a separate route from the signed-in `/activity` page and polls its own
+endpoint, `GET /api/hub/activity/public`, which needs no login and ignores any
+cookie or token it is sent. The hub filters the data before it builds the
+view, so private rows never reach the page:
+
+- **Shown:** open issues and pull requests in public repositories of hives the
+  registry lists as public on github.com — number, title, stage, modifiers,
+  author kind — plus their public stage hops, opens and merges, each hive's
+  name and report freshness.
+- **Omitted:** private-repository items and events (and items whose
+  visibility the spoke does not know), hives not listed as public or on a
+  GitHub Enterprise host, per-hive totals, truncation and dropped-event counts
+  (they can count private items), hive owners, and any per-user access grant.
+
+A hub test (`TestActivityPublic_OmitsPrivateRowsByConstruction`) checks that a
+private row is absent from this view whether the request is anonymous or
+carries an admin's session. See also
+[Hub Fleet activity page](hub-fleet-activity.md#public-safe-view).
 
 ### Dashboard authentication does not protect Twitch output
 
@@ -306,15 +357,14 @@ acknowledgement cannot cover new content.
 ### Enabling it (owner only)
 
 Nothing below is done by this repository or by the hive; it is the owner's
-decision on #15861. Status as of this change: the channel is provisioned; the
-stream key is **not** installed and the public-safe hub view does **not** yet
-exist (it follows the Fleet activity page,
-[#15965](https://github.com/hivecommons/hive/issues/15965)).
+decision on #15861. Status as of this change: the channel is provisioned and
+the [public-safe hub view](#the-public-safe-hub-view) exists; the stream key
+is **not** installed and the broadcast is **not** enabled.
 
-1. **Source.** Confirm a hub route renders the public-safe view anonymously
-   and meets the policy above, then set `DASHBOARD_PATH` in
-   `fleet/configmap.yaml` (e.g. with `?kiosk=1`). Open it in a private
-   browser window first: what you see there is what Twitch will show.
+1. **Source.** `DASHBOARD_PATH` already points at
+   `/activity/public?kiosk=1`. Open `https://hive.hivecommons.dev/activity/public`
+   in a private browser window and confirm it meets the policy above: what
+   you see there is what Twitch will show.
 2. **Stream key.** In the `hivecommonsfleet` Creator Dashboard, copy the
    Primary Stream key and install it without echoing it or writing it to a
    file, a commit or an issue comment:

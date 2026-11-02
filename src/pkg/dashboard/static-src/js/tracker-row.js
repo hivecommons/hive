@@ -1,49 +1,3 @@
-    // Which strip segment a stage lights: main stages light themselves,
-    // 040 shares the PR in progress column with 030, 060 shares CI / Review
-    // with 050, 095 and 100 share the Merge gate column with 080, detours
-    // light the segment they branch from (stageTrackerColumn in Go).
-    // kind is 'issue' or 'pr': an issue parked on a person (045, or a
-    // pre-045 085) is parked before any PR exists, so it lights Actionable
-    // rather than the merge gate. item (optional) is the row: once a merge
-    // call has been made on its head (merge_gate.state merging /
-    // merge-failed) the outcome is a Merge gate matter whatever numeric
-    // stage the lane fell back to — hivecommons/docs#512 drew "Merge
-    // failed" in CI / Review because the PR sat at 060.
-    //
-    // The column follows the CURRENT state, never the highest stage the
-    // row once reached: a PR under repair (stageTrackerUnderRepair) lights
-    // CI / Review even when a stale merge_gate ("merge-failed" from the
-    // attempt that found the conflict) or a planner-ordered merge_train
-    // still rides on the record — hive's own #15574 read "Fixing" under
-    // Merge queue after "fell back to Fixing — conflicting".
-    function stageTrackerAnchor(stage, stages, kind, item) {
-      const cur = Number(stage) || 0;
-      if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
-      // Under repair past 030 → CI / Review, before any gate or train
-      // promotion. The one park the predicate also names, 085 needs
-      // decision, stays at the gate: the person decides there.
-      const repairing = typeof stageTrackerUnderRepair === 'function' && !!stageTrackerUnderRepair(cur, item && item.reason);
-      if (repairing && cur > STAGE_TRACKER_PR_COLUMN && cur !== STAGE_TRACKER_NEEDS_DECISION) return 50;
-      const mg = item && item.merge_gate;
-      if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
-      // A merge-train member is a Merge queue matter too, 1st included:
-      // the train's facts are mirrored onto its head while the head still
-      // sits at 050/070, and hive's own #15400 ("1st") lit CI / Review
-      // next to its 2nd-place sibling in Merge queue (hivecommons/hive#15395).
-      if (item && item.merge_train && item.merge_train.state && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
-      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
-      if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
-      if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
-      if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
-      // 060 reviewed is pre-admission (approved, CI pending or red; it can
-      // regress to 070): it lights CI / Review (50), never the merge gate.
-      if (cur === 60) return 50;
-      if (cur === STAGE_TRACKER_PRE_MERGE_SOAK || cur === 100) return STAGE_TRACKER_MERGE_COLUMN;
-      const st = (stages || []).find(x => Number(x.number) === cur) || {};
-      let from = Number(st.branch_from) || 0;
-      if (from === 60) from = 50;
-      return STAGE_TRACKER_PATH.indexOf(from) >= 0 ? from : 0;
-    }
 
     // Segment list for one item: path segments with done/active state plus a
     // detour badge when the item sits on a side stage, and the merged end-cap.
@@ -221,12 +175,31 @@
       const r = String((sa && sa.human_reason) || stageTrackerHumanWhy(item, kind) || STAGE_TRACKER_HUMAN_REASON_FALLBACK).replace(/\s+/g, ' ').trim();
       return r.length > STAGE_TRACKER_HUMAN_REASON_MAX ? r.slice(0, STAGE_TRACKER_HUMAN_REASON_MAX - 1).replace(/\s+\S*$/, '') + '…' : r;
     }
+    function stageTrackerExternalPRWork(item) {
+      if (!item || (item.kind !== 'pr' && !item.via_pr)) return null;
+      let source = item;
+      if (item.via_pr) {
+        const linked = (item.linked_prs || []).filter(lp => lp && stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item));
+        source = linked.length === 1 ? linked[0] : {};
+      }
+      const who = stageTrackerReturnedAuthor(source);
+      const holder = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      if (holder && (!who.author || holder.source !== 'author')) return Object.assign({}, who, { owner: stageTrackerClaimantShort(holder) });
+      return who.kind === 'hive' || who.kind === 'bot' ? null : who;
+    }
     function stageTrackerActorTip(item) {
       // Guarded: test harnesses lift this function by name without stageTrackerHumanWhy.
       const humanWhy = typeof stageTrackerHumanWhy === 'function' ? stageTrackerHumanWhy : () => '';
       const sa = stageTrackerStageActor(item);
       if (!sa) { const k = stageTrackerActorKind(item); const w = humanWhy(item, k); return k ? ' · Next move: ' + k + (w ? ' — ' + w : '') : ''; }
-      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) {
+        const external = typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+        if (external) {
+          if (external.owner) return ' · Recorded PR owner ' + external.owner + ' — current work activity is unknown';
+          return external.author ? ' · Author-owned PR @' + external.author + ' — current work activity is unknown' : ' · PR ownership and current work activity are unknown';
+        }
+        return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      }
       const why = sa.why || humanWhy(item, sa.kind);
       return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (why ? ' — ' + why : '');
     }
@@ -275,6 +248,8 @@
       const sa = stageTrackerStageActor(item);
       if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const external = sa.kind === STAGE_TRACKER_ACTOR_NONE && typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
+      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'CI failing') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
       const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
       return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }

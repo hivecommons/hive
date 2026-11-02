@@ -66,6 +66,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hivecommons/hive/crux/agentsmd"
+	"github.com/hivecommons/hive/crux/internal/frontmatter"
 )
 
 const (
@@ -74,9 +75,6 @@ const (
 
 	// DefaultVersion is assigned to a skill whose file omits "version".
 	DefaultVersion = "0.0.0"
-
-	// frontMatterDelim opens and closes the optional YAML front-matter block.
-	frontMatterDelim = "---"
 
 	// injectionHeader titles the resolved-skills block produced by InjectionText.
 	injectionHeader = "## Requested Skills"
@@ -227,7 +225,7 @@ func parseSkillFile(fileName, content string, lg *slog.Logger) Skill {
 		Source:  SourceURLLocalFile,
 	}
 
-	fm, rest := splitFrontMatter(content)
+	fm, rest := frontmatter.Split(content)
 	if fm != "" {
 		var meta skillFrontMatter
 		if yErr := yaml.Unmarshal([]byte(fm), &meta); yErr != nil {
@@ -256,26 +254,6 @@ func normalizeTags(tags []string) []string {
 		}
 	}
 	return out
-}
-
-// splitFrontMatter returns the YAML front-matter (without delimiters) and the
-// remaining document. If no front-matter block is present, front-matter is ""
-// and the whole content is returned as rest.
-func splitFrontMatter(content string) (fm, rest string) {
-	trimmed := strings.TrimLeft(content, "\r\n")
-	lines := strings.Split(trimmed, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != frontMatterDelim {
-		return "", content
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == frontMatterDelim {
-			fm = strings.Join(lines[1:i], "\n")
-			rest = strings.Join(lines[i+1:], "\n")
-			return fm, rest
-		}
-	}
-	// Opening delimiter with no close: not valid front-matter, treat as body.
-	return "", content
 }
 
 // Get returns the highest-versioned skill registered under name.

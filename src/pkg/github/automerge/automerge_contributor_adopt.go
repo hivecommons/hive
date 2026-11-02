@@ -1152,6 +1152,17 @@ func (c *Engine) adoptionCopyRebaseFailedTwice(obs stageObservation) bool {
 	return ok && ep.Exhausted
 }
 
+// inPlaceRebaseExhausted reports whether the fixer's rebase-resolve episode
+// on this in-place adoption used every attempt without the head reading
+// mergeable (hivecommons/hive#16023).
+func (c *Engine) inPlaceRebaseExhausted(obs stageObservation, rec stagelabels.Record) bool {
+	if c.rebaseEpisode == nil || !rec.AdoptedInPlace() {
+		return false
+	}
+	ep, ok := c.rebaseEpisode(obs.Owner+"/"+obs.Repo, obs.Number)
+	return ok && ep.Exhausted
+}
+
 // priorCopyInputs keys a claim by the closed copy it follows, so a
 // re-adoption is not answered by the first adoption's journal entry.
 func priorCopyInputs(prior int, inputs map[string]string) map[string]string {
@@ -1926,8 +1937,11 @@ func adoptedHeadSignoffUnfixable(obs stageObservation, rec stagelabels.Record) b
 // supersession this sweep, or "" to stay in place. A DCO-red head is left to
 // settleAdoption's DCO re-home, which carries the repair instructions. A
 // squash-unsafe hive sign-off re-homes immediately; rebase work first gets
-// the normal fixer window on the contributor branch.
-func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) string {
+// the normal fixer window on the contributor branch, which ends at the 074
+// dwell or as soon as the fixer's rebase-resolve episode on the adopted PR
+// is exhausted (rebaseExhausted: every attempt pushed a dirty head or timed
+// out with no push; hivecommons/hive#16023).
+func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time, rebaseExhausted bool) string {
 	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead || adoptedHeadDCORed(obs, rec) || adoptionBlocked(obs.Labels) != "" || verdictNeedsHuman(obs.Detail) {
 		return ""
 	}
@@ -1935,7 +1949,7 @@ func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy St
 		return AdoptReasonSignoffRehome
 	}
 	if humanConflictReasons[obs.Reason] || humanConflictReasons[obs.LaneReason] || hasLabelFold(obs.Labels, "needs-rebase") {
-		if adoptionStale(obs, rec, policy, now) {
+		if rebaseExhausted || adoptionStale(obs, rec, policy, now) {
 			return AdoptReasonRebaseRehome
 		}
 	}
@@ -1996,7 +2010,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		c.info("stage labels: adopted head had no clock; starting the 074 dwell from this sweep", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "adopted_at", rec.AdoptedAt)
 		rec, _ = store.Get(key)
 	}
-	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now)
+	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now, c.inPlaceRebaseExhausted(obs, rec))
 	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && c.pushAccessLost(ctx, obs) {
 		rehomeReason = AdoptReasonPushRehome
 	}

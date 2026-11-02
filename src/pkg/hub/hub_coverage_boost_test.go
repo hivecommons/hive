@@ -911,8 +911,11 @@ func TestHandleRegistryDeleteAsAdmin(t *testing.T) {
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
 		{ID: "delete-me", Online: true},
+		{ID: "keep-me", Online: true},
 	}
 	srv.mu.Unlock()
+	srv.activity.record("delete-me", activityDigest("o/r", 1), time.Now().UTC())
+	srv.activity.record("keep-me", activityDigest("o/r", 2), time.Now().UTC())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /api/hub/registry/{id}", srv.handleRegistryDelete)
@@ -927,10 +930,18 @@ func TestHandleRegistryDeleteAsAdmin(t *testing.T) {
 	}
 
 	srv.mu.RLock()
-	if len(srv.registry.Hives) != 0 {
-		t.Error("hive should have been removed")
+	if len(srv.registry.Hives) != 1 || srv.registry.Hives[0].ID != "keep-me" {
+		t.Errorf("expected only keep-me to remain, got %+v", srv.registry.Hives)
 	}
 	srv.mu.RUnlock()
+
+	// The admin path must purge the activity digest too (#16002).
+	if got := srv.activity.snapshot([]string{"delete-me"}); len(got) != 0 {
+		t.Error("handleRegistryDelete left the removed hive's activity digest in memory")
+	}
+	if got := srv.activity.snapshot([]string{"keep-me"}); len(got) != 1 {
+		t.Error("handleRegistryDelete purged an unrelated hive's activity digest")
+	}
 }
 
 func TestHandleRegistryDeleteNotFound(t *testing.T) {

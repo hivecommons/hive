@@ -362,6 +362,9 @@ type StageTrackerItem struct {
 	// stalled, a handled regression, blocked-on-pr, 040 covered or a PR
 	// ready for auto-merge — the hive advances those (hivecommons/hive#15008).
 	NeedsHuman bool `json:"needs_human,omitempty"`
+	// HumanAttention is the current item's actionable human requirement,
+	// separate from an actor/claimant icon or optional delegation action.
+	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`
@@ -413,6 +416,9 @@ type StageTrackerItem struct {
 	// says — a header read "8 PRs" over seven seats because a red 090
 	// row was counted.
 	ciRed bool
+	// ciChecking is a real check observed running on this snapshot's head
+	// with no failing checks, not a pending reviewer or meta check.
+	ciChecking bool
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -425,6 +431,9 @@ type StageTrackerItem struct {
 	SentinelAlert    bool   `json:"sentinel_alert,omitempty"`
 	SentinelFindings int    `json:"sentinel_findings,omitempty"`
 	SentinelReason   string `json:"sentinel_reason,omitempty"`
+	// SentinelNotice marks verified informational findings without the live
+	// blocking label. The notice remains visible but is not a decision gate.
+	SentinelNotice bool `json:"sentinel_notice,omitempty"`
 	// HumanApprover is the trusted merger whose GitHub Approve review on
 	// the current head settled a requires_human verdict or a manual-merge
 	// lane rule (the `:human-approved@login` suffix on the stage reason).
@@ -667,16 +676,17 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
-	Preparation *StageTrackerPreparation `json:"preparation,omitempty"`
-	BaseRef     string                   `json:"base_ref,omitempty"`
-	Number      int                      `json:"number"`
-	Title       string                   `json:"title,omitempty"`
-	URL         string                   `json:"url,omitempty"`
-	Author      string                   `json:"author,omitempty"`
-	AuthorKind  string                   `json:"author_kind,omitempty"`
-	Stage       int                      `json:"stage,omitempty"`
-	StageSince  *time.Time               `json:"stage_since,omitempty"`
-	Caption     string                   `json:"caption,omitempty"`
+	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
+	Preparation    *StageTrackerPreparation    `json:"preparation,omitempty"`
+	BaseRef        string                      `json:"base_ref,omitempty"`
+	Number         int                         `json:"number"`
+	Title          string                      `json:"title,omitempty"`
+	URL            string                      `json:"url,omitempty"`
+	Author         string                      `json:"author,omitempty"`
+	AuthorKind     string                      `json:"author_kind,omitempty"`
+	Stage          int                         `json:"stage,omitempty"`
+	StageSince     *time.Time                  `json:"stage_since,omitempty"`
+	Caption        string                      `json:"caption,omitempty"`
 	// NoteChangedAt mirrors the PR row's: when the caption last changed
 	// meaning.
 	NoteChangedAt *time.Time `json:"note_changed_at,omitempty"`
@@ -688,6 +698,7 @@ type StageTrackerLinkedPR struct {
 	// so a sub-row under an issue names the alert too.
 	SentinelAlert  bool   `json:"sentinel_alert,omitempty"`
 	SentinelReason string `json:"sentinel_reason,omitempty"`
+	SentinelNotice bool   `json:"sentinel_notice,omitempty"`
 	// HumanApprover / ManualMerge / HumanMergeReason(Text) mirror the
 	// nested PR's 090 fields so a sub-row's gate cell says why a person
 	// merges it, as the top-level row would (hivecommons/hive#14658).

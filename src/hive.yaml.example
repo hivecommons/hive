@@ -525,6 +525,8 @@ governor:
       #   after_offline: 15m            # default 15m; registered relay offline, measured from the later
       #                                 # of its last heartbeat and the first stage/072 nudge
       #   after_unregistered: 15m       # default 15m; no contributor profile, wait after the nudge with no new head
+      #   rebase_attempt_timeout: 15m   # default 15m; a fixer rebase attempt with no push by then counts as failed;
+      #                                 # once attempts are spent an in-place adoption re-homes to a superseding PR
       #   supersede:
       #     close_first: true           # default true; close the original (hive/superseded, one note naming the
       #                                 # copy) in the pass that opens the copy; reopened if the copy fails.

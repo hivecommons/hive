@@ -744,3 +744,68 @@ func TestSignalContextIsCancellable(t *testing.T) {
 	stop()
 	<-ctx.Done()
 }
+
+// seqRuntime serves the ring buffer by offset, like agent.Manager.
+type seqRuntime struct {
+	crux.Runtime
+	buf *crux.RingBuffer
+}
+
+func (s *seqRuntime) GetBufferSince(_ string, seq uint64) ([]string, uint64, error) {
+	lines, next := s.buf.Since(seq)
+	return lines, next, nil
+}
+
+// streamOutput runs stream over rt, ticking once per step (each step runs
+// before its tick), and returns what was printed.
+func streamOutput(t *testing.T, rt crux.Runtime, steps ...func()) []string {
+	t.Helper()
+	h := newHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		h.env.stream(ctx, rt, "alpha", time.Hour)
+		close(done)
+	}()
+	for _, step := range steps {
+		step()
+		h.ticks <- time.Time{}
+	}
+	// The unbuffered tick proves the previous poll finished.
+	h.ticks <- time.Time{}
+	cancel()
+	<-done
+	return strings.Fields(h.stdout.String())
+}
+
+func TestStreamByOffsetRepeatedLines(t *testing.T) {
+	buf := crux.NewRingBuffer(500)
+	rt := &seqRuntime{buf: buf}
+	got := streamOutput(t, rt,
+		func() {
+			for range streamWindow {
+				buf.Write("x")
+			}
+		},
+		func() { buf.Write("x") },
+	)
+	if len(got) != streamWindow+1 {
+		t.Fatalf("printed %d lines, want %d", len(got), streamWindow+1)
+	}
+}
+
+func TestStreamByOffsetBurst(t *testing.T) {
+	buf := crux.NewRingBuffer(1000)
+	rt := &seqRuntime{buf: buf}
+	got := streamOutput(t, rt,
+		func() { buf.Write("first") },
+		func() {
+			for i := range 3 * streamWindow {
+				buf.Write(fmt.Sprintf("l%d", i))
+			}
+		},
+	)
+	if len(got) != 1+3*streamWindow || got[1] != "l0" || got[len(got)-1] != fmt.Sprintf("l%d", 3*streamWindow-1) {
+		t.Fatalf("printed %d lines, first/last %q/%q", len(got), got[1], got[len(got)-1])
+	}
+}

@@ -54,8 +54,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// surface the dashboard holds instead of *agent.Manager; pkg/agent stays
 	// for the audit, trailer, provider-status and agent-mode helpers the
 	// Runtime does not cover, and leaves when those move behind the boundary
-	// (hivecommons/hive#13536).
-	const maxDashboardInternalImports = 56
+	// (hivecommons/hive#13536), plus pkg/hubactivity, the leaf wire contract
+	// (ceilings, urgency order, sanitiser) the spoke's heartbeat activity
+	// digest is built against from the dashboard's own stage tracker
+	// (hivecommons/hive#15963).
+	const maxDashboardInternalImports = 57
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

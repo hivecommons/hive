@@ -1,0 +1,1 @@
+- crux/pushbroker: trailing-blank-line normalisation no longer silently re-tracks a touched path the agent had staged for deletion (`git rm --cached`); the staged deletion is put back after the amend ([#16198](https://github.com/hivecommons/hive/issues/16198)).

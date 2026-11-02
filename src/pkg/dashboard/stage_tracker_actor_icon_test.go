@@ -8,7 +8,7 @@ import (
 // The actor icon on a lit stage pill comes from the server's stage_actor
 // kind, never from a guess on the login: hive → honeycomb, clanker → robot,
 // human → the same person glyph "Needs human decision" uses, bot → cog,
-// none → no icon and a tooltip that says nobody is on it and why
+// none → no icon; external PR activity remains unknown
 // (hivecommons/docs#500 drew "Fixing" with no icon and nobody fixing).
 func stageTrackerActorIconJS(t *testing.T, html string) string {
 	t.Helper()
@@ -23,7 +23,7 @@ func TestStageTrackerActorIconKindsJS(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+stageTrackerRowsFixtureJS+`
 const actorSvg = (html) => (/<svg class="ham-ico ham-actor-ico"[^>]*aria-label="([^"]*)"[^>]*>([\s\S]*?)<\/svg>/.exec(strip(html)) || []);
-const detour = (html) => (/<span class="ham-detour">([^<]*)<\/span>/.exec(strip(html)) || [])[1];
+const detour = (html) => (/<span class="ham-detour(?: ham-has-holder)?">([^<]*)</.exec(strip(html)) || [])[1];
 const litTitle = (html) => (/<li class="ham-seg active[^"]*"[^>]*title="([^"]*)"/.exec(strip(html)) || [])[1] || '';
 const since = new Date(now - 10 * 3600000).toISOString();
 const pr = (n, extra) => Object.assign({ repo: 'hivecommons/docs', number: n, kind: 'pr', title: 'docs: resync', url: 'https://x/' + n, stage: 70, stage_since: since, caption: 'Fixing', author: 'alice', author_kind: 'human' }, extra || {});
@@ -58,12 +58,19 @@ assert.strictEqual(detour(row), 'Conflicting · bot PR', 'nobody is fixing: the 
 assert.ok(litTitle(row).includes('Next move: bot @github-actions[bot] — bot-authored PR'), litTitle(row));
 assert.ok(text(row).includes('Conflicting · bot PR'), 'the compact caption carries the same words: ' + text(row));
 
-// none → no icon; the tooltip says nobody is on it and why.
+// none is not abandonment evidence for an author-owned external PR.
 row = stageTrackerRowHtml(pr(504, { author_kind: '', stage_actor: { kind: 'none', why: 'the PR is red and no agent or author is on it' } }), stages, ctx);
-assert.strictEqual(actorSvg(row).length, 0, 'no actor icon when nobody is working: ' + strip(row));
-assert.strictEqual(detour(row), 'Red · nobody on it');
-assert.ok(litTitle(row).includes('no one is working on this right now — the PR is red and no agent or author is on it'), litTitle(row));
-assert.ok(tooltip(row).includes('no one is working on this right now — the PR is red'), 'row tooltip too: ' + tooltip(row));
+assert.strictEqual(actorSvg(row).length, 0, 'no invented live actor: ' + strip(row));
+assert.strictEqual(detour(row), 'CI failing · author-owned');
+assert.ok(litTitle(row).includes('Author-owned PR @alice — current work activity is unknown'), litTitle(row));
+assert.ok(!tooltip(row).includes('no one is working'), tooltip(row));
+row = stageTrackerRowHtml(pr(504, { author:'', author_kind:'', stage_actor:{kind:'none'} }),stages,ctx);
+assert.strictEqual(detour(row),'CI failing · owner unknown');
+assert.ok(litTitle(row).includes('ownership and current work activity are unknown'));
+row = stageTrackerRowHtml(pr(504, {author:'',author_kind:'',stage_actor:{kind:'none'},
+  claimant:{kind:'person',login:'recorded-owner',source:'assignee'}}),stages,ctx);
+assert.strictEqual(detour(row),'CI failing · owner recorded');
+assert.ok(litTitle(row).includes('Recorded PR owner @recorded-owner — current work activity is unknown'));
 
 // No stage_actor (older server): the stage-table heuristic still applies and the word stays Fixing.
 row = stageTrackerRowHtml(pr(505, { author_kind: 'clanker' }), stages, ctx);
@@ -75,7 +82,7 @@ assert.ok(litTitle(row).includes(' · Next move: clanker'), litTitle(row));
 row = stageTrackerRowHtml(pr(506, { stage: 50, caption: 'CI running', stage_actor: { kind: 'none', why: 'CI is still running' } }), stages, ctx);
 assert.strictEqual(actorSvg(row).length, 0, strip(row));
 assert.ok(strip(row).includes('<span class="ham-seg-t">CI / Review</span>'), 'a path column keeps its name');
-assert.ok(litTitle(row).includes(STAGE_TRACKER_NOBODY_LEAD + ' — CI is still running'));
+assert.ok(litTitle(row).includes('Author-owned PR @alice — current work activity is unknown'));
 
 // An issue riding its one covering PR takes the PR's actor.
 const lp = { number: 500, title: 'docs: resync', url: 'https://x/500', author: 'github-actions[bot]', author_kind: '', stage: 70, stage_since: since, modifiers: ['needs-rebase'], stage_actor: { kind: 'bot', login: 'github-actions[bot]', why: botWhy } };
@@ -86,12 +93,36 @@ assert.strictEqual(detour(row), 'Conflicting · bot PR');
 // Sub-rows carry their own actor: one with an agent, one with nobody.
 row = stageTrackerRowHtml({ repo: 'hivecommons/docs', number: 497, kind: 'issue', title: 'Two', url: 'https://x/497', stage: 40, stage_since: since, linked_prs: [
   Object.assign({}, lp, { number: 510, stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer is on it' } }),
-  Object.assign({}, lp, { number: 511, modifiers: [], stage_actor: { kind: 'none', why: 'no agent is on it' } }),
+  Object.assign({}, lp, { number: 511, author:'hive-bot', author_kind:'hive', modifiers: [], stage_actor: { kind: 'none', why: 'no agent is on it' } }),
 ] }, stages, ctx);
 const subRows = subs(row);
 assert.strictEqual(subRows.length, 2);
 assert.ok(subRows[0].includes('aria-label="Next move: hive"') && subRows[0].includes('<span class="ham-detour">Fixing</span>'), subRows[0]);
 assert.ok(!subRows[1].includes('ham-actor-ico') && subRows[1].includes('<span class="ham-detour">Red · nobody on it</span>') && subRows[1].includes(STAGE_TRACKER_NOBODY_LEAD + ' — no agent is on it'), subRows[1]);
+const externalLP={...lp,author:'clubanderson',author_kind:'',modifiers:[],stage_actor:{kind:'none',why:'author kind unknown'}};
+row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',linked_prs:[externalLP]},stages,ctx);
+assert.strictEqual(detour(row),'CI failing · author-owned');
+assert.ok(litTitle(row).includes('Author-owned PR @clubanderson'),litTitle(row));
+assert.ok(!litTitle(row).includes('@issue-filer'));
+for(const kind of ['human','hive']){
+  row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',author_kind:kind,
+    linked_prs:[{...externalLP,author:''}]},stages,ctx);
+  assert.strictEqual(detour(row),'CI failing · owner unknown','an unknown inline PR author never inherits the issue filer');
+  assert.ok(litTitle(row).includes('ownership and current work activity are unknown'),litTitle(row));
+  assert.ok(!litTitle(row).includes('@issue-filer'),litTitle(row));
+}
+row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',
+  claimant:{kind:'person',login:'issue-holder',source:'assignee'},linked_prs:[{...externalLP,author:'',
+    claimant:{kind:'person',login:'pr-holder',source:'assignee'}}]},stages,ctx);
+assert.strictEqual(detour(row),'CI failing · owner recorded');
+assert.ok(litTitle(row).includes('Recorded PR owner @pr-holder'),litTitle(row));
+assert.ok(!litTitle(row).includes('@issue-holder'),litTitle(row));
+row=stageTrackerRowHtml({repo:'hivecommons/docs',number:601,kind:'issue',stage:40,linked_prs:[externalLP,{...externalLP,number:512}]},stages,ctx);
+for(const sub of subs(row)){
+  assert.ok(sub.includes('CI failing · author-owned'),sub);
+  assert.ok(sub.includes('current work activity is unknown'),sub);
+  assert.ok(!sub.includes('nobody on it'),sub);
+}
 `)
 }
 

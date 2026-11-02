@@ -23,7 +23,7 @@ on:
     # src/**, so this is the same rule applied to the docs outside src/.
     # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
     # release PRs touch only these; the required contexts must report — #10795
-    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/**', '.github/workflows/**']
+    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/**', '.github/workflows/**', '.github/integration-candidate.template.yml']
   pull_request:
     branches: [v4, v5, v6]
     # Required contexts from this workflow must appear on every PR head. Keep
@@ -108,7 +108,7 @@ jobs:
           run=false
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*)
+              CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*|.github/integration-candidate.template.yml)
                 run=true
                 ;;
             esac
@@ -148,7 +148,9 @@ jobs:
 
       - name: Check readonly candidate CI generation
         working-directory: .
-        run: python3 .github/scripts/generate-integration-ci.py --check
+        run: |
+          python3 .github/scripts/generate-integration-ci.py --check
+          python3 .github/scripts/test-generate-integration-ci.py
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -912,7 +914,7 @@ jobs:
 
       - name: Integration candidate materializer contracts
         working-directory: .
-        run: node --test .github/scripts/integration-materialize.test.cjs
+        run: node --test .github/scripts/integration-*.test.cjs
 
       # bin/contributor-relay.js used to carry the source under a misleading
       # .sh name (kubestellar/hive#6429), which needed a copy trick for

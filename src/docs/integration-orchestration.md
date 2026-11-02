@@ -5,6 +5,79 @@ and GitHub's native queue. It is not a merge engine and does not activate either
 authority. Every existing CI, review, trust, DCO, coverage, soak, hold and
 current-base guard remains authoritative. Nothing deploys automatically.
 
+## Trusted candidate required-context profile
+
+The candidate entry workflow is generated from
+`.github/integration-candidate.template.yml` and the existing technical CI
+sources by `.github/scripts/generate-integration-ci.py`. Its six technical
+required contexts execute the actual top-level build, lint, test, coverage,
+gosec and govulncheck jobs, with their full prerequisite DAG. They are not
+aliases of reusable-workflow checks or copied author-head statuses. Every
+technical job, including jobs using `always()`, requires successful immutable
+subject validation before execution. Candidate shard cancellation cannot count
+as complete testing.
+
+The five governance contexts run trusted read-only policy:
+
+* `gate` validates the immutable tag, repository, ordered parents/trees,
+  workflow closure and exact shared single-attempt owner. Candidates cannot
+  publish release images. This gate is **not** an ARM/Docker build receipt.
+* `DCO` validates the full introduced commit range, without bot/waiver
+  shortcuts, and explicitly checks each generated merge's own author signoff.
+* `changelog-fragment-guard` validates every member separately against the
+  immutable base. One member's fragment cannot excuse another member. Combined
+  citation checks still apply; candidate validation never autofixes, pushes
+  or comments.
+* `verify PR contents` runs a read-only adaptation of the pure title/type and
+  issue-reference rules in `kubernetes-sigs/kubebuilder-release-tools` commit
+  `012269a88fa4c034a0acf1ba84c26b195c0dbab4` (v0.4.3, Apache-2.0). It does not
+  execute the advisory image wrapper, grant its checks-writing permissions,
+  silently accept an unavailable image, or impersonate the DCO App. Unsupported
+  titles, including prefixes not accepted by that immutable policy, fail
+  explicitly rather than nominally succeeding.
+* `Sign-off survives the squash` validates the original exact member heads and
+  authors under their reviewed merge policy. Bounded read-only forge GraphQL
+  batches resolve original commit-author identities before invoking the pinned
+  checker; an unavailable/unlinked author cannot use its legacy degraded-success
+  fallback. That context stops explicitly until truthful attribution is
+  available. The candidate itself is a tested merge object, not a fabricated
+  bot-authored squash PR.
+
+The verifier's enrolled `.github` closure contains a literal pin to the
+`src/scripts` tree, not merely a comparison against caller-supplied
+`preparedBy.sourceSHA`. Both the declared source and checkout must match that
+pin before any checker executes. Helper changes require a deliberately reviewed
+pin/profile update; choosing the candidate itself as a new source cannot
+authorize changed verifier code.
+
+Candidate receipt schema 2 signs the actual job/check/App/suite identities and
+conclusions for all eleven contexts, plus the exact subject/run/attempt and a
+digest of member author, head/ref, base identity, draft, title, body and labels.
+Only the isolated OIDC finalizer has `id-token: write`; technical/control jobs
+have no write authority. Missing, duplicate, skipped, foreign-head or
+wrong-producer jobs cannot become passing candidate proof. The observer
+verifies those physical identities against actual Actions/check observations;
+the live promotion guard re-reads current member metadata. State/base/time
+changes from a documented exact-prefix merge do not themselves invalidate
+otherwise identical metadata. Historical schema 1 remains replayable, but
+cannot satisfy the new literal protected-context profile.
+Metadata drift invalidates proof; it does not authorize an automatic rerun or
+steal an existing dispatch claim. Existing bounded owner-repair/authority rules
+still apply.
+
+This source profile does **not** enable the producer policy, create authority,
+change GitHub protection or App permissions, dispatch candidates, deploy a
+runtime, or replace isolated protected-promotion qualification. A bounded
+read on 2026-10-31 found no resolved v5 rulesets and all eleven classic required
+contexts unbound to a specific App; that user-credential observation is not
+proof that the live installation App can promote. Any additional required
+image/architecture or producer contract must be genuinely qualified, not
+inferred from a check name. Execution remains OFF until separately authorized.
+The composed DAG includes prerequisite/matrix jobs beyond the eleven context
+names. Qualification must measure that actual fanout and assigned-runner cost
+against explicitly configured admission bounds; eleven names are not an
+eleven-job capacity or throughput claim.
+
 ## Exact protected-promotion protocol
 
 The authoring layer remains distinct from separately opted-in Hive-owned

@@ -52,12 +52,14 @@ type IntegrationCandidateObservation struct {
 }
 
 type integrationCandidateReceipt struct {
-	Schema     int                                    `json:"schema"`
-	Protocol   string                                 `json:"protocol"`
-	Subject    forgestate.IntegrationCandidateSubject `json:"subject"`
-	RunID      string                                 `json:"runID"`
-	RunAttempt string                                 `json:"runAttempt"`
-	Outcomes   struct {
+	Schema         int                                             `json:"schema"`
+	Protocol       string                                          `json:"protocol"`
+	Subject        forgestate.IntegrationCandidateSubject          `json:"subject"`
+	RunID          string                                          `json:"runID"`
+	RunAttempt     string                                          `json:"runAttempt"`
+	MetadataDigest string                                          `json:"metadataDigest,omitempty"`
+	Contexts       map[string]forgestate.IntegrationContextReceipt `json:"contexts,omitempty"`
+	Outcomes       struct {
 		CI       string `json:"ci"`
 		Tests    string `json:"tests"`
 		Security string `json:"security"`
@@ -240,10 +242,35 @@ func (c *Client) ReadIntegrationCandidateObservation(ctx context.Context, expect
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return out, fmt.Errorf("candidate receipt has trailing data")
 	}
-	if receipt.Schema != 1 || receipt.Protocol != "integration-producer-receipt-v1" ||
+	if !(receipt.Schema == 1 && receipt.Protocol == "integration-producer-receipt-v1" ||
+		receipt.Schema == 2 && receipt.Protocol == "integration-producer-receipt-v2") ||
 		receipt.RunID != strconv.FormatInt(expected.RunID, 10) ||
 		receipt.RunAttempt != strconv.Itoa(expected.Attempt) || !receipt.Subject.SameCore(expected.Subject) {
 		return out, fmt.Errorf("receipt does not bind the enrolled exact immutable subject and attempt")
+	}
+	for _, name := range expected.RequiredJobs {
+		for _, required := range forgestate.IntegrationRequiredContexts() {
+			if name == required && receipt.Schema != 2 {
+				return out, fmt.Errorf("protected candidate context profile requires v2 signed actual-job governance")
+			}
+		}
+	}
+	if err := bindCandidateContextReceipt(receipt, &run, jobs.Jobs, checks.CheckRuns, expected.CheckAppID); err != nil {
+		return out, err
+	}
+	if receipt.Schema == 2 {
+		for _, name := range forgestate.IntegrationRequiredContexts() {
+			id := receipt.Contexts[name].CheckID
+			exists := false
+			for _, retained := range proof.CheckIDs {
+				if retained == id {
+					exists = true
+				}
+			}
+			if !exists {
+				proof.CheckIDs = append(proof.CheckIDs, id)
+			}
+		}
 	}
 	digest := sha256.Sum256(payload)
 	out.Identity, err = verifier.Verify(ctx, token, payload, IntegrationProducerBinding{
@@ -271,7 +298,16 @@ func (c *Client) ReadIntegrationCandidateObservation(ctx context.Context, expect
 	out.ArtifactID, out.ArtifactDigest, out.Payload, out.Token = artifactID, artifactDigest, payload, token
 	out.CheckIDs = proof.CheckIDs
 	out.State, out.Detail = "rejected", "actual technical workflow/jobs rejected; provenance alone is not green"
-	if proof.Passed && receipt.Outcomes.CI == "success" && receipt.Outcomes.Tests == "success" && receipt.Outcomes.Security == "success" {
+	passed := receipt.Schema == 1 && receipt.Outcomes.CI == "success" && receipt.Outcomes.Tests == "success" && receipt.Outcomes.Security == "success"
+	if receipt.Schema == 2 {
+		passed = forgestate.IntegrationContextsPassed(receipt.Contexts, receipt.MetadataDigest)
+		if passed {
+			if err := c.VerifyIntegrationCandidateGovernance(ctx, expected.Subject, payload); err != nil {
+				return out, err
+			}
+		}
+	}
+	if proof.Passed && passed {
 		out.State, out.Detail = "passed", "exact candidate technical proof verified; author review and live promotion gates remain separate"
 	}
 	return out, nil

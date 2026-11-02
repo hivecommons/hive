@@ -74,7 +74,9 @@ func TestBobConfigResolveAPIKey(t *testing.T) {
 
 			c := &BobConfig{APIKeyEnv: tc.apiKeyEnv}
 			if tc.fileContents != "" {
-				path := filepath.Join(t.TempDir(), "bob_api_key")
+				dir := t.TempDir()
+				defer SetSecretFileRootsForTest(dir)()
+				path := filepath.Join(dir, "bob_api_key")
 				if err := os.WriteFile(path, []byte(tc.fileContents), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -106,6 +108,40 @@ func TestBobConfigResolveAPIKey(t *testing.T) {
 				t.Error("ResolveAPIKeySource() must not expose the key value")
 			}
 		})
+	}
+}
+
+// TestBobConfigResolveAPIKeyRefusesUnmanagedFile checks that Bob applies the
+// same managed-secrets-dir gate as the LiteLLM, gateway and inference
+// resolvers: a readable api_key_file outside the managed dirs is skipped.
+func TestBobConfigResolveAPIKeyRefusesUnmanagedFile(t *testing.T) {
+	t.Setenv(DefaultBobAPIKeyEnv, "")
+	managed := filepath.Join(t.TempDir(), "secrets")
+	if err := os.MkdirAll(managed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer SetSecretFileRootsForTest(managed)()
+
+	outside := filepath.Join(t.TempDir(), "bob_api_key")
+	if err := os.WriteFile(outside, []byte("outside-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &BobConfig{APIKeyFile: outside}
+	if got := c.ResolveAPIKey(); got != "" {
+		t.Errorf("ResolveAPIKey() = %q, want empty for a file outside the managed dirs", got)
+	}
+	if got := c.ResolveAPIKeySource(); got != "" {
+		t.Errorf("ResolveAPIKeySource() = %q, want empty", got)
+	}
+
+	inside := filepath.Join(managed, "bob_api_key")
+	if err := os.WriteFile(inside, []byte("inside-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.APIKeyFile = inside
+	if got := c.ResolveAPIKey(); got != "inside-key" {
+		t.Errorf("ResolveAPIKey() = %q, want inside-key", got)
 	}
 }
 

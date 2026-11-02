@@ -752,6 +752,13 @@ var benignSubstrings = []string{
 	// every agent warn once in the same boot — an operator configuration
 	// condition, not a repeated runtime defect (hivecommons/hive#14020).
 	"copilot cli substituted the configured model",
+	// The inference translator (src/crux/proxy/github_proxy_inference.go)
+	// refuses every request from an agent with neither an agent model nor a
+	// gateway default_model, and names the remedy on the agent's dashboard
+	// LastError. Each refused call warns, so an unconfigured agent bursts —
+	// an operator configuration condition, not an upstream inference defect
+	// (hivecommons/hive#16170).
+	"inference model not configured; request refused",
 	// The scheduler (src/pkg/scheduler/kick_priming.go) warns when the primer
 	// render exceeds knowledge.primer.max_bytes (#12124). The render already
 	// carries its own truncation marker. A hive whose vault outgrows the cap
@@ -876,6 +883,18 @@ func IsGitHubUpstreamUnavailable(s string) bool {
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// A moved held branch requires fresh review: this is the hold guard
+	// enforcing merge safety, not a runtime defect (#16100). Match only the
+	// successful refusal; provenance, comment and re-hold failures stay reportable.
+	if strings.TrimSpace(m) == "hold guard: branch moved while hold-gated — blocking auto-merge, requiring fresh review" {
+		return true
+	}
+	// A sentinel finding flags a PR for a human: the sweep working as designed,
+	// not a runtime defect (#16112). Match only the finding notice; "sentinel
+	// sweep failed" and "sentinel sweep: PR skipped" stay reportable.
+	if strings.TrimSpace(m) == "sentinel alert" {
+		return true
+	}
 	// A CI gate refusal is the merge safety policy working as designed, even
 	// when a required check remains unsuccessful across repeated polls (#14364).
 	// Keep the operator warning, but do not turn it into a runtime defect.

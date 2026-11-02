@@ -118,8 +118,9 @@ type Server struct {
 
 	// matrix is the dashboard.matrix line source (matrix_source.go); nil
 	// until MatrixObserver is called with an active config.
-	matrixMu sync.Mutex
-	matrix   *matrixSource
+	matrixMu    sync.Mutex
+	matrix      *matrixSource
+	matrixNudge stageTrackerNudger
 
 	port       int
 	authToken  string
@@ -1553,6 +1554,7 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		terminalHandoffs: make(map[string]terminalHandoff),
 		cliModels:        newCLIModelCache(),
 		startedAt:        time.Now(),
+		matrixNudge:      stageTrackerNudger{interval: matrixLinesNudgeInterval},
 	}
 	s.registerCoreRoutes()
 	// A merge attempt beginning or ending is a tracker change the next poll
@@ -3717,7 +3719,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot()}
+	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active()}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
@@ -3738,6 +3740,10 @@ type statusWithWebhooks struct {
 	// signals, the last one, webhook-triggered kicks and unmatched heads.
 	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
 	*EvalLoopStatus
+	// MatrixEnabled reports whether the Matrix block is active (enabled with
+	// at least one repo, see config.MatrixConfig.Active) so the header shows
+	// the Matrix tab only on hives whose /api/matrix/lines will serve it.
+	MatrixEnabled bool `json:"matrixEnabled"`
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
 	// machine (scheduled / draining / pulling / … / missed) with the drain
 	// countdown, derived at serve time (#14856). Absent on a hive the hub

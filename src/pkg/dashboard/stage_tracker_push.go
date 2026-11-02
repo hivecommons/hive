@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -27,6 +28,8 @@ const (
 	// pushStatePushed: a head landed; CI and the re-review for it are
 	// still running. `since` is when it landed.
 	pushStatePushed = "pushed"
+	// No new head: the canonical observation sees checks pending again.
+	pushStateChecking = "checking"
 
 	// pushNextCI / pushNextReReview name what the push queued.
 	pushNextCI       = "ci"
@@ -35,16 +38,17 @@ const (
 
 // StageTrackerPush is the `push` field of a PR row in the CI / Review column.
 type StageTrackerPush struct {
-	// State is waiting (no push since the wait began) or pushed.
+	// State is waiting, pushed, or checking (same-head CI pending again).
 	State string `json:"state"`
 	// Login is the PR author: whose push the hive waits on, or who pushed.
 	Login string `json:"login,omitempty"`
 	// Since is when the state began: the wait's start, or the push.
 	Since *time.Time `json:"since,omitempty"`
-	// Sha is the pushed head; URL links to the commit on GitHub.
+	// Sha is the observed head; checking does not imply a new push.
+	// URL links to the pushed commit on GitHub.
 	Sha string `json:"sha,omitempty"`
 	URL string `json:"url,omitempty"`
-	// Next is what the push queued: ci or re-review.
+	// Next is the outstanding CI / re-review work, not readiness proof.
 	Next string `json:"next,omitempty"`
 	// Stale is set on a wait older than dashboard.stage_tracker.waiting_push_stale_h.
 	Stale bool `json:"stale,omitempty"`
@@ -72,6 +76,20 @@ func stageTrackerPushFor(it StageTrackerItem, stage stagelabels.Stage, rec stage
 			Next:  stageTrackerPushNext(stage, rec.Reason),
 		}
 	}
+	if stageTrackerCIRetryObserved(it, stage, rec) {
+		return &StageTrackerPush{State: pushStateChecking, Sha: it.Head, Next: pushNextCI}
+	}
+	if stageTrackerAuthorPushSatisfied(it, stage, rec) {
+		// The nudge names the old head even when the webhook push ledger
+		// has not caught up. A PR update time is not a known push time.
+		return &StageTrackerPush{
+			State: pushStatePushed,
+			Login: login,
+			Sha:   it.Head,
+			URL:   stageTrackerCommitURL(it, it.Head),
+			Next:  stageTrackerPushNext(stage, rec.Reason),
+		}
+	}
 	if !stage.WaitsOnPush() || rec.WaitingPushSince.IsZero() {
 		return nil
 	}
@@ -85,6 +103,20 @@ func stageTrackerPushFor(it StageTrackerItem, stage stagelabels.Stage, rec stage
 		Since: &since,
 		Stale: staleAfter > 0 && now.Sub(since) >= staleAfter,
 	}
+}
+
+func stageTrackerCIRetryObserved(it StageTrackerItem, stage stagelabels.Stage, rec stagelabels.Record) bool {
+	if !stage.WaitsOnPush() || !it.ciChecking || it.ciRed || it.Head == "" || !strings.EqualFold(rec.ActivityHead, it.Head) ||
+		(stageengine.ClassifyCIReason(rec.Reason) != stageengine.CIReasonRed && rec.Reason != "ci-red") {
+		return false
+	}
+	for _, m := range it.Modifiers {
+		switch m {
+		case modNeedsRebase, modNeedsHuman, modNeedsDecision, modUnauthorized, modHold, modBlocked, modDraft:
+			return false
+		}
+	}
+	return true
 }
 
 // stageTrackerPushSettling reports whether CI or the re-review for the
@@ -135,8 +167,17 @@ func stageTrackerCommitURL(it StageTrackerItem, sha string) string {
 // stageTrackerPushCaption is the hive line for a pushed row: "push seen 2m
 // ago → CI/re-review queued". "" when the row carries no push.
 func stageTrackerPushCaption(p *StageTrackerPush, now time.Time) string {
-	if p == nil || p.State != pushStatePushed || p.Since == nil {
+	if p != nil && p.State == pushStateChecking {
+		return "checks pending again on the current head — no new push requested"
+	}
+	if p == nil || p.State != pushStatePushed {
 		return ""
+	}
+	if p.Since == nil {
+		if p.Next == pushNextReReview {
+			return "new head observed → re-review pending"
+		}
+		return "new head observed → CI pending"
 	}
 	ago := shortDuration(now.Sub(*p.Since))
 	if ago == "0s" {
@@ -148,6 +189,9 @@ func stageTrackerPushCaption(p *StageTrackerPush, now time.Time) string {
 // stageTrackerPushWhy is the next-move line for a pushed row: who pushed
 // and what the hive runs on the new head.
 func stageTrackerPushWhy(p *StageTrackerPush) string {
+	if p.State == pushStateChecking {
+		return "checks pending again on " + shortSHA(p.Sha) + " — no new push requested"
+	}
 	who := "the author"
 	if p.Login != "" {
 		who = "@" + p.Login
@@ -178,9 +222,21 @@ func stageTrackerPushOnHead(it StageTrackerItem, rec stagelabels.Record) bool {
 	return it.Head == "" || strings.EqualFold(it.Head, rec.LastPushSha) || strings.EqualFold(it.Head, rec.ActivityHead)
 }
 
-// stageTrackerPushPending reports whether the row's `push` field says a
-// head landed that CI / the re-review have not settled: the ball is with
-// the hive, so the row asks nothing of a person (hivecommons/hive#16021).
+// A nudge's old-head request is satisfied before a push webhook or a stage
+// relabel necessarily lands. A newly evaluated author hold starts its own wait;
+// that current-head request must not be released by an older nudge.
+func stageTrackerAuthorPushSatisfied(it StageTrackerItem, stage stagelabels.Stage, rec stagelabels.Record) bool {
+	if it.Kind != "pr" || !stage.WaitsOnPush() || it.Head == "" || rec.NudgeHead == "" || strings.EqualFold(it.Head, rec.NudgeHead) {
+		return false
+	}
+	if strings.EqualFold(rec.ActivityHead, it.Head) && !rec.WaitingOnHive && rec.WaitingPushSince.After(rec.NudgeStart()) {
+		return false
+	}
+	return true
+}
+
+// stageTrackerPushPending reports a head awaiting CI/re-review, or observed
+// same-head checks running again without requiring a new push.
 func stageTrackerPushPending(it StageTrackerItem) bool {
-	return it.Push != nil && it.Push.State == pushStatePushed
+	return it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking)
 }
