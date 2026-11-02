@@ -104,7 +104,7 @@ func (d attentionDelivery) Post(ctx context.Context, e attention.Episode, body s
 	if d.c.attentionConfig == nil || d.c.attentionConfig().Owner(e.Key.Repo) != d.c.attentionHiveID {
 		return writeback.ErrSuppressed
 	}
-	return d.c.CreateIssueComment(ctx, e.Key.Repo, e.Key.Item, body)
+	return d.c.CreateIssueComment(ctx, e.Key.Repo, e.Key.Item, body) // writeback:gated — live policy and admitter rechecked above
 }
 func attentionStatus(episodes []attention.Episode) string {
 	sort.Slice(episodes, func(i, j int) bool { return episodes[i].Key.Hash() < episodes[j].Key.Hash() })
