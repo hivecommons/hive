@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -3595,6 +3596,8 @@ type GitHubConfig struct {
 	// the author and every watcher; editing an existing comment does not.
 	// See GitHubNotificationsConfig.
 	Notifications GitHubNotificationsConfig `yaml:"notifications,omitempty" json:"notifications,omitempty"`
+	// Attention is an opt-in, single-admitter condition episode ledger.
+	Attention attention.Config `yaml:"attention,omitempty" json:"attention,omitempty"`
 	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
 	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
 	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be

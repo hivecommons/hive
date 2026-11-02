@@ -1,0 +1,1 @@
+- Add an opt-in, per-repo single-admitter attention primitive with durable condition episodes, quiet recovery, and uncertain-POST reconciliation; existing quiet-mode writers and review/hold behavior remain unchanged.
