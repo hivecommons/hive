@@ -189,12 +189,13 @@ type CompetingPR struct {
 
 // Input is everything the delegate reads about one parked item.
 type Input struct {
-	Repo   string
-	Number int
-	Kind   Kind
-	Title  string
-	Body   string
-	Labels []string
+	Repo    string
+	Number  int
+	Kind    Kind
+	Title   string
+	Body    string
+	HeadSHA string
+	Labels  []string
 	// Reasons are the park reasons; Question is the reviewer's decision
 	// question, when one was recorded.
 	Reasons  []string

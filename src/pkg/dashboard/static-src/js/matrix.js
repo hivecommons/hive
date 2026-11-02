@@ -54,7 +54,7 @@
     labels.append(source, freshness, pausedLabel);
     var ctx = canvas.getContext('2d');
     var motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    var lines = [], lastSeq = 0, lastAt = 0, startedAt = Date.now();
+    var lines = [], lastSeq = 0, lastAt = 0, lastIngestAt = 0, startedAt = Date.now();
     var enabled = false, manualPause = false, loading = false, pending = false;
     var frame = 0, previous = 0, page = 0, pageTimer = 0, drops = [];
     var atlas = document.createElement('canvas'), glyphs = new Map();
@@ -85,15 +85,22 @@
     function resetText(){ queue = []; tabs = []; typing = null; termRows = []; termHead = ''; termClock = 0; }
     function clearContent(message){
       enabled = false; lines = []; drops = []; glyphs.clear(); resetText();
-      lastSeq = 0; lastAt = 0;
+      lastSeq = 0; lastAt = 0; lastIngestAt = 0;
       list.replaceChildren(); ctx.clearRect(0, 0, width, height);
       notice.textContent = message;
       sync();
     }
     function updateLabels(){
       var minutes = Math.floor(Math.max(0, Date.now() - (lastAt || startedAt)) / 60000);
-      freshness.textContent = minutes >= 10 ? 'stale · no new lines for ' + minutes + 'm' :
+      var text = minutes >= 10 ? 'stale · no new lines for ' + minutes + 'm' :
         (lastAt ? 'last line ' + (minutes ? minutes + 'm ago' : 'just now') : 'waiting for first line');
+      // When stale, say whether the hive is still looking: a recent ingest
+      // means nothing was pushed, an old one means the feed itself is behind.
+      if (minutes >= 10 && lastIngestAt) {
+        var ingestMinutes = Math.floor(Math.max(0, Date.now() - lastIngestAt) / 60000);
+        text += ' · last ingest ' + (ingestMinutes ? ingestMinutes + 'm ago' : 'just now');
+      }
+      freshness.textContent = text;
       pausedLabel.textContent = paused() ? 'paused' : 'p / Space to pause';
     }
     function caption(line){ return line.repo + '#' + line.pr + ' · ' + line.path; }
@@ -302,6 +309,8 @@
             lastAt = Number.isFinite(at) ? at : Date.now();
           }
           lastSeq = seq;
+          var ingestAt = Date.parse(data.last_ingest_at);
+          lastIngestAt = Number.isFinite(ingestAt) ? ingestAt : 0;
           lines = lines.concat(incoming).slice(-120);
           queue = queue.concat(incoming).slice(-120);
           enabled = true;

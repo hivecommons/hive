@@ -114,3 +114,45 @@ func (g AgentRuntimeGovernorConfig) ResolveLiteLLMRemoteRoute(backend, requested
 	}
 	return endpoint, model, LiteLLMRouteLegacyYAML
 }
+
+// DefaultInferenceModel is the model an inference-routed agent launches with
+// when its own config names none (agents[].model: "" or whitespace): the
+// default of whichever source would supply its endpoint.
+//
+//   - a named model gateway (backend == gateway name): that gateway's
+//     default_model;
+//   - the built-in "litellm" backend: the explicit litellm gateway's
+//     default_model when one is configured, else governor.litellm.default_model
+//     when the legacy block has an endpoint (env or yaml) or runs the local
+//     proxy;
+//   - anything else (vllm, llm-d, CLI backends, nothing configured): "".
+//
+// Until this existed governor.litellm.default_model was consumed only by the
+// proxy's outbound rewrite and the trajectory reviewer, never by the agent
+// launch command, so an empty agents[].model reached the CLI as a bare
+// `--model` (see ModelFlag). The value is returned verbatim — never
+// normalized — because it becomes the outbound OpenAI "model" field the
+// gateway checks for entitlement.
+func (g AgentRuntimeGovernorConfig) DefaultInferenceModel(backend string) string {
+	backend = strings.TrimSpace(backend)
+	if backend == "" {
+		return ""
+	}
+	if !IsInferenceBackend(backend) {
+		if gw := g.ResolveGateway(backend); gw != nil {
+			return strings.TrimSpace(gw.DefaultModel)
+		}
+		return ""
+	}
+	if backend != "litellm" {
+		return ""
+	}
+	if gw := g.ExplicitLiteLLMGateway(backend); gw != nil {
+		return strings.TrimSpace(gw.DefaultModel)
+	}
+	lc := g.LiteLLM
+	if lc.LocalProxy || strings.TrimSpace(lc.ResolveEndpoint()) != "" {
+		return strings.TrimSpace(lc.DefaultModel)
+	}
+	return ""
+}

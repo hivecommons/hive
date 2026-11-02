@@ -65,6 +65,20 @@ closing them.
    [#5814](https://github.com/hivecommons/hive/issues/5814); PR content
    verification must pull from the transferred `ghcr.io/hivecommons/pr-verifier`
    package instead of the retired `ghcr.io/kubestellar/pr-verifier` reference.
+   The current immutable `v1` mirror contains only `linux/arm64`, not a
+   multi-architecture index. The Hive verifier therefore uses native ARM64:
+   same-repository PRs may use the existing `HIVE_ARM64_RUNNER` override, while
+   forks always use GitHub-hosted `ubuntu-24.04-arm`. No general runner-pool
+   variable is changed. The workflow checks both runner and image platform
+   before executing the verifier. Its upstream v0.4.3 source is
+   `kubernetes-sigs/kubebuilder-release-tools` commit
+   `012269a88fa4c034a0acf1ba84c26b195c0dbab4`; the image provenance names
+   `kubestellar/infra`, and `hivecommons/infra` carries the mirrored consumer.
+   A future multi-architecture replacement needs publication under
+   `ghcr.io/hivecommons/pr-verifier`, verification of its platform manifests
+   and source version, then a reviewed immutable-digest update in Hive's
+   `.github/workflows/pr-verifier.yml` and the infra reusable consumer.
+   Do not substitute an unverified tag or make forks use self-hosted runners.
 6. **Hosted hub web domain** — In progress under
    [#5951](https://github.com/hivecommons/hive/issues/5951); the canonical hub
    is `https://hive.hivecommons.dev`, while `https://hive.kubestellar.io`
