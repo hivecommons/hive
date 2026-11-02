@@ -265,13 +265,15 @@ func evidenceFindingsByKey(v EvidenceView) map[string]string {
 			att += t.Attempted
 			blk += t.Blocked
 		}
-		if att == 0 {
-			out["writes"] = "No agent write attempts have been recorded by the guardrail proxy yet."
-		} else {
-			rate := float64(blk) / float64(att)
-			out["writes"] = fmt.Sprintf("Agents attempted %d writes to GitHub through the guardrail proxy and %d (%s) %s blocked; a blocked write never reached GitHub.",
-				att, blk, evidencePctText(&rate), evidencePlural(blk, "was", "were"))
+		status, rateText := "Enforcement not observed", evidenceDash
+		if blk > 0 {
+			status = "Enforcement demonstrated"
 		}
+		if att > 0 {
+			rate := float64(blk) / float64(att)
+			rateText = evidencePctText(&rate)
+		}
+		out["writes"] = fmt.Sprintf("%s — %d prohibited write(s) blocked; %d observed agent write attempts through the guardrail proxy (%s blocked). Counts do not rule out bypasses or false positives.", status, blk, att, rateText)
 	} else {
 		out["writes"] = ""
 	}

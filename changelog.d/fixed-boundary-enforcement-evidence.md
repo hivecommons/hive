@@ -1,0 +1,1 @@
+- Report boundary enforcement as demonstrated when observed writes were blocked, not a refusal-rate grade; keep zero, Sentinel detections, and coverage limitations informational.
