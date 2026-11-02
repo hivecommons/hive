@@ -1360,6 +1360,7 @@
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          if (id === 'accept-triage' && data.ok !== true) throw new Error(data.error || 'The server did not confirm the triage handoff');
           if (id === 'decide:close-issue' && data.status !== 'closed' && data.status !== 'refused') throw new Error(data.error || 'The server did not confirm that the issue closed');
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
           if (req.poll && !stageTrackerDelegatedDone(data)) {
