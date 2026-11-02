@@ -71,7 +71,7 @@ func (c *Engine) humanMergePathGate(ctx context.Context, displayRepo, owner, rep
 		return "", nil
 	}
 	c.info("automerge sweep held PR touching human-merge paths", "repo", displayRepo, "pr", number, "paths", matches, "config", hgithub.HumanMergePathsConfigKey)
-	if err := hgithub.HoldForHumanMergePaths(ctx, c.gh, owner, repo, number, matches); err != nil {
+	if err := hgithub.HoldForHumanMergePaths(ctx, c.gh, owner, repo, number, matches, pr.GetHead().GetSHA()); err != nil {
 		return autoMergeReasonHumanMergePath, err
 	}
 	return autoMergeReasonHumanMergePath, nil

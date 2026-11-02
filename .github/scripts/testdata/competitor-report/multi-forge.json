@@ -1,0 +1,31 @@
+{
+  "repository": "hivecommons/hive",
+  "default_branch": "v5",
+  "sha": "632a92bcd9574aaa2e167f29602ee3ec813bd696",
+  "files": {
+    "README.md": "# Hive\nSee dated benchmarks for outcomes.",
+    "LICENSE": "Apache License\nVersion 2.0, January 2004",
+    "src/pkg/forge/forge.go": "package forge\ntype Forge interface {\n    GetRepo() error\n}",
+    "src/pkg/forge/github_forge.go": "package forge\ntype GitHubForge struct{}",
+    "src/pkg/forge/gitlab_forge.go": "package forge\ntype GitLabForge struct{}",
+    "src/pkg/forge/gitea_forge.go": "package forge\n// Gitea and Forgejo share this adapter.\ntype GiteaForge struct{}",
+    "src/docs/integrations/forges.md": "# Forges: GitLab, Gitea and Forgejo\nGitHub, GitLab, and Gitea/Forgejo adapters exist.\nEscalation and hold writes select an adapter, but enumeration still starts from GitHub.\nAgent execution and proxy enforcement are not end-to-end non-GitHub.",
+    "src/cmd/hive/main_eval_cycle.go": "package main\nfunc cycle() {\n    fresh, err := ghClient.EnumerateActionable(enumCtx)\n}",
+    "src/crux/config/agent_runtime.go": "package config\nvar CLIBackends = []string{\"copilot\", \"codex\"}",
+    "src/docs/benchmarks/outcomes-2026-10.md": "# Outcome benchmark - 2026-10\nCost per merged PR: ≈$2.13 est.\nn=2869 merged, 2026-08-08 to 2026-10-27\nEstimated spend: $6124.75\nAn upper-bound, order-of-magnitude estimate; not current per-task billing."
+  },
+  "tree": [
+    "README.md",
+    "LICENSE",
+    "src/pkg/forge/forge.go",
+    "src/pkg/forge/github_forge.go",
+    "src/pkg/forge/gitlab_forge.go",
+    "src/pkg/forge/gitea_forge.go",
+    "src/docs/integrations/forges.md",
+    "src/cmd/hive/main_eval_cycle.go",
+    "src/crux/config/agent_runtime.go",
+    "src/docs/benchmarks/outcomes-2026-10.md"
+  ],
+  "work": [],
+  "prior_decisions": []
+}

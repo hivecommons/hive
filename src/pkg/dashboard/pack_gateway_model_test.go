@@ -447,3 +447,44 @@ func TestApplyPackUnownedCLIBackendsDoNotChooseGateway(t *testing.T) {
 		t.Errorf("reviewer moved onto %q with no gateway picked", got.Backend)
 	}
 }
+
+// TestApplyPackFollowsGatewayBackendOverrides covers the second #14678 reopen:
+// the operator's agents ran on LiteLLM through a live BackendOverride (replayed
+// from hive-state.json before the boot-time pack apply) while their config
+// backend was still the pack's copilot. The dashboard showed LiteLLM on every
+// card, but the pack read only the config backend, found no gateway, and kept
+// the L2 reviewer on copilot.
+func TestApplyPackFollowsGatewayBackendOverrides(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		reviewer *config.AgentConfig
+	}{
+		{"reviewer created by the level", nil},
+		{"pack-owned copilot reviewer repaired", &config.AgentConfig{
+			ID: "reviewer", Role: "reviewer", Enabled: true,
+			Backend: "copilot", BackendOwner: config.FieldOwnerPack,
+			Model: "claude-fable-5", ModelOwner: config.FieldOwnerPack,
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newFullServer(t)
+			for _, name := range []string{"scanner", "quality", "guide"} {
+				a := packCLIAgent(name)
+				srv.deps.Config.Agents[name] = a
+				srv.deps.AgentMgr.AddAgent(name, a)
+				if err := srv.deps.AgentMgr.SetBackendOverride(name, "litellm"); err != nil {
+					t.Fatalf("SetBackendOverride(%s): %v", name, err)
+				}
+			}
+			if tt.reviewer != nil {
+				srv.deps.Config.Agents["reviewer"] = *tt.reviewer
+			}
+			if _, err := srv.ApplyPack(2); err != nil {
+				t.Fatalf("ApplyPack(2): %v", err)
+			}
+			if got := srv.deps.Config.Agents["reviewer"]; got.Backend != "litellm" || got.Model != "" {
+				t.Errorf("reviewer backend=%q model=%q, want litellm with no model like the agents the operator moved", got.Backend, got.Model)
+			}
+		})
+	}
+}

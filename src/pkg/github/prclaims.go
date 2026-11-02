@@ -1080,13 +1080,16 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 						closedAt = pr.GetUpdatedAt().Time
 					}
 					if !closedAt.Before(mergedCutoff) {
-						c.emitPRTerminalObserved(PRTerminalObservation{
-							Repo:       repo,
-							Number:     pr.GetNumber(),
-							State:      PRStateClosed,
-							ObservedAt: closedAt,
+						c.observeTerminalPR(ctx, terminalEnrichmentTask{
+							owner: owner, repoName: repoName, identity: identity,
+							updatedAt: pr.GetUpdatedAt().Time,
+							observation: PRTerminalObservation{
+								Repo:       repo,
+								Number:     pr.GetNumber(),
+								State:      PRStateClosed,
+								ObservedAt: closedAt,
+							},
 						})
-						c.emitTerminalPRReviews(ctx, owner, repoName, repo, pr.GetNumber(), pr.GetUpdatedAt().Time, identity)
 						history = append(history,
 							prHistoryFromClaims(claimsFromPR(pr, repo, identity, now), PRStateClosed, now)...)
 					}
@@ -1095,21 +1098,21 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				if mergedAt.Before(mergedCutoff) {
 					continue
 				}
-				mergedBy := c.prTerminalMergedBy(ctx, owner, repoName, pr)
-				c.emitPRTerminalObserved(PRTerminalObservation{
-					Repo:        repo,
-					Number:      pr.GetNumber(),
-					State:       PRStateMerged,
-					ObservedAt:  mergedAt,
-					Actor:       mergedBy,
-					Attribution: prTerminalMergeAttribution(mergedBy, identity, c.appBotLogin),
-					CreatedAt:   pr.GetCreatedAt().Time,
-					URL:         pr.GetHTMLURL(),
-					Issues:      mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
+				c.observeTerminalPR(ctx, terminalEnrichmentTask{
+					owner: owner, repoName: repoName, identity: identity,
+					updatedAt: pr.GetUpdatedAt().Time, mergedBy: safeGetLogin(pr.GetMergedBy()),
+					observation: PRTerminalObservation{
+						Repo:       repo,
+						Number:     pr.GetNumber(),
+						State:      PRStateMerged,
+						ObservedAt: mergedAt,
+						CreatedAt:  pr.GetCreatedAt().Time,
+						URL:        pr.GetHTMLURL(),
+						Issues:     mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
+					},
 				})
 				// #16116: other people's reviews reach the throughput card's
 				// Reviewed row the way their merges reach Merged·Closed.
-				c.emitTerminalPRReviews(ctx, owner, repoName, repo, pr.GetNumber(), pr.GetUpdatedAt().Time, identity)
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
 				for _, claim := range prClaims {

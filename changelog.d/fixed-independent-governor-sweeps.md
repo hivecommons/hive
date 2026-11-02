@@ -1,0 +1,1 @@
+- Run governor maintenance sweeps on independent, non-overlapping timers using immutable configuration snapshots; report sweep cadence in `/api/health` and governor tick stage durations so slow maintenance no longer delays unrelated sweeps or evaluation ([#16286](https://github.com/hivecommons/hive/issues/16286)).
