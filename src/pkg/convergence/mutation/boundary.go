@@ -60,13 +60,13 @@ func (b *Boundary) ExecuteJournaled(ctx context.Context, claim effects.Claim, ef
 	invoked := false
 	out, err := frozen.Execute(ctx, claim, func(ctx context.Context) (effects.Result, error) {
 		invoked = true
-		if err := frozen.Executor.Journal.syncPersistent(); err != nil {
+		if err := frozen.Executor.Journal.syncPersistentContext(ctx); err != nil {
 			return effects.Result{}, effects.NotApplied(fmt.Errorf("syncing mutation intent before effect: %w", err))
 		}
 		return effect(ctx)
 	})
 	if invoked || err == nil || out.Provenance != "" {
-		if syncErr := frozen.Executor.Journal.syncPersistent(); syncErr != nil {
+		if syncErr := frozen.Executor.Journal.syncPersistentContext(ctx); syncErr != nil {
 			return out, fmt.Errorf("mutation journal acknowledgement not synced: %w (execution: %v)", syncErr, err)
 		}
 	}
@@ -126,7 +126,7 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 	}
 	mutEffect := boundaryEffect(claim)
 	var out effects.Result
-	op, execErr := executor.Execute(mutEffect, entry.Epoch, holder, func() (string, error) {
+	op, execErr := executor.ExecuteContext(ctx, mutEffect, entry.Epoch, holder, func() (string, error) {
 		res, err := effect(ctx)
 		out = res
 		return res.Provenance, err
@@ -205,7 +205,7 @@ func (b *Boundary) noteResolved(logicalID string) {
 // observation of external state (effects.Reconciler): Applied records the
 // found effect without repeating it, !Applied authorizes the same logical
 // operation to retry. Off mode journals nothing, so there is nothing to do.
-func (b *Boundary) Reconcile(_ context.Context, claim effects.Claim, state effects.ExternalState) error {
+func (b *Boundary) Reconcile(ctx context.Context, claim effects.Claim, state effects.ExternalState) error {
 	if b == nil {
 		return nil
 	}
@@ -222,7 +222,7 @@ func (b *Boundary) Reconcile(_ context.Context, claim effects.Claim, state effec
 	if executor.Journal == nil {
 		return fmt.Errorf("mutation boundary requires a journal when mode is enabled")
 	}
-	op, err := executor.Journal.Reconcile(boundaryEffect(claim).LogicalID(), ExternalState{
+	op, err := executor.Journal.ReconcileContext(ctx, boundaryEffect(claim).LogicalID(), ExternalState{
 		Known:   true,
 		Applied: state.Applied,
 		Result:  state.Provenance,
@@ -239,7 +239,7 @@ func (b *Boundary) Reconcile(_ context.Context, claim effects.Claim, state effec
 // be attempted again. A Known external observation (Reconcile) is always
 // preferred; this is for the case where none can be obtained and the entry
 // would otherwise fence every retry forever. Off mode journals nothing.
-func (b *Boundary) ExpireUnresolved(_ context.Context, claim effects.Claim, ttl time.Duration) (bool, error) {
+func (b *Boundary) ExpireUnresolved(ctx context.Context, claim effects.Claim, ttl time.Duration) (bool, error) {
 	if b == nil || ttl <= 0 {
 		return false, nil
 	}
@@ -265,7 +265,7 @@ func (b *Boundary) ExpireUnresolved(_ context.Context, claim effects.Claim, ttl 
 	if now.Sub(op.UpdatedAt) < ttl {
 		return false, nil
 	}
-	if _, err := executor.Journal.Reconcile(id, ExternalState{Known: true, Applied: false}, now); err != nil {
+	if _, err := executor.Journal.ReconcileContext(ctx, id, ExternalState{Known: true, Applied: false}, now); err != nil {
 		return false, err
 	}
 	if b.Logger != nil {
