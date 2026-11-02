@@ -115,6 +115,9 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 
 	resp := s.buildStageTracker(s.status, store, now)
 	labelled := trackerItem(t, resp, "pr", 109)
+	if labelled.SentinelNotice {
+		t.Fatal("a live blocking label must not become an informational notice")
+	}
 	if !labelled.SentinelAlert || labelled.SentinelFindings != 0 || labelled.SentinelReason != "" {
 		t.Fatalf("label-only PR 109 = alert %v findings %d reason %q", labelled.SentinelAlert, labelled.SentinelFindings, labelled.SentinelReason)
 	}
@@ -122,6 +125,9 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 		t.Fatalf("PR 109 stage = %d, want 085", labelled.Stage)
 	}
 	evid := trackerItem(t, resp, "pr", 110)
+	if !evid.SentinelNotice {
+		t.Fatal("verified trusted-author findings without a blocking label must be informational")
+	}
 	if !evid.SentinelAlert || evid.SentinelFindings != 2 || evid.SentinelReason != "touches OWNERS (+1 more)" || evid.Head != headEvidence {
 		t.Fatalf("evidence PR 110 = alert %v findings %d reason %q head %q", evid.SentinelAlert, evid.SentinelFindings, evid.SentinelReason, evid.Head)
 	}
@@ -166,6 +172,9 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 	}
 	if nested == nil || !nested.SentinelAlert || nested.Head != headClean {
 		t.Fatalf("issue 13 linked_prs must mirror PR 112's alert: %+v", issue.LinkedPRs)
+	}
+	if nested.SentinelNotice {
+		t.Fatal("the nested live label must retain its blocking meaning")
 	}
 
 	// Webhook: the label comes off → flag drops; goes on → flag returns.
@@ -286,7 +295,7 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 		`confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel`,
 		`label: preface + 'What should the hive change on '`,
 		`if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));`,
-		`sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || ''`,
+		`sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || ''`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing sentinel lane wiring %q", want)

@@ -68,6 +68,13 @@ test('unsupported or untrusted helper scope refuses instead of returning green',
   await assert.rejects(policy.verify('contents', subject(), [member()]), /closure unavailable/);
 });
 
+test('src/scripts tree matches the pinned TRUSTED_SCRIPTS_TREE', () => {
+  const pinned = /const TRUSTED_SCRIPTS_TREE = '([a-f0-9]{40})'/.exec(
+    fs.readFileSync(path.join(__dirname, 'integration-governance.cjs'), 'utf8'))[1];
+  const actual = cp.execFileSync('git', ['rev-parse', 'HEAD:src/scripts'], {encoding: 'utf8'}).trim();
+  assert.equal(actual, pinned, `src/scripts tree ${actual} != pinned TRUSTED_SCRIPTS_TREE ${pinned}; re-pin the literal in .github/scripts/integration-governance.cjs to git rev-parse HEAD:src/scripts`);
+});
+
 test('real pinned helpers enforce each original member and reject missing signoff or fragment', () => {
   const root = process.cwd(), workspace = path.join(root, '.integration-governance-fixture');
   const helper = path.join(root, '.github/scripts/integration-governance.cjs');
@@ -129,9 +136,10 @@ test('real pinned helpers enforce each original member and reject missing signof
     // Changing the helper closure is not permission to execute a new checker.
     fs.appendFileSync(path.join(workspace, 'src/scripts/check-dco-trailers.sh'), '\n# different helper\n');
     git('add', '.'); git('commit', '-s', '-m', 'Different helper closure');
-    assert.throws(() => check('dco', bad, [pr]));
+    // HEAD:src/scripts drifted from the pin: the refusal names both trees and the re-pin.
+    assert.throws(() => check('dco', bad, [pr]), /is not the pinned TRUSTED_SCRIPTS_TREE .*re-pin the literal/);
     const forgedSource = structuredClone(bad);
     forgedSource.preparedBy.sourceSHA = git('rev-parse', 'HEAD');
-    assert.throws(() => check('dco', forgedSource, [pr]));
+    assert.throws(() => check('dco', forgedSource, [pr]), /closure unavailable/);
   } finally { fs.rmSync(workspace, {recursive: true, force: true}); }
 });

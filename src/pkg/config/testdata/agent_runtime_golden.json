@@ -558,6 +558,7 @@
     "AutoUpgrade": false,
     "AutoUpgradeMode": "",
     "ContributeSuspended": false,
+    "activity": {},
     "ContributeWallEnabled": false,
     "ContributeWallRetentionDays": 0,
     "NPSEnabled": null,

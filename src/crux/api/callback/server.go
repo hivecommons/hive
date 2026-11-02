@@ -13,8 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/hivecommons/hive/crux/internal/privatedir"
 
 	"github.com/hivecommons/hive/crux/api"
 )
@@ -578,27 +579,9 @@ func Listen(cfg ListenConfig) (*Listeners, error) {
 	return ls, nil
 }
 
-// ownedPrivateDir refuses a socket directory this user does not own
-// outright: a real directory (not a symlink), owned by this uid, with no
-// group or other permission bits.
+// ownedPrivateDir refuses a socket directory this user does not own outright.
 func ownedPrivateDir(dir string) error {
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return errors.New("is a symlink")
-	}
-	if !fi.IsDir() {
-		return errors.New("is not a directory")
-	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return fmt.Errorf("mode %04o is readable by others; want %04o", perm, SocketDirMode)
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("owned by uid %d, not this user (uid %d)", st.Uid, os.Getuid())
-	}
-	return nil
+	return privatedir.Check(dir, SocketDirMode)
 }
 
 // Serve runs the endpoint on ls until ctx ends, then shuts down and closes

@@ -431,6 +431,9 @@ type StageTrackerItem struct {
 	SentinelAlert    bool   `json:"sentinel_alert,omitempty"`
 	SentinelFindings int    `json:"sentinel_findings,omitempty"`
 	SentinelReason   string `json:"sentinel_reason,omitempty"`
+	// SentinelNotice marks verified informational findings without the live
+	// blocking label. The notice remains visible but is not a decision gate.
+	SentinelNotice bool `json:"sentinel_notice,omitempty"`
 	// HumanApprover is the trusted merger whose GitHub Approve review on
 	// the current head settled a requires_human verdict or a manual-merge
 	// lane rule (the `:human-approved@login` suffix on the stage reason).
@@ -695,6 +698,7 @@ type StageTrackerLinkedPR struct {
 	// so a sub-row under an issue names the alert too.
 	SentinelAlert  bool   `json:"sentinel_alert,omitempty"`
 	SentinelReason string `json:"sentinel_reason,omitempty"`
+	SentinelNotice bool   `json:"sentinel_notice,omitempty"`
 	// HumanApprover / ManualMerge / HumanMergeReason(Text) mirror the
 	// nested PR's 090 fields so a sub-row's gate cell says why a person
 	// merges it, as the top-level row would (hivecommons/hive#14658).

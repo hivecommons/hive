@@ -60,11 +60,16 @@ const (
 //     and Copilot coding agents.
 //   - unknown: terminal observations without an actor/path. Unknown is counted
 //     in by_actor for transparency but excluded from share trend math.
+//
+// The Reviewed row's human and other columns come from pr_review_observed:
+// reviews the hive did not write, read by the settle scan once their PR
+// merged or closed (#16116). Created stays hive-only.
 var prThroughputActions = map[string]bool{
 	ghpkg.AuditActionAgentPRCreated:      true,
 	ghpkg.AuditActionAgentIssueCreated:   true,
 	ghpkg.AuditActionHiveIssueCreated:    true,
 	ghpkg.AuditActionPRReviewed:          true,
+	ghpkg.AuditActionPRReviewObserved:    true,
 	ghpkg.AuditActionAgentCommentCreated: true,
 	ghpkg.AuditActionIssueClaimed:        true,
 	ghpkg.AuditActionPRMerged:            true,
@@ -88,6 +93,10 @@ type PRThroughputCounters struct {
 	// lower(repo)#number, so a forge-observed terminal state cannot double-count
 	// a merge/close the hive already audited through a relay or sweep path.
 	Terminal map[string]string `json:"terminal,omitempty"`
+	// Reviews remembers observed reviews already counted, keyed by GitHub
+	// review ID, so every settle scan that re-observes a review inside its
+	// window — or a restart — cannot count it twice (#16116).
+	Reviews map[string]bool `json:"reviews,omitempty"`
 	// Since is the RFC3339 timestamp of the oldest event the counters cover —
 	// how far back "all time" actually goes.
 	Since string `json:"since,omitempty"`
@@ -104,6 +113,7 @@ type PRThroughputRepoCounters struct {
 	ByActor      PRThroughputActorMatrix            `json:"by_actor,omitempty"`
 	ActorBuckets map[string]PRThroughputActorMatrix `json:"actor_buckets,omitempty"`
 	Terminal     map[string]string                  `json:"terminal,omitempty"`
+	Reviews      map[string]bool                    `json:"reviews,omitempty"`
 	Since        string                             `json:"since,omitempty"`
 }
 
@@ -124,6 +134,7 @@ func (c PRThroughputCounters) clone() PRThroughputCounters {
 		out.MergedByPath[k] = v
 	}
 	out.Terminal = cloneStringMap(c.Terminal)
+	out.Reviews = cloneBoolMap(c.Reviews)
 	out.ByActor = cloneActorMatrix(c.ByActor)
 	out.ActorBuckets = cloneActorBuckets(c.ActorBuckets)
 	if len(c.ByRepo) > 0 {
@@ -133,6 +144,7 @@ func (c PRThroughputCounters) clone() PRThroughputCounters {
 			v.ByActor = cloneActorMatrix(v.ByActor)
 			v.ActorBuckets = cloneActorBuckets(v.ActorBuckets)
 			v.Terminal = cloneStringMap(v.Terminal)
+			v.Reviews = cloneBoolMap(v.Reviews)
 			out.ByRepo[k] = v
 		}
 	}
@@ -145,7 +157,7 @@ func (c *PRThroughputCounters) add(e AuditEntry) bool {
 	if !prThroughputActions[e.Action] {
 		return false
 	}
-	if !c.rememberTerminal(e) {
+	if !c.rememberTerminal(e) || !rememberPRThroughputReview(&c.Reviews, e) {
 		return false
 	}
 	c.addTotals(e)
@@ -194,7 +206,7 @@ func (c *PRThroughputCounters) addTotals(e AuditEntry) {
 }
 
 func (c *PRThroughputRepoCounters) add(e AuditEntry) {
-	if !c.rememberTerminal(e) {
+	if !c.rememberTerminal(e) || !rememberPRThroughputReview(&c.Reviews, e) {
 		return
 	}
 	switch e.Action {
@@ -229,7 +241,7 @@ func (c *PRThroughputRepoCounters) add(e AuditEntry) {
 
 func (c PRThroughputCounters) forRepo(repo string) PRThroughputCounters {
 	rc := c.ByRepo[strings.ToLower(repo)]
-	return PRThroughputCounters{Version: c.Version, Opened: rc.Opened, Merged: rc.Merged, MergedByPath: cloneIntMap(rc.MergedByPath), Closed: rc.Closed, ByActor: cloneActorMatrix(rc.ByActor), ActorBuckets: cloneActorBuckets(rc.ActorBuckets), Terminal: cloneStringMap(rc.Terminal), Since: rc.Since}
+	return PRThroughputCounters{Version: c.Version, Opened: rc.Opened, Merged: rc.Merged, MergedByPath: cloneIntMap(rc.MergedByPath), Closed: rc.Closed, ByActor: cloneActorMatrix(rc.ByActor), ActorBuckets: cloneActorBuckets(rc.ActorBuckets), Terminal: cloneStringMap(rc.Terminal), Reviews: cloneBoolMap(rc.Reviews), Since: rc.Since}
 }
 
 func cloneIntMap(in map[string]int) map[string]int {
@@ -261,6 +273,8 @@ func prThroughputActorAttribution(e AuditEntry) (kind, role, actor string, ok bo
 		return prThroughputKindIssue, prThroughputRoleCreated, prThroughputActorHive, true
 	case ghpkg.AuditActionPRReviewed:
 		return prThroughputKindPR, prThroughputRoleReviewed, prThroughputActorFromAttrs(attrs, prThroughputActorHive), true
+	case ghpkg.AuditActionPRReviewObserved:
+		return prThroughputKindPR, prThroughputRoleReviewed, prThroughputActorFromAttrs(attrs, prThroughputActorUnknown), true
 	case ghpkg.AuditActionAgentCommentCreated, ghpkg.AuditActionIssueClaimed:
 		return prThroughputKindIssue, prThroughputRoleReviewed, prThroughputActorHive, true
 	case ghpkg.AuditActionPRMerged:
@@ -395,6 +409,64 @@ func prThroughputTerminalAction(action string) bool {
 	return action == ghpkg.AuditActionPRMerged || action == ghpkg.AuditActionPRClosed
 }
 
+// prThroughputDedupedAction reports whether repeats of action are dropped:
+// PR terminal states (once per PR) and observed reviews (once per review).
+// The settle scan re-observes both on every pass of its window.
+func prThroughputDedupedAction(action string) bool {
+	return prThroughputTerminalAction(action) || action == ghpkg.AuditActionPRReviewObserved
+}
+
+// prThroughputReviewKey is the de-duplication key of a pr_review_observed
+// entry: its GitHub review ID, or "" when the detail carries none.
+func prThroughputReviewKey(e AuditEntry) string {
+	if e.Action != ghpkg.AuditActionPRReviewObserved {
+		return ""
+	}
+	return strings.TrimSpace(parseAuditDetailAttrs(e.Detail)["review_id"])
+}
+
+// prThroughputDedupKey is the key the audit-derived (windowed) views use to
+// count a de-duplicated action once: lower(repo)#number for a PR terminal
+// state, review:<id> for an observed review, "" for everything else.
+func prThroughputDedupKey(e AuditEntry) string {
+	if prThroughputTerminalAction(e.Action) {
+		return prThroughputPRKey(e)
+	}
+	if id := prThroughputReviewKey(e); id != "" {
+		return "review:" + id
+	}
+	return ""
+}
+
+// rememberPRThroughputReview records an observed review's ID in seen and
+// reports whether it is new (and so should be counted). Entries that are not
+// observed reviews, or carry no review ID, always count.
+func rememberPRThroughputReview(seen *map[string]bool, e AuditEntry) bool {
+	id := prThroughputReviewKey(e)
+	if id == "" {
+		return true
+	}
+	if *seen == nil {
+		*seen = map[string]bool{}
+	}
+	if (*seen)[id] {
+		return false
+	}
+	(*seen)[id] = true
+	return true
+}
+
+func cloneBoolMap(in map[string]bool) map[string]bool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func (c *PRThroughputCounters) rememberTerminal(e AuditEntry) bool {
 	if !prThroughputTerminalAction(e.Action) {
 		return true
@@ -460,7 +532,13 @@ func (a *AuditLog) loadPRThroughputCounters(countersPath, auditPath string) {
 
 func (a *AuditLog) hydratePRThroughputTerminalKeysLocked(auditPath string) bool {
 	changed := false
-	for _, e := range a.actionsSince(time.Time{}, func(action string) bool { return prThroughputTerminalAction(action) }, nil, auditPath) {
+	for _, e := range a.actionsSince(time.Time{}, prThroughputDedupedAction, nil, auditPath) {
+		if e.Action == ghpkg.AuditActionPRReviewObserved {
+			if a.hydratePRThroughputReviewKeyLocked(e) {
+				changed = true
+			}
+			continue
+		}
 		key := prThroughputPRKey(e)
 		if key == "" {
 			continue
@@ -487,6 +565,27 @@ func (a *AuditLog) hydratePRThroughputTerminalKeysLocked(auditPath string) bool 
 		changed = true
 	}
 	return changed
+}
+
+// hydratePRThroughputReviewKeyLocked marks an audited observed review as
+// already counted, in the totals and its repo, so a counters file that
+// predates the review keys never counts it again. Callers must hold a.mu.
+func (a *AuditLog) hydratePRThroughputReviewKeyLocked(e AuditEntry) bool {
+	id := prThroughputReviewKey(e)
+	if id == "" || a.prCounters.Reviews[id] {
+		return false
+	}
+	rememberPRThroughputReview(&a.prCounters.Reviews, e)
+	if repo, ok := collect.AuditEntryRepo(e); ok {
+		if a.prCounters.ByRepo == nil {
+			a.prCounters.ByRepo = map[string]PRThroughputRepoCounters{}
+		}
+		repoKey := strings.ToLower(repo)
+		rc := a.prCounters.ByRepo[repoKey]
+		rememberPRThroughputReview(&rc.Reviews, e)
+		a.prCounters.ByRepo[repoKey] = rc
+	}
+	return true
 }
 
 // notePRThroughput bumps and persists the counters for a PR throughput audit

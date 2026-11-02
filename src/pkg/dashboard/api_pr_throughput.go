@@ -312,7 +312,7 @@ func prThroughputBuckets(entries []AuditEntry, since, until time.Time, bucketSiz
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
+	seen := map[string]bool{} // prThroughputDedupKey: terminal PRs, observed reviews
 	openedAt := map[string]time.Time{}
 	ttmByBucket := make([][]float64, len(buckets))
 	for _, e := range sorted {
@@ -321,13 +321,11 @@ func prThroughputBuckets(entries []AuditEntry, since, until time.Time, bucketSiz
 			continue
 		}
 		key := prThroughputPRKey(e)
-		if prThroughputTerminalAction(e.Action) {
-			if key != "" {
-				if seenTerminal[key] {
-					continue
-				}
-				seenTerminal[key] = true
+		if dk := prThroughputDedupKey(e); dk != "" {
+			if seen[dk] {
+				continue
 			}
+			seen[dk] = true
 		}
 		if e.Action == ghpkg.AuditActionAgentPRCreated && key != "" {
 			openedAt[key] = t
@@ -384,20 +382,17 @@ func prThroughputActorSeries(entries []AuditEntry, since, until time.Time, bucke
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
+	seen := map[string]bool{} // prThroughputDedupKey: terminal PRs, observed reviews
 	for _, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || t.After(until) || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
-		if prThroughputTerminalAction(e.Action) {
-			key := prThroughputPRKey(e)
-			if key != "" {
-				if seenTerminal[key] {
-					continue
-				}
-				seenTerminal[key] = true
+		if dk := prThroughputDedupKey(e); dk != "" {
+			if seen[dk] {
+				continue
 			}
+			seen[dk] = true
 		}
 		if t.Before(since) {
 			continue
@@ -433,20 +428,17 @@ func prThroughputActorTotals(entries []AuditEntry, since, until time.Time, repo,
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
+	seen := map[string]bool{} // prThroughputDedupKey: terminal PRs, observed reviews
 	for _, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || !t.Before(until) || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
-		if prThroughputTerminalAction(e.Action) {
-			key := prThroughputPRKey(e)
-			if key != "" {
-				if seenTerminal[key] {
-					continue
-				}
-				seenTerminal[key] = true
+		if dk := prThroughputDedupKey(e); dk != "" {
+			if seen[dk] {
+				continue
 			}
+			seen[dk] = true
 		}
 		if t.Before(since) {
 			continue
@@ -488,18 +480,18 @@ func summarizePRThroughput(entries []AuditEntry, since, until time.Time, repo st
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
+	seen := map[string]bool{} // prThroughputDedupKey: terminal PRs, observed reviews
 	for _, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || !prThroughputActions[e.Action] || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
 		key := prThroughputPRKey(e)
-		if prThroughputTerminalAction(e.Action) && key != "" {
-			if seenTerminal[key] {
+		if dk := prThroughputDedupKey(e); dk != "" {
+			if seen[dk] {
 				continue
 			}
-			seenTerminal[key] = true
+			seen[dk] = true
 		}
 		if e.Action == ghpkg.AuditActionAgentPRCreated && key != "" {
 			openedAt[key] = t

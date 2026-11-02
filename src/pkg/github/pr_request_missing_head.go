@@ -13,14 +13,21 @@ import (
 // errMissingHead reports that the PR request named a head ref that does not
 // exist on the remote. It stays an ordinary (retryable) error rather than a
 // policy rejection: the agent pushing its branch makes the same request valid,
-// which is exactly what the bounded retry is for.
+// which is exactly what the bounded retry is for. The wrapped compare 404 is
+// deliberately exposed through Unwrap so that signedAPIRefusal on the
+// signed-reconciler path can classify it as a bounded refusal.
 type errMissingHead struct {
 	repo string
 	head string
 	// repoVisible distinguishes "the branch is missing" from "the whole
 	// repository is invisible to this App installation" — different remedies.
 	repoVisible bool
+	// cause is the compare error that triggered the diagnosis; Unwrap exposes
+	// it so the 404 keeps its identity for errors.As classification.
+	cause error
 }
+
+func (e *errMissingHead) Unwrap() error { return e.cause }
 
 func (e *errMissingHead) Error() string {
 	if !e.repoVisible {
@@ -70,7 +77,7 @@ func (c *Client) diagnoseCompareFailure(ctx context.Context, owner, repo, base, 
 	if _, _, err := c.client.Repositories.Get(ctx, owner, repo); err != nil {
 		if errors.As(err, &ghErr) && ghErr.Response != nil &&
 			ghErr.Response.StatusCode == http.StatusNotFound {
-			return &errMissingHead{repo: owner + "/" + repo, head: head, repoVisible: false}
+			return &errMissingHead{repo: owner + "/" + repo, head: head, repoVisible: false, cause: cause}
 		}
 		return wrapped
 	}
@@ -80,7 +87,7 @@ func (c *Client) diagnoseCompareFailure(ctx context.Context, owner, repo, base, 
 	if _, _, err := c.client.Git.GetRef(ctx, owner, repo, ref); err != nil {
 		if errors.As(err, &ghErr) && ghErr.Response != nil &&
 			ghErr.Response.StatusCode == http.StatusNotFound {
-			return &errMissingHead{repo: owner + "/" + repo, head: head, repoVisible: true}
+			return &errMissingHead{repo: owner + "/" + repo, head: head, repoVisible: true, cause: cause}
 		}
 		return wrapped
 	}

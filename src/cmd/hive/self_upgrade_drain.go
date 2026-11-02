@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -255,7 +256,8 @@ func agentKicksInFlight(statuses map[string]*crux.Process, processStart, now tim
 }
 
 // wedgedKickNotices remembers which wedged kicks were already logged, so the
-// per-heartbeat upgrade check warns once per kick instead of every beat.
+// per-heartbeat upgrade check only mentions a kick in the single per-pass
+// warning the first time it is seen, instead of repeating it every beat.
 type wedgedKickNotices struct {
 	mu     sync.Mutex
 	logged map[string]time.Time
@@ -293,4 +295,18 @@ func wedgedKickAgents(wedged []wedgedKick) []string {
 		names = append(names, w.Agent)
 	}
 	return names
+}
+
+// wedgedKickSummaries describes each kick in wedged as one string, for log
+// attributes.
+func wedgedKickSummaries(wedged []wedgedKick) []string {
+	if len(wedged) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(wedged))
+	for _, w := range wedged {
+		out = append(out, fmt.Sprintf("%s kick_at=%s age=%s ceiling=%s",
+			w.Agent, w.KickAt.UTC().Format(time.RFC3339), w.Age.Round(time.Second), w.Ceiling))
+	}
+	return out
 }

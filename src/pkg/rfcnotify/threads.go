@@ -53,6 +53,16 @@ type Threads interface {
 	ThreadURL(threadID string) (string, error)
 }
 
+// Editor is an optional extension of Threads that edits the opened card and
+// renames the RFC's thread when the RFC is retitled. Without it a retitle
+// changes nothing on Discord.
+type Editor interface {
+	// EditMessage replaces the content of a channel message.
+	EditMessage(messageID, content string) error
+	// RenameThread renames a thread.
+	RenameThread(threadID, name string) error
+}
+
 // Commenter is an optional extension of Source that comments on a GitHub
 // issue or pull request, for the opt-in backlink.
 type Commenter interface {
@@ -149,6 +159,47 @@ func (t *threadRun) deliver(ev Event, msg string) (keep bool, err error) {
 		}
 	}
 	return false, t.persist(key)
+}
+
+// retitle edits the RFC's opened card to the new title and renames its
+// thread. It posts nothing. A failure is counted and logged, not retried: a
+// card deleted on Discord must not hold back later notices.
+func (t *threadRun) retitle(ev Event) {
+	key := ev.Issue.Key()
+	rec := t.s.det.state.Issues[key]
+	if rec == nil || (rec.MessageID == "" && rec.ThreadID == "") {
+		return
+	}
+	ed, ok := t.s.threads.(Editor)
+	if !ok {
+		t.s.opts.Logger.Debug("rfc notify: Discord surface cannot edit; retitle not applied", "issue", key)
+		return
+	}
+	edited := false
+	if rec.MessageID != "" {
+		text := Format(Event{Kind: KindOpened, Issue: ev.Issue}, t.s.opts.IncludeRepo)
+		if err := ed.EditMessage(rec.MessageID, text); err != nil {
+			t.res.Errors++
+			t.s.opts.Logger.Warn("rfc notify: card edit failed", "issue", key, "error", err)
+		} else {
+			rec.OpenText, edited = text, true
+		}
+	}
+	if rec.ThreadID != "" {
+		name := threadName(ev.Issue)
+		if err := ed.RenameThread(rec.ThreadID, name); err != nil {
+			t.res.Errors++
+			t.s.opts.Logger.Warn("rfc notify: thread rename failed", "issue", key, "error", err)
+		} else {
+			rec.ThreadName, edited = name, true
+		}
+	}
+	if edited {
+		t.res.Edited++
+	}
+	if err := t.persist(key); err != nil {
+		t.s.opts.Logger.Warn("rfc notify: save failed", "issue", key, "error", err)
+	}
 }
 
 // postCard sends the opened card with the record's nonce. The attempt is

@@ -1470,7 +1470,7 @@
     // flagged PR, so the operator reads the security reason before
     // choosing Approve; '' when nothing in items is flagged.
     function stageTrackerSentinelPreface(items) {
-      return (items || []).filter(it => it && it.sentinel_alert).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
+      return (items || []).filter(it => it && it.sentinel_alert && !it.sentinel_notice).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
     }
     // Every confirm a row action raises can be opted out of per browser,
     // per action id (the dialog's "Don't ask again for this action" box;

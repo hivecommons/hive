@@ -365,6 +365,10 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 	if err != nil {
 		return false, st.Reason, err
 	}
+	if prNumber > 0 && st.HeadTimeAheadBy > 0 {
+		c.info("automerge head time ahead of host clock; min_head_age not evaluable from it, measured from first observation", "repo", owner+"/"+repo, "pr", prNumber,
+			"sha", sha, "ahead_by", st.HeadTimeAheadBy.Round(time.Second), "green", st.Green, "reason", st.Reason)
+	}
 	if len(st.Reporting) > 0 {
 		c.info("automerge CI reporting observation", "repo", owner+"/"+repo, "pr", prNumber,
 			"head", sha, "observations", st.Reporting)

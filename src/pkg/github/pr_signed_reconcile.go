@@ -50,6 +50,38 @@ var prSignedReconcileInterval = time.Minute
 // signedReconcileMaxPRPages bounds the open-PR listing per repo (100 per page).
 const signedReconcileMaxPRPages = 10
 
+// signedReconcileMaxAttempts is how many consecutive passes GitHub may refuse
+// signBranch (a 4xx answer) at the same head before the reconciler gives up on
+// that head. A persistent refusal (a 422 on the scratch ref, #16193) can never
+// succeed on retry. A 5xx or network failure is an outage, not a refusal: it
+// is not counted and the head is retried every pass until GitHub recovers.
+const signedReconcileMaxAttempts = 3
+
+// signedSkipReasonRunes caps the API error text quoted in the skip comment;
+// a GraphQL failure can carry a response body up to 1 MiB.
+const signedSkipReasonRunes = 300
+
+// signedSkipRemedyPerson tells the PR owner how to unblock a head the hive
+// refused to rewrite because a person's (or a merge) commit sits in the tail.
+const signedSkipRemedyPerson = "The hive re-signs only its own agents' commits (`github.app_signed_commits`) and never re-authors a person's work. " +
+	"To unblock it, either squash the unsigned commit into a commit you sign yourself " +
+	"(an interactive rebase marking it `fixup` into your commit, then force-push the signed result), " +
+	"or drop your own commit from the branch so the hive can re-sign the agent's work on a later pass, " +
+	"then push your change again, signed, on top."
+
+// signedSkipRemedyAPIRefused tells the PR owner how to unblock a head GitHub
+// kept refusing to sign: there is no person's commit to squash, only a new
+// head (or a repository-side fix) re-arms the reconciler.
+const signedSkipRemedyAPIRefused = "GitHub refused the signing request at this head on every attempt, so the hive stopped retrying it. " +
+	"The error above is GitHub's; check the repository's settings (branch rules on `" + signedCommitScratchPrefix + "*` refs, the App's `contents` permission) if it points at them. " +
+	"Pushing a new commit to the branch restarts signing at the new head."
+
+// signedReconcileFailure counts consecutive signBranch failures at one head.
+type signedReconcileFailure struct {
+	head  string
+	count int
+}
+
 // signedReconcileMarker identifies the App's "can't sign this" comment so it
 // is posted once per PR, including across hive restarts.
 const signedReconcileMarker = "<!-- hive:signed-commits-blocked -->"
@@ -67,6 +99,37 @@ type signedReconcileState struct {
 	settled map[string]string
 	// noted holds the PRs that already carry the skip comment.
 	noted map[string]bool
+	// failures counts consecutive signBranch failures per PR at one head.
+	failures map[string]signedReconcileFailure
+}
+
+// signedPRKey is the "owner/repo#N" key the settled, noted and failures maps
+// share; prune relies on it starting with the repo prefix "owner/repo#".
+func signedPRKey(owner, repo string, number int) string {
+	return fmt.Sprintf("%s/%s#%d", owner, repo, number)
+}
+
+// noteFailure records one more failure of key at head and returns the
+// consecutive count; a different head restarts the count.
+func (s *signedReconcileState) noteFailure(key, head string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failures == nil {
+		s.failures = map[string]signedReconcileFailure{}
+	}
+	f := s.failures[key]
+	if f.head != head {
+		f = signedReconcileFailure{head: head}
+	}
+	f.count++
+	s.failures[key] = f
+	return f.count
+}
+
+func (s *signedReconcileState) clearFailures(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.failures, key)
 }
 
 func (s *signedReconcileState) settledHead(key string) string {
@@ -111,6 +174,11 @@ func (s *signedReconcileState) prune(repoPrefix string, open map[string]bool) {
 	for key := range s.noted {
 		if strings.HasPrefix(key, repoPrefix) && !open[key] {
 			delete(s.noted, key)
+		}
+	}
+	for key := range s.failures {
+		if strings.HasPrefix(key, repoPrefix) && !open[key] {
+			delete(s.failures, key)
 		}
 	}
 }
@@ -174,7 +242,7 @@ func (c *Client) reconcileSignedCommits(ctx context.Context) {
 			if !strings.EqualFold(pr.GetHead().GetRepo().GetFullName(), owner+"/"+name) {
 				continue
 			}
-			key := fmt.Sprintf("%s%d", prefix, pr.GetNumber())
+			key := signedPRKey(owner, name, pr.GetNumber())
 			open[key] = true
 			headSHA := pr.GetHead().GetSHA()
 			if headSHA == "" || c.signedReconcile.settledHead(key) == headSHA {
@@ -213,6 +281,7 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 	head := pr.GetHead().GetRef()
 	headSHA := pr.GetHead().GetSHA()
 	logArgs := []any{"repo", owner + "/" + repo, "pr", number, "head", head}
+	key := signedPRKey(owner, repo, number)
 
 	commits, err := c.listPRRepositoryCommits(ctx, owner, repo, number)
 	if err != nil {
@@ -226,7 +295,7 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 		// GitHub stops listing PR commits at 250, so the tail cannot be seen.
 		reason := fmt.Sprintf("the PR has %d or more commits, past what GitHub lists, so its unsigned tail cannot be checked", len(commits))
 		c.warn("signed-commit reconciler: skipped", append(logArgs, "reason", reason)...)
-		c.noteSignedSkip(ctx, owner, repo, number, reason)
+		c.noteSignedSkip(ctx, owner, repo, number, reason, signedSkipRemedyPerson)
 		return headSHA
 	}
 	if commits[len(commits)-1].GetSHA() != headSHA {
@@ -260,7 +329,7 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 	if reason := c.signedTailBlocker(tail); reason != "" {
 		reason = fmt.Sprintf("commit %s is unverified; %s", shortSHA(commits[firstUnverified].GetSHA()), reason)
 		c.warn("signed-commit reconciler: skipped; the PR keeps an unsigned commit", append(logArgs, "reason", reason)...)
-		c.noteSignedSkip(ctx, owner, repo, number, reason)
+		c.noteSignedSkip(ctx, owner, repo, number, reason, signedSkipRemedyPerson)
 		return headSHA
 	}
 
@@ -268,12 +337,25 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 	if err != nil {
 		var moved signedHeadMovedError
 		c.warn("signed-commit reconciler: could not re-author the unsigned tail as a GitHub-signed commit", append(logArgs, "base", base, "reason", err.Error())...)
-		if errors.As(err, &moved) || !errors.Is(err, errSignedCommitSkip) {
+		if errors.As(err, &moved) {
 			return "" // transient: retry next pass
 		}
-		c.noteSignedSkip(ctx, owner, repo, number, err.Error())
+		if !errors.Is(err, errSignedCommitSkip) {
+			if !signedAPIRefusal(err) {
+				return "" // outage (5xx, network): retry next pass, uncounted
+			}
+			if n := c.signedReconcile.noteFailure(key, headSHA); n < signedReconcileMaxAttempts {
+				return "" // retry next pass
+			}
+			c.warn("signed-commit reconciler: giving up on this head after repeated refusals", append(logArgs, "attempts", signedReconcileMaxAttempts)...)
+			reason := fmt.Sprintf("GitHub refused to sign this head %d times in a row: %s", signedReconcileMaxAttempts, signedSkipReason(err))
+			c.noteSignedSkip(ctx, owner, repo, number, reason, signedSkipRemedyAPIRefused)
+			return headSHA
+		}
+		c.noteSignedSkip(ctx, owner, repo, number, err.Error(), signedSkipRemedyPerson)
 		return headSHA
 	}
+	c.signedReconcile.clearFailures(key)
 	c.recordWriteAudit(AuditActionSignedCommitReauthored, hiveWriteMeta(),
 		WriteTarget{Repo: owner + "/" + repo, Number: number},
 		"branch", head, "base", base, "commit", oid,
@@ -281,6 +363,17 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 	c.info("signed-commit reconciler: unsigned tail re-authored as one GitHub-signed commit by the App bot",
 		append(logArgs, "base", base, "commit", oid, "replaced_commits", replaced)...)
 	return oid
+}
+
+// signedSkipReason reduces an API error to text fit for a public PR comment:
+// its first line, capped at signedSkipReasonRunes. The full error is in the
+// warn log.
+func signedSkipReason(err error) string {
+	reason := strings.TrimSpace(firstLine(err.Error()))
+	if runes := []rune(reason); len(runes) > signedSkipReasonRunes {
+		reason = string(runes[:signedSkipReasonRunes]) + "..."
+	}
+	return reason
 }
 
 func commitVerified(rc *gh.RepositoryCommit) bool {
@@ -335,10 +428,11 @@ func (c *Client) hiveCommitIdentity(login, email string) bool {
 }
 
 // noteSignedSkip leaves one comment on the PR explaining why its head can't be
-// signed. The in-memory set spares the comment listing on later heads; the
+// signed (reason) and what unblocks it (remedy, one of the signedSkipRemedy*
+// texts). The in-memory set spares the comment listing on later heads; the
 // marker covers restarts.
-func (c *Client) noteSignedSkip(ctx context.Context, owner, repo string, number int, reason string) {
-	key := fmt.Sprintf("%s/%s#%d", owner, repo, number)
+func (c *Client) noteSignedSkip(ctx context.Context, owner, repo string, number int, reason, remedy string) {
+	key := signedPRKey(owner, repo, number)
 	if c.signedReconcile.isNoted(key) {
 		return
 	}
@@ -358,11 +452,7 @@ func (c *Client) noteSignedSkip(ctx context.Context, owner, repo string, number 
 		"If the base branch requires signed commits, this PR cannot merge until every commit on it is Verified, " +
 		"including any below a Verified head.\n\n" +
 		"Reason: " + reason + "\n\n" +
-		"The hive re-signs only its own agents' commits (`github.app_signed_commits`) and never re-authors a person's work. " +
-		"To unblock it, either squash the unsigned commit into a commit you sign yourself " +
-		"(an interactive rebase marking it `fixup` into your commit, then force-push the signed result), " +
-		"or drop your own commit from the branch so the hive can re-sign the agent's work on a later pass, " +
-		"then push your change again, signed, on top. This note is posted once per PR."
+		remedy + " This note is posted once per PR."
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("signed-commit reconciler: posting the skip note failed", "repo", owner+"/"+repo, "pr", number, "err", err)
 		return

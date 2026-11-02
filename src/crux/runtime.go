@@ -360,3 +360,12 @@ type Runtime interface {
 	Background
 	Authorizer
 }
+
+// BufferSinceReader is an optional Runtime extension: it reads the ring buffer
+// by monotonic position instead of by window, so followers neither drop
+// repeated lines nor lose lines that scroll past between polls.
+type BufferSinceReader interface {
+	// GetBufferSince returns the buffered lines at positions seq and later
+	// and the position to ask for next. Start with seq 0.
+	GetBufferSince(name string, seq uint64) ([]string, uint64, error)
+}

@@ -245,6 +245,12 @@ if [ -n "$ISSUES" ]; then
     case "$tok" in
       *[!0-9]*) echo "hive-open-pr: --issues expects issue numbers, got '$tok'" >&2; exit 2;;
     esac
+    # GitHub numbers issues from 1. A "0" is an unsubstituted placeholder
+    # (an agent copying "--issues <N>" with no issue in hand); refusing it here
+    # beats the watcher rejecting "Fixes #0" with advice that cannot help.
+    case "$tok" in
+      0*) echo "hive-open-pr: --issues expects a real issue number (GitHub numbers issues from 1), got '$tok' — pass the issue this PR is for, or omit --issues when there is none" >&2; exit 2;;
+    esac
     ISSUE_LIST="$ISSUE_LIST,$tok"
   done
   ISSUE_LIST="${ISSUE_LIST#,}"

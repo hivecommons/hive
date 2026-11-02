@@ -86,7 +86,12 @@ control character, and rerun.
 the body actually references each declared issue — `Fixes #N`, or `Refs #N`
 when part of the issue deliberately stays open — and rejects the request
 otherwise. Pass it whenever the run started from an issue, so a truncated or
-replaced body cannot open a PR that orphans its issue.
+replaced body cannot open a PR that orphans its issue. Issue numbers start at
+1: `--issues 0` is the `<N>` placeholder left unsubstituted and is refused by
+the script, and a request that still carries a `0` is rejected by the watcher
+as a placeholder rather than as a body that "never references" it — no body
+can reference `#0`, so the usual re-run-with-the-full-body remedy would only
+loop ([#16162](https://github.com/hivecommons/hive/issues/16162)).
 
 When the PR body resolves an issue (`Fixes #N`, `Closes #N`, or
 `Resolves #N`), add the issue-author trailer before the first push with

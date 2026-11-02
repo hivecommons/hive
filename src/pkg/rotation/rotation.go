@@ -769,6 +769,16 @@ func codexLimitWindow(id string, w *codexRateLimitWindow) LimitWindow {
 	return lw
 }
 
+// classifyCodexProbeError tags the app-server's "account authentication
+// required" refusal as no_credentials: a host with no codex account is an
+// expected state, not a probe defect.
+func classifyCodexProbeError(err error) error {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "authentication required") {
+		return withCause(ProbeCauseNoCredentials, err)
+	}
+	return err
+}
+
 func (p CodexProber) Provider() string { return "openai" }
 
 func (p CodexProber) Probe(ctx context.Context) Headroom {
@@ -779,7 +789,7 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 		err = errors.New("codex app-server: no rateLimits response")
 	}
 	if err != nil {
-		return failOpen(p.Provider(), err)
+		return failOpen(p.Provider(), classifyCodexProbeError(err))
 	}
 	h, err := codexHeadroomForModel(p.Provider(), p.ThresholdPct, result, p.Model)
 	if err != nil {
@@ -1767,6 +1777,10 @@ func (m *Manager) logProbeFailure(h Headroom) {
 	}
 	m.lastProbeErrLog[h.Provider] = key
 	m.mu.Unlock()
+	if h.ProbeErrCause == ProbeCauseNoCredentials {
+		slog.Info("provider headroom probe unavailable: no credentials", "provider", h.Provider, "cause", h.ProbeErrCause, "error", msg)
+		return
+	}
 	slog.Warn("provider headroom probe failed", "provider", h.Provider, "cause", h.ProbeErrCause, "error", msg)
 }
 

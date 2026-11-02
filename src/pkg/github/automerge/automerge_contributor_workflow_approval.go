@@ -134,6 +134,10 @@ func workflowApprovalCommentActor(comment *gh.IssueComment, headSHA string, head
 	if comment == nil {
 		return "", false
 	}
+	// An edit to an existing comment is not a new instruction.
+	if comment.GetUpdatedAt().Time.After(comment.GetCreatedAt().Time) {
+		return "", false
+	}
 	body := comment.GetBody()
 	author := strings.TrimSpace(hgithub.SafeGetLogin(comment.GetUser()))
 	boundToHead := func(markerHead string) bool {

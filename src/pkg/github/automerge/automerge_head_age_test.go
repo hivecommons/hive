@@ -189,3 +189,49 @@ func TestHeadPushedAtFallsBackToPinWhenCommitLookupFails(t *testing.T) {
 		t.Fatalf("after bump fallback = %v, want pinned %v", got, first)
 	}
 }
+
+// hivecommons/hive#16143: GitHub's server-generated updated_at/created_at ran
+// +1h ahead of the host clock, so both the pinned updated_at and the commit
+// time (clamped to created_at) landed in the future and the gate read every
+// head as "pushed 0s ago" for an hour. The host clock at the head's first
+// observation stands in: the gate holds one min_head_age window, then clears.
+func TestHeadPushedAtFallsBackToHostClockWhenHeadTimeIsAhead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sha":"skew","committer":{"name":"c","date":"2026-11-01T08:49:14Z"}}`))
+	}))
+	defer srv.Close()
+	clock := time.Date(2026, 11, 1, 8, 51, 19, 0, time.UTC)
+	firstSeen := clock
+	minHeadAge := 3 * time.Minute
+	e := New(hgithub.NewClient("token", "acme", []string{"widget"}, nil, srv.URL), Options{
+		Now:           func() time.Time { return clock },
+		MinHeadAge:    minHeadAge,
+		HeadFirstSeen: NewHeadFirstSeenTracker(),
+	})
+	pr := &gh.PullRequest{
+		CreatedAt: &gh.Timestamp{Time: clock.Add(time.Hour - 2*time.Minute)},
+		UpdatedAt: &gh.Timestamp{Time: clock.Add(time.Hour - time.Minute)},
+	}
+
+	if got := e.headPushedAt(context.Background(), "acme", "widget", 560, "skew", pr); !got.Equal(firstSeen) {
+		t.Fatalf("first observation headPushedAt = %v, want host clock %v", got, firstSeen)
+	}
+	clock = firstSeen.Add(time.Minute)
+	got := e.headPushedAt(context.Background(), "acme", "widget", 560, "skew", pr)
+	if !got.Equal(firstSeen) {
+		t.Fatalf("second observation headPushedAt = %v, want pinned host clock %v", got, firstSeen)
+	}
+	if age := clock.Sub(got); age != time.Minute {
+		t.Fatalf("head age = %v, want 1m measured from first observation", age)
+	}
+	clock = firstSeen.Add(minHeadAge)
+	if got := e.headPushedAt(context.Background(), "acme", "widget", 560, "skew", pr); clock.Sub(got) < minHeadAge {
+		t.Fatalf("head age %v still under min_head_age after one window from first observation", clock.Sub(got))
+	}
+	// A head whose time is not ahead of the host clock is unaffected.
+	sane := &gh.PullRequest{UpdatedAt: &gh.Timestamp{Time: clock.Add(-10 * time.Minute)}}
+	if got := e.headPushedAt(context.Background(), "acme", "widget", 561, "sane", sane); !got.Equal(sane.GetUpdatedAt().Time) {
+		t.Fatalf("sane head = %v, want updated_at %v", got, sane.GetUpdatedAt().Time)
+	}
+}

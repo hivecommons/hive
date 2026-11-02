@@ -1,0 +1,1 @@
+- The public activity cache is now invalidated when a hive is deleted ([#16117](https://github.com/hivecommons/hive/issues/16117)). Previously, deleted public hives remained visible in the anonymous `/api/hub/activity/public` endpoint for up to 2 seconds (the cache TTL) instead of disappearing immediately.
