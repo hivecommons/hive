@@ -409,6 +409,67 @@ func TestSignedReconcile_MovedHeadRetriesNextPass(t *testing.T) {
 	}
 }
 
+// A persistent API failure (a 422 refusing the scratch ref, #16193) is retried
+// below the cap, then settles with exactly one skip comment; a new head
+// restarts the count.
+func TestSignedReconcile_PersistentFailureSettlesAtCap(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	m.refCreateStatus = 422
+	m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+
+	for i := 1; i < signedReconcileMaxAttempts; i++ {
+		c.reconcileSignedCommits(context.Background())
+		if len(m.posted) != 0 {
+			t.Fatalf("pass %d: below the cap must not comment, got %q", i, m.posted)
+		}
+	}
+	if got := m.countCalls(prCommitsCall); got != signedReconcileMaxAttempts-1 {
+		t.Fatalf("below the cap the PR must be retried every pass, commits listed %d times", got)
+	}
+
+	c.reconcileSignedCommits(context.Background())
+	if len(m.posted) != 1 || !strings.Contains(m.posted[0], signedReconcileMarker) || !strings.Contains(m.posted[0], "422") {
+		t.Fatalf("exactly one skip comment naming the error expected at the cap, got %q", m.posted)
+	}
+
+	m.resetCalls()
+	c.reconcileSignedCommits(context.Background())
+	if m.countCalls(prCommitsCall) != 0 || len(m.posted) != 1 {
+		t.Errorf("a settled head must not be retried or re-commented (posted=%d):\n%s", len(m.posted), strings.Join(m.calls, "\n"))
+	}
+}
+
+func TestSignedReconcile_FailureCountResetsOnNewHead(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	m.refCreateStatus = 422
+	m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+	for i := 1; i < signedReconcileMaxAttempts; i++ {
+		c.reconcileSignedCommits(context.Background())
+	}
+
+	newHead := "dddd000000000000000000000000000000000030"
+	m.prCommits = []map[string]any{prCommitJSON(newHead, false, "", "quality@hive.kubestellar.io")}
+	m.openPRs = []map[string]any{reconcilePR(77, reconcileBot, newHead)}
+	c.reconcileSignedCommits(context.Background())
+	if len(m.posted) != 0 {
+		t.Fatalf("a new head must restart the failure count, got comment %q", m.posted)
+	}
+}
+
+func TestSignedReconcile_SuccessClearsFailureCount(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+	c.signedReconcile.noteFailure("o/r#77", m.headSHA)
+
+	c.reconcileSignedCommits(context.Background())
+	if m.refPatch == nil {
+		t.Fatal("expected the tail to be re-authored")
+	}
+	if f := c.signedReconcile.failures["o/r#77"]; f.count != 0 {
+		t.Errorf("success must clear the failure count, got %+v", f)
+	}
+}
+
 // Only the App's own PRs are the hive's to rewrite.
 func TestSignedReconcile_IgnoresPeoplesPRs(t *testing.T) {
 	m, c := reconcileFixture(t, true)

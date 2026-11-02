@@ -50,6 +50,17 @@ var prSignedReconcileInterval = time.Minute
 // signedReconcileMaxPRPages bounds the open-PR listing per repo (100 per page).
 const signedReconcileMaxPRPages = 10
 
+// signedReconcileMaxAttempts is how many consecutive passes may fail signBranch
+// at the same head before the reconciler gives up on that head. A persistent
+// API refusal (a 422 on the scratch ref, #16193) can never succeed on retry.
+const signedReconcileMaxAttempts = 3
+
+// signedReconcileFailure counts consecutive signBranch failures at one head.
+type signedReconcileFailure struct {
+	head  string
+	count int
+}
+
 // signedReconcileMarker identifies the App's "can't sign this" comment so it
 // is posted once per PR, including across hive restarts.
 const signedReconcileMarker = "<!-- hive:signed-commits-blocked -->"
@@ -67,6 +78,31 @@ type signedReconcileState struct {
 	settled map[string]string
 	// noted holds the PRs that already carry the skip comment.
 	noted map[string]bool
+	// failures counts consecutive signBranch failures per PR at one head.
+	failures map[string]signedReconcileFailure
+}
+
+// noteFailure records one more failure of key at head and returns the
+// consecutive count; a different head restarts the count.
+func (s *signedReconcileState) noteFailure(key, head string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failures == nil {
+		s.failures = map[string]signedReconcileFailure{}
+	}
+	f := s.failures[key]
+	if f.head != head {
+		f = signedReconcileFailure{head: head}
+	}
+	f.count++
+	s.failures[key] = f
+	return f.count
+}
+
+func (s *signedReconcileState) clearFailures(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.failures, key)
 }
 
 func (s *signedReconcileState) settledHead(key string) string {
@@ -111,6 +147,11 @@ func (s *signedReconcileState) prune(repoPrefix string, open map[string]bool) {
 	for key := range s.noted {
 		if strings.HasPrefix(key, repoPrefix) && !open[key] {
 			delete(s.noted, key)
+		}
+	}
+	for key := range s.failures {
+		if strings.HasPrefix(key, repoPrefix) && !open[key] {
+			delete(s.failures, key)
 		}
 	}
 }
@@ -213,6 +254,7 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 	head := pr.GetHead().GetRef()
 	headSHA := pr.GetHead().GetSHA()
 	logArgs := []any{"repo", owner + "/" + repo, "pr", number, "head", head}
+	failKey := fmt.Sprintf("%s/%s#%d", owner, repo, number)
 
 	commits, err := c.listPRRepositoryCommits(ctx, owner, repo, number)
 	if err != nil {
@@ -268,12 +310,21 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 	if err != nil {
 		var moved signedHeadMovedError
 		c.warn("signed-commit reconciler: could not re-author the unsigned tail as a GitHub-signed commit", append(logArgs, "base", base, "reason", err.Error())...)
-		if errors.As(err, &moved) || !errors.Is(err, errSignedCommitSkip) {
+		if errors.As(err, &moved) {
 			return "" // transient: retry next pass
+		}
+		if !errors.Is(err, errSignedCommitSkip) {
+			if n := c.signedReconcile.noteFailure(failKey, headSHA); n < signedReconcileMaxAttempts {
+				return "" // retry next pass
+			}
+			c.warn("signed-commit reconciler: giving up on this head after repeated failures", append(logArgs, "attempts", signedReconcileMaxAttempts)...)
+			c.noteSignedSkip(ctx, owner, repo, number, fmt.Sprintf("signing failed %d times in a row at this head: %s", signedReconcileMaxAttempts, err.Error()))
+			return headSHA
 		}
 		c.noteSignedSkip(ctx, owner, repo, number, err.Error())
 		return headSHA
 	}
+	c.signedReconcile.clearFailures(failKey)
 	c.recordWriteAudit(AuditActionSignedCommitReauthored, hiveWriteMeta(),
 		WriteTarget{Repo: owner + "/" + repo, Number: number},
 		"branch", head, "base", base, "commit", oid,
