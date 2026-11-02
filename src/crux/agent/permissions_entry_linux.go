@@ -22,13 +22,25 @@ func openEntry(path string) (*os.File, error) {
 }
 
 func entryChmod(f *os.File, mode os.FileMode) error {
-	return os.Chmod(entryProcPath(f), mode)
+	return entryPathError(f, os.Chmod(entryProcPath(f), mode))
 }
 
 func entryChown(f *os.File, uid, gid int) error {
-	return os.Chown(entryProcPath(f), uid, gid)
+	return entryPathError(f, os.Chown(entryProcPath(f), uid, gid))
 }
 
 func entryProcPath(f *os.File) string {
 	return fmt.Sprintf("/proc/self/fd/%d", f.Fd())
+}
+
+// entryPathError reports a failed change against the entry's own path rather
+// than its /proc/self/fd link, matching what f.Chown/f.Chmod report on other
+// platforms. The descriptor number differs between ticks whenever other fds are
+// open, so an error naming it would make every tick's failure look new to
+// warnDeduper and re-fire the WARN that #4488 demoted to DEBUG.
+func entryPathError(f *os.File, err error) error {
+	if pe, ok := err.(*os.PathError); ok {
+		pe.Path = f.Name()
+	}
+	return err
 }
