@@ -153,12 +153,12 @@ implemented**; see
 
 ## Focused comparison: maintenance, forge and managed agents
 
-Checked **2026-11-02** against the primary sources below. **Documented** means
-the vendor describes the capability, not that Hive tested it. **Unknown**
-means this assessment did not establish it, not that the vendor lacks it.
+Checked **2026-11-02** against the first-party sources below. **Documented**
+means the vendor says it works, not that Hive tested it. **Unknown**
+means we did not verify it. It does not mean the vendor lacks it.
 Hive's source baseline is v5
 [`ddf4a56fc1a66f379b97f9fa64c834fd7896a034`](https://github.com/hivecommons/hive/commit/ddf4a56fc1a66f379b97f9fa64c834fd7896a034),
-committed 2026-11-02. This update does not establish v6 or deployed-fleet parity.
+committed 2026-11-02. We did not check v6 or prove the same behavior in live fleets.
 
 | Actual job | Hive at that baseline | GitHub Agentic Workflows GA | Entire / Devin, documented as checked |
 | --- | --- | --- | --- |
@@ -169,46 +169,47 @@ committed 2026-11-02. This update does not establish v6 or deployed-fleet parity
 | Preserve provenance and measure outcomes | Review/merge evidence and scoped observational outcomes; no cross-vendor causal benchmark ([evidence][hive-evidence], [October outcomes][hive-outcomes]) | Actions artifacts/logs and validated output jobs; Accenture figures in GA announcement are a customer account, not a controlled Hive comparison ([GA][gh-aw-ga]) | **Entire:** Trails preserve intent/trace/outcome; Continuous Memory syncs sessions into Git, with graph/brain components. Speed/token savings are vendor claims, not reproduced here ([launch][entire-launch]). **Devin:** test recordings and workflow call history are documented evidence, not directly comparable outcome rates ([testing][devin-testing], [workflows][devin-workflows]). |
 | Source and forge scope | Apache-2.0 source; GitHub operational path, GitLab and Gitea/Forgejo adapters with substantial end-to-end gaps ([license][hive-license], [forge contract][hive-forge], [limits][hive-forges]) | Open-source project running on GitHub Actions; GA announcement establishes github.com availability, not general forge portability ([GA][gh-aw-ga]) | **Entire:** independent Git-compatible private-repo hosting; launch lists public repositories and self-hosted Git nodes as upcoming, not delivered ([launch][entire-launch]). **Devin:** documented GitHub, GitLab, Bitbucket and Azure DevOps integrations; this is broader documented forge coverage than Hive's complete operation today, not tested parity ([integrations][devin-integrations]). |
 
-Entire's **2026-10-26** launch is a direct primary source for Trails,
+Entire's **2026-10-26** launch is a first-party source for Trails,
 Continuous Memory and Buildkite/Depot CI. Its open-source CLI/graph/brain
 components do not make the hosted forge an open-source Hive replacement.
-Git compatibility alone does not establish an adapter for Trails.
+Support for Git alone does not prove that Hive can use Trails.
 
-Devin's readable official docs establish meaningful governance and
-orchestration overlap. The weekly report's specific **2026-10-30 Cognition
-enterprise-governance announcement remains unconfirmed** in this assessment.
-Undated live docs prove the documented capability as observed, not its release
-date. A guessed URL returning 404 is not evidence that an announcement is false.
+Devin's own docs show that its policy and fleet tools overlap with Hive.
+The weekly report's specific **2026-10-30 Cognition enterprise-governance
+announcement remains unconfirmed** here. Live docs with no date show what
+the vendor says now. They do not prove when it shipped.
+A guessed URL returning 404 does not prove that a launch claim is false.
 
 ### Forge correction and existing decision
 
 Neither “Hive is GitHub-only” without qualification nor “Hive supports all
-three forges end-to-end” is accurate. The existing
+three forges end-to-end” is right. The existing
 [`Forge` interface and `NewForge` factory][hive-forge] already select GitHub,
 GitLab and Gitea/Forgejo. However,
 [`main_eval_cycle.go`][hive-enumeration] and
 [`repos_rescan.go`][hive-rescan] still call `ghClient.EnumerateActionable`.
-Some writes consume the adapter, but discovery, agent operations, merge and
-proxy limitations remain ([full list][hive-forges]). This assessment supplies
-no deployed non-GitHub Hive evidence.
+Some writes use the adapter. Gaps remain in how Hive finds work, runs agents,
+merges code and checks traffic ([full list][hive-forges]).
+We found no proof of a live non-GitHub Hive.
 
 Do not redesign the interface. [ADR-0005](adr/0005-forge-abstraction.md),
 [#6170](https://github.com/hivecommons/hive/issues/6170) and the
 [roadmap sequencing decision][hive-roadmap] already cover it.
-The September 9 decision recorded under #6177/#6167 deferred enumeration-policy
-extraction until after the GA cut unless it would not reset the required-gate
-soak. A closed design issue is not proof of delivered end-to-end support.
-Revisit that decision explicitly with an adopter need and acceptance evidence;
-this comparison does not reverse it.
+The September 9 decision under #6177/#6167 put the work to split out listing
+policy after the GA cut. Earlier work was allowed only if it would not reset
+the required-gate soak (the period used to prove that checks stay green).
+A closed design issue does not prove full support.
+Revisit that choice with a real user's need and proof that the full path works.
+This page does not reverse it.
 
 ### Five report releases: integration compatibility
 
 **Method:** read published, non-draft release notes and the source contracts
-linked below; inspect Hive launch/config and existing test/CI definitions.
+linked below. Read Hive's launch code, config, tests and CI steps.
 **No vendor binary, authenticated task, launcher smoke, build or local test
 suite was executed for this assessment.** These are source-contract results,
-not certifications of runtime compatibility. Release dates are publication
-dates; linked upstream source revisions have their own commit dates.
+not proof that the tools ran well together. Release dates say when a release
+was published. Linked source versions have their own commit dates.
 
 | Report release (published, 2026) | Hive contract and source result | Action / remaining uncertainty |
 | --- | --- | --- |
@@ -229,35 +230,35 @@ engine, dependency, configuration or pin changes.
 
 ### Ranked decisions: keep, integrate, defer, drop
 
-These are recommendations as of **2026-11-02**, not measured ROI or approved
-roadmap changes.
+These are suggested next steps as of **2026-11-02**. They are not measured
+returns on investment or approved roadmap changes.
 
-1. **Keep the governed maintenance plane; replace “single-worker competitors”
-   framing.** Low documentation cost; preserves a useful operator choice
-   without pretending gh-aw/Devin lack ongoing automation or policy. Use the
+1. **Keep the governed maintenance plane; drop the “single-worker competitors”
+   claim.** The docs fix is cheap. It helps teams choose without claiming that
+   gh-aw/Devin lack ongoing jobs or policy. Use the
    jobs table above and existing [ACMM policy](acmm-policy-matrix.md), not a
    claimed universal quality/cost advantage.
 2. **Integrate with existing gh-aw jobs rather than replace them.** Lowest-risk
    entry is the [report-only sample](../deploy/gh-aw/README.md). Broader dispatch
    stays behind the existing [external-workflow admission design](design/external-workflow-admission.md)
    and [acceptance bar](backend-support-tiers.md#github-agentic-workflows-on-ramp-not-a-cli-backend):
-   verified receipts, cancellation and refusal of write-capable stages.
-   Benefit: reuse Actions investments; cost: real admission/identity work,
+   checked receipts, a way to cancel, and refusal of stages that can write.
+   Benefit: reuse Actions work; cost: real checks on who may run what,
    not a CLI name added to a list. No dispatch adapter is shipped by this doc.
-3. **Revisit forge sequencing only for a concrete adopter requirement.**
+3. **Revisit the forge plan only for a real user's need.**
    Reuse [#6167](https://github.com/hivecommons/hive/issues/6167) and the
-   [recorded decision][hive-roadmap]. Benefit: actual portability; high cost:
-   enumerate/filter policy, write/merge/proxy/auth paths and deployment proof.
-   Entire makes provenance/forge portability worth evaluating, not a reason to
+   [recorded decision][hive-roadmap]. Benefit: work on more forges; high cost:
+   listing/filter rules, write/merge/proxy/auth paths and proof in a live hive.
+   Entire makes forge choice and traces worth a look. It is not a reason to
    implement a fourth adapter before the existing three work end-to-end.
 4. **Keep evidence tied to heads, populations and provenance.** Reuse
    [evidence](evidence.md) and [outcomes](benchmarks/outcomes-2026-10.md);
-   evaluate whether Trail-style intent/session context helps reviewers before
-   importing external transcripts (privacy and retention review required).
+   check whether Trail-style intent and session context help reviewers before
+   bringing in outside transcripts. First review what data to store and for how long.
    No vendor benchmark was reproduced. Hive's historical estimated cost per
-   merge is not a current universal competitive metric. Comparative trials
-   and transcript integrations have real collection/review cost; not promised
-   by this documentation update.
+   merge is not a current rate for all users or a fair vendor score.
+   Trials and transcript links cost time to build and review.
+   This docs update does not promise them.
 5. **Drop speculative release churn and SDK parity work.** Keep current tiers
    and use the five-release assessment above. Benefit: avoid mistaking app/SDK
    releases for launcher contracts; cost: unresolved seams still need targeted
