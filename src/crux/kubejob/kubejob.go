@@ -190,6 +190,10 @@ func (o Options) Validate() error {
 // left in place until its TTL so the operator can inspect it.
 func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Result, error) {
 	var res sandbox.Result
+	if spec.ClineProvider != nil {
+		_ = spec.ClineProvider.Close()
+		return res, errors.New("kubejob: scoped Cline provider files are Podman-only; configure Job Secret references instead")
+	}
 	if err := l.Options.Validate(); err != nil {
 		return res, err
 	}

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cline"
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/outputschema"
@@ -184,6 +186,15 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = err.Error()
 		return res, err
 	}
+	var provider *cline.ProviderFile
+	if spec.AgentConfig.Backend == "cline" && spec.Runtime != config.SandboxRuntimeJob {
+		provider, err = cline.StageProviderFile(os.Getenv("HIVE_CLINE_CONFIG_DIR"), spec.AgentConfig.Model, workspace)
+		if err != nil {
+			res.Error = err.Error()
+			return res, err
+		}
+		defer provider.Close()
+	}
 	// A spool the relay cannot see is a lost review, not a failed kick: the
 	// rest of the run is still worth doing, so log and go on without one.
 	spool, spoolErr := e.openReviewSpool(spec.ReviewSpoolDir, spec.Agent, workspace)
@@ -207,7 +218,15 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Env:            spool.sandboxEnv(),
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
+		ClineProvider:  provider,
 	})
+	if provider != nil {
+		sres.Stdout = provider.Redact(sres.Stdout)
+		sres.Stderr = provider.Redact(sres.Stderr)
+		if err := provider.Close(); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}
 	if ctx.Err() == nil && !spool.awaitDrain(ctx) && e.Logger != nil {
 		e.Logger.Warn("sandbox review spool: requests still pending after the drain wait", "agent", spec.Agent, "spool", spool.entry.Spool)
 	}
@@ -225,7 +244,12 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	res.Sandbox = sres
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		res.TimedOut = true
-		runErr = fmt.Errorf("sandbox kick timed out after %s", spec.Timeout)
+		timeoutErr := fmt.Errorf("sandbox kick timed out after %s", spec.Timeout)
+		if provider != nil {
+			runErr = errors.Join(timeoutErr, runErr)
+		} else {
+			runErr = timeoutErr
+		}
 	}
 	res.TranscriptPath = filepath.Join(workspace, sandboxTranscriptRelPath)
 	_ = writeTranscript(res.TranscriptPath, sres)
@@ -363,7 +387,7 @@ func truncateRunes(s string, max int) string {
 
 func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 	if cfg.Backend == "cline" {
-		return nil, fmt.Errorf("Cline needs provider-file credentials, which the Podman sandbox cannot inject; use sandbox runtime job with an operator-selected provider Secret, an isolated per-UID worker or the contributor container; never stage keys in the Git workspace")
+		return nil, fmt.Errorf("Cline requires scoped provider-file staging or Job Secret references through the canonical sandbox kick path; direct command overrides are unsupported")
 	}
 	if strings.TrimSpace(cfg.LaunchCmd) != "" {
 		return []string{"sh", "-lc", cfg.LaunchCmd + " < " + shellQuote(promptRel)}, nil

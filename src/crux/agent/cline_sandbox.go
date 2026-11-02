@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/cline"
@@ -13,8 +15,10 @@ func validateClineSandbox(agent *AgentProcess, runtime string, job config.Sandbo
 		return err
 	}
 	if runtime != config.SandboxRuntimeJob {
-		_, err := sandboxCommand(configSnapshot{Backend: "cline"}, sandboxPromptRelPath)
-		return err
+		if !filepath.IsAbs(os.Getenv("HIVE_CLINE_CONFIG_DIR")) {
+			return fmt.Errorf("Cline Podman requires an explicit absolute HIVE_CLINE_CONFIG_DIR for dedicated operator credentials")
+		}
+		return nil
 	}
 	for _, name := range job.EnvFromSecrets {
 		if strings.TrimSpace(name) != "" {
@@ -26,7 +30,7 @@ func validateClineSandbox(agent *AgentProcess, runtime string, job config.Sandbo
 
 func sandboxKickCommand(spec SandboxKickSpec, promptRel string) ([]string, error) {
 	cfg := spec.AgentConfig
-	if cfg.Backend != "cline" || spec.Runtime != config.SandboxRuntimeJob {
+	if cfg.Backend != "cline" {
 		return sandboxCommand(cfg, promptRel)
 	}
 	if strings.TrimSpace(cfg.LaunchCmd) != "" {
@@ -38,13 +42,18 @@ func sandboxKickCommand(spec SandboxKickSpec, promptRel string) ([]string, error
 	if err := config.ValidateReasoningEffort("cline", cfg.ReasoningEffort); err != nil {
 		return nil, err
 	}
-	args := []string{"crux", cline.Subcommand, "--provider-secret", "--model", shellQuote(cfg.Model),
-		"--prompt-file", shellQuote(promptRel)}
+	args := []string{"crux", cline.Subcommand}
+	if spec.Runtime == config.SandboxRuntimeJob {
+		args = append(args, "--provider-secret")
+	} else {
+		args = append(args, "--provider-file", cline.ProviderMountPath, "--state-dir", cline.ProviderStatePath)
+	}
+	args = append(args, "--model", cfg.Model, "--prompt-file", promptRel)
 	if cfg.ReasoningEffort != "" {
-		args = append(args, "--thinking", shellQuote(cfg.ReasoningEffort))
+		args = append(args, "--thinking", cfg.ReasoningEffort)
 	}
 	if spec.Timeout > 0 {
-		args = append(args, "--timeout", shellQuote(spec.Timeout.String()))
+		args = append(args, "--timeout", spec.Timeout.String())
 	}
-	return []string{"sh", "-lc", "exec " + strings.Join(args, " ")}, nil
+	return args, nil
 }

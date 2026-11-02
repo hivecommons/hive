@@ -1,4 +1,5 @@
-// Package sandbox launches agent work in credential-free rootless Podman sandboxes.
+// Package sandbox launches rootless Podman work with credential-free Git
+// workspaces and an optional opaque selected-provider capability for Cline.
 package sandbox
 
 import (
@@ -10,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/cline"
 )
 
 const (
@@ -37,6 +40,7 @@ type LaunchSpec struct {
 	NetworkMode    string
 	NetworkNone    bool
 	ReadOnly       bool
+	ClineProvider  *cline.ProviderFile
 }
 
 type Result struct {
@@ -51,7 +55,17 @@ type Launcher interface {
 
 type PodmanLauncher struct{ Binary string }
 
-func (l PodmanLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, error) {
+func (l PodmanLauncher) Run(ctx context.Context, spec LaunchSpec) (res Result, runErr error) {
+	if spec.ClineProvider != nil {
+		defer func() {
+			res.Stdout = spec.ClineProvider.Redact(res.Stdout)
+			res.Stderr = spec.ClineProvider.Redact(res.Stderr)
+			if err := spec.ClineProvider.Close(); err != nil {
+				runErr = errors.Join(runErr, err)
+			}
+		}()
+		spec.Name = "hive-cline-" + spec.ClineProvider.ID()
+	}
 	bin := l.Binary
 	if bin == "" {
 		bin = PodmanBinary
@@ -63,13 +77,28 @@ func (l PodmanLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, error
 	if err != nil {
 		return Result{}, err
 	}
+	if spec.ClineProvider != nil {
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), clineContainerCleanupTimeout)
+			defer cancel()
+			cleanup := exec.CommandContext(cleanupCtx, bin, "rm", "--force", "--ignore", spec.Name)
+			cleanup.Env = spec.ClineProvider.SanitizeEnv(SanitizedEnv(os.Environ(), spec.EnvAllowlist, spec.Env))
+			if err := cleanup.Run(); err != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("sandbox: Cline container cleanup failed; remove %s before retrying", spec.Name))
+				res.ExitCode = -1
+			}
+		}()
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = SanitizedEnv(os.Environ(), spec.EnvAllowlist, spec.Env)
+	if spec.ClineProvider != nil {
+		cmd.Env = spec.ClineProvider.SanitizeEnv(cmd.Env)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
-	res := Result{Stdout: stdout.String(), Stderr: stderr.String()}
+	res = Result{Stdout: stdout.String(), Stderr: stderr.String()}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
 	}
@@ -110,13 +139,20 @@ func PodmanArgs(spec LaunchSpec) ([]string, error) {
 	}
 	args = append(args, "--userns=keep-id")
 	args = append(args, "-v", filepath.Clean(spec.Workspace)+":"+mount+":Z")
+	if spec.ClineProvider != nil {
+		extra, err := clineProviderArgs(spec, mount, workdir)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, extra...)
+	}
 	args = append(args, "--workdir", workdir)
 	// Name only: podman takes the value from its own environment, which Run
 	// sets from the same spec.Env. A value on the command line would be
 	// readable by every user on the host through /proc/<pid>/cmdline, and
 	// some values (the review spool key, #14986) are per-run secrets.
 	for k := range spec.Env {
-		if !isCredentialName(k) {
+		if !isCredentialName(k) && (spec.ClineProvider == nil || k != "HOME") {
 			args = append(args, "--env", k)
 		}
 	}

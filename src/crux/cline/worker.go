@@ -68,9 +68,9 @@ func CheckConfig(configDir, model string) error {
 }
 
 type options struct {
-	binary, model, effort, promptFile, cwd, configDir, stateDir, stageConfig string
-	timeout                                                                  time.Duration
-	check, exportConfig, providerSecret                                      bool
+	binary, model, effort, promptFile, cwd, configDir, stateDir, stageConfig, providerFile string
+	timeout                                                                                time.Duration
+	check, exportConfig, providerSecret                                                    bool
 }
 
 // Run is shared by hive/cline-turn and standalone crux/cline-turn. Prompts go
@@ -91,6 +91,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.BoolVar(&opts.check, "check", false, "check CLI capabilities and selected provider config without inference")
 	fs.BoolVar(&opts.exportConfig, "export-provider-config", false, "write selected provider credential JSON to stdout for Secret generation (sensitive)")
 	fs.BoolVar(&opts.providerSecret, "provider-secret", false, "consume HIVE_CLINE_PROVIDERS_B64 from an operator-selected sandbox Job Secret, without a credential source file")
+	fs.StringVar(&opts.providerFile, "provider-file", "", "read-only selected-provider file supplied by the scoped Podman capability")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -130,15 +131,41 @@ func run(opts options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if opts.configDir == "" && !opts.providerSecret {
+	if opts.configDir == "" && !opts.providerSecret && opts.providerFile == "" {
 		opts.configDir = filepath.Join(home, ".cline")
 	}
 	var credentials []byte
-	if opts.providerSecret {
+	if opts.providerSecret || opts.providerFile != "" {
 		if opts.configDir != "" || opts.stageConfig != "" || opts.exportConfig {
 			return errors.New("provider-secret cannot be combined with credential source, staging or export options")
 		}
-		credentials, err = selectedProviderSecret(provider)
+		if opts.providerSecret && opts.providerFile != "" {
+			return errors.New("provider-file and provider-secret are mutually exclusive")
+		}
+		if opts.providerSecret {
+			credentials, err = selectedProviderSecret(provider)
+		} else {
+			if opts.cwd == "" {
+				opts.cwd, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			opts.cwd, err = filepath.Abs(opts.cwd)
+			if err != nil {
+				return err
+			}
+			if err := secretStateOutsideWorkspace(opts.providerFile, opts.cwd); err != nil {
+				return err
+			}
+			var raw []byte
+			raw, err = os.ReadFile(opts.providerFile)
+			if err == nil {
+				credentials, err = narrowCredentials(raw, provider)
+			} else {
+				return errors.New("cannot read the mounted selected Cline provider")
+			}
+		}
 	} else {
 		credentials, err = selectedCredentials(opts.configDir, provider)
 	}
@@ -176,7 +203,7 @@ func run(opts options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(opts.stateDir, 0o700); err != nil {
 		return err
 	}
-	if opts.providerSecret {
+	if opts.providerSecret || opts.providerFile != "" {
 		if err := secretStateOutsideWorkspace(opts.stateDir, opts.cwd); err != nil {
 			return err
 		}
@@ -312,7 +339,7 @@ func narrowCredentials(raw []byte, provider string) ([]byte, error) {
 	if err := json.Unmarshal(entry, &auth); err != nil || auth.Settings == nil {
 		return nil, errors.New("invalid Cline provider config")
 	}
-	if auth.TokenSource == "oauth" {
+	if auth.TokenSource == "oauth" || containsRefreshToken(entry) {
 		return nil, errors.New("Cline OAuth refresh synchronization is not supported by isolated workers; configure a dedicated API-key provider with cline auth")
 	}
 	return json.Marshal(map[string]any{"version": 1, "lastUsedProvider": provider, "modes": map[string]any{},

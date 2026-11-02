@@ -126,15 +126,16 @@ Hive logs an `agent sandbox posture` warning at boot and on every config reload 
 
 The second gate is deliberate rather than an oversight, and it is not safe to simply collapse. A sandboxed agent runs a different execution model — no tmux CLI at all, and every kick is a Podman run against the primary repo — and `startSandboxKickLocked` has **no fallback to the tmux path**: an agent opted in without a resolvable image fails every kick outright rather than degrading. Making the global flag sufficient would therefore convert working agents into permanently failing ones on any hive that set it without an image. Changing that default is a fleet-affecting decision that wants measurement, not a code-reading; the warning above is the part that is safe today.
 
-**Cline has an explicit runtime limitation.** Its bounded worker supports
-`sandbox.runtime: job` with an operator-provisioned, dedicated provider Secret
-referenced by that agent's existing `job.env_from_secrets`. Disposable Podman
-kicks refuse Cline because that launcher cannot materialize the required provider
-file outside the credential-free Git workspace. This is not a shared refusal
-for every backend and must not be advertised as full sandbox parity. No silent
-tmux fallback, new credential environment allowlist, or confinement bypass is
-provided. See [Cline sandbox setup and the remaining Podman design
-decision](integrations/cline.md#disposable-sandbox-kicks).
+**Cline's provider capability is separate from the Git workspace.** Its bounded
+worker uses dedicated provider Secrets through existing `job.env_from_secrets`
+for Jobs, or an opaque, per-run selected-provider file mounted `ro,Z` outside
+the workspace for Podman. The latter requires an explicit absolute
+`HIVE_CLINE_CONFIG_DIR`; it does not grant arbitrary host mounts, share the full
+operator config, or change other engines' mounts. Private UID-owned tmpfs state,
+container teardown and staged-file revocation/cleanup are part of that scoped
+capability. GitHub credentials still never enter. No silent tmux fallback,
+expanded credential environment allowlist, or confinement bypass is provided.
+See [Cline sandbox setup](integrations/cline.md#disposable-sandbox-kicks).
 
 For sandboxed agents, a kick now follows this path:
 

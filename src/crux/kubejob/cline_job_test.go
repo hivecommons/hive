@@ -1,6 +1,7 @@
 package kubejob
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,13 @@ import (
 	"github.com/hivecommons/hive/crux/cline"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
+
+func TestJobRefusesPodmanProviderCapability(t *testing.T) {
+	_, err := (&Launcher{}).Run(context.Background(), sandbox.LaunchSpec{ClineProvider: &cline.ProviderFile{}})
+	if err == nil || !strings.Contains(err.Error(), "Podman-only") {
+		t.Fatal("Job accepted a host provider-file capability", err)
+	}
+}
 
 func TestClineJobUsesSecretReferenceNotHostCredentialMaterial(t *testing.T) {
 	t.Setenv(cline.ProviderSecretEnv, "must-not-copy-host-credential")

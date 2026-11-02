@@ -17,9 +17,9 @@ func TestClineSandboxJobCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(cmd, "|")
-	for _, want := range []string{"exec crux cline-turn --provider-secret", "--model 'openrouter/anthropic/test'",
-		"--thinking 'high'", "--timeout '1m0s'", "--prompt-file '.hive/kick-prompt.txt'"} {
+	joined := strings.Join(cmd, " ")
+	for _, want := range []string{"crux cline-turn --provider-secret", "--model openrouter/anthropic/test",
+		"--thinking high", "--timeout 1m0s", "--prompt-file .hive/kick-prompt.txt"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %s: %s", want, joined)
 		}
@@ -43,8 +43,9 @@ func TestClineSandboxJobCommand(t *testing.T) {
 	spec.AgentConfig = configSnapshot{Backend: "cline", Model: "openrouter/test"}
 	for _, runtime := range []string{"", config.SandboxRuntimePodman} {
 		spec.Runtime = runtime
-		if _, err := sandboxKickCommand(spec, "prompt"); err == nil || !strings.Contains(err.Error(), "Podman") {
-			t.Fatalf("Podman credential boundary bypassed: %v", err)
+		cmd, err := sandboxKickCommand(spec, ".hive/kick-prompt.txt")
+		if err != nil || !strings.Contains(strings.Join(cmd, " "), "--provider-file /run/hive-cline-provider/providers.json") {
+			t.Fatalf("Podman did not select scoped file mode: %v", err)
 		}
 	}
 	spec.AgentConfig = configSnapshot{Backend: "copilot"}
@@ -54,6 +55,7 @@ func TestClineSandboxJobCommand(t *testing.T) {
 }
 
 func TestClineSandboxJobPolicyAndCredentialPreflight(t *testing.T) {
+	t.Setenv("HIVE_CLINE_CONFIG_DIR", "")
 	agent := &AgentProcess{Config: config.AgentConfig{Model: "openrouter/test"}}
 	job := config.SandboxJobConfig{EnvFromSecrets: []string{"dedicated-cline-provider"}}
 	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, job); err != nil {
@@ -102,7 +104,7 @@ func TestClineManagerSandboxJobRouting(t *testing.T) {
 	select {
 	case spec := <-captured:
 		command := strings.Join(spec.Command, " ")
-		if !strings.Contains(command, "cline-turn --provider-secret") || !strings.Contains(command, "--thinking 'medium'") {
+		if !strings.Contains(command, "cline-turn --provider-secret") || !strings.Contains(command, "--thinking medium") {
 			t.Fatal("Cline did not use the bounded Job runner", command)
 		}
 		if len(spec.EnvAllowlist) != 0 || spec.Env["HIVE_CLINE_PROVIDERS_B64"] != "" {
@@ -115,6 +117,7 @@ func TestClineManagerSandboxJobRouting(t *testing.T) {
 }
 
 func TestClineSandboxRefusalPreservesIdleState(t *testing.T) {
+	t.Setenv("HIVE_CLINE_CONFIG_DIR", "")
 	tests := []struct {
 		name    string
 		runtime string

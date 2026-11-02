@@ -54,12 +54,10 @@ scrape Cline's changing TUI. Turns use the existing pane workspace and environme
 
 ### Disposable sandbox kicks
 
-Cline does **not** have complete parity across the optional disposable sandbox
-runtimes. Kubernetes Jobs are supported through their existing
-`job.env_from_secrets` credential boundary. Rootless Podman kicks are not:
-`sandbox.LaunchSpec` has no credential-file mount or Secret reference, and its
-only filesystem grant is the Git workspace. This is a Cline-specific refusal,
-not a blanket refusal for all other coding backends.
+Cline supports both optional disposable sandbox runtimes. Kubernetes Jobs use
+their existing `job.env_from_secrets` credential boundary. Rootless Podman uses
+a narrowly typed selected-provider file capability, not a configurable host
+mount list. Both paths keep credentials outside the Git workspace.
 
 For the Job runtime, provision a **dedicated** Secret in the spoke's namespace
 with only `HIVE_CLINE_PROVIDERS_B64`, containing base64-encoded selected-provider
@@ -111,12 +109,40 @@ The shared sandbox credential deny-list rejects `HIVE_CLINE_PROVIDERS_B64`
 from controller environment forwarding, even if an allowlist or explicit
 environment map names it; only the Job's Secret reference can supply it.
 
-Podman support requires a separate owner decision: approve a selected-provider,
-read-only, out-of-workspace credential mount with lifecycle/UID/SELinux rules,
-or provide a brokered inference endpoint that needs no provider credential in
-the workload. Neither capability exists in the current Podman launcher.
-Do not pass provider JSON through its environment allowlist, put credentials
-in the Git workspace/image, or turn off the sandbox to evade this refusal.
+For Podman, explicitly set `HIVE_CLINE_CONFIG_DIR` to an **absolute** dedicated
+operator-managed config directory on the Hive process; there is no ambient-home
+credential lookup on this path. Use the same agent definition with
+`sandbox.runtime: podman` and omit the Job Secret reference. Provision working
+rootless Podman, the approved image, normal UID keep-id mapping and restricted
+egress policy as for other sandbox engines.
+
+Each kick copies only the selected manual/API-key provider into a unique,
+owner-only directory under
+`~/.local/state/crux/cline/provider-mounts`. The source and stage must resolve
+outside the Git workspace; symlink, ownership, permissions and staged-content
+checks reject unsafe capabilities. Only the staged `providers.json` is bound at
+`/run/hive-cline-provider/providers.json`, with `ro,Z` (private SELinux relabel).
+The operator's original config is never mounted or relabeled. A private
+UID/GID-owned `nosuid,nodev,noexec` tmpfs at `/run/hive-cline-state` holds the
+worker's temporary HOME/state, including its narrowed runtime credential copy.
+No provider value is passed in argv or environment. Existing engines retain
+their original mount/UID behavior.
+
+The mount capability is accepted only with the canonical bounded command and
+fixed file/state/workspace paths; arbitrary commands, extra host mounts and
+launch overrides cannot use it. Every attempted launch cleans up its unique
+named container with bounded `podman rm --force --ignore`, including failures
+and cancellation, before revoking/removing its stage. Cleanup failure is a
+failed run with an actionable container name, never a successful publish.
+Selected secret values are redacted before captured output becomes a transcript
+or result; normal broker scanning and policy remain authoritative. Do not copy
+credentials into task artifacts or commit them. Neither a read-only mount nor
+Cline's settings file is a defense against an agent deliberately reading its
+own provider key; use dedicated least-privilege provider credentials and the
+existing restricted egress boundary.
+
+Do not pass provider JSON through a sandbox environment allowlist, put
+credentials in the Git workspace/image, or disable confinement to make it work.
 
 ## ClankeR
 
@@ -166,10 +192,10 @@ Do not put credential JSON in a ConfigMap or CLI arguments.
   Cline's CLI. Such agent definitions are refused rather than silently dropping
   their restrictions. OAuth provider entries are also refused: copying
   single-use refresh tokens without a synchronization protocol is unsafe.
-- Custom `launch_cmd` overrides are refused for Cline, including sandbox Jobs.
-  Disposable Podman sandbox kicks remain unsupported; the Job runtime uses only
-  explicit Secret references as described above. Per-UID workers and contributor
-  containers are separate supported paths, not silent fallbacks.
+- Custom `launch_cmd` overrides are refused for Cline, including disposable
+  sandbox kicks. Podman uses only the scoped selected-provider file capability;
+  Jobs use only explicit Secret references. Per-UID workers and contributor
+  containers remain separate supported paths, not silent fallbacks.
 - Structured usage is retained as `CLINE_USAGE` in captured output and sanitized
   per-turn normalized records under `~/.local/state/crux/cline/usage` (30-day
   retention). Hive collects shared/per-agent home records through its existing
@@ -191,6 +217,10 @@ native CLI was checked with `--version` and `--help` on macOS; no authenticated
 coding task or production contributor registration was launched.
 An isolated invalid-provider stdin/NDJSON smoke also returned the expected
 structured error and nonzero exit without contacting an authenticated provider.
+Podman argv, secret isolation/redaction, parallel stages and failure/cancellation
+cleanup are exercised with dummy provider data and a controlled Podman executable
+fixture in CI. No real Podman container or authenticated Kubernetes coding Job
+was launched during integration verification.
 
 `src/crux` in Hive is canonical. After merge, the existing Crux sync publishes
 the module-path-rewritten standalone mirror. Consumers of released standalone
