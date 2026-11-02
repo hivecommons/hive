@@ -1695,6 +1695,30 @@ func TestBrokerNormalisationSkipsSymlinkedParentDir(t *testing.T) {
 	}
 }
 
+// The parent check compares against the resolved workspace; a workspace
+// that cannot be resolved is a hard error rather than a silent skip-all.
+func TestStripTrailingBlankLinesUnresolvableWorkspace(t *testing.T) {
+	b := &Broker{Workspace: filepath.Join(t.TempDir(), "missing"), Runner: &envRecordingRunner{}}
+	_, err := b.stripTrailingBlankLines(context.Background(), []string{"a.txt"})
+	if err == nil || !strings.Contains(err.Error(), "resolving workspace") {
+		t.Fatalf("err = %v, want resolving workspace error", err)
+	}
+}
+
+// A parent that cannot be resolved is treated as outside the workspace.
+func TestInsideRootUnresolvableParent(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insideRoot(root, filepath.Join(root, "missing", "a.txt")) {
+		t.Fatal("insideRoot = true for a path whose parent cannot be resolved")
+	}
+	if !insideRoot(root, filepath.Join(root, "a.txt")) {
+		t.Fatal("insideRoot = false for a path directly in root")
+	}
+}
+
 // The changed-file list spans the outgoing commits, so it includes paths they
 // deleted. If the agent has since re-created such a path uncommitted on disk,
 // it passes the on-disk check but `git show HEAD:<path>` fails — a deleted
