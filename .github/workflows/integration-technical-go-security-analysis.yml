@@ -129,6 +129,10 @@ jobs:
       working-directory: src
       continue-on-error: true
       run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+    - name: Scan crux module
+      working-directory: src/crux
+      continue-on-error: true
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
   golangci-lint:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
