@@ -31,9 +31,10 @@ import (
 // --only` need to record it: a file the agent had edited since HEAD is
 // snapshotted first and put back on disk — whether or not the amend
 // succeeds — so the edit's content is preserved. It is restored to the
-// working tree, not the index: `git add` of the normalised blob replaces
-// whatever the agent had staged for that path, so a staged edit comes back
-// unstaged. A file still identical to HEAD is simply left normalised,
+// working tree and, for a path the agent had staged changes to, the index:
+// `git add` of the normalised blob replaces the staged entry, so the exact
+// pre-operation index entry is put back with `git update-index --cacheinfo`.
+// A file still identical to HEAD is simply left normalised,
 // keeping the workspace clean after the amend.
 func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (amended bool, err error) {
 	if len(files) == 0 {
@@ -45,7 +46,13 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 	}
 	var touched []string
 	var edited []workingTreeSnapshot
+	var staged []string
 	defer func() {
+		for _, entry := range staged {
+			if _, uerr := b.git(ctx, "update-index", "--add", "--cacheinfo", entry); uerr != nil {
+				err = errors.Join(err, fmt.Errorf("restoring staged edit: %w", uerr))
+			}
+		}
 		for _, snap := range edited {
 			if werr := os.WriteFile(snap.abs, snap.data, snap.perm); werr != nil {
 				err = errors.Join(err, fmt.Errorf("restoring uncommitted edit to %s: %w", snap.rel, werr))
@@ -90,6 +97,9 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 	if len(touched) == 0 {
 		return false, nil
 	}
+	if staged, err = b.stagedEntries(ctx, touched); err != nil {
+		return false, err
+	}
 	addArgs := append([]string{"add", "--"}, touched...)
 	if _, err := b.git(ctx, addArgs...); err != nil {
 		return false, err
@@ -106,6 +116,36 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 		b.Logger.Info("pushbroker normalised trailing blank lines", "repo", b.Repo, "branch", b.Branch, "files", touched)
 	}
 	return true, nil
+}
+
+// stagedEntries returns, as `--cacheinfo` arguments (mode,blob,path), the
+// index entries of the files that have staged changes relative to HEAD, so
+// they can be restored exactly after `git add` overwrites them.
+func (b *Broker) stagedEntries(ctx context.Context, files []string) ([]string, error) {
+	diffArgs := append([]string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--"}, files...)
+	out, err := b.git(ctx, diffArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("listing staged paths: %w", err)
+	}
+	paths := splitNUL(out)
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	lsArgs := append([]string{"ls-files", "-s", "-z", "--"}, paths...)
+	out, err = b.git(ctx, lsArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("reading staged entries: %w", err)
+	}
+	var entries []string
+	for _, rec := range splitNUL(out) {
+		meta, path, ok := strings.Cut(rec, "\t")
+		fields := strings.Fields(meta)
+		if !ok || len(fields) != 3 || fields[2] != "0" {
+			continue
+		}
+		entries = append(entries, fields[0]+","+fields[1]+","+path)
+	}
+	return entries, nil
 }
 
 // headPaths returns the subset of files that HEAD's tree contains, so the
