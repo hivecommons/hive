@@ -1983,6 +1983,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		func() int { return cfg.Review.MaxReviewsPerHead },
 	)
 	client.SetNotificationsQuiet(func() bool { return cfg.GitHub.Notifications.Quiet() })
+	// github.notifications.shadow (hivecommons/hive#16264): would-notify
+	// instrumentation only, read live; nothing is suppressed.
+	client.SetNotificationsShadow(func() bool { return cfg.GitHub.Notifications.Shadow })
 	// review.require_labels (PR approval allow-list): the relay's half of the
 	// gate, read live so a Features-tab edit applies to the next request.
 	client.SetReviewRequireLabels(func() []string { return cfg.Review.RequireLabels })
