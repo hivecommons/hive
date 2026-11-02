@@ -52,7 +52,8 @@ func TestHubActivityItemsReadsTheMemoisedTracker(t *testing.T) {
 	s := newTestServer()
 	s.stageStore = stagelabels.NewStore("", func() time.Time { return now })
 	s.deps = &Dependencies{Config: &config.Config{
-		Project: config.ProjectConfig{Org: "acme", PrimaryRepo: "acme/widget", Repos: []string{"acme/widget"}},
+		// Bare names, as config loading leaves them after stripping the org.
+		Project: config.ProjectConfig{Org: "acme", PrimaryRepo: "widget", Repos: []string{"widget"}},
 		Hub:     config.HubConfig{IsPublic: true},
 	}}
 	builds := 0
