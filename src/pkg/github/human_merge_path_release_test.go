@@ -105,6 +105,9 @@ func TestReleaseHumanMergePathHold(t *testing.T) {
 			if released != tc.want || (deletes == 1) != tc.want {
 				t.Fatalf("released=%v deletes=%d err=%v", released, deletes, err)
 			}
+			if tc.want && err != nil {
+				t.Fatalf("successful release returned an error: %v", err)
+			}
 			if tc.timelineError && err == nil {
 				t.Fatal("timeline failure must be reported")
 			}
