@@ -1975,7 +1975,7 @@ func removeCompletedReviews(pending []PendingReview, artifact Artifact) []Pendin
 		}
 		_, reported := agg.Perspectives[p.Perspective]
 		if p.Decision {
-			reported = reported && agg.Decided
+			reported = reported && agg.Decided && agg.Verdict != VerdictIncomplete
 		} else if p.Head != "" {
 			reported = containsHead(agg.Heads[p.Perspective], p.Head)
 		}

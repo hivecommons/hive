@@ -83,6 +83,11 @@ func TestCompletedReviewCannotReleaseAnotherIdentity(t *testing.T) {
 		t.Fatal("raw head reports released a decision worker")
 	}
 	matching.Decided = true
+	matching.Verdict = VerdictIncomplete
+	if got := removeCompletedReviews([]PendingReview{pending}, Artifact{Items: []Aggregate{matching}}); len(got) != 1 {
+		t.Fatal("a partial decision released its still-working decision owner")
+	}
+	matching.Verdict = VerdictApprove
 	if got := removeCompletedReviews([]PendingReview{pending}, Artifact{Items: []Aggregate{matching}}); len(got) != 0 {
 		t.Fatal("matching decided result did not release its worker")
 	}
