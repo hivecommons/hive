@@ -1645,6 +1645,80 @@ func TestBrokerNormalisationSkipsSymlinks(t *testing.T) {
 	}
 }
 
+// outsideWatchRunner records what an outside file holds each time the broker
+// runs git, so a write that is undone before Run returns is still observed.
+type outsideWatchRunner struct {
+	watch string
+	seen  []string
+}
+
+func (r *outsideWatchRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	got, _ := os.ReadFile(r.watch)
+	r.seen = append(r.seen, string(got))
+	if name == "git" && slices.Contains(args, "push") {
+		return []byte("ok"), nil
+	}
+	return ExecRunner{}.Run(ctx, dir, env, name, args...)
+}
+
+// Lstat on the leaf is not enough: the agent can commit cfg/hive.yaml and
+// then, uncommitted, swap the cfg directory for a symlink out of the
+// workspace. The leaf then resolves to a regular hive-owned file and the
+// normaliser would write HEAD's blob — content the agent chose — into it,
+// even if only until the restore. The path must be skipped before any write.
+func TestBrokerNormalisationSkipsSymlinkedParentDir(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "cfg/hive.yaml", "agent: content\n\n\n")
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "hive.yaml")
+	const original = "hive-owned: original\n"
+	if err := os.WriteFile(outside, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "cfg")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(dir, "cfg")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	r := &outsideWatchRunner{watch: outside}
+	if _, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: r}).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for i, got := range r.seen {
+		if got != original {
+			t.Fatalf("normaliser wrote through a symlinked parent directory to %s (observed at git call %d): %q", outside, i, got)
+		}
+	}
+	if got, _ := os.ReadFile(outside); string(got) != original {
+		t.Fatalf("outside file changed after Run: %q", got)
+	}
+}
+
+// The parent check compares against the resolved workspace; a workspace
+// that cannot be resolved is a hard error rather than a silent skip-all.
+func TestStripTrailingBlankLinesUnresolvableWorkspace(t *testing.T) {
+	b := &Broker{Workspace: filepath.Join(t.TempDir(), "missing"), Runner: &envRecordingRunner{}}
+	_, err := b.stripTrailingBlankLines(context.Background(), []string{"a.txt"})
+	if err == nil || !strings.Contains(err.Error(), "resolving workspace") {
+		t.Fatalf("err = %v, want resolving workspace error", err)
+	}
+}
+
+// A parent that cannot be resolved is treated as outside the workspace.
+func TestInsideRootUnresolvableParent(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insideRoot(root, filepath.Join(root, "missing", "a.txt")) {
+		t.Fatal("insideRoot = true for a path whose parent cannot be resolved")
+	}
+	if !insideRoot(root, filepath.Join(root, "a.txt")) {
+		t.Fatal("insideRoot = false for a path directly in root")
+	}
+}
+
 // The changed-file list spans the outgoing commits, so it includes paths they
 // deleted. If the agent has since re-created such a path uncommitted on disk,
 // it passes the on-disk check but `git show HEAD:<path>` fails — a deleted
