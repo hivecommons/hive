@@ -253,6 +253,9 @@ type SentinelSweepResult struct {
 	// than listed; ListedRepos counts the fallback.
 	CachedRepos int
 	ListedRepos int
+	// Fetched counts PRs whose head was new to the heads map and so was
+	// read and had its files fetched this pass (SweepSentinelNewHeads).
+	Fetched int
 }
 
 func (r *SentinelSweepResult) actions() int {
@@ -395,6 +398,68 @@ func (c *Client) sweepSentinelCached(ctx context.Context, result *SentinelSweepR
 		}
 		c.sentinelEvaluatePR(ctx, result, repo, owner, repoName, pr, label, opts)
 	}
+}
+
+// SweepSentinelNewHeads is the incremental pass between reconciles: it walks
+// the forgestate cache for the repos opts.RepoAllowed admits and evaluates
+// only the open PRs whose head the heads map has not seen, reading each such
+// PR and its files exactly once. Unchanged heads cost no GitHub call, and
+// repos the cache has not reconciled are left to the full sweep rather than
+// listed. It exists so the Matrix line source (PatchObserver) sees a push
+// within minutes of it landing instead of waiting for the next full
+// SweepSentinel, whose cadence is bounded below by the governor tick (#16276);
+// because the heads map is shared, the full sweep then skips those heads.
+func (c *Client) SweepSentinelNewHeads(ctx context.Context, opts SentinelSweepOptions) (*SentinelSweepResult, error) {
+	label, maxActions, result, err := c.sentinelSweepPrepared(opts)
+	if err != nil {
+		return nil, err
+	}
+	cache := opts.prCache()
+	if cache == nil {
+		return result, nil
+	}
+	for _, repo := range c.getRepos() {
+		if opts.RepoAllowed != nil && !opts.RepoAllowed(repo) {
+			continue
+		}
+		if result.actions() >= maxActions {
+			break
+		}
+		snap, ok := cache.Snapshot(repo)
+		if !ok || !snap.Ready {
+			continue
+		}
+		result.CachedRepos++
+		owner, repoName := c.splitRepo(repo)
+		numbers := make([]int, 0, len(snap.PRs))
+		for n := range snap.PRs {
+			numbers = append(numbers, n)
+		}
+		sort.Ints(numbers)
+		for _, n := range numbers {
+			if result.actions() >= maxActions {
+				break
+			}
+			item := snap.PRs[n]
+			result.Seen++
+			if item.HeadSHA == "" || c.sentinelHeads.isSeen(sentinelKey(owner, repoName, n), item.HeadSHA) {
+				result.Skipped++
+				continue
+			}
+			pr, open, err := c.sentinelReadPR(ctx, owner, repoName, n)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s#%d: %v", repo, n, err))
+				continue
+			}
+			if !open {
+				result.Skipped++
+				continue
+			}
+			result.Fetched++
+			c.sentinelEvaluatePR(ctx, result, repo, owner, repoName, pr, label, opts)
+		}
+	}
+	return result, nil
 }
 
 // SweepSentinelPR evaluates one PR: the `pull_request` opened/synchronize/

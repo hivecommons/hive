@@ -6089,6 +6089,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		b.cfgReloadMu.Unlock()
 	}
 	b.startReviewEvents()
+	b.startMatrixIngest()
 
 	// Webhook health re-check: in webhook mode the base tick (900s) is longer
 	// than the health window (2 × eval_interval_s), so without this a lapse

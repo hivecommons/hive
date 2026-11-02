@@ -77,6 +77,13 @@ type matrixSource struct {
 	rateCount   int
 	rateDropped uint64
 	notify      func(seq uint64)
+
+	// ingestAt is when a sentinel pass that feeds this source last finished
+	// (unix nanoseconds; 0 until the first), and ingestEvery the cadence the
+	// composition root promised for the next one. Both are reported on
+	// /api/matrix/lines so the kiosk can tell "no pushes" from "no ingest".
+	ingestAt    atomic.Int64
+	ingestEvery atomic.Int64
 }
 
 func newMatrixSource(cfg config.MatrixConfig, logger *slog.Logger) *matrixSource {
@@ -333,6 +340,31 @@ func (m *matrixSource) reset() {
 	m.mu.Unlock()
 }
 
+// recordIngest notes that an ingest pass finished at `at` and the next one
+// is expected after `every` (0 when unknown).
+func (m *matrixSource) recordIngest(at time.Time, every time.Duration) {
+	m.ingestAt.Store(at.UnixNano())
+	m.ingestEvery.Store(int64(every))
+}
+
+// ingestStatus returns the last ingest time (zero when none) and the whole
+// seconds until the next is due, floored at zero; nextS is 0 when no cadence
+// has been recorded.
+func (m *matrixSource) ingestStatus(now time.Time) (last time.Time, nextS int) {
+	if ns := m.ingestAt.Load(); ns != 0 {
+		last = time.Unix(0, ns)
+	}
+	every := time.Duration(m.ingestEvery.Load())
+	if every <= 0 || last.IsZero() {
+		return last, 0
+	}
+	remaining := last.Add(every).Sub(now)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return last, int(remaining.Round(time.Second) / time.Second)
+}
+
 func (m *matrixSource) setNotify(fn func(seq uint64)) {
 	m.mu.Lock()
 	m.notify = fn
@@ -366,4 +398,21 @@ func (s *Server) MatrixObserver(cfg config.MatrixConfig) func(github.SentinelPat
 		s.matrix.setNotify(s.nudgeMatrixLines)
 	}
 	return s.matrix.Observe
+}
+
+// RecordMatrixIngest is called by whatever pass feeds the Matrix source
+// (the incremental head pass or the full sentinel sweep) when it finishes,
+// with the cadence it will run at next. A nil Server or an inactive source
+// is a no-op.
+func (s *Server) RecordMatrixIngest(at time.Time, every time.Duration) {
+	if s == nil {
+		return
+	}
+	s.matrixMu.Lock()
+	m := s.matrix
+	s.matrixMu.Unlock()
+	if m == nil {
+		return
+	}
+	m.recordIngest(at, every)
 }

@@ -7,6 +7,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/forgestate"
@@ -260,5 +261,124 @@ func TestSentinelPREventWanted(t *testing.T) {
 		if got := SentinelPREventWanted(tc.event, tc.action); got != tc.want {
 			t.Errorf("SentinelPREventWanted(%q,%q)=%v want %v", tc.event, tc.action, got, tc.want)
 		}
+	}
+}
+
+// The incremental pass (#16276) reads only heads the sentinel has not seen,
+// hands each to the PatchObserver once, and leaves unchanged heads, repos
+// outside the allowlist and repos the cache has not reconciled alone with
+// no GitHub call.
+func TestSweepSentinelNewHeadsReadsOnlyUnseenHeads(t *testing.T) {
+	f := &sentinelFixture{
+		prs: []map[string]any{
+			sentinelPR(7, "alice", "aaa111"),
+			sentinelPR(8, "bob", "bbb222"),
+		},
+		files: map[int][]map[string]any{
+			7: {{"filename": "main.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "+package main\n"}},
+			8: {{"filename": "README.md", "status": "modified", "additions": 1, "deletions": 0, "patch": "+hello\n"}},
+		},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r", "o/other"})
+	cache := &fakeSentinelPRCache{snaps: map[string]forgestate.Snapshot{
+		"o/r":     {Repo: "o/r", Ready: true, PRs: map[int]forgestate.Item{7: cachedPR(7, "aaa111"), 8: cachedPR(8, "bbb222")}},
+		"o/other": {Repo: "o/other", Ready: false, PRs: map[int]forgestate.Item{1: cachedPR(1, "zzz999")}},
+	}}
+	var observed []string
+	opts := defaultSentinelOpts(nil)
+	opts.PRCache = cache
+	opts.PatchObserver = func(obs SentinelPatchObservation) {
+		observed = append(observed, fmt.Sprintf("%s#%d@%s", obs.Repo, obs.Number, obs.HeadSHA))
+	}
+
+	// First pass: both cached heads are new, each is read and diffed once.
+	res, err := c.SweepSentinelNewHeads(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("pass 1: %v", err)
+	}
+	if res.CachedRepos != 1 || res.Seen != 2 || res.Fetched != 2 || f.listHits != 0 {
+		t.Fatalf("pass 1: res=%+v listHits=%d", res, f.listHits)
+	}
+	if len(f.getHits) != 2 || f.filesHits != 2 {
+		t.Fatalf("pass 1 reads: gets=%v files=%d", f.getHits, f.filesHits)
+	}
+	if want := []string{"o/r#7@aaa111", "o/r#8@bbb222"}; fmt.Sprint(observed) != fmt.Sprint(want) {
+		t.Fatalf("observed=%v want %v", observed, want)
+	}
+
+	// Second pass, nothing changed: no GitHub call, nothing observed.
+	gets, files, obs := len(f.getHits), f.filesHits, len(observed)
+	res, err = c.SweepSentinelNewHeads(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("pass 2: %v", err)
+	}
+	if res.Fetched != 0 || res.Skipped != 2 || len(f.getHits) != gets || f.filesHits != files || len(observed) != obs {
+		t.Fatalf("pass 2 must be free: res=%+v gets=%v files=%d observed=%v", res, f.getHits, f.filesHits, observed)
+	}
+
+	// PR 8's head moves: only it is re-read and observed at the new head.
+	f.prs[1] = sentinelPR(8, "bob", "bbb333")
+	cache.snaps["o/r"].PRs[8] = cachedPR(8, "bbb333")
+	res, err = c.SweepSentinelNewHeads(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("pass 3: %v", err)
+	}
+	if res.Fetched != 1 || len(f.getHits) != gets+1 || f.filesHits != files+1 {
+		t.Fatalf("pass 3: res=%+v gets=%v files=%d", res, f.getHits, f.filesHits)
+	}
+	if len(observed) != obs+1 || observed[obs] != "o/r#8@bbb333" {
+		t.Fatalf("pass 3 observed=%v", observed)
+	}
+
+	// The full sweep shares the heads map, so it skips every head the
+	// incremental pass already evaluated without any GitHub call.
+	gets, files = len(f.getHits), f.filesHits
+	full, err := c.SweepSentinel(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("full sweep: %v", err)
+	}
+	if full.Skipped != 2 || len(f.getHits) != gets || f.filesHits != files {
+		t.Fatalf("full sweep after incremental pass must be free: res=%+v gets=%v files=%d", full, f.getHits, f.filesHits)
+	}
+}
+
+func TestSweepSentinelNewHeadsHonoursRepoGateAndNeedsCache(t *testing.T) {
+	f := &sentinelFixture{
+		prs:   []map[string]any{sentinelPR(7, "alice", "aaa111")},
+		files: map[int][]map[string]any{7: {{"filename": "main.go", "status": "modified", "additions": 1, "patch": "+x\n"}}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	cache := &fakeSentinelPRCache{snaps: map[string]forgestate.Snapshot{
+		"o/r": {Repo: "o/r", Ready: true, PRs: map[int]forgestate.Item{7: cachedPR(7, "aaa111")}},
+	}}
+	SetSentinelPRCache(nil)
+
+	// No cache registered anywhere: the pass does nothing rather than list.
+	opts := defaultSentinelOpts(nil)
+	res, err := c.SweepSentinelNewHeads(context.Background(), opts)
+	if err != nil || res.Seen != 0 || res.CachedRepos != 0 || f.listHits != 0 || len(f.getHits) != 0 {
+		t.Fatalf("no cache: res=%+v err=%v listHits=%d gets=%v", res, err, f.listHits, f.getHits)
+	}
+
+	// Repo outside the allowlist: nothing is read.
+	opts.PRCache = cache
+	opts.RepoAllowed = func(string) bool { return false }
+	res, err = c.SweepSentinelNewHeads(context.Background(), opts)
+	if err != nil || res.Seen != 0 || len(f.getHits) != 0 {
+		t.Fatalf("disallowed repo: res=%+v err=%v gets=%v", res, err, f.getHits)
+	}
+
+	opts.RepoAllowed = nil
+	res, err = c.SweepSentinelNewHeads(context.Background(), opts)
+	if err != nil || res.Fetched != 1 || len(f.getHits) != 1 {
+		t.Fatalf("allowed repo: res=%+v err=%v gets=%v", res, err, f.getHits)
+	}
+
+	if _, err := (*Client)(nil).SweepSentinelNewHeads(context.Background(), opts); err == nil {
+		t.Fatal("nil client must error")
 	}
 }
