@@ -250,7 +250,7 @@ func TestStageTrackerSentinelLabelClearsBlockingBundle(t *testing.T) {
 			if tt.findings != nil {
 				writeSentinelBundle(t, root, "acme/console", tt.number, head, tt.findings, tt.actions...)
 			}
-			alert, findings, reason := s.stageTrackerSentinel(verifier, "acme/console", tt.number, head, tt.labels)
+			alert, findings, reason, _ := s.stageTrackerSentinel(verifier, "acme/console", tt.number, head, tt.labels)
 			if alert != tt.wantAlert || findings != tt.wantFindings || reason != tt.wantReason {
 				t.Fatalf("stageTrackerSentinel = alert %v findings %d reason %q, want %v %d %q", alert, findings, reason, tt.wantAlert, tt.wantFindings, tt.wantReason)
 			}
@@ -263,13 +263,13 @@ func TestStageTrackerSentinelLabelClearsBlockingBundle(t *testing.T) {
 func TestStageTrackerSentinelConfiguredLabel(t *testing.T) {
 	s := newTestServer()
 	s.deps = &Dependencies{Config: &config.Config{Sentinel: config.SentinelConfig{Label: "security-hold"}}}
-	if alert, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{"Security-Hold"}); !alert {
+	if alert, _, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{"Security-Hold"}); !alert {
 		t.Fatal("configured label (case-insensitive) must flag")
 	}
-	if alert, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{config.DefaultSentinelLabel}); alert {
+	if alert, _, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{config.DefaultSentinelLabel}); alert {
 		t.Fatal("the default label is not the configured one")
 	}
-	if alert, n, reason := s.stageTrackerSentinel(nil, "acme/console", 1, "", nil); alert || n != 0 || reason != "" {
+	if alert, n, reason, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", nil); alert || n != 0 || reason != "" {
 		t.Fatal("no label, no head → clean")
 	}
 }
@@ -295,7 +295,9 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 		`confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel`,
 		`label: preface + 'What should the hive change on '`,
 		`if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));`,
-		`sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || ''`,
+		`sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || ''`,
+		`function stageTrackerSentinelPathLines(item)`,
+		`function stageTrackerSentinelTipWithPaths(item)`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing sentinel lane wiring %q", want)
@@ -330,6 +332,8 @@ func TestStageTrackerSentinelLaneText(t *testing.T) {
 	}
 	html := indexHTML(t)
 	script := stageTrackerRepoGroupingHarness(t, html) + strings.Join([]string{
+		jsFunc(t, html, "stageTrackerSentinelPathLines"),
+		jsFunc(t, html, "stageTrackerSentinelTipWithPaths"),
 		jsFunc(t, html, "stageTrackerSentinelPreface"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_MAX_ROWS"),
 		jsConstLine(t, html, "STAGE_TRACKER_EXIT_MS"),
