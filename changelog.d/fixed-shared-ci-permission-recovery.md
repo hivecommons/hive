@@ -1,0 +1,1 @@
+- Surface shared-CI recovery permission refusals as an actionable operator handoff, retry after the permission cooldown even on unchanged PRs, and align bot-PR squash attribution with the existing required check.
