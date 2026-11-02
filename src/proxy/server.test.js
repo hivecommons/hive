@@ -137,7 +137,7 @@ function startProxy(extraEnv = {}) {
     const proc = spawn('node', ['server.js'], {
       cwd: __dirname,
       env: {
-        ...process.env,
+        ...hermeticEnv(),
         HIVE_PROXY_PORT: String(PROXY_PORT),
         HIVE_API_PORT: String(GO_PORT),
         HIVE_TTYD_PORT: String(TTYD_PORT),
