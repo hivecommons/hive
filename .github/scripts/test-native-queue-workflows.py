@@ -74,20 +74,22 @@ class NativeQueueWorkflows(unittest.TestCase):
         # gosec defaults -concurrency to runtime.NumCPU(), which inside a
         # runner pod is the NODE's vCPU count, not the pod's cgroup limit.
         # Unbounded, every worker type-checks and builds SSA for its own
-        # package at once, and the pod is OOM-killed or evicted mid-Scan:
-        # "runner lost communication", hivecommons/hive#16040. The pod CPU
-        # limit is a ceiling, not a memory proof: it only guarantees gosec
-        # never runs more workers than the pod can schedule.
+        # package at once, a plausible source of runner memory pressure
+        # in hivecommons/hive#16040. The pod CPU limit is a ceiling, not an
+        # OOM diagnosis or memory proof: it only bounds worker fanout.
         values = yaml.safe_load(
             (ROOT / "src/deploy/ci-runners/lke/hive-runners-lke-values.yaml").read_text())
         runner = next(c for c in values["template"]["spec"]["containers"]
                       if c["name"] == "runner")
         cpu = str(runner["resources"]["limits"]["cpu"])
         cpu_limit = int(cpu[:-1]) // 1000 if cpu.endswith("m") else int(float(cpu))
-        for file in ("go-security-analysis.yml",
-                     "integration-technical-go-security-analysis.yml"):
+        for file, job in (
+            ("go-security-analysis.yml", "gosec"),
+            ("integration-technical-go-security-analysis.yml", "gosec"),
+            ("integration-candidate.yml", "security-gosec"),
+        ):
             with self.subTest(file=file):
-                steps = workflow(file)["jobs"]["gosec"]["steps"]
+                steps = workflow(file)["jobs"][job]["steps"]
                 scan = next(s for s in steps if s.get("name") == "Scan")["run"]
                 match = re.search(r"\bgosec\b.*\s-concurrency[ =](\d+)\b", scan)
                 self.assertIsNotNone(match, f"gosec must pass an explicit -concurrency: {scan!r}")

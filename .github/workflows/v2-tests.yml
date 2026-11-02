@@ -1106,8 +1106,10 @@ jobs:
   # are all ≤ 5s). The hints only affect BALANCE, never MEMBERSHIP: a stale
   # weight makes a bucket slower, not a package untested.
   list-packages:
-    needs: required-context-scope
-    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    # Discovery uses only the checkout/event, not the scope verdict. Start it
+    # alongside scope instead of paying another runner-queue round trip.
+    # Shards and both required aggregates still depend on successful scope.
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     outputs:
@@ -2084,10 +2086,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: ${{ steps.cov-scope.outputs.score == 'true' }}
         with:
+          # This job only lists packages and scores uploaded profiles. Saving
+          # the runners' shared multi-GB module/build caches adds a serial
+          # post-step to the required coverage verdict with no compile reuse.
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: |
-            src/go.sum
-            src/crux/go.sum
       # Fill GOMODCACHE up front with bounded retries so a transient
       # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
       # job's first module-fetching step; see .github/actions/go-mod-download-retry.
