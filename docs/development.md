@@ -171,9 +171,9 @@ pattern in each file. Go security CI caches the version-pinned gosec binary;
 the scan itself still runs every time. Gosec's recursive discovery includes
 nested modules, so its `./...` scan covers Crux without scanning it twice.
 Other Go tools still need both `./...` and `./crux/...`.
-Gosec uses two package-loading workers by default rather than the host CPU
-count (which can exceed a runner container's CPU quota); operators can set
-`HIVE_CI_GOSEC_CONCURRENCY` in the runner environment to tune it.
+Gosec retains the four package-loading workers established by #16045 rather
+than the host CPU count (which can exceed a runner container's CPU quota).
+The structural contract checks this explicit bound against the runner limit.
 The coverage scorer only lists packages and reads shard profiles; it does not
 archive shared Go caches in a serial post-step after scoring.
 Package discovery runs alongside the scope preflight; test shards still wait

@@ -1943,7 +1943,7 @@ jobs:
     - name: Scan
       working-directory: src
       continue-on-error: true
-      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency "${HIVE_CI_GOSEC_CONCURRENCY:-2}" -exclude-generated ./...'
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
     env:
       GO_CACHE_GUARD_BUILD_CACHE: ${{ 'job' || 'job' }}
   security-golangci-lint:
