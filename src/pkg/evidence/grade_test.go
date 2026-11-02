@@ -248,16 +248,23 @@ func TestGradeBoundary(t *testing.T) {
 		in   BoundaryStats
 		want string
 	}{
-		{"too few", BoundaryStats{TotalWrites: 19, Blocked: 1}, NoGradeLetter},
-		{"never exercised", BoundaryStats{TotalWrites: 1000}, "A-"},
-		{"quiet boundary", BoundaryStats{TotalWrites: 1000, Blocked: 3}, "A+"},
-		{"two percent", BoundaryStats{TotalWrites: 1000, Blocked: 20}, "A"},
-		{"five percent", BoundaryStats{TotalWrites: 1000, Blocked: 50}, "B"},
-		{"ten percent", BoundaryStats{TotalWrites: 1000, Blocked: 100}, "C+"},
-		{"noisy", BoundaryStats{TotalWrites: 100, Blocked: 30}, "C-"},
+		{"empty", BoundaryStats{}, "Enforcement not observed"},
+		{"one observed block", BoundaryStats{TotalWrites: 1, Blocked: 1}, "Enforcement demonstrated"},
+		{"low sample", BoundaryStats{TotalWrites: 19, Blocked: 1}, "Enforcement demonstrated"},
+		{"never exercised", BoundaryStats{TotalWrites: 1000}, "Enforcement not observed"},
+		{"quiet boundary", BoundaryStats{TotalWrites: 1000, Blocked: 3}, "Enforcement demonstrated"},
+		{"high refusal rate", BoundaryStats{TotalWrites: 652, Blocked: 77}, "Enforcement demonstrated"},
+		{"all blocked", BoundaryStats{TotalWrites: 30, Blocked: 30}, "Enforcement demonstrated"},
+		{"Sentinel only", BoundaryStats{SentinelHits: 4}, "Enforcement not observed"},
+		{"Sentinel with unblocked writes", BoundaryStats{TotalWrites: 100, SentinelHits: 4}, "Enforcement not observed"},
+		{"block without denominator", BoundaryStats{Blocked: 1}, "Enforcement demonstrated"},
 	} {
-		if g := GradeBoundary(tc.in); g.Letter != tc.want {
-			t.Errorf("%s: letter %q, want %q (reason %q)", tc.name, g.Letter, tc.want, g.Reason)
+		g := GradeBoundary(tc.in)
+		if g.Letter != NoGradeLetter || g.Band != BandNone || g.EnoughData || !strings.HasPrefix(g.Reason, tc.want) {
+			t.Errorf("%s: got %+v, want ungraded observation %q", tc.name, g, tc.want)
+		}
+		if !strings.Contains(g.Rubric, "bypasses or false positives") || !strings.Contains(g.Rubric, "informational") {
+			t.Errorf("%s: missing observation limits: %q", tc.name, g.Rubric)
 		}
 	}
 }
@@ -267,9 +274,11 @@ func TestSummarizeBoundary(t *testing.T) {
 		in   BoundaryStats
 		want string
 	}{
-		{BoundaryStats{}, "No agent writes to GitHub recorded in this window."},
-		{BoundaryStats{TotalWrites: 4210, Blocked: 3}, "4210 agent writes to GitHub; 3 were refused by the proxy (0.07%). No sentinel hits."},
-		{BoundaryStats{TotalWrites: 10, Blocked: 1, SentinelHits: 1}, "10 agent writes to GitHub; 1 was refused by the proxy (10.00%). 1 sentinel hit."},
+		{BoundaryStats{}, "Enforcement not observed — 0 prohibited writes blocked; 0 observed writes (—). Sentinel detections: 0 (informational)."},
+		{BoundaryStats{TotalWrites: 4210, Blocked: 3}, "Enforcement demonstrated — 3 prohibited writes blocked; 4210 observed writes (0.07%). Sentinel detections: 0 (informational)."},
+		{BoundaryStats{TotalWrites: 10, Blocked: 1, SentinelHits: 1}, "Enforcement demonstrated — 1 prohibited write blocked; 10 observed writes (10.00%). Sentinel detections: 1 (informational)."},
+		{BoundaryStats{TotalWrites: 652, Blocked: 77}, "Enforcement demonstrated — 77 prohibited writes blocked; 652 observed writes (11.81%). Sentinel detections: 0 (informational)."},
+		{BoundaryStats{SentinelHits: 4}, "Enforcement not observed — 0 prohibited writes blocked; 0 observed writes (—). Sentinel detections: 4 (informational)."},
 	} {
 		if got := SummarizeBoundary(tc.in); got != tc.want || words(got) > PlainSummaryMaxWords {
 			t.Errorf("got %q (%d words), want %q", got, words(got), tc.want)

@@ -129,7 +129,7 @@ func evidenceGrades(v EvidenceView) []evidenceGrade {
 	}
 	out = append(out, evidenceGrade{"Autonomy level × outcome", acmmGrade, lowBasis("Revert rate at the highest autonomy level with enough merged PRs", evidenceRevertStrong, evidenceRevertFair)})
 
-	out = append(out, evidenceGrade{"Boundary enforcement", "Not graded", "There is no \"good\" block rate: zero blocks with many attempts means agents stayed inside their lane, many blocks means the guardrail did its job."})
+	out = append(out, evidenceGrade{"Boundary enforcement", "Not graded", "Observed blocks demonstrate enforcement on those attempts; zero means not observed, not failure. Refusal frequency describes attempted-agent compliance, not enforcement quality. Counts do not rule out bypasses or false positives."})
 
 	fam := v.FamilyFalseApproveRate
 	biggest := fam.Same
