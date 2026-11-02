@@ -23,6 +23,7 @@ type statusCommentServer struct {
 	comments []map[string]any
 	creates  int
 	edits    int
+	deletes  []string
 }
 
 func (s *statusCommentServer) start(t *testing.T) *httptest.Server {
@@ -52,6 +53,17 @@ func (s *statusCommentServer) start(t *testing.T) *httptest.Server {
 				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/issues/comments/"):
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			s.deletes = append(s.deletes, id)
+			kept := s.comments[:0]
+			for _, cm := range s.comments {
+				if jsonNumber(cm["id"]) != id {
+					kept = append(kept, cm)
+				}
+			}
+			s.comments = kept
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -104,6 +116,41 @@ func TestUpsertPRStatusSectionCreatesOnceThenEdits(t *testing.T) {
 	body, _ = s.comments[0]["body"].(string)
 	if _, ok := prstatus.Get(body, prstatus.KeyStageStalled); ok {
 		t.Fatalf("cleared section still present: %q", body)
+	}
+}
+
+// A PR carrying two hive status comments (two writers both created one)
+// is reconciled on the next write: every section lands in the oldest, the
+// newer hive-authored copy is deleted, and the edit is tallied as an edit,
+// not a created comment.
+func TestUpsertPRStatusSectionMergesDuplicateStatusComments(t *testing.T) {
+	bot := map[string]any{"login": "hive-app[bot]", "type": "Bot"}
+	s := &statusCommentServer{comments: []map[string]any{
+		{"id": 11, "body": prstatus.Upsert("", prstatus.KeyStageStalled, "stalled"), "user": bot},
+		{"id": 12, "body": prstatus.Upsert("", prstatus.KeyStageRegressed, "regressed"), "user": bot},
+	}}
+	c := testClient(t, s.start(t).URL)
+	created, err := c.UpsertPRStatusSection(context.Background(), "o/r", 5, prstatus.KeyEvidence, "evidence")
+	if err != nil || created {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	if s.creates != 0 || len(s.deletes) != 1 || s.deletes[0] != "12" || len(s.comments) != 1 {
+		t.Fatalf("creates=%d deletes=%v comments=%d, want the newer status comment deleted", s.creates, s.deletes, len(s.comments))
+	}
+	body, _ := s.comments[0]["body"].(string)
+	for _, key := range []string{prstatus.KeyStageStalled, prstatus.KeyStageRegressed, prstatus.KeyEvidence} {
+		n := 0
+		for _, sec := range prstatus.Parse(body) {
+			if sec.Key == key {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("section %q appears %d times in %q", key, n, body)
+		}
+	}
+	if created, edited, _ := c.NotificationCounts(); created != 0 || edited != 2 {
+		t.Fatalf("tally created=%d edited=%d, want 0 created and 2 edits", created, edited)
 	}
 }
 
