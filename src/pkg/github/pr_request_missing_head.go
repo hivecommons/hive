@@ -13,7 +13,9 @@ import (
 // errMissingHead reports that the PR request named a head ref that does not
 // exist on the remote. It stays an ordinary (retryable) error rather than a
 // policy rejection: the agent pushing its branch makes the same request valid,
-// which is exactly what the bounded retry is for.
+// which is exactly what the bounded retry is for. The wrapped compare 404 is
+// deliberately exposed through Unwrap so that signedAPIRefusal on the
+// signed-reconciler path can classify it as a bounded refusal.
 type errMissingHead struct {
 	repo string
 	head string
