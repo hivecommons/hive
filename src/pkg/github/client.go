@@ -157,6 +157,7 @@ type Client struct {
 	mergeAlertIDsByRepo       map[string]map[string]*mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	mergedClaimScanTransient  sync.Map        // repo -> true while its merged-PR scan is timing out
 	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState
 	appAuth                   *AppAuth // nil for token-authenticated clients
