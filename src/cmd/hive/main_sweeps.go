@@ -2660,10 +2660,14 @@ func reviewPlannerGitHubFor(c *github.Client) reviewPlannerGitHub {
 }
 
 func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
+	refreshReviewVerdictsForPRs(cfg, nil, logger)
+}
+
+func refreshReviewVerdictsForPRs(cfg *config.Config, prs []review.PullRequest, logger *slog.Logger) {
 	if cfg == nil || !shouldRefreshReviewVerdicts(cfg) {
 		return
 	}
-	artifact, err := review.CollectAndMerge("", "", review.AggregateOptions{
+	opts := review.AggregateOptions{
 		// Unanimity is judged against what a PR was eligible to receive. Without
 		// this the cap makes approve unreachable and every PR aggregates to
 		// requires_human.
@@ -2677,7 +2681,14 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		ModelStamps:                 reviewModelStamps(logger),
 		ExpectedHeads:               cfg.ExpectedReviewHeads(),
 		MissingHeads:                reviewMissingHeads(),
-	}, time.Now().UTC())
+	}
+	var artifact review.Artifact
+	var err error
+	if prs == nil {
+		artifact, err = review.CollectAndMerge("", "", opts, time.Now().UTC())
+	} else {
+		artifact, err = review.CollectAndMergeForPRs("", "", prs, opts, time.Now().UTC())
+	}
 	if err != nil {
 		if !os.IsNotExist(err) {
 			logger.Warn("failed to refresh review verdicts", "error", err)

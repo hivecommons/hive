@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/escalation"
@@ -1230,16 +1231,60 @@ func InScopeFinding(f outputschema.Finding) bool {
 }
 
 func Collect(dir string, opts AggregateOptions) (Artifact, error) {
+	return collectForPRs(dir, opts, nil)
+}
+
+// ReportFilePrefix identifies the relay's files for one PR without opening
+// the historical reports belonging to every other PR on the volume.
+func ReportFilePrefix(repo string, number int) string {
+	return fmt.Sprintf("%s%s-%d-", ReviewReportFilePrefix, reportSlug(repo), number)
+}
+
+func reportSlug(value string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	if slug := strings.Trim(b.String(), "-"); slug != "" {
+		return slug
+	}
+	return "unknown"
+}
+
+func collectForPRs(dir string, opts AggregateOptions, prs []PullRequest) (Artifact, error) {
 	dir = ReportDir(dir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return Artifact{}, err
+	}
+	prefixes := map[string]bool{}
+	targets := map[string]bool{}
+	for _, pr := range prs {
+		prefixes[strings.ToLower(ReportFilePrefix(pr.Repo, pr.Number))] = true
+		targets[strings.ToLower(fmt.Sprintf("%s#%d", pr.Repo, pr.Number))] = true
 	}
 	groups := map[string][]PerspectiveReport{}
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasPrefix(name, ReviewReportFilePrefix) || !strings.HasSuffix(name, ReviewReportFileSuffix) {
 			continue
+		}
+		if prs != nil {
+			selected := false
+			for prefix := range prefixes {
+				if strings.HasPrefix(strings.ToLower(name), prefix) {
+					selected = true
+					break
+				}
+			}
+			if !selected {
+				continue
+			}
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
@@ -1252,6 +1297,9 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		report, err := ValidateReportFor(raw, opts.Perspectives.acceptingBuiltins())
 		if err != nil {
 			return Artifact{}, fmt.Errorf("%s: %w", name, err)
+		}
+		if prs != nil && !targets[strings.ToLower(fmt.Sprintf("%s#%d", report.Repo, report.Number))] {
+			continue
 		}
 		opts.ModelStamps.apply(report)
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
@@ -1354,6 +1402,27 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	if err != nil {
 		return Artifact{}, err
 	}
+	return mergeCollected(fresh, dir, path, now)
+}
+
+// CollectAndMergeForPRs collects only the open PRs in the governor snapshot.
+// Historical aggregates remain durable; incompatible bodies stay separate.
+func CollectAndMergeForPRs(dir, path string, prs []PullRequest, opts AggregateOptions, now time.Time) (Artifact, error) {
+	if prs == nil {
+		prs = []PullRequest{}
+	}
+	fresh, err := collectForPRs(dir, opts, prs)
+	if err != nil {
+		return Artifact{}, err
+	}
+	return mergeCollected(fresh, dir, path, now)
+}
+
+var artifactMergeMu sync.Mutex
+
+func mergeCollected(fresh Artifact, dir, path string, now time.Time) (Artifact, error) {
+	artifactMergeMu.Lock()
+	defer artifactMergeMu.Unlock()
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -1362,7 +1431,11 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	// first run, in which case the fresh collect is the whole truth.
 	merged := map[string]Aggregate{}
 	order := []string{}
+	generatedAt := now
 	if existing, loadErr := LoadArtifact(path); loadErr == nil {
+		if existing.GeneratedAt.After(generatedAt) {
+			generatedAt = existing.GeneratedAt
+		}
 		for _, item := range existing.Items {
 			if now.Sub(item.RecordedAt) > VerdictRetention && !item.RecordedAt.IsZero() {
 				continue
@@ -1378,6 +1451,10 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	for _, item := range fresh.Items {
 		item.RecordedAt = now
 		key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
+		if prior, ok := merged[key]; ok && prior.RecordedAt.After(now) {
+			// A slow older collection must not roll back a newer result.
+			continue
+		}
 		if prior, ok := merged[key]; ok && retainsOverIncomplete(prior.Verdict) && item.Verdict == VerdictIncomplete {
 			// A re-review can arrive one perspective at a time. Missing
 			// reports do not withdraw a settled non-approve verdict (human
@@ -1394,7 +1471,7 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 		merged[key] = item
 	}
 
-	artifact := Artifact{GeneratedAt: now, Items: make([]Aggregate, 0, len(order))}
+	artifact := Artifact{GeneratedAt: generatedAt, Items: make([]Aggregate, 0, len(order))}
 	for _, key := range order {
 		artifact.Items = append(artifact.Items, merged[key])
 	}

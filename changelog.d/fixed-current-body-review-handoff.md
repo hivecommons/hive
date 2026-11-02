@@ -1,0 +1,1 @@
+- Collect review outputs for open PRs without rereading every historical report, release completed reviewers before priority scheduling, and request missing perspectives against the current body without letting older collections overwrite newer results.

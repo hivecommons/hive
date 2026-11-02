@@ -353,6 +353,8 @@ func RecordDeltaRestamps(path string, restamps []DeltaRestamp, now time.Time) (i
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	artifactMergeMu.Lock()
+	defer artifactMergeMu.Unlock()
 	target := path
 	if target == "" {
 		target = ReviewVerdictsPath
