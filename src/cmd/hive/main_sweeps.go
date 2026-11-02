@@ -1359,6 +1359,9 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 		return
 	}
 	logSentinelResult(result, logger)
+	if dashSrv != nil && cfg.Dashboard.Matrix.Active() {
+		dashSrv.RecordMatrixIngest(time.Now(), matrixIngestInterval)
+	}
 	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
 		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
 	}

@@ -110,6 +110,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// must inherit it or the sweeps regress to ungated.
 	client.SetWritebackGate(b.writebackGate())
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
+	// Evaluated heads persist so a restart or rebuild neither re-diffs every
+	// open PR nor blanks the Matrix feed until the next sweep (#16276).
+	client.SetSentinelHeadsPath(sentinelHeadsStatePath)
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// Per-repo pause (#6203). A live predicate over the shared config, so a
 	// pause taken in the dashboard narrows the very next enumeration and
