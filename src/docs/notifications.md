@@ -295,3 +295,189 @@ notifications:
 ```
 
 The bot needs the `Create Public Threads` and `Send Messages in Threads` permissions, plus `Read Message History` for reconciliation.
+
+## GitHub writes: inventory and shadow mode (`github.notifications.shadow`)
+
+Every new issue/PR comment, review submission, review request and @-mention
+the hive makes on GitHub emails the people involved and everyone watching the
+repository. [`github.notifications.mode`](operator-reference/sweeps-and-operations.md#notification-mode-githubnotificationsmode)
+already folds the hive's own bookkeeping into one edited status comment;
+shadow mode measures what is left so a later change can be judged against a
+baseline ([#16075](https://github.com/hivecommons/hive/issues/16075)).
+
+```yaml
+github:
+  notifications:
+    shadow: true   # default false
+```
+
+Shadow mode is **instrumentation only**: nothing is suppressed, delayed or
+rerouted, and the GitHub writes are byte-for-byte the same with the flag on
+or off. With the flag on, each notification-capable write the Go client makes
+is attributed to its producer (the inventoried function below), classified,
+and given a *would-notify* decision:
+
+- **Record** — `{repo, item, producer, class, condition key, would_notify,
+  reason}` plus the logins the write mentions or requests. Comment bodies,
+  other recipients and inbox contents are never kept. The last 512 records
+  stay in memory (`Client.NotificationShadowRecords`).
+- **Condition key** (provisional) — `(repo, item, class, subject)`, where the
+  subject is what the writer supplies (the status-comment section key for
+  `PostNoteOrFold`) or the producer name. A later change defines the
+  authoritative, producer-independent key.
+- **Decision** — a write whose condition key was already written within 24
+  hours is `would_notify=false`, reason `repeat_condition`, **only** for the
+  `status` and `attention` classes. `protocol_command`, `required_review` and
+  `security_event` writes are always `would_notify=true` (a repeat gets reason
+  `exempt_class_repeat`). A failed write is `delivery_failed`.
+
+### Counters
+
+The hourly `github notifications` log line gains `shadow_would_suppress`,
+`shadow_reviews`, `shadow_review_requests`, `shadow_mentions`,
+`shadow_delivery_failures` and `shadow_active_items` while shadow mode is on
+(the line is unchanged while it is off). The opt-in Prometheus endpoint
+(`HIVE_METRICS_ENABLED` + `HIVE_METRICS_TOKEN`) exports:
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `hive_github_comments_total` | `op` = `created` / `edited` / `suppressed` | The always-on comment tally. |
+| `hive_github_notification_comments_created_total` | `producer`, `class` | New comments. |
+| `hive_github_notification_reviews_submitted_total` | `producer`, `class` | Review submissions. |
+| `hive_github_notification_review_requests_total` | `producer`, `class` | Review requests. |
+| `hive_github_notification_mentions_total` | `producer`, `class` | @-mentions in posted comments and reviews. |
+| `hive_github_notification_suppressed_repeats_total` | `producer`, `class` | Notes the hive actually did not post (folded or already present). |
+| `hive_github_notification_would_suppress_repeats_total` | `producer`, `class` | Writes shadow mode *would* suppress. |
+| `hive_github_notification_delivery_failures_total` | `producer`, `class` | Failed writes. |
+| `hive_github_notification_active_items` | — | Items with a notification-capable write in the last 24 hours. |
+
+All counts are API writes, a proxy for notifications — never "emails
+delivered". Counters are cumulative since process start.
+
+### Comparing baseline windows
+
+Compare **per active item**, over **matched windows**: the same length (a
+whole week, so weekday traffic is matched), similar open-item load, and no
+change to `github.notifications.mode` or the hive version inside either
+window. For each window compute
+
+```
+writes      = increase(hive_github_notification_comments_created_total[7d])
+            + increase(hive_github_notification_reviews_submitted_total[7d])
+            + increase(hive_github_notification_review_requests_total[7d])
+per_item    = writes / avg_over_time(hive_github_notification_active_items[7d])
+repeat_rate = increase(hive_github_notification_would_suppress_repeats_total[7d])
+            / avg_over_time(hive_github_notification_active_items[7d])
+```
+
+broken down by `class` and `producer`. The baseline is a shadow-on window
+before any suppression ships; the candidate is the same metrics after it. The
+80% reduction in repeat/non-actionable writes per active item named in #16075
+is an **acceptance target**, not a measured or claimed result: shadow mode
+only produces the baseline that target will be checked against.
+
+### Write-site inventory
+
+Every function under `src/pkg` and `src/cmd` that calls a notification-capable
+write primitive (`CreateIssueComment`, `CreateIssueCommentBudgeted`,
+`PostNoteOrFold`, `PostClaimNote`, `PullRequests.CreateReview`,
+`RequestReviewers`) or records a suppressed note is listed here and in
+`notificationWriteSites` (`src/pkg/github/notification_write_sites.go`).
+`TestNotificationWriteSitesInventory` fails when a new call site is added
+without a class. Review submissions and review requests are always counted as
+`required_review`, whichever producer made them.
+
+- `status` — bookkeeping readable on demand; repeats may be would-suppress.
+- `attention` — asks a person to look or act; repeats may be would-suppress.
+- `required_review` — a review or review request a merge depends on; never would-suppress.
+- `protocol_command` — machine-consumed (claim markers, `/lgtm`, `/approve`, `/ok-to-test`); never would-suppress.
+- `security_event` — trust or integrity signal; never would-suppress.
+
+| Producer | Class | Notes |
+|---|---|---|
+| `dashboard.(*ContributeWSHub).markAlreadyDoneIssue` | `status` |  |
+| `dashboard.(*ContributeWSHub).releaseGateParkLabel` | `status` |  |
+| `dashboard.(*ContributeWSHub).releaseToolingBlockedLabel` | `status` |  |
+| `dashboard.(*Server).armRebaseThenMerge` | `status` |  |
+| `dashboard.(*Server).executeDelegatedDecision` | `status` |  |
+| `dashboard.(*Server).handlePullRequestMergeDecision` | `status` |  |
+| `dashboard.(*Server).handleRepoItemAdoptNow` | `status` |  |
+| `dashboard.(*Server).handleRepoItemBlockerClosePartial` | `status` |  |
+| `dashboard.(*Server).handleRepoItemDecision` | `status` |  |
+| `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
+| `dashboard.(*Server).mirrorPlanWith` | `status` |  |
+| `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |
+| `github.(*Client).CreateIssueCommentBudgeted` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).PostFleetReportCleared` | `status` |  |
+| `github.(*Client).PostFleetReportRecovery` | `status` |  |
+| `github.(*Client).PostFleetReportRollup` | `status` |  |
+| `github.(*Client).PostNoteOrFold` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
+| `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).closeDecomposedParent` | `status` |  |
+| `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
+| `github.(*Client).closeSupersededPRDecision` | `status` |  |
+| `github.(*Client).fileReviewBacklog` | `status` |  |
+| `github.(*Client).joinFleetReportIssue` | `status` |  |
+| `github.(*Client).markInProgressStarted` | `status` |  |
+| `github.(*Client).postUnblockedNote` | `status` |  |
+| `github.(*Client).priorArtGateClose` | `status` |  |
+| `github.(*Client).reconcileBlockedTargets` | `status` |  |
+| `github.(*Client).recordReviewEvidenceMerge` | `status` |  |
+| `github.SyncIssueStageLabelsWith` | `status` |  |
+| `github.ensureIssueStagePRLink` | `status` |  |
+| `github.githubIssueBacklogSink.AppendToItem` | `status` |  |
+| `github.githubIssueBacklogSink.CloseItem` | `status` |  |
+| `github.githubIssueBacklogSink.LiftBlock` | `status` |  |
+| `github.handleMergedPRIssueStage` | `status` |  |
+| `github.runRecheckSoak` | `status` |  |
+| `main.postReviewAcknowledgements` | `status` |  |
+| `main.rfcNotifySource.Comment` | `status` |  |
+| `main.unparkEscalatedPR` | `status` |  |
+| `dashboard.(*ContributeWSHub).parkWrongBase` | `attention` |  |
+| `dashboard.(*Server).handleRepoItemReroute` | `attention` |  |
+| `dashboard.(*Server).handleReviewPipelineSendToHuman` | `attention` |  |
+| `dashboard.(*Server).reroutePickupLapsed` | `attention` |  |
+| `dashboard.(*Server).settleRebaseMergeLedger` | `attention` |  |
+| `github.(*Client).NudgeTrackingIssueClosingRefs` | `attention` |  |
+| `github.(*Client).appendFoldedFinding` | `attention` |  |
+| `github.(*Client).bindProwLgtm` | `attention` |  |
+| `github.(*Client).commentOnHumanFiledTwin` | `attention` |  |
+| `github.(*Client).createIssue` | `attention` |  |
+| `github.(*Client).handleOneIssueRequest` | `attention` |  |
+| `github.(*Client).parkClankerRequestedPR` | `attention` |  |
+| `github.(*Client).redirectToExistingPR` | `attention` |  |
+| `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
+| `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
+| `main.claimEscalationLookup` | `attention` |  |
+| `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
+| `main.maintainHeldPRMergeability` | `attention` |  |
+| `main.rfcCoverageForge.CreateComment` | `attention` |  |
+| `main.runEscalationSweep` | `attention` |  |
+| `prfollowup.postStaleHeadPushNotes` | `attention` |  |
+| `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |
+| `scheduler.(*Scheduler).parkUnclearIssue` | `attention` |  |
+| `scheduler.(*Scheduler).postTriageClarifyComment` | `attention` |  |
+| `github.(*Client).QueuePRAutoMergeWithNoteResultAtHead` | `required_review` |  |
+| `github.(*Client).RequestReviewers` | `required_review` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).handleOneReviewRequest` | `required_review` |  |
+| `dashboard.postClaimComment` | `protocol_command` |  |
+| `github.(*Client).PostClaimNote` | `protocol_command` |  |
+| `github.(*Client).reportOperatorPullRequestApproval` | `protocol_command` |  |
+| `main.githubClaimHooks` | `protocol_command` |  |
+| `github.(*Client).handleOnePRRequest` | `security_event` |  |
+| `github.(*Client).markReporterTrustAwaiting` | `security_event` |  |
+| `github.(*Client).reconcileReporterTrustSignal` | `security_event` |  |
+| `main.enforceHoldGuard` | `security_event` |  |
+
+Hive-maintained GitHub Actions workflows that comment (not instrumented by the
+Go client; listed for completeness):
+
+| Workflow | Class | What it posts |
+|---|---|---|
+| `changelog-fragment-guard.yml`, `changelog-reminder.yml`, `docs-index-reminder.yml` | `status` | PR reminders about changelog fragments and the docs index. |
+| `issue-closed-reopen-hint.yml`, `issue-reopen-command.yml` | `status` | Reopen hint on closed issues; reply to a reopen command. |
+| `backend-smoke.yml`, `ci-runner-canary.yml`, `coverage-hourly.yml`, `dco-post-merge.yml`, `flue-smoke.yml`, `omp-smoke.yml`, `wavefront-smoke.yml`, `v2-ci.yml`, `v2-tests.yml` | `attention` | "Still failing" comments on an open failure-tracking issue. |
+| `promote-stable.yml` | `attention` | Emergency stable-promotion exception note. |
+| `weekly-competitor-report.md` (`.lock.yml`) | `status` | Weekly report comment on the tracking issue. |
+| `hive-ok-to-test.yml` | `protocol_command` | The `/ok-to-test` command that releases held workflow runs. |

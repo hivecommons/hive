@@ -483,3 +483,81 @@ func TestMergeRequestWatcher_RoutesNonGitHubRepoToForge(t *testing.T) {
 		t.Errorf("human_merge_paths repo should be denied: %v", err)
 	}
 }
+
+// A 405 "Changes must be made through the merge queue" can never be cleared by
+// retrying PUT /merge (hivecommons/hive#16229): the request is set aside on the
+// first refusal with the classified reason, a re-request for the same head is
+// refused without another PUT, and nothing is logged at WARN.
+func TestMergeRequestWatcher_MergeQueueRequiredIsTerminal(t *testing.T) {
+	var puts atomic.Int32
+	green := greenFixture()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if green.serveCI(w, r) {
+			return
+		}
+		if r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge") {
+			puts.Add(1)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = io.WriteString(w, `{"message":"Repository rule violations found\n\nChanges must be made through the merge queue\n\n"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	var logs strings.Builder
+	c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var reEngaged int
+	c.SetMergeReEngageHook(func(string, int) bool { reEngaged++; return true })
+
+	dir := t.TempDir()
+	mergeRequestDirForTest = dir
+	defer func() { mergeRequestDirForTest = "" }()
+
+	reqPath, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 74, ExpectSHA: "abc", Agent: "scanner"})
+	c.ProcessMergeRequestsOnce(context.Background())
+
+	if got := puts.Load(); got != 1 {
+		t.Fatalf("PUT /merge calls = %d, want 1", got)
+	}
+	if _, err := os.Stat(reqPath + ".exhausted"); err != nil {
+		t.Fatalf("merge-queue-required refusal should quarantine on the first attempt: %v", err)
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, mergeQueueRequiredReason) {
+		t.Fatalf("result = %+v, want a failed attempt 1 carrying %q", resp, mergeQueueRequiredReason)
+	}
+
+	again, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 74, ExpectSHA: "abc", Agent: "scanner"})
+	c.ProcessMergeRequestsOnce(context.Background())
+	if got := puts.Load(); got != 1 {
+		t.Fatalf("re-request for the same head must not PUT again, got %d calls", got)
+	}
+	if _, err := os.Stat(again + ".exhausted"); err != nil {
+		t.Fatalf("re-request for the same head should be refused: %v", err)
+	}
+
+	out := logs.String()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "level=WARN") && (strings.Contains(line, "merge queue") || strings.Contains(line, "giving up")) {
+			t.Fatalf("merge-queue-required refusal must not log at WARN:\n%s", out)
+		}
+	}
+	if n := strings.Count(out, mergeQueueRequiredReason+"\""); n != 1 {
+		t.Fatalf("classified message logged %d times, want once:\n%s", n, out)
+	}
+	if reEngaged != 0 {
+		t.Fatalf("merge-queue-required is not fixable by code; re-engage hook called %d times", reEngaged)
+	}
+}
+
+func TestIsMergeQueueRequiredMergeBlocker(t *testing.T) {
+	if !isMergeQueueRequiredMergeBlocker("merging PR o/r#74 (squash): PUT https://api.github.com/repos/o/r/pulls/74/merge: 405 Repository rule violations found\n\nChanges must be made through the merge queue") {
+		t.Error("merge-queue-required 405 not recognised")
+	}
+	for _, msg := range []string{"Changes must be made through a pull request", "405 Pull Request is not mergeable"} {
+		if isMergeQueueRequiredMergeBlocker(msg) {
+			t.Errorf("%q misclassified as merge-queue-required", msg)
+		}
+	}
+}

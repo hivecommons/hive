@@ -102,6 +102,7 @@ const (
 // production sandbox, deny-list, and refusal helpers; this table is the join
 // that makes those tests exhaustive over the production backend registry.
 var localBackendPostures = map[string]localConfinementPosture{
+	"cline":     postureRefusalGated,
 	"claude":    postureSandboxed,
 	"copilot":   postureSandboxed,
 	"goose":     postureRefusalGated,

@@ -16,3 +16,9 @@ func TestGitHubNotificationsConfig(t *testing.T) {
 		t.Error("unknown mode must be invalid")
 	}
 }
+
+func TestGitHubNotificationsShadowDefaultsOff(t *testing.T) {
+	if (GitHubNotificationsConfig{}).Shadow {
+		t.Fatal("github.notifications.shadow must default to off")
+	}
+}

@@ -169,7 +169,26 @@ function snapshot(members) {
   return JSON.stringify(members);
 }
 
-async function evaluate({ github, context }) {
+// A 5xx from GitHub is the API failing, not the evidence failing: three v5
+// PRs saw `GET .../check-runs - 500` in the same second (#16258) and the
+// bounded wait above threw on the first attempt. Retry it like pending
+// evidence; the loop still fails closed when it never clears. 4xx stays a
+// hard failure (missing refs and permissions do not fix themselves).
+function isTransientAPIError(error) {
+  const status = Number(error?.status);
+  return Number.isInteger(status) && status >= 500 && status <= 599;
+}
+
+async function evaluate(args) {
+  try {
+    return await evaluateOnce(args);
+  } catch (error) {
+    if (!isTransientAPIError(error)) throw error;
+    throw new PendingEvidence(`GitHub API ${error.status} (${error.message}); retrying`, { cause: error });
+  }
+}
+
+async function evaluateOnce({ github, context }) {
   const repo = context.repo;
   if (context.eventName === 'pull_request_target') {
     const event = context.payload.pull_request;
@@ -222,4 +241,5 @@ async function evaluate({ github, context }) {
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
+  isTransientAPIError,
 };

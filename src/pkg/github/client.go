@@ -278,6 +278,11 @@ type Client struct {
 	// notifications counts comments created, edited and suppressed; logged
 	// hourly so the effect of quiet mode is measurable.
 	notifications notificationTally
+	// shadowNotificationsFn is github.notifications.shadow, read live: when
+	// it returns true every notification-capable write is classified and
+	// recorded in notificationShadow. nil reads as off.
+	shadowNotificationsFn func() bool
+	notificationShadow    notificationShadow
 	// reviewRequireLabelsFn returns review.require_labels, read live so a
 	// Features-tab edit gates the next relay request without a rebuild. nil
 	// or empty means the gate is off.
@@ -2963,6 +2968,7 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	if err == nil {
 		c.noteCommentCreated()
 	}
+	c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteComment, repo: owner + "/" + repoName, item: number, body: body, err: err})
 	return err
 }
 
@@ -3199,6 +3205,9 @@ func (c *Client) QueuePRAutoMergeWithNoteResultAtHead(ctx context.Context, repo 
 			}
 			return effects.Result{Provenance: provenance}, apiErr
 		})
+		if !refusedAsOwn {
+			c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteReview, repo: full, item: number, body: body, class: NotificationClassRequiredReview, err: err})
+		}
 		if err != nil {
 			return res, fmt.Errorf("approving PR: %w", err)
 		}

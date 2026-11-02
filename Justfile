@@ -340,6 +340,11 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
+      cline)
+        echo "Cline requires cline@3.0.74 and a current crux exposing cline-turn."
+        echo "Run cline auth with a dedicated API-key provider, then export AGENT_MODEL=provider/model."
+        "${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --check
+        ;;
       omp)
         if command -v omp &>/dev/null; then
           echo "OMP CLI detected ($(omp --version 2>&1 | head -1))"
@@ -1008,6 +1013,14 @@ contribute-hive backend="" mode="docker": check-version
       BACKEND="${AGENT_BACKEND:-claude}"
     fi
     export AGENT_BACKEND="$BACKEND"
+    if [[ "$BACKEND" == "cline" ]]; then
+      export CONTRIBUTOR_MODE=headless
+      if ! command -v "${HIVE_CLINE_RUNNER:-crux}" >/dev/null 2>&1; then
+        echo "ERROR: Cline requires a current crux (or HIVE_CLINE_RUNNER=hive) with cline-turn support."
+        exit 1
+      fi
+      "${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --check
+    fi
     # MLX-only launch override: preserve an explicit selection over saved profiles.
     if [[ -n "${_MLX_LAUNCH_MODEL:-}" ]]; then
       if [[ "$BACKEND" != "pi" || "$_MLX_LAUNCH_MODEL" != mlx/* ]]; then
@@ -1278,7 +1291,7 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
-        goose|agy|bob|pi|aider|kilo|omp|openhands|omnigent)
+        goose|agy|bob|pi|aider|kilo|omp|openhands|omnigent|cline)
           # No sandbox, filesystem allowlist, or command deny-list exists for
           # any of these nine (see the "no confinement mechanism at all"
           # block in backends.conf) — refuse to launch unconfined by
@@ -1428,6 +1441,7 @@ contribute-hive backend="" mode="docker": check-version
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV CCACHE_DIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/ccache")"
       export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}"
+      if [[ "$BACKEND" != "cline" ]]; then
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
       tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $AGENT_LAUNCH_CMD" Enter
@@ -1442,6 +1456,7 @@ contribute-hive backend="" mode="docker": check-version
           echo "         Fix it for good with: tmux kill-server   (ends all tmux sessions, then rerun this recipe)" >&2
           ;;
       esac
+      fi
 
       # Start the relay
       export HIVE_AGENT_SESSION="$TMUX_SESSION"
@@ -1669,6 +1684,15 @@ contribute-hive backend="" mode="docker": check-version
       }
       CLI_MOUNTS=""
       case "${BACKEND}" in
+        cline)
+          if ! "${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --stage-config "${CLI_STAGE}/.cline"; then
+            rm -rf "${CLI_STAGE}"
+            exit 1
+          fi
+          CLINE_VOLUMESUF=":ro"
+          if [[ -n "$VOLSUF" ]]; then CLINE_VOLUMESUF="${VOLSUF},ro"; fi
+          CLI_MOUNTS="-v ${CLI_STAGE}/.cline:/home/dev/.cline${CLINE_VOLUMESUF}"
+          ;;
         claude)
           # #7836: an allowlist of ~/.claude, never the directory — see
           # stage_claude_home above for what the directory would have carried.
@@ -1935,6 +1959,9 @@ contribute-hive backend="" mode="docker": check-version
         while IFS= read -r name; do
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
+      elif [[ "$BACKEND" == "cline" ]]; then
+        # Authentication comes only from the narrowed provider file.
+        :
       else
         for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GEMINI_API_KEY DATABRICKS_TOKEN OMNIGENT_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOB_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
           add_provider_env "$name"
@@ -2369,7 +2396,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # authenticates through an interactive Google OAuth flow with no API-key
     # mode, so a pod has no way to sign in. Do NOT add agy here to "resync" the
     # two lists — a pod would start, fail auth, and crash-loop.
-    readonly HEADLESS_BACKENDS="claude litellm copilot codex goose"
+    readonly HEADLESS_BACKENDS="claude litellm copilot codex goose cline"
     # Memory sizing: the contributor image is ~2.7GiB unpacked and each task
     # spawns a real coding-CLI + a repo build/test, so requests are deliberately
     # generous. Named here so an operator can see and tune them, not magic YAML.
@@ -2447,6 +2474,14 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     CRED_MISSING=""
     if [[ "$BACKEND_HEADLESS_OK" == true ]]; then
       case "$BACKEND" in
+        cline)
+          if CLINE_CONFIG_JSON=$("${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --export-provider-config); then
+            add_cred "HIVE_CLINE_PROVIDERS_B64" "$(b64 "$(b64 "$CLINE_CONFIG_JSON")")"
+            unset CLINE_CONFIG_JSON
+          else
+            CRED_MISSING="cline requires a current crux with cline-turn and a configured dedicated API-key provider; run cline auth and set AGENT_MODEL=provider/model."
+          fi
+          ;;
         claude)
           # Two routes, explicit key first (operator intent beats a file that
           # happens to exist): ANTHROPIC_API_KEY travels as itself and the CLI
