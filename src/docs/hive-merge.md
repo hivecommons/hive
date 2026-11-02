@@ -154,6 +154,56 @@ sweep lanes whatever the intent tier. If the changed-file list for a configured
 repo cannot be fetched completely, the merge is withheld (fail closed). See
 [operator-reference.md](operator-reference.md).
 
+**Staged pin-only policy (not yet enforced).**
+
+`auto_merge.human_merge_pin_only` provides the schema and conservative diff
+classifier for #16242 / #16262. **It does not currently enable an exception:**
+relay, sweep, `/approve` and native-queue gates still require the existing
+human-merge path policy. Do not remove `human_merge_paths` or manually clear a
+hold to simulate this feature.
+
+```yaml
+auto_merge:
+  human_merge_paths:
+    owner/repo: [".github/workflows/*.yml", "Containerfile"]
+  human_merge_pin_only:
+    owner/repo:
+      enabled: true
+      paths: [".github/workflows/*.yml", "Containerfile"]
+      kinds: [action-sha, image-digest, version-pin]
+      trusted_authors: [maintainer-login]
+```
+
+Repository keys are case-insensitive; duplicate normalized keys are rejected.
+Absent/disabled entries have no effect. Enabled entries require nonempty paths,
+kinds and trusted authors; unknown kinds are rejected, including when disabled.
+The classifier accepts only existing modified files in both the actual guarded
+path matches and exception paths, and checks **all** files in the PR. Every
+changed line must be a paired pin replacement. Supported forms are unquoted
+`uses: owner/repo[/path]@<40-hex>` (an existing simple `# vN[.N[.N]]`
+comment may change), `FROM image@sha256:<64-hex>` / `image: image@sha256:...`,
+and literal `version: 1.2.3` / `ARG TOOL_VERSION=1.2.3` updates. Other syntax,
+missing patches, line-count mismatches, added/renamed files, owner files,
+permission/credential/signing text and non-pin edits fail closed.
+
+This classifier proves **syntax only**, not authenticated identity, exact-head
+binding, file-list completeness, semantic interpretation or review of upstream
+references. Those proofs must be added by the integration children (#16265,
+#16266); attribution and safe hold release are tracked in #16269. None of the
+schema or classifier APIs grants permission to merge or clears a hold. Native
+required checks and producer bindings, freshness, current reviews, substantive
+objections, unrelated holds and configured soak must remain independent gates.
+
+Operators stage the key in the controller's configured `hive.yaml` seed, not in
+the image repository. The existing config-file watcher reloads the seed with the
+dashboard overlay via `LoadWithDashboardOverlay`; invalid configuration is not
+installed. Reloading this schema alone still does **not** enable admission. The
+integration PRs must wire live policy updates into every merge path.
+
+There is **no minimum deployable version enabling this lane yet**. Utah rollout
+and current-head positive/negative deployment evidence remain tracked by
+projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authorized.
+
 **Contributor PRs are held to the contributor-lane policy.** A merge request
 for a PR whose author is not the hive App, a configured trusted bot, or a
 trusted-author role is evaluated against the same `auto_merge.contributor_lane`
