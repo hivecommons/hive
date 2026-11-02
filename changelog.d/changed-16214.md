@@ -1,1 +1,1 @@
-- refactor(crux): share the private socket dir check (#16214)
+- crux: the socket-directory ownership/mode check used by both `crux serve` and the callback listener is now one shared implementation (`crux/internal/privatedir`), so future hardening cannot drift between the two (#16213, #16214).
