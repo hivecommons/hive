@@ -2532,6 +2532,12 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		DeltaMaxAge:           cfg.Review.EffectiveDeltaMaxAge(),
 	})
 	recordReviewDeltaRestamps(plan, logger)
+	pendingRecords, pendingAgents, confirmedAgents := review.PendingReviewerOccupancy(plan.State)
+	if pendingRecords > 0 || plan.SettledReviews > 0 {
+		logger.Info("review dispatch occupancy", "pending_records", pendingRecords,
+			"pending_agents", pendingAgents, "delivery_confirmed_pending_agents", confirmedAgents,
+			"settled_records", plan.SettledReviews, "planned_kicks", len(plan.ReviewKicks))
+	}
 	for _, k := range plan.ReviewKicks {
 		if k.BotAuthorRouted {
 			logger.Info("review routed bot-authored PR to bot_author_model", "repo", k.Repo, "pr", k.Number, "head", k.HeadSHA, "agent", k.Agent, "review_model", k.ReviewModel, "review_backend", k.ReviewBackend)
@@ -2667,6 +2673,7 @@ func refreshReviewVerdictsForPRs(cfg *config.Config, prs []review.PullRequest, l
 	if cfg == nil || !shouldRefreshReviewVerdicts(cfg) {
 		return
 	}
+	started := time.Now()
 	opts := review.AggregateOptions{
 		// Unanimity is judged against what a PR was eligible to receive. Without
 		// this the cap makes approve unreachable and every PR aggregates to
@@ -2695,7 +2702,9 @@ func refreshReviewVerdictsForPRs(cfg *config.Config, prs []review.PullRequest, l
 		}
 		return
 	}
-	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items),
+		"elapsed", time.Since(started), "report_files_read", artifact.Collection.FilesRead,
+		"new_report_receipts", artifact.Collection.NewReports, "max_new_report_lag", artifact.Collection.MaxReportLag)
 }
 
 // reviewModelStamps reads the dispatch state so a verdict whose report

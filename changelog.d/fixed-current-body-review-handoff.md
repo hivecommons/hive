@@ -1,1 +1,1 @@
-- Collect review outputs for open PRs without rereading every historical report, release completed reviewers before priority scheduling, and request missing perspectives against the current body without letting older collections overwrite newer results.
+- Collect review outputs for open PRs without rereading every historical report, request only missing current-body perspectives, settle reviewer slots only from fresh report receipts, preserve newer verdicts against late collection/restamps, and log collection lag plus pending versus delivery-confirmed occupancy.
