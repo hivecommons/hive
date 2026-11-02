@@ -402,7 +402,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// After the New caption: an unclassified clanker PR whose clanker
 		// is offline says what that means for it.
 		it.Caption = stageTrackerOfflineAuthorCaption(it.Caption, it.Presence, it.Stage, adoptionClock, now)
-		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
+		it.SentinelAlert, it.SentinelFindings, it.SentinelReason, it.SentinelDetails = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
 		it.SentinelNotice = it.SentinelAlert && !slices.ContainsFunc(pr.Labels, func(label string) bool {
 			return strings.EqualFold(strings.TrimSpace(label), sentinelLabel)
 		})

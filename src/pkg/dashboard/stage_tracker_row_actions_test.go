@@ -848,6 +848,8 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP_FALLBACK"),
 		jsFunc(t, html, "stageTrackerSentinelTip"),
+		jsFunc(t, html, "stageTrackerSentinelPathLines"),
+		jsFunc(t, html, "stageTrackerSentinelTipWithPaths"),
 		jsFunc(t, html, "stageTrackerSentinelPreface"),
 		jsFunc(t, html, "stageTrackerConfirmSkipped"),
 		jsFunc(t, html, "stageTrackerSetConfirmSkip"),
@@ -1734,6 +1736,24 @@ assert.ok(html.includes('<span class="ham-plan-chip" title="' + hiveDialogEscape
 assert.deepStrictEqual(buttons(html), ['Cancel', 'Let hive do that'], 'exactly two buttons when the head is not mergeable');
 assert.ok(html.includes('btn-danger hive-dialog-btn primary" data-initial-focus'), 'the sentinel case keeps the danger primary');
 assert.ok(html.indexOf('hive-dialog-btn cancel') < html.indexOf('hive-dialog-btn primary'), 'Cancel first, primary last');
+
+// 1b. The sentinel line names the files and the rule that fired, from the
+//     row's sentinel_details, bounded by the server (hivecommons/hive: "knowing
+//     what the sensitive path(s) (and files) are in this alert dialog would
+//     really help me make a decision"); the Details paragraph keeps the
+//     line breaks (white-space: pre-line) and the chip's tooltip carries it.
+const flagged = { repo: 'hivecommons/hive', number: 16230, kind: 'pr', head: '4396f46abcdef', sentinel_alert: true, sentinel_reason: 'changes 1 sensitive path(s)',
+  sentinel_details: [{ rule: 'sensitive_path', summary: 'changes 1 sensitive path(s)', paths: ['.github/workflows/release.yml'] }, { rule: 'permission_escalation', summary: 'widens workflow permissions' }] };
+assert.deepStrictEqual(stageTrackerSentinelPathLines(flagged), ['sensitive_path: .github/workflows/release.yml', 'permission_escalation (widens workflow permissions)']);
+assert.deepStrictEqual(stageTrackerSentinelPathLines(Object.assign({}, flagged, { sentinel_details: [{ rule: 'sensitive_path', paths: ['a', 'b'], more_paths: 4 }] })), ['sensitive_path: a, b (+4 more)']);
+assert.deepStrictEqual(stageTrackerSentinelPathLines({ sentinel_alert: true }), []);
+let preface = stageTrackerSentinelPreface([flagged]);
+assert.strictEqual(preface, '⚠ hivecommons/hive#16230 — Sentinel flagged security-relevant changes at 4396f46: changes 1 sensitive path(s)\n   · sensitive_path: .github/workflows/release.yml\n   · permission_escalation (widens workflow permissions)', preface);
+assert.strictEqual(stageTrackerSentinelPreface([Object.assign({}, flagged, { sentinel_details: [] })]), '⚠ hivecommons/hive#16230 — Sentinel flagged security-relevant changes at 4396f46: changes 1 sensitive path(s)', 'no details: the line is unchanged');
+html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([Object.assign({}, pr15332, { ref: 'hivecommons/hive#16230', number: 16230 })], preface));
+assert.ok(detailsOf(html).includes('<p class="ham-plan-finding">' + hiveDialogEscape(preface) + '</p>'), 'the Details finding names the files: ' + detailsOf(html));
+assert.ok(html.includes('<span class="ham-plan-chip" title="' + hiveDialogEscape(preface) + '">⚠ Sentinel</span>'), 'the chip tooltip names the files too');
+assert.ok(!visibleOf(html).includes('.github/workflows/release.yml'), 'the paths stay behind Details');
 
 // 2. A stale "Hive would:" prefix in the payload is still rendered once.
 view = stageTrackerDelegatePlanView([Object.assign({}, pr15332, { summary: 'Hive would: Hive would: send #15332 back' })], '');

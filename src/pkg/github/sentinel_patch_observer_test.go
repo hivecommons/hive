@@ -75,6 +75,25 @@ func TestSentinelPatchObserverReceivesFetchedFiles(t *testing.T) {
 	}
 }
 
+// Config loading strips the org off every repos entry, so the configured slug
+// is a bare name; the observation must still name the repo owner/name, or the
+// Matrix allowlist (owner/name entries) never matches (#16235).
+func TestSentinelPatchObserverQualifiesBareRepoSlug(t *testing.T) {
+	f := observerFixture("alice", false)
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"r"})
+	var obs observations
+	opts := defaultSentinelOpts(nil)
+	opts.PatchObserver = obs.add
+	if _, err := c.SweepSentinel(context.Background(), opts); err != nil || len(obs.got) != 1 {
+		t.Fatalf("err=%v obs=%+v", err, obs.got)
+	}
+	if o := obs.got[0]; o.Repo != "o/r" || o.Private {
+		t.Fatalf("observation=%+v, want repo o/r and public", o)
+	}
+}
+
 func TestSentinelPatchObserverPublicRepoNotPrivate(t *testing.T) {
 	f := observerFixture("alice", false)
 	srv := newSentinelServer(t, f)
