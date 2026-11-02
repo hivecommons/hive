@@ -45,7 +45,7 @@ func (c *Client) PostNoteOrFold(ctx context.Context, repo string, number int, ke
 		return false, ErrNoGitHubClient
 	}
 	if !c.notificationsQuiet() {
-		return true, c.CreateIssueComment(ctx, repo, number, body)
+		return true, c.CreateIssueComment(WithNotificationSubject(ctx, key), repo, number, body)
 	}
 	created, err := c.UpsertPRStatusSection(ctx, repo, number, key, body)
 	if err == nil && !created {
