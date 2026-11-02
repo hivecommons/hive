@@ -123,6 +123,15 @@ let refreshed = 0; function stageTrackerAfterActions() { refreshed++; }
   assert.strictEqual(rendered, 1, 'one optimistic re-render for the success');
   assert.strictEqual(refreshed, 1, 'then the usual refetch');
   assert.strictEqual(toasts[toasts.length - 1], 'done:error:Accepted 1 of 2 issues. Failed: o/r#2 — write permission required', 'the failure is toasted, never a native dialog');
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+  const missingReceipt = await stageTrackerRunActions([_stageTracker.items[1]], 'accept-triage', {});
+  assert.strictEqual(missingReceipt[0].ok, false, 'HTTP 200 without a handoff receipt is not acceptance');
+  assert.strictEqual(_stageTracker.items[1].stage, 15, 'an unconfirmed handoff must not paint an accepted row');
+  global.fetch = async () => ({ ok: false, status: 502, json: async () => ({ error: 'Triage labels were saved on GitHub, but the work handoff could not be refreshed' }) });
+  const failedHandoff = await stageTrackerRunActions([_stageTracker.items[1]], 'accept-triage', {});
+  assert.strictEqual(failedHandoff[0].ok, false);
+  assert.ok(failedHandoff[0].error.includes('labels were saved'), 'partial success preserves the explicit handoff failure');
+  assert.strictEqual(_stageTracker.items[1].stage, 15);
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }

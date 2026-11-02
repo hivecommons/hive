@@ -154,8 +154,10 @@ func TestRunLoopTopRunsOverdueReconcileWithoutTickerTick(t *testing.T) {
 	if len(h.sources) != 2 || h.sources[1] != evalSourceEnumerate {
 		t.Fatalf("sources = %v, want initial + loop-top reconcile pass", h.sources)
 	}
-	if h.sweeps != 2 {
-		t.Fatalf("sweeps = %d, want the owed reconcile to run as a full tick", h.sweeps)
+	// Sweep workers start once and run detached; the full tick is
+	// observable through its per-tick rotation check.
+	if h.rotations != 2 || h.sweeps != 1 {
+		t.Fatalf("rotations=%d sweep workers started=%d, want the owed reconcile to run as a full tick", h.rotations, h.sweeps)
 	}
 	if !strings.Contains(log.String(), "eval interval elapsed without a reconcile pass; enumerating") {
 		t.Fatalf("missing loop-top log line:\n%s", log.String())

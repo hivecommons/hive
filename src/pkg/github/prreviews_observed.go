@@ -70,10 +70,10 @@ func (c *Client) prReviewObserved() PRReviewObservedHook {
 // next scan. The dashboard sink de-duplicates
 // repeats by review ID. A failed read emits nothing, is
 // not cached, and does not fail the scan: the next scan retries it.
-func (c *Client) emitTerminalPRReviews(ctx context.Context, owner, repoName, repo string, number int, updatedAt time.Time, identity HiveIdentity) {
+func (c *Client) emitTerminalPRReviews(ctx context.Context, owner, repoName, repo string, number int, updatedAt time.Time, identity HiveIdentity) bool {
 	hook := c.prReviewObserved()
 	if hook == nil || number <= 0 {
-		return
+		return true
 	}
 	key := strings.ToLower(owner+"/"+repoName) + "#" + strconv.Itoa(number)
 	now := time.Now()
@@ -82,14 +82,14 @@ func (c *Client) emitTerminalPRReviews(ctx context.Context, owner, repoName, rep
 		for _, r := range reviews {
 			hook(r)
 		}
-		return
+		return true
 	}
 	fresh, err := c.listTerminalPRReviews(ctx, owner, repoName, repo, number, identity)
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Debug("terminal PR reviews lookup failed", "repo", owner+"/"+repoName, "number", number, "error", err)
 		}
-		return
+		return false
 	}
 	seen := c.prTerminalReviews.seen(key, now)
 	c.prTerminalReviews.put(key, updatedAt, fresh, now)
@@ -98,6 +98,7 @@ func (c *Client) emitTerminalPRReviews(ctx context.Context, owner, repoName, rep
 			hook(r)
 		}
 	}
+	return true
 }
 
 // listTerminalPRReviews pages through a PR's reviews and keeps the submitted

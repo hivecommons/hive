@@ -89,8 +89,8 @@ func AcquireDestinationMerge(ctx context.Context, dir, repo, base string) (conte
 	}
 	unlock := lock.Unlock
 	if dir != "" {
-		const directoryMode = 0o755
-		const fileMode = 0o644
+		const directoryMode = 0o700
+		const fileMode = 0o600
 		if err := os.MkdirAll(dir, directoryMode); err != nil {
 			unlock()
 			return ctx, nil, err

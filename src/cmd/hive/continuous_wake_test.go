@@ -251,8 +251,10 @@ func TestRunLoopContinuousWakeServedBetweenBusyTicks(t *testing.T) {
 	if len(h.sources) != 3 || h.sources[2] != evalSourceCached {
 		t.Fatalf("sources = %v, want initial/cadence followed by cached re-kick", h.sources)
 	}
-	if h.sweeps != 2 || h.rotations != 2 {
-		t.Fatalf("sweeps=%d rotations=%d: continuous wake must omit maintenance", h.sweeps, h.rotations)
+	// Sweeps run on their own timers (started once, never per tick), so
+	// rotation is the per-tick maintenance the lean wake must skip.
+	if h.sweeps != 1 || h.rotations != 2 {
+		t.Fatalf("sweep workers started=%d rotations=%d: continuous wake must omit maintenance", h.sweeps, h.rotations)
 	}
 	if !strings.Contains(log.String(), "continuous re-kick wake: running an early eval cycle") {
 		t.Fatalf("missing continuous wake: %s", log.String())

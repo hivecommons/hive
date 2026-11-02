@@ -1,12 +1,15 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -419,5 +422,42 @@ func TestFilterClaimedIssuesReferenceClaimStillHonorsRedStale(t *testing.T) {
 	}
 	if len(result.Issues.Items) != 1 {
 		t.Fatalf("red-stale reference claim should remain actionable, got %+v", result.Issues.Items)
+	}
+}
+
+// TestMergedClaimScanTimeoutLoggedOncePerRepo pins that a deadline/cancel on
+// the merged-PR scan is classified as transient (Info, not Warn) and logged
+// once per repo until a scan succeeds.
+func TestMergedClaimScanTimeoutLoggedOncePerRepo(t *testing.T) {
+	srv := mergedClaimServer(t, nil, nil)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	c := NewClientForTest(srv.URL, "torch-spyre", []string{"spyre-inference"}, logger)
+	identity := HiveIdentity{AppLogin: "kubestellar-hive[bot]"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 0; i < 3; i++ {
+		if _, err := c.FetchClaims(ctx, identity); err == nil {
+			t.Fatal("FetchClaims: want error from cancelled context")
+		}
+	}
+	out := buf.String()
+	if strings.Contains(out, "level=WARN msg=\"merged-pr-claim scan failed") {
+		t.Errorf("transient merged scan error logged as WARN:\n%s", out)
+	}
+	if n := strings.Count(out, "merged-pr-claim scan timed out (transient)"); n != 1 {
+		t.Errorf("transient message logged %d times, want 1:\n%s", n, out)
+	}
+
+	if _, err := c.FetchClaims(context.Background(), identity); err != nil {
+		t.Fatalf("FetchClaims: %v", err)
+	}
+	buf.Reset()
+	cancel2Ctx, cancel2 := context.WithCancel(context.Background())
+	cancel2()
+	_, _ = c.FetchClaims(cancel2Ctx, identity)
+	if !strings.Contains(buf.String(), "merged-pr-claim scan timed out (transient)") {
+		t.Errorf("transient message not re-logged after a successful scan:\n%s", buf.String())
 	}
 }
