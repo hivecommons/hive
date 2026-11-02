@@ -416,12 +416,12 @@ without a class. Review submissions and review requests are always counted as
 | `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |
 | `scheduler.(*Scheduler).parkUnclearIssue` | `attention` |  |
 | `scheduler.(*Scheduler).postTriageClarifyComment` | `attention` |  |
-| `github.(*Client).QueuePRAutoMergeWithNoteResult` | `required_review` |  |
+| `github.(*Client).QueuePRAutoMergeWithNoteResultAtHead` | `required_review` |  |
 | `github.(*Client).RequestReviewers` | `required_review` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).handleOneReviewRequest` | `required_review` |  |
 | `dashboard.postClaimComment` | `protocol_command` |  |
 | `github.(*Client).PostClaimNote` | `protocol_command` |  |
-| `github.(*Client).RecordOperatorPullRequestApprovalWith` | `protocol_command` |  |
+| `github.(*Client).reportOperatorPullRequestApproval` | `protocol_command` |  |
 | `main.githubClaimHooks` | `protocol_command` |  |
 | `github.(*Client).handleOnePRRequest` | `security_event` |  |
 | `github.(*Client).markReporterTrustAwaiting` | `security_event` |  |

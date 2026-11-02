@@ -91,14 +91,14 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"scheduler.(*Scheduler).postTriageClarifyComment":     {Class: NotificationClassAttention},
 
 	// required_review: a review submission or request a merge depends on.
-	"github.(*Client).QueuePRAutoMergeWithNoteResult": {Class: NotificationClassRequiredReview},
-	"github.(*Client).handleOneReviewRequest":         {Class: NotificationClassRequiredReview},
+	"github.(*Client).QueuePRAutoMergeWithNoteResultAtHead": {Class: NotificationClassRequiredReview},
+	"github.(*Client).handleOneReviewRequest":               {Class: NotificationClassRequiredReview},
 
 	// protocol_command: machine-consumed comments.
-	"dashboard.postClaimComment":                             {Class: NotificationClassProtocolCommand},
-	"github.(*Client).PostClaimNote":                         {Class: NotificationClassProtocolCommand},
-	"github.(*Client).RecordOperatorPullRequestApprovalWith": {Class: NotificationClassProtocolCommand},
-	"main.githubClaimHooks":                                  {Class: NotificationClassProtocolCommand},
+	"dashboard.postClaimComment":                         {Class: NotificationClassProtocolCommand},
+	"github.(*Client).PostClaimNote":                     {Class: NotificationClassProtocolCommand},
+	"github.(*Client).reportOperatorPullRequestApproval": {Class: NotificationClassProtocolCommand},
+	"main.githubClaimHooks":                              {Class: NotificationClassProtocolCommand},
 
 	// security_event: trust and integrity signals.
 	"github.(*Client).handleOnePRRequest":           {Class: NotificationClassSecurityEvent},
