@@ -1,0 +1,1 @@
+- Record validated operator approvals before optional GitHub reporting, bound reporting waits, and keep mutation-journal readers responsive during ordered durable writes without weakening merge gates.

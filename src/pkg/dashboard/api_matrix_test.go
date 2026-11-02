@@ -415,3 +415,56 @@ func getMatrixLines(t *testing.T, s *Server, target string) matrixLinesResponse 
 	}
 	return resp
 }
+
+// /api/matrix/lines reports when the ingest pass last ran and when the next
+// is due (#16276), null/0 before the first pass, so the kiosk can tell "no
+// pushes" from "no ingest".
+func TestHandleMatrixLines_IngestFreshness(t *testing.T) {
+	s := newTestServer()
+	s.RecordMatrixIngest(time.Now(), time.Minute) // no source yet: no-op
+	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
+	src := s.matrix
+	t.Cleanup(src.close)
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	src.now = func() time.Time { return now }
+
+	get := func() map[string]json.RawMessage {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/matrix/lines", nil)
+		req.Header.Set("X-Hive-Role", config.RoleRead)
+		rr := httptest.NewRecorder()
+		s.handleMatrixLines(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("code = %d, want 200", rr.Code)
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return body
+	}
+
+	body := get()
+	if string(body["last_ingest_at"]) != "null" || string(body["next_ingest_in_s"]) != "0" {
+		t.Fatalf("before first ingest: last=%s next=%s", body["last_ingest_at"], body["next_ingest_in_s"])
+	}
+
+	s.RecordMatrixIngest(now.Add(-30*time.Second), 2*time.Minute)
+	var resp matrixLinesResponse
+	body = get()
+	if err := json.Unmarshal(body["last_ingest_at"], &resp.LastIngestAt); err != nil || resp.LastIngestAt == nil || !resp.LastIngestAt.Equal(now.Add(-30*time.Second)) {
+		t.Fatalf("last_ingest_at=%s err=%v", body["last_ingest_at"], err)
+	}
+	if string(body["next_ingest_in_s"]) != "90" {
+		t.Fatalf("next_ingest_in_s=%s, want 90", body["next_ingest_in_s"])
+	}
+
+	// An overdue pass floors at zero rather than going negative.
+	s.RecordMatrixIngest(now.Add(-10*time.Minute), 2*time.Minute)
+	if body = get(); string(body["next_ingest_in_s"]) != "0" {
+		t.Fatalf("overdue next_ingest_in_s=%s, want 0", body["next_ingest_in_s"])
+	}
+
+	var nilSrv *Server
+	nilSrv.RecordMatrixIngest(now, time.Minute) // must not panic
+}

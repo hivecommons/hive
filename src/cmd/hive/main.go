@@ -2440,6 +2440,10 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
+	// The Matrix backlog survives a restart so the kiosk never blanks
+	// (#16276); the paired sentinel head map is set in
+	// applyGitHubClientConfigHooks.
+	b.dashSrv.SetMatrixPersistPath(matrixLinesStatePath)
 	b.dashSrv.SetIntegrationExecutionEvaluators(b.integrationPreparationEligibility, b.integrationEligibility)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
@@ -3691,6 +3695,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		prevACMMLevel := b.cfg.ACMMLevelOrZero()
 		nextACMMLevel := prevACMMLevel
 		defer func() {
+			b.publishSweepConfig()
 			b.cfgReloadMu.Unlock()
 			if prevACMMLevel != nextACMMLevel {
 				b.onACMMLevelChanged(prevACMMLevel, nextACMMLevel)
@@ -5961,24 +5966,40 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	if loopNow == nil {
 		loopNow = time.Now
 	}
+	b.cfgReloadMu.Lock()
+	b.publishSweepConfig()
+	b.cfgReloadMu.Unlock()
+	if deps.startSweeps != nil {
+		defer deps.startSweeps(b)()
+	}
+	// Cadence is measured from the start, including the first (often slow)
+	// enumerate pass, not from completion of startup evaluation.
+	lastEnumerateAt := loopNow()
+	b.cfgReloadMu.Lock()
+	initialTickStarted := time.Now()
 	b.evalCycles++
 	deps.runEval(b, nil, evalSourceEnumerate)
+	initialEvalDuration := time.Since(initialTickStarted)
 	// lastEnumerateAt is when the last reconcile pass started. Wake-driven
 	// cycles plan from the cached snapshot, and a busy spoke can be woken
 	// every few minutes for hours; the reconcile cadence must not depend on
 	// the ticker tick winning the select against those wakes
 	// (hivecommons/hive#15779). reconcileOverdue is the one check both the
 	// wake paths and the loop top consult.
-	lastEnumerateAt := loopNow()
 	reconcileOverdue := func(now time.Time) bool {
 		return lastEvalInterval > 0 && now.Sub(lastEnumerateAt) >= lastEvalInterval
 	}
+	initialRotationStarted := time.Now()
 	deps.runRotation(b)
+	initialRotationDuration := time.Since(initialRotationStarted)
 	if b.wd != nil {
 		b.wd.Tick(b.ctx)
 	}
-	deps.runSweeps(b)
 	deps.persist(b)
+	b.cfgReloadMu.Unlock()
+	b.logger.Info("governor tick complete", "tick_wall_s", time.Since(initialTickStarted).Seconds(),
+		"eval_s", initialEvalDuration.Seconds(), "rotation_s", initialRotationDuration.Seconds(), "sweeps_s", 0,
+		"source", evalSourceEnumerate.String(), "startup", true)
 
 	// tick is one governor pass. The cadence ticker runs it with
 	// evalSourceEnumerate (the reconcile pass that re-lists every repo). The
@@ -5987,6 +6008,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// gates, planning from the stored snapshot — already patched by the
 	// delivery's targeted re-read — so a wake costs no listing.
 	tick := func(source evalCycleSource) {
+		tickStarted := time.Now()
 		if now := loopNow(); source == evalSourceCached && reconcileOverdue(now) {
 			b.logger.Info("cached snapshot older than eval interval; enumerating",
 				"snapshot_age", now.Sub(lastEnumerateAt).Round(time.Second).String(),
@@ -5997,6 +6019,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			lastEnumerateAt = loopNow()
 		}
 		b.cfgReloadMu.Lock()
+		b.publishSweepConfig()
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
 			b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
@@ -6055,9 +6078,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		b.evalCycles++
+		evalStarted := time.Now()
 		deps.runEval(b, restarted, source)
+		evalDuration := time.Since(evalStarted)
+		rotationStarted := time.Now()
 		deps.runRotation(b)
-		deps.runSweeps(b)
+		rotationDuration := time.Since(rotationStarted)
 		// Trajectory review runs after the eval cycle (so kicks/intents are
 		// current) on its own cadence, gated by Due().
 		if b.trajLane != nil && b.trajLane.Due(time.Now()) {
@@ -6090,8 +6116,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			b.evalLoop.setInterval(effectiveEvalInterval, mode)
 		}
 		b.cfgReloadMu.Unlock()
+		b.logger.Info("governor tick complete", "tick_wall_s", time.Since(tickStarted).Seconds(),
+			"eval_s", evalDuration.Seconds(), "rotation_s", rotationDuration.Seconds(), "sweeps_s", 0,
+			"source", source.String())
 	}
 	b.startReviewEvents()
+	b.startMatrixIngest()
 
 	// Webhook health re-check: in webhook mode the base tick (900s) is longer
 	// than the health window (2 × eval_interval_s), so without this a lapse

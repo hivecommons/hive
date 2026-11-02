@@ -23,6 +23,7 @@ func TestBasePreparationProvenanceForEveryAdmittingLane(t *testing.T) {
 			if _, reason, _, err := preparationGate(c, 2, "main", "head2"); err != nil || reason != preparationQueued(1) {
 				t.Fatalf("other lane revoked %s owner: %q %v", lane, reason, err)
 			}
+			api.prs[1].Head.SHA = gh.Ptr("observed-refresh")
 			c.recordStage(lane, "acme/widget", "acme", "widget", api.prs[1], "required-check-failing:build", false, nil)
 			if ev, _, _, err := preparationGate(c, 2, "main", "head2"); err != nil || !ev.BranchUpdated {
 				t.Fatalf("owning lane did not release: %+v %v", ev, err)

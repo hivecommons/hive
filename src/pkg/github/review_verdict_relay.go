@@ -457,6 +457,7 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	// (hivecommons/hive#13542). Only a decided report may carry dispositions.
 	report.Head = auth.ReviewHead
 	report.Decided = auth.Decided
+	report.ReporterAgent = strings.TrimSpace(req.Agent)
 	if !report.Decided {
 		report.Dispositions = nil
 	}
