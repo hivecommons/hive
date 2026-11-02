@@ -11,15 +11,18 @@ import (
 )
 
 type forge struct {
-	posts   []Episode
-	landed  map[string]bool
-	history []string
-	fail    bool
-	finds   int
-	findErr error
+	posts      []Episode
+	landed     map[string]bool
+	history    []string
+	fail       bool
+	finds      int
+	findErr    error
+	historyErr error
 }
 
-func (f *forge) History(context.Context, string, int) ([]string, error) { return f.history, nil }
+func (f *forge) History(context.Context, string, int) ([]string, error) {
+	return f.history, f.historyErr
+}
 func (f *forge) Find(_ context.Context, e Episode) (bool, error) {
 	f.finds++
 	return f.landed[e.Attempt], f.findErr
