@@ -1747,6 +1747,9 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		AppBotLogin:        b.cfg.GitHub.BotLogin(),
 		AppBotUserID:       b.appBotUserIDResolver(),
 		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
+		InferenceDefaultModel: func(backend string) string {
+			return b.cfg.Governor.DefaultInferenceModel(backend)
+		},
 	}
 	return true
 }

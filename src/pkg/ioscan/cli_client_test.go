@@ -400,3 +400,34 @@ func TestExtractSingleJSONObject(t *testing.T) {
 		}
 	}
 }
+
+// An empty or whitespace model must omit --model from argv entirely; a bare
+// `--model` would make the CLI consume the next argument as its value.
+func TestCLIChatClientArgvOmitsEmptyModel(t *testing.T) {
+	for _, model := range []string{"", "  "} {
+		c, err := NewCLIChatClient("claude", model, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		argv := c.argv("classify this")
+		for i, arg := range argv {
+			if arg == "--model" {
+				t.Fatalf("model %q: argv %v carries --model at %d", model, argv, i)
+			}
+		}
+	}
+	c, err := NewCLIChatClient("claude", " haiku ", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := c.argv("classify this")
+	for i, arg := range argv {
+		if arg == "--model" {
+			if i+1 >= len(argv) || argv[i+1] != "haiku" {
+				t.Fatalf("argv %v: --model must be followed by the trimmed model", argv)
+			}
+			return
+		}
+	}
+	t.Fatalf("argv %v: configured model missing", argv)
+}

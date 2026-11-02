@@ -167,8 +167,11 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 	// passes the marker check, but a kick typed into it is consumed by the
 	// menu — or by bash once the default "No, exit" selection exits the CLI
 	// (observed live: "-bash: NEVER: command not found").
+	// A Claude permission dialog is a blocking prompt too, but a restart
+	// relaunches into the same dialog; the prompt wait below answers it in
+	// place (or names it in the error) instead.
 	pane := m.captureVisiblePaneForAgent(agent)
-	if !paneHasCLIMarker(pane) || paneShowsConsentScreen(pane) {
+	if (!paneHasCLIMarker(pane) || paneShowsConsentScreen(pane)) && !paneShowsClaudePermissionDialog(pane) {
 		consentScreen := paneShowsConsentScreen(pane)
 		m.mu.Unlock()
 		// Answer the bypass consent screen in place: a restart relaunches
@@ -287,21 +290,8 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	defer agent.kickDelivering.Store(false)
 
 	visible := m.captureVisiblePaneForAgent(agent)
-	menuFooter := paneTUIMenuFooter(effectiveBackend(agent), visible)
-	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) || paneShowsCopilotQuestionForm(visible) || menuFooter != "" {
-		reason := "pane not at a ready input prompt"
-		if menuFooter != "" {
-			reason = tuiMenuNotReadyReason(menuFooter)
-		}
-		m.markKickUndeliverableLocked(agent, time.Now(), reason)
-		m.logger.Warn("kick delivery skipped: CLI is not at a ready prompt; refusing to type kick into shell",
-			"agent", agent.Name, "trigger", trigger, "has_cli_marker", paneHasCLIMarker(visible),
-			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible),
-			"question_form", paneShowsCopilotQuestionForm(visible), "menu_footer", menuFooter)
-		if menuFooter != "" {
-			return fmt.Errorf("agent %s pane not at a ready input prompt: %s", agent.Name, reason)
-		}
-		return m.kickNotReadyErrorLocked(agent, time.Now(), fmt.Errorf("agent %s pane not at a ready input prompt", agent.Name))
+	if err := m.checkKickPromptReadyLocked(agent, visible, trigger); err != nil {
+		return err
 	}
 
 	// Archive the PREVIOUS kick's scrollback and clear the history before any
