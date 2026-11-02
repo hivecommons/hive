@@ -121,24 +121,35 @@ func preparationClaims(pr *gh.PullRequest, fullRepo string) ([]int, bool) {
 	return numbers, true
 }
 
+// preparationClaimsClear returns both PRs' claimed issues when every claim is
+// known and no claimed issue has blocking dependency evidence.
+func (c *Engine) preparationClaimsClear(ctx context.Context, owner, repo string, a, b *gh.PullRequest) ([]int, []int, bool) {
+	fullRepo := owner + "/" + repo
+	ac, ak := preparationClaims(a, fullRepo)
+	bc, bk := preparationClaims(b, fullRepo)
+	if !ak || !bk {
+		return nil, nil, false
+	}
+	for _, n := range append(slices.Clone(ac), bc...) {
+		blocked, known, err := hgithub.ReadIssueDependencyEvidence(ctx, c.gh, owner, repo, n)
+		if err != nil || !known || blocked {
+			return nil, nil, false
+		}
+	}
+	return ac, bc, true
+}
+
 func (c *Engine) preparationIndependent(ctx context.Context, owner, repo string, a, b *gh.PullRequest) bool {
 	fullRepo := owner + "/" + repo
 	if mergeTrainAdoptionPair(a, b) || a.GetHead().GetSHA() == b.GetHead().GetSHA() {
 		return false
 	}
-	ac, ak := preparationClaims(a, fullRepo)
-	bc, bk := preparationClaims(b, fullRepo)
-	if !ak || !bk {
+	ac, bc, ok := c.preparationClaimsClear(ctx, owner, repo, a, b)
+	if !ok {
 		return false
 	}
 	for _, n := range ac {
 		if slices.Contains(bc, n) {
-			return false
-		}
-	}
-	for _, n := range append(ac, bc...) {
-		blocked, known, err := hgithub.ReadIssueDependencyEvidence(ctx, c.gh, owner, repo, n)
-		if err != nil || !known || blocked {
 			return false
 		}
 	}
@@ -187,16 +198,10 @@ func (c *Engine) preparationMayPass(ctx context.Context, owner, repo, base strin
 	if !known || ready {
 		return false
 	}
-	ac, ak := preparationClaims(candidate, owner+"/"+repo)
-	bc, bk := preparationClaims(predecessor, owner+"/"+repo)
-	if !ak || !bk {
+	// Deliberate re-read: claims and dependency evidence may have changed since
+	// the independence check above.
+	if _, _, ok := c.preparationClaimsClear(ctx, owner, repo, candidate, predecessor); !ok {
 		return false
-	}
-	for _, n := range append(ac, bc...) {
-		blocked, known, err := hgithub.ReadIssueDependencyEvidence(ctx, c.gh, owner, repo, n)
-		if err != nil || !known || blocked {
-			return false
-		}
 	}
 	candidateReady, candidateKnown = c.preparationReadiness(ctx, owner, repo, candidate, callerLane)
 	liveTip, _, err := c.gh.Repositories.GetBranch(ctx, owner, repo, base, 0)

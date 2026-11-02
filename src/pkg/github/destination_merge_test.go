@@ -82,3 +82,30 @@ func TestDestinationMergeChild(t *testing.T) {
 		t.Fatal("unknown helper mode")
 	}
 }
+
+func TestDestinationMergeStateOwnerOnly(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "destination-merges")
+	_, release, err := AcquireDestinationMerge(context.Background(), dir, "acme/widget", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("directory mode = %o, want 700", got)
+	}
+	locks, err := filepath.Glob(filepath.Join(dir, "*.lock"))
+	if err != nil || len(locks) != 1 {
+		t.Fatalf("lock files = %v, err = %v", locks, err)
+	}
+	info, err = os.Stat(locks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("lock file mode = %o, want 600", got)
+	}
+}
