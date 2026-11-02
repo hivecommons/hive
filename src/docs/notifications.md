@@ -131,6 +131,48 @@ Current v1 event coverage:
 | PR | merged | Includes the target branch (`merged into v6`) and merge/head SHA dedupe. |
 | PR | closed unmerged | Open → closed without merge. |
 
+### Per-recipient attention budget (opt-in, off by default)
+
+Per-condition reminder limits do not add up to an attention budget: ten
+conditions on ten items each reminding daily is still ten pings a day for one
+person. `pkg/attentionbudget` caps **non-urgent** attention writes (first
+pings and reminders) per responsible recipient per rolling 24 hours, across
+items, and never drops an ask that goes over the cap
+([#16271](https://github.com/hivecommons/hive/issues/16271), part of
+[#16075](https://github.com/hivecommons/hive/issues/16075)).
+
+| Field | Default | Notes |
+|---|---|---|
+| `github.attention.recipient_budget` | `0` (off) | Max non-urgent attention writes per recipient per rolling 24h. `0` keeps today's behaviour; maximum `1000`. |
+| `github.attention.digest_recipients` | empty | GitHub logins (case-insensitive, optional `@`) that opted into the digest. |
+
+These keys live in the `github.attention` block owned by the condition-episode
+ledger ([#16267](https://github.com/hivecommons/hive/issues/16267)); the budget
+takes effect once the ledger routes its non-urgent writes through it.
+
+- **Off (shadow mode).** With `recipient_budget: 0` every write is delivered
+  exactly as before. The budget still counts, per recipient, how many writes
+  would have overflowed a candidate cap of 5 (`ShadowBudget`) and reports
+  `delivered`, `exempt`, `overflowed` and `would_overflow` per login in the
+  `attention budget:` log line, so an operator can choose N from evidence
+  before enabling it.
+- **Enabled, recipient opted into the digest.** The (N+1)th non-urgent ping or
+  reminder in the window is not posted. It stays an open, overflowed ask: it is
+  listed in the item's status card (`attention-overflow` section), in the
+  repo's action queue, and in the recipient's digest.
+- **Enabled, recipient not opted in.** Per-episode delivery is kept: newly
+  actionable asks are always posted; only reminders over the cap are deferred
+  (and remain visible in the status card and action queue).
+- **Digest.** One comment per recipient per repo, identified by
+  `<!-- hive:attention-digest recipient=<login> -->`, created once through the
+  existing marker-comment upsert and edited in place afterwards (edits notify
+  nobody). It serves as the reminder for the asks it lists. No external
+  service is involved.
+- **Never budgeted.** Materially new security risk or imminent destructive
+  action, mandatory/required reviews, machine-consumed protocol commands, and
+  every security/merge hold notice always deliver immediately and do not
+  consume budget. Unclassified writes are treated as exempt.
+
 ## What triggers notifications
 
 The Hive Go process sends notifications for these events:

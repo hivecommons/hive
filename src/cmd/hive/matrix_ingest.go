@@ -30,8 +30,8 @@ const (
 	sentinelHeadsStatePath = "/data/sentinel-heads.json"
 )
 
-// matrixIngestState serializes the incremental passes: the ticker goroutine
-// and the per-cycle call in runSweeps must not read the same new head twice.
+// matrixIngestState serializes incremental passes so concurrent callers must
+// not read the same new head twice.
 type matrixIngestState struct {
 	mu      sync.Mutex
 	lastRun time.Time

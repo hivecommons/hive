@@ -62,7 +62,7 @@ func (h *loopHarness) deps() runLoopDeps {
 			h.sources = append(h.sources, source)
 		},
 		runRotation: func(*boot) { h.rotations++ },
-		runSweeps:   func(*boot) { h.sweeps++ },
+		startSweeps: func(*boot) func() { h.sweeps++; return func() {} },
 		persist: func(*boot) {
 			h.persists++
 			if h.persisted != nil {
@@ -146,8 +146,8 @@ func TestRunLoopWithRunsFirstCycleThenTicks(t *testing.T) {
 	if len(h.evals) != 2 || h.evals[0] != nil || strings.Join(h.evals[1], ",") != "alpha" {
 		t.Fatalf("evals = %v", h.evals)
 	}
-	if h.rotations != 2 || h.sweeps != 2 {
-		t.Fatalf("rotations=%d sweeps=%d, want 2 each", h.rotations, h.sweeps)
+	if h.rotations != 2 || h.sweeps != 1 {
+		t.Fatalf("rotations=%d sweep workers started=%d, want 2/1", h.rotations, h.sweeps)
 	}
 	// first cycle + tick + shutdown
 	if h.persists != 3 {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -108,122 +107,13 @@ func NewDefaultSecurityScanner() *DefaultSecurityScanner {
 }
 
 var (
-	// Path arguments need shell terminators, not word boundaries: /, * and ~
-	// are non-word characters. The root target is one or more path components
-	// made only of slashes and an optional . or .. (/, //, /., /.., /./,
-	// /../). $HOME, ${HOME} and ~ may carry the same suffix, or /*, and still
-	// name the whole home directory. Split flags (-r -f) and surrounding
-	// single or double quotes are accepted too. Names such as /.cache or
-	// ~/.cache are not matched. The fork bomb likewise needs no word boundary.
-	destructiveCmdRe  = regexp.MustCompile(`(?i)(\brm\s+(-[rRfF]+\s+)+["']?(` + rmRootTargetPattern + `)["']?(\s|$|[;&|])|\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
+	// destructiveCmdRe matches the non-rm destructive commands: mkfs, dd
+	// from /dev/zero and the fork bomb, which needs no word boundary. A
+	// recursive rm of a protected directory is decided by analyzeRmCommand
+	// (shellrm.go), which reads the command the way the shell does.
+	destructiveCmdRe  = regexp.MustCompile(`(?i)(\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
-	// shellSeparatorRe splits a command line into the simple commands that
-	// isDestructiveRm inspects one at a time.
-	shellSeparatorRe = regexp.MustCompile(`[;&|\n]+`)
-	// rmRootTargetRe anchors rmRootTargetPattern so isDestructiveRm can test
-	// a single argv token; it shares the target set with destructiveCmdRe so
-	// the two detectors cannot drift apart.
-	rmRootTargetRe = regexp.MustCompile(`^(` + rmRootTargetPattern + `)$`)
 )
-
-// rmRootTargetPattern is the set of paths whose recursive removal wipes the
-// filesystem root or the home directory: one or more components made only of
-// slashes and an optional . or .. (/, //, /., /.., /./, /../), optionally
-// followed by *; a bare * or /*; and $HOME, ${HOME} or ~ optionally carrying
-// the same suffix. Names such as /.cache, ~/.cache or /... are not matched.
-// Both destructiveCmdRe and rmRootTargetRe are built from it.
-const rmRootTargetPattern = `(/+\.{0,2})+\*?|/*\*|(\$HOME|\$\{HOME\}|~)((/+\.{0,2})+\*?)?`
-
-// isDestructiveRm reports whether cmd contains a recursive rm whose target is
-// the filesystem root or the home directory. Unlike destructiveCmdRe it reads
-// the argv the way rm does, so the option tokens may come in any order and
-// any spelling: -r/-R or --recursive mark the removal recursive, -- ends the
-// options, and every other option (--force, --no-preserve-root, -v, ...) is
-// skipped. GNU rm refuses "rm -rf /" by default; "rm -rf --no-preserve-root /"
-// is the spelling that actually removes it, and it must not pass clean. Every
-// token is read through shellWord first, so an escaped or quoted option such
-// as \-rf or "-rf" counts as the -rf the shell hands rm, and the command word
-// is matched by its base name, so /bin/rm and /usr/bin/rm are read the same
-// way as a bare rm.
-func isDestructiveRm(cmd string) bool {
-	for _, simple := range shellSeparatorRe.Split(cmd, -1) {
-		fields := strings.Fields(simple)
-		for i, f := range fields {
-			if !isRmCommandWord(f) {
-				continue
-			}
-			if rmRemovesRoot(fields[i+1:]) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// shellWord reads an rm argv token the way the shell does: quotes are dropped
-// and a backslash escape resolves to the character it escapes, so \rm, r\m,
-// \/, /\* and /\. are judged like rm, rm, /, /* and /. respectively. "\$" and
-// "\~" are deliberately kept escaped: the shell reads those as literal
-// characters, not a home-directory expansion, so they must not match the root
-// target set. A trailing lone backslash is kept as is.
-func shellWord(token string) string {
-	if !strings.ContainsAny(token, `"'\`) {
-		return token
-	}
-	var b strings.Builder
-	b.Grow(len(token))
-	for i := 0; i < len(token); i++ {
-		switch c := token[i]; c {
-		case '"', '\'':
-		case '\\':
-			if i+1 == len(token) {
-				b.WriteByte(c)
-				continue
-			}
-			i++
-			if next := token[i]; next == '$' || next == '~' {
-				b.WriteByte(c)
-			}
-			b.WriteByte(token[i])
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
-
-// isRmCommandWord reports whether field names the rm binary, either bare or
-// by path (/bin/rm, /usr/bin/rm, ./rm), reading the word as the shell does,
-// so the alias-bypass spelling \rm is an rm too.
-func isRmCommandWord(field string) bool {
-	return strings.EqualFold(path.Base(shellWord(field)), "rm")
-}
-
-func rmRemovesRoot(args []string) bool {
-	recursive, rootTarget, endOfOptions := false, false, false
-	for _, raw := range args {
-		arg := shellWord(raw)
-		if !endOfOptions && len(arg) > 1 && strings.HasPrefix(arg, "-") {
-			switch {
-			case arg == "--":
-				endOfOptions = true
-			case strings.HasPrefix(arg, "--"):
-				if arg == "--recursive" {
-					recursive = true
-				}
-			default:
-				if strings.ContainsAny(arg[1:], "rR") {
-					recursive = true
-				}
-			}
-			continue
-		}
-		if rmRootTargetRe.MatchString(arg) {
-			rootTarget = true
-		}
-	}
-	return recursive && rootTarget
-}
 
 // Scan analyzes the tool request for security violations.
 func (s *DefaultSecurityScanner) Scan(ctx context.Context, req ToolRequest) (ScanResult, error) {
@@ -270,8 +160,12 @@ func (s *DefaultSecurityScanner) Scan(ctx context.Context, req ToolRequest) (Sca
 	if IsBash(req.Tool) || req.GetCommand() != "" {
 		cmd := req.GetCommand()
 		if cmd != "" {
-			if destructiveCmdRe.MatchString(cmd) || isDestructiveRm(cmd) {
+			destructive, overBound := analyzeRmCommand(cmd)
+			switch {
+			case destructive || destructiveCmdRe.MatchString(cmd):
 				violations = append(violations, fmt.Sprintf("destructive shell command detected: %q", cmd))
+			case overBound:
+				violations = append(violations, fmt.Sprintf("shell command exceeds destructive-command analysis bounds: %q", cmd))
 			}
 			if credentialExfilRe.MatchString(cmd) {
 				violations = append(violations, fmt.Sprintf("credential exfiltration attempt detected: %q", cmd))

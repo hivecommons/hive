@@ -75,6 +75,9 @@ type repoItemDecisionMock struct {
 	issueState string
 	// commentError / editError refuse POST /comments or PATCH /issues/N.
 	commentError, editError int
+	statusError             int
+	commentBlockText        string
+	commentStarted          chan struct{}
 	// editPaths records each PATCH path alongside edits.
 	editPaths []string
 }
@@ -90,6 +93,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/collaborators/writer/permission") || strings.HasSuffix(path, "/collaborators/someone/permission")):
 			_, _ = io.WriteString(w, `{"permission":"write"}`)
 		case r.Method == http.MethodPost && strings.Contains(path, "/statuses/"):
+			if m.statusError != 0 {
+				w.WriteHeader(m.statusError)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+				return
+			}
 			_, _ = io.WriteString(w, `{}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/collaborators/reader/permission"):
 			_, _ = io.WriteString(w, `{"permission":"read"}`)
@@ -227,6 +235,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			}
 			var c map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&c)
+			if m.commentBlockText != "" && strings.Contains(c["body"], m.commentBlockText) {
+				close(m.commentStarted)
+				<-r.Context().Done()
+				return
+			}
 			m.comments = append(m.comments, c["body"])
 			_, _ = io.WriteString(w, `{"id":1}`)
 		case r.Method == http.MethodGet && strings.Contains(path, "/labels/"):

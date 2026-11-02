@@ -273,8 +273,15 @@ jobs:
       - name: Scan
         working-directory: src
         continue-on-error: true
-        # Unlike go test/vet, gosec recursively discovers nested modules.
-        # Listing ./crux/... too scans every Crux directory twice.
+        # The nested src/crux module is not loaded from here; it has its own
+        # "Scan crux module" step below.
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+
+      # src/crux is a nested Go module: the src/ scan above does not load it
+      # (0 "Checking file: .../src/crux/" lines), so scan it from its own root.
+      - name: Scan crux module
+        working-directory: src/crux
+        continue-on-error: true
         run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
 
   golangci-lint:
