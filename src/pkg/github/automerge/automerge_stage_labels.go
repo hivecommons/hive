@@ -1138,6 +1138,14 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				route := c.fixerExhaustedRoute(obs, fixer)
 				obs.Route = &route
 			}
+			if step := c.sharedCIRecoveryUnauthorized(ctx, obs); step != "" && verdict.Stage != stagelabels.None {
+				pass.RecoveryUnauthorized = step
+				verdict.Stage = stagelabels.NeedsDecision
+				verdict.Rank = stageRankOwned
+				obs.Reason = unauthorizedReason(step)
+				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+				obs.Route = &route
+			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.

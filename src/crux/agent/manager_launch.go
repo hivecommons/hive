@@ -975,8 +975,6 @@ const (
 	agyLaunchModeEnv         = "HIVE_AGY_LAUNCH_MODE"
 	agyLaunchModeHeadless    = "headless"
 	agyLaunchModeInteractive = "interactive"
-	agyHeadlessReadyMarker   = "HIVE_AGY_HEADLESS_READY"
-	agyHeadlessRunningMarker = "HIVE_AGY_HEADLESS_RUNNING"
 )
 
 func agyInteractiveLaunchRequested(value string) bool {

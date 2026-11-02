@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -41,7 +42,22 @@ const (
 	// burst) finishes well inside it, so the listing is paid once per sweep;
 	// a PR opened after the listing is seen on the next one.
 	openPRLinkCacheTTL = time.Minute
+
+	// openPRLinkListTimeout bounds one full open-PR listing for the guard.
+	openPRLinkListTimeout = 45 * time.Second
+	// openPRLinkFailureTTL is how long a failed listing answers the guard
+	// for its repo: a surge of claims fails open at once instead of each one
+	// re-running a listing that just timed out and re-logging the warning.
+	openPRLinkFailureTTL = time.Minute
 )
+
+// errOpenPRListingBackedOff marks an error replayed from the failure cache.
+var errOpenPRListingBackedOff = errors.New("open-PR listing failed recently")
+
+type openPRLinkFailure struct {
+	err   error
+	until time.Time
+}
 
 // OpenPRLink is one open pull request that links an issue with a closing
 // keyword, as the guard found it.
@@ -75,6 +91,8 @@ type openPRLinkIndex struct {
 type openPRLinkCache struct {
 	mu    sync.Mutex
 	repos map[string]*openPRLinkIndex
+	// failures holds each repo's last listing failure for openPRLinkFailureTTL.
+	failures map[string]openPRLinkFailure
 	// disabled is scanner.skip_issues_with_open_pr: false.
 	disabled bool
 	now      func() time.Time
@@ -82,7 +100,7 @@ type openPRLinkCache struct {
 
 func (c *Client) openPRLinks() *openPRLinkCache {
 	c.openPRLinkOnce.Do(func() {
-		c.openPRLinkState = &openPRLinkCache{repos: map[string]*openPRLinkIndex{}, now: time.Now}
+		c.openPRLinkState = &openPRLinkCache{repos: map[string]*openPRLinkIndex{}, failures: map[string]openPRLinkFailure{}, now: time.Now}
 	})
 	return c.openPRLinkState
 }
@@ -122,9 +140,11 @@ func (c *Client) InvalidateOpenPRLinks(repo string) {
 	defer cache.mu.Unlock()
 	if repo == "" {
 		cache.repos = map[string]*openPRLinkIndex{}
+		cache.failures = map[string]openPRLinkFailure{}
 		return
 	}
 	delete(cache.repos, c.canonicalRepo(repo))
+	delete(cache.failures, c.canonicalRepo(repo))
 }
 
 // canonicalRepo maps repo onto the configured spelling, so a caller naming
@@ -143,11 +163,20 @@ func (c *Client) openPRIndexFor(ctx context.Context, repo string) (*openPRLinkIn
 		cache.mu.Unlock()
 		return idx, nil
 	}
+	if f, ok := cache.failures[repo]; ok && now.Before(f.until) {
+		cache.mu.Unlock()
+		return nil, fmt.Errorf("%w: %w", errOpenPRListingBackedOff, f.err)
+	}
 	cache.mu.Unlock()
 
 	owner, repoName := c.splitRepo(repo)
-	prs, err := c.listOpenPRsForSupersessionSweep(WithRESTCaller(ctx, "hive:open_pr_links"), owner, repoName)
+	listCtx, cancel := context.WithTimeout(WithRESTCaller(ctx, "hive:open_pr_links"), openPRLinkListTimeout)
+	defer cancel()
+	prs, err := c.listOpenPRsForSupersessionSweep(listCtx, owner, repoName)
 	if err != nil {
+		cache.mu.Lock()
+		cache.failures[repo] = openPRLinkFailure{err: err, until: cache.now().Add(openPRLinkFailureTTL)}
+		cache.mu.Unlock()
 		return nil, err
 	}
 	identity := c.getHiveIdentity()
@@ -157,6 +186,7 @@ func (c *Client) openPRIndexFor(ctx context.Context, repo string) (*openPRLinkIn
 	idx := buildOpenPRLinkIndex(prs, repo, identity, now)
 	cache.mu.Lock()
 	cache.repos[repo] = idx
+	delete(cache.failures, repo)
 	cache.mu.Unlock()
 	return idx, nil
 }
@@ -231,9 +261,15 @@ func (c *Client) OpenPRLinkGuard(ctx context.Context, repo string, number int, l
 	}
 	link, ok, err := c.OpenPRLinkingIssue(ctx, repo, number)
 	if err != nil {
-		if c.logger != nil {
+		// A replayed failure was already warned about when it happened.
+		if c.logger != nil && !errors.Is(err, errOpenPRListingBackedOff) {
+			reason := "open-pr-listing-failed"
+			if errors.Is(err, context.DeadlineExceeded) {
+				reason = "open-pr-listing-timeout"
+			}
 			c.logger.Warn("open-PR guard: could not list open PRs, admitting the claim on ledger evidence alone",
-				slog.String("repo", repo), slog.Int("issue", number), slog.String("error", err.Error()))
+				slog.String("repo", repo), slog.Int("issue", number),
+				slog.String("reason", reason), slog.String("error", err.Error()))
 		}
 		return OpenPRLink{}, false
 	}

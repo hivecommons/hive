@@ -1,0 +1,1 @@
+- Run the pinned ARM64-only PR verifier on native ARM64, preserve GitHub-hosted isolation for forks, and report incompatible or failed verification explicitly instead of leaving stale optional results unexplained.

@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
-
-	"github.com/hivecommons/hive/pkg/github"
 )
 
 // cliStartupDelay is how long runLoop waits after boot for the agent CLIs to
@@ -34,10 +32,9 @@ func (t realTimer) Stop()                  { t.Timer.Stop() }
 func (t realTimer) Reset(d time.Duration)  { t.Timer.Reset(d) }
 
 // runLoopDeps are runLoop's effects (#7571, step 2): the two timers, the CLI
-// startup wait, and the per-tick work units (eval cycle, rotation check,
-// GitHub sweeps — whose last-run stamps live on *boot — state persist, crash
-// recovery) — each of which does GitHub
-// or disk IO or spawns agent processes. The loop shape, watchdog reconcile,
+// startup wait, the independent sweep workers, and the per-tick work units
+// (eval cycle, rotation check, state persist, crash recovery) — each of which
+// does GitHub or disk IO or spawns agent processes. The loop shape, watchdog reconcile,
 // lane gating, ticker reset, and agent-status broadcast run for real.
 type runLoopDeps struct {
 	waitCLIStartup func(ctx context.Context) bool
@@ -54,7 +51,7 @@ type runLoopDeps struct {
 	now            func() time.Time
 	runEval        func(b *boot, restarted []string, source evalCycleSource)
 	runRotation    func(b *boot)
-	runSweeps      func(b *boot)
+	startSweeps    func(b *boot) func()
 	persist        func(b *boot)
 	restartCrashed func(ctx context.Context, mgr crux.Runtime) []string
 }
@@ -82,36 +79,8 @@ func defaultRunLoopDeps() runLoopDeps {
 		runRotation: func(b *boot) {
 			runRotationCheck(b.ctx, b.cfg, b.rotationMgr, b.gov, b.agentMgr, b.logger)
 		},
-		runSweeps: func(b *boot) {
-			// Merges are irreversible: bound them to the snapshot the cycle
-			// planned from (refused while it is stale, re-read when old).
-			sweepCtx := github.WithIrreversibleGuard(b.ctx, b.ghClient.SnapshotFreshnessGuard(b.lastActionable.Load(), time.Now))
-			runAutoMergeSweepIfDue(sweepCtx, b.ghClient, b.cfg, b.dashSrv, &b.lastAutoMergeSweep, b.logger)
-			decision := decideEvalBudgetWork(apiBudgetModeForClient(b.ghClient), b.cfg.Governor.OptionalSweepEveryNCycles, b.evalCycles)
-			if len(decision.SkippedSteps) > 0 {
-				b.ghClient.RecordAPIBudgetSkippedSteps(decision.SkippedSteps)
-			}
-			if !decision.SkipUnstick {
-				runSupersessionSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSupersessionSweep, b.logger)
-				runDuplicateFixSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastDuplicateFixSweep, b.logger)
-				runSharedCIRerunSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSharedCIRerunSweep, b.logger)
-				runBlockedIssuesSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastBlockedIssuesSweep, b.logger)
-			}
-			if decision.SkipOptional {
-				return
-			}
-			runTaskListSweepIfDue(b.ctx, b.ghClient, b.dashSrv, &b.lastTaskListSweep, b.logger)
-			runDuplicateSweepIfDue(b.ctx, b.cfg, b.ghClient, b.dashSrv, &b.lastDuplicateSweep, b.logger)
-			runIssueUnparkSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastIssueUnparkSweep, b.logger)
-			runClosedIssueStageSweepIfDue(b.ctx, b.ghClient, b.dashSrv, &b.lastClosedIssueSweep, b.logger)
-			runClarityGateResumeSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastClarityResumeSweep, b.logger)
-			runPriorArtGateResumeSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastPriorArtResumeSweep, b.logger)
-			runSentinelSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSentinelSweep, b.logger)
-			runLegacyFleetReportSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastLegacyFleetReportSweep, b.logger)
-			runGoodFirstIssueSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.gfiState(), b.lastActionable.Load(), &b.lastGFISweep, b.logger)
-			runFirstTimerWelcome(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.firstTimerState(), b.firstTimerKnownContributor, b.lastActionable.Load(), b.logger)
-			runRFCExistingCheck(b.ctx, newRFCCoverageForge(b.ghClient), b.cfg, b.dashSrv, b.rfcCoverageState(), b.lastActionable.Load(), b.logger)
-			runRFCNotifySweep(b.ctx, newRFCNotifySource(b.ghClient, b.rfcNotifyState()), len(b.cfg.Project.Repos), b.cfg, b.dashSrv, b.rfcNotifyState(), b.logger)
+		startSweeps: func(b *boot) func() {
+			return b.startSweepWorkers()
 		},
 		persist: func(b *boot) {
 			persistState(b.agentMgr, b.gov, b.cfg, spokeStatePath, b.logger, b.dashSrv, b.wd)

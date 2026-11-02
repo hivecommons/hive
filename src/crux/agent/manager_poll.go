@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agent/panesignal"
 )
 
 // pollTmuxOutputForAgent is pollTmuxOutput using the agent's tmux socket.
@@ -614,18 +616,8 @@ func diffNewLines(prev, curr []string) []string {
 	return out
 }
 
-var spinnerReplacer = strings.NewReplacer(
-	"◐", "○", "◑", "○", "◒", "○", "◓", "○",
-	"◎", "○", "◉", "○", "●", "○",
-)
-
-var creditsRe = regexp.MustCompile(`AI Credits: [\d.]+`)
-
 func normalizeLine(s string) string {
-	s = strings.TrimRight(s, " \t")
-	s = spinnerReplacer.Replace(s)
-	s = creditsRe.ReplaceAllString(s, "AI Credits: _")
-	return s
+	return panesignal.NormalizeLine(s)
 }
 
 func findOverlap(prev, curr []string) int {

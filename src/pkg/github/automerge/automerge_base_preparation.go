@@ -312,27 +312,69 @@ func (c *Engine) observeBasePreparation(lane, owner, repo string, pr *gh.PullReq
 	if base == "" {
 		return
 	}
-	if err := c.preparationStore().change(preparationKey(owner, repo, base), func(st *basePreparation) error {
-		keep := !merged && preparationKeepsOwner(reason, evalErr)
-		if reason == basePreparationPrefix+"snapshot-changed" && st.Attempts[pr.GetNumber()].Head == "" {
-			// A push won the race before we issued any refresh. Pending
-			// work on that unreviewed head is not our preparation.
-			keep = false
+	key := preparationKey(owner, repo, base)
+	snapshot, err := c.preparationStore().ownerSnapshot(key)
+	if err != nil {
+		c.warn("automerge base preparation persistence failed", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "error", err)
+		return
+	}
+	keep := !merged && preparationKeepsOwner(reason, evalErr)
+	if reason == basePreparationPrefix+"snapshot-changed" && snapshot.Owner.Number == pr.GetNumber() && snapshot.Attempt.Head == "" {
+		// A push won the race before we issued any refresh. Pending
+		// work on that unreviewed head is not our preparation.
+		keep = false
+	}
+	owns := snapshot.Owner.Lane == lane && snapshot.Owner.Number == pr.GetNumber()
+	changes := owns && !keep
+	for _, w := range snapshot.Waiters {
+		if w.Lane == lane && w.Number == pr.GetNumber() {
+			changes = changes || w.Head != pr.GetHead().GetSHA() ||
+				(!(w.Yielded && keep && !merged) && !strings.HasPrefix(reason, basePreparationPrefix))
+		}
+	}
+	if !changes || c.gh == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), preparationObservationTimeout)
+	defer cancel()
+	current, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:base_preparation_settlement"), owner, repo, pr.GetNumber())
+	if err != nil || !preparationObservationIdentity(pr, current) {
+		c.info("automerge base preparation observation skipped", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "reason", "unverified-current-identity", "error", err)
+		return
+	}
+	if owns && !keep && !merged && snapshot.Attempt.Head != "" &&
+		snapshot.Attempt.Head == current.GetHead().GetSHA() &&
+		c.now().Sub(snapshot.Attempt.At) < effects.DefaultUnresolvedTTL &&
+		c.preparationInvalidPR(current, base, snapshot.Owner.Repair) == "" {
+		// The accepted write has not become observable. An older evaluation
+		// cannot release its exclusive slot while that mutation is unresolved.
+		c.info("automerge base preparation observation skipped", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "reason", "refresh-mutation-unobserved")
+		return
+	}
+	if err := c.preparationStore().change(key, func(st *basePreparation) error {
+		if owns && (st.Owner != snapshot.Owner || st.Attempts[pr.GetNumber()] != snapshot.Attempt) {
+			return nil
+		}
+		matchesWaiter := func(w preparationCandidate) bool {
+			return w.Lane == lane && w.Number == pr.GetNumber() && slices.Contains(snapshot.Waiters, w)
 		}
 		// Waiting is not preparation yet: a changed or now-pending waiting
 		// head loses its admission ticket and must qualify again.
 		for i := range st.Waiting {
-			if st.Waiting[i].Yielded && st.Waiting[i].Number == pr.GetNumber() && keep {
+			if matchesWaiter(st.Waiting[i]) && st.Waiting[i].Yielded && keep {
 				st.Waiting[i].Head = pr.GetHead().GetSHA()
 			}
 		}
 		st.Waiting = slices.DeleteFunc(st.Waiting, func(w preparationCandidate) bool {
+			if !matchesWaiter(w) {
+				return false
+			}
 			if w.Yielded && keep && !merged {
 				return false
 			}
-			return w.Lane == lane && w.Number == pr.GetNumber() && (w.Head != pr.GetHead().GetSHA() || !strings.HasPrefix(reason, basePreparationPrefix))
+			return w.Head != pr.GetHead().GetSHA() || !strings.HasPrefix(reason, basePreparationPrefix)
 		})
-		if !keep && st.Owner.Lane == lane && st.Owner.Number == pr.GetNumber() {
+		if owns && !keep && st.Owner.Lane == lane && st.Owner.Number == pr.GetNumber() {
 			if merged {
 				reason = "merged"
 				delete(st.Attempts, pr.GetNumber())

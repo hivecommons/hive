@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agent/panesignal"
 	"github.com/hivecommons/hive/crux/config"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -731,17 +732,8 @@ const (
 // Edit/write variants are included for completeness across versions.
 var toolSummaryRe = regexp.MustCompile(`(?i)\b(?:ran|running) \d+ shell command|\bread \d+ file|\bedited \d+ file|\bwrote \d+ file|\bupdated \d+ file`)
 
-// cliBusyEscapeFooterRe matches stable footer actions the CLIs show only while
-// work is in flight. Callers must still pass the VISIBLE pane only: scrollback
-// can retain a completed turn's footer after the prompt is genuinely idle.
-var cliBusyEscapeFooterRe = regexp.MustCompile(`(?i)\besc (?:to )?(?:interrupt|stop agents|cancel)\b`)
-
-const cliWaitingForBackgroundAgentsMarker = "Waiting for background agents"
-
 func paneShowsBusyFooter(pane string) bool {
-	return pane != "" &&
-		(cliBusyEscapeFooterRe.MatchString(pane) ||
-			strings.Contains(pane, cliWaitingForBackgroundAgentsMarker))
+	return panesignal.ShowsBusyFooter(pane)
 }
 
 // expandedToolCallMarkers are literal fragments of Claude Code's expanded

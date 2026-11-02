@@ -71,6 +71,9 @@ func (b *boot) adoptGitHubClient(newClient *github.Client, newAppAuth *github.Ap
 	if b == nil || newClient == nil {
 		return
 	}
+	if previous := b.currentGitHubClient(); previous != nil && previous != newClient {
+		previous.StopPRTerminalEnrichment()
+	}
 	b.ghClient = newClient
 	b.appAuth = newAppAuth
 	// Provider consumers (metrics and fleet-stats collectors, the scheduler's

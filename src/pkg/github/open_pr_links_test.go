@@ -209,6 +209,28 @@ func TestOpenPRGuard_ListingFailureFailsOpen(t *testing.T) {
 	}
 }
 
+func TestOpenPRGuard_ListingFailureIsNotRetriedWithinWindow(t *testing.T) {
+	srv, obs := newOpenPRGuardServer(t, nil, nil)
+	defer srv.Close()
+	obs.failPulls = true
+	c := newTestClient(t, srv, "o", []string{"r"})
+	if _, ok := c.OpenPRLinkGuard(context.Background(), "o/r", 42, nil); ok {
+		t.Fatal("guard refused; want fail-open")
+	}
+	calls := obs.pullsCalls
+	if calls == 0 {
+		t.Fatal("first claim did not attempt a listing")
+	}
+	for i := 0; i < 5; i++ {
+		if _, ok := c.OpenPRLinkGuard(context.Background(), "o/r", 42, nil); ok {
+			t.Fatal("guard refused; want fail-open")
+		}
+	}
+	if obs.pullsCalls != calls {
+		t.Fatalf("listing attempts = %d, want %d: failure must be replayed within the window", obs.pullsCalls, calls)
+	}
+}
+
 func TestOpenPRGuard_InvalidateForcesRelist(t *testing.T) {
 	srv, obs := newOpenPRGuardServer(t, nil, nil)
 	defer srv.Close()

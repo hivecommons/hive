@@ -1,0 +1,1 @@
+- Human-merge-path holds now record their exact head without claiming pre-existing holds; a shared fail-closed release API validates App ownership and complete label history for later pin-only admission integration, with operator rollout prerequisites documented (#16269).

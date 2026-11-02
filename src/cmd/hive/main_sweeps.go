@@ -1359,6 +1359,9 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 		return
 	}
 	logSentinelResult(result, logger)
+	if dashSrv != nil && cfg.Dashboard.Matrix.Active() {
+		dashSrv.RecordMatrixIngest(time.Now(), matrixIngestInterval)
+	}
 	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
 		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
 	}
@@ -2532,6 +2535,12 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		DeltaMaxAge:           cfg.Review.EffectiveDeltaMaxAge(),
 	})
 	recordReviewDeltaRestamps(plan, logger)
+	pendingRecords, pendingAgents, confirmedAgents := review.PendingReviewerOccupancy(plan.State)
+	if pendingRecords > 0 || plan.SettledReviews > 0 {
+		logger.Info("review dispatch occupancy", "pending_records", pendingRecords,
+			"pending_agents", pendingAgents, "delivery_confirmed_pending_agents", confirmedAgents,
+			"settled_records", plan.SettledReviews, "planned_kicks", len(plan.ReviewKicks))
+	}
 	for _, k := range plan.ReviewKicks {
 		if k.BotAuthorRouted {
 			logger.Info("review routed bot-authored PR to bot_author_model", "repo", k.Repo, "pr", k.Number, "head", k.HeadSHA, "agent", k.Agent, "review_model", k.ReviewModel, "review_backend", k.ReviewBackend)
@@ -2660,10 +2669,15 @@ func reviewPlannerGitHubFor(c *github.Client) reviewPlannerGitHub {
 }
 
 func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
+	refreshReviewVerdictsForPRs(cfg, nil, logger)
+}
+
+func refreshReviewVerdictsForPRs(cfg *config.Config, prs []review.PullRequest, logger *slog.Logger) {
 	if cfg == nil || !shouldRefreshReviewVerdicts(cfg) {
 		return
 	}
-	artifact, err := review.CollectAndMerge("", "", review.AggregateOptions{
+	started := time.Now()
+	opts := review.AggregateOptions{
 		// Unanimity is judged against what a PR was eligible to receive. Without
 		// this the cap makes approve unreachable and every PR aggregates to
 		// requires_human.
@@ -2677,14 +2691,23 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		ModelStamps:                 reviewModelStamps(logger),
 		ExpectedHeads:               cfg.ExpectedReviewHeads(),
 		MissingHeads:                reviewMissingHeads(),
-	}, time.Now().UTC())
+	}
+	var artifact review.Artifact
+	var err error
+	if prs == nil {
+		artifact, err = review.CollectAndMerge("", "", opts, time.Now().UTC())
+	} else {
+		artifact, err = review.CollectAndMergeForPRs("", "", prs, opts, time.Now().UTC())
+	}
 	if err != nil {
 		if !os.IsNotExist(err) {
 			logger.Warn("failed to refresh review verdicts", "error", err)
 		}
 		return
 	}
-	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items),
+		"elapsed", time.Since(started), "report_files_read", artifact.Collection.FilesRead,
+		"new_report_receipts", artifact.Collection.NewReports, "max_new_report_lag", artifact.Collection.MaxReportLag)
 }
 
 // reviewModelStamps reads the dispatch state so a verdict whose report

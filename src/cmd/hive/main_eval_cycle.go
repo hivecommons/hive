@@ -664,7 +664,13 @@ func runEvalCycle(
 	}
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
-	refreshReviewVerdicts(cfg, logger)
+	reviewTargets := make([]review.PullRequest, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
+	for _, items := range [][]github.PullRequest{actionable.PRs.Items, actionable.PRs.Held} {
+		for _, pr := range items {
+			reviewTargets = append(reviewTargets, review.PullRequest{Repo: fullRepoName(pr.Repo, cfg.Project.Org), Number: pr.Number})
+		}
+	}
+	refreshReviewVerdictsForPRs(cfg, reviewTargets, logger)
 	recordReviewOutcomes(ctx, cfg, ghClient, actionable, logger)
 	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSetForRepo("")
 
