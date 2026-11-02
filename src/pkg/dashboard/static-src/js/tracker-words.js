@@ -450,6 +450,34 @@
       const fallback = item.sentinel_notice ? 'informational findings; no blocking sentinel label' : STAGE_TRACKER_SENTINEL_TIP_FALLBACK;
       return lead + (head ? ' at ' + head : '') + ': ' + (reason || fallback);
     }
+    // Pure: one line per sentinel finding naming its rule and the files it
+    // fired on — "sensitive_path: .github/workflows/ci.yml, OWNERS (+3
+    // more)" — from the row's sentinel_details (hivecommons/hive: "knowing
+    // what the sensitive path(s) (and files) are in this alert dialog would
+    // really help me make a decision"). The server bounds the paths per
+    // finding and reports the rest as more_paths. [] without details.
+    function stageTrackerSentinelPathLines(item) {
+      const details = item && Array.isArray(item.sentinel_details) ? item.sentinel_details : [];
+      return details.map(d => {
+        const rule = String((d && d.rule) || '').trim();
+        const summary = String((d && d.summary) || '').trim();
+        const paths = (d && Array.isArray(d.paths) ? d.paths : []).map(p => String(p || '').trim()).filter(Boolean);
+        const more = Number(d && d.more_paths) || 0;
+        const label = rule || summary;
+        if (!label) return '';
+        if (!paths.length) return rule && summary ? rule + ' (' + summary + ')' : label;
+        return label + ': ' + paths.join(', ') + (more > 0 ? ' (+' + more + ' more)' : '');
+      }).filter(Boolean);
+    }
+    // Pure: the sentinel tip followed by its path lines, one per line and
+    // indented, for the decision dialogs and result toasts; the tip alone
+    // when the row carries no details.
+    function stageTrackerSentinelTipWithPaths(item) {
+      const tip = stageTrackerSentinelTip(item);
+      if (!tip) return '';
+      const lines = stageTrackerSentinelPathLines(item);
+      return lines.length ? tip + lines.map(l => '\n   · ' + l).join('') : tip;
+    }
     // Whether the item's lit chevron word carries the alert itself (a PR
     // parked at 085, or an issue riding one): the chip then adds nothing.
     function stageTrackerSentinelInLane(item) {

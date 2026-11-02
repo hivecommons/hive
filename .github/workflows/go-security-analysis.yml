@@ -232,7 +232,16 @@ jobs:
       # v0.25.0, which does not COMPILE under Go 1.25 ("invalid array length").
       # The failure looks like a scan failure but is a build failure in the
       # tool itself — do not downgrade to "fix" a finding.
+      - name: Restore pinned gosec binary
+        id: gosec-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/hive-ci-tools/gosec
+          key: hive-gosec-${{ runner.os }}-${{ runner.arch }}-v2.29.0-${{ hashFiles('src/go.mod') }}
       - name: Install gosec
+        if: steps.gosec-cache.outputs.cache-hit != 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/hive-ci-tools
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
 
       # -exclude-generated: generated files are not hand-maintained, so a
@@ -256,14 +265,17 @@ jobs:
       # -concurrency 4: gosec defaults to runtime.NumCPU(), which in a runner
       # pod is the NODE's 32 vCPUs, not the pod's 6-CPU limit
       # (src/deploy/ci-runners/lke/hive-runners-lke-values.yaml). Each worker
-      # type-checks and builds SSA for its own package, so 32 at once pushed
-      # the pod far past its 3Gi request and it was killed mid-Scan — the
-      # "runner lost communication" failures of #16040. Keep this at or below
-      # the runner CPU limit (test-native-queue-workflows.py enforces it).
+      # type-checks and builds SSA for its own package, so 32 at once can
+      # create memory pressure. This bounds a plausible contributor to the
+      # "runner lost communication" failures of #16040, not a proven OOM
+      # diagnosis. Keep this at or below the runner CPU limit
+      # (test-native-queue-workflows.py enforces it).
       - name: Scan
         working-directory: src
         continue-on-error: true
-        run: gosec -concurrency 4 -exclude-generated ./... ./crux/...
+        # Unlike go test/vet, gosec recursively discovers nested modules.
+        # Listing ./crux/... too scans every Crux directory twice.
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
 
   golangci-lint:
     needs: required-context-scope

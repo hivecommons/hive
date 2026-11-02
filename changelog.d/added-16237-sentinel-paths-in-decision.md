@@ -1,0 +1,1 @@
+- The *Let hive decide* dialog, the tracker payload (`sentinel_details`), `/api/sentinel` (`findings`) and the hive's "reviewed, intended" decision comment now name the files and the sentinel rule that fired — bounded to 10 paths per finding with a "+N more" count — instead of only "changes N sensitive path(s)" ([#16237](https://github.com/hivecommons/hive/issues/16237)).

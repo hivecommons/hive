@@ -40,6 +40,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/webassets/kioskcta"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -1695,6 +1696,9 @@ func (s *Server) Start() error {
 		// Editing branding.json therefore needs a restart; editing the
 		// stylesheet does not. That asymmetry is documented in branding.md.
 		branded := webstatic.InjectBranding(applyBranding(rawIndex, s.loadBranding()))
+		// The kiosk call-to-action badge (#16236) is baked in the same way:
+		// its QR code and copy are static per process.
+		branded = kioskcta.Inject(branded, s.kioskCTAOptions())
 		idx = webstatic.NewIndexDocument(branded)
 		// Hand the FINAL served bytes to the CSP layer explicitly, rather than
 		// having the document constructor reach out and set global state:

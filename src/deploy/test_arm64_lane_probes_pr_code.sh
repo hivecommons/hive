@@ -24,6 +24,7 @@ FAIL=0
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LANE="$(cd "$HERE/../../.github/workflows" && pwd)/podman-arm64-lane.yml"
+DOCKER="$(dirname "$LANE")/docker.yml"
 PROBE="$HERE/probe_arm64_image_startup.sh"
 
 ok()  { echo "  PASS: $1"; PASS=$((PASS + 1)); }
@@ -31,9 +32,32 @@ bad() { echo "  FAIL: $1"; [ -n "${2:-}" ] && echo "        $2"; FAIL=$((FAIL + 
 
 echo "=== #5370: the arm64 lane probes PR code, not the published image ==="
 
-for f in "$LANE" "$PROBE"; do
+for f in "$LANE" "$DOCKER" "$PROBE"; do
   [ -f "$f" ] || { bad "missing file: $f"; echo; echo "=== $PASS passed, $FAIL failed ==="; exit 1; }
 done
+
+# The matrix build and its local freshness reload must select the same
+# architecture. Otherwise an arm64 job rebuilds/probes amd64 under the host
+# default instead of checking the image it just built.
+freshness_block="$(awk '/- name: Assert embedded commit matches build/,/^[[:space:]]+# SECURITY/' "$DOCKER")"
+if grep -E '^[[:space:]]+--platform ' <<<"$freshness_block" \
+   | grep -qF '${{ matrix.platform }}'; then
+  ok "the Docker freshness reload keeps the matrix platform"
+else
+  bad "the Docker freshness reload does not select the matrix platform" \
+      "an arm64 job would rebuild and probe the host architecture instead of its own image"
+fi
+
+EXPECTED_DOCKER_ARM64_JOBS=3
+native_pr_runners="$(grep -F 'runs-on:' "$DOCKER" \
+  | grep -F "vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false" \
+  | grep -cF '["ubuntu-24.04-arm"]')"
+if [ "$native_pr_runners" -eq "$EXPECTED_DOCKER_ARM64_JOBS" ]; then
+  ok "all three Docker ARM64 builds default to free native runners only on public PRs"
+else
+  bad "Docker ARM64 native PR runner selection is incomplete" \
+      "keep the explicit ARM64 override and existing private/release runner fallback in all three image jobs"
+fi
 
 # ── The lane must build on a pull request ────────────────────────────────
 if grep -q "if: github.event_name == 'pull_request'" "$LANE" \

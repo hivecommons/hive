@@ -1,0 +1,1 @@
+- build(deps): bump http-proxy-middleware from 4.2.0 to 4.2.1 in /src/proxy (#16187)
