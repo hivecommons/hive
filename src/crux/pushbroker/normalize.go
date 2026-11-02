@@ -39,7 +39,7 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 	if len(files) == 0 {
 		return false, nil
 	}
-	inHead, err := b.headPaths(ctx)
+	inHead, err := b.headPaths(ctx, files)
 	if err != nil {
 		return false, err
 	}
@@ -108,11 +108,14 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 	return true, nil
 }
 
-// headPaths returns the set of paths HEAD's tree contains, so the normaliser
-// can tell a path the outgoing commits deleted from one they changed without
-// a `git show` per file. -z keeps exact bytes, matching changedFiles.
-func (b *Broker) headPaths(ctx context.Context) (map[string]struct{}, error) {
-	out, err := b.git(ctx, "ls-tree", "-r", "-z", "--name-only", "HEAD")
+// headPaths returns the subset of files that HEAD's tree contains, so the
+// normaliser can tell a path the outgoing commits deleted from one they
+// changed without relying on a `git show` failure to detect the deletion.
+// ls-tree is scoped to files so the cost tracks the change, not the tree;
+// -z keeps exact bytes, matching changedFiles.
+func (b *Broker) headPaths(ctx context.Context, files []string) (map[string]struct{}, error) {
+	args := append([]string{"ls-tree", "-r", "-z", "--name-only", "HEAD", "--"}, files...)
+	out, err := b.git(ctx, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing HEAD tree: %w", err)
 	}

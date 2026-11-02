@@ -1047,14 +1047,23 @@ func TestBrokerCollapsesAllNewlineFileToOneNewline(t *testing.T) {
 // substring of the joined argv) while every other invocation proceeds through
 // the real git binary — used to exercise stripTrailingBlankLines' own error
 // paths (git add / git commit --amend failing) without hand-rolling a full
-// scripted double for the whole broker.
+// scripted double for the whole broker. An optional hook runs the first time
+// the subcommand matches, before the injected failure, so a test can change
+// the workspace mid-normalisation — between the write of the normalised blob
+// and the restore of the agent's edit.
 type failingRunner struct {
 	failSubstr string
 	failErr    error
+	hook       func()
+	hooked     bool
 }
 
 func (f *failingRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
 	if name == "git" && strings.Contains(strings.Join(args, " "), f.failSubstr) {
+		if f.hook != nil && !f.hooked {
+			f.hooked = true
+			f.hook()
+		}
 		return []byte("fatal: injected failure"), f.failErr
 	}
 	if name == "git" && slices.Contains(args, "push") {
@@ -1130,7 +1139,7 @@ func TestBrokerSurfacesReadHeadFailureAfterAmend(t *testing.T) {
 func TestBrokerSurfacesReadFailureDuringNormalisation(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
-	r := &nthCallFailingRunner{failSubstr: "show HEAD:main.go", failOnCall: 1, failErr: errors.New("bad object")}
+	r := &failingRunner{failSubstr: "show HEAD:main.go", failErr: errors.New("bad object")}
 	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
 		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
@@ -1209,11 +1218,10 @@ func TestBrokerSurfacesRestoreFailureAfterFailedAmend(t *testing.T) {
 	defer os.Chmod(path, 0o644)
 	// Revoke write permission only once the normalised blob is on disk, so
 	// the initial overwrite succeeds and it is the restore that fails.
-	r := &hookedRunner{hookSubstr: "commit --amend", hook: func() error {
+	r := &failingRunner{failSubstr: "commit --amend", failErr: errors.New("hook rejected"), hook: func() {
 		if err := os.Chmod(path, 0o444); err != nil {
 			t.Fatal(err)
 		}
-		return errors.New("hook rejected")
 	}}
 	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
@@ -1222,29 +1230,6 @@ func TestBrokerSurfacesRestoreFailureAfterFailedAmend(t *testing.T) {
 	if !strings.Contains(err.Error(), "restoring uncommitted edit to main.go") {
 		t.Fatalf("Run error = %v, want it to also report the failed restore of main.go", err)
 	}
-}
-
-// hookedRunner runs hook (and fails with its error, if any) the first time a
-// git subcommand matching hookSubstr is invoked, so a test can change the
-// workspace mid-normalisation — between the write of the normalised blob and
-// the restore of the agent's edit — without a full scripted double.
-type hookedRunner struct {
-	hookSubstr string
-	hook       func() error
-	fired      bool
-}
-
-func (h *hookedRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
-	if name == "git" && !h.fired && strings.Contains(strings.Join(args, " "), h.hookSubstr) {
-		h.fired = true
-		if err := h.hook(); err != nil {
-			return []byte("fatal: injected failure"), err
-		}
-	}
-	if name == "git" && slices.Contains(args, "push") {
-		return []byte("ok"), nil
-	}
-	return ExecRunner{}.Run(ctx, dir, env, name, args...)
 }
 
 // If HEAD's tree cannot be listed, normalisation cannot tell a changed path
