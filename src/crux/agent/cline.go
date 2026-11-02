@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/cline"
+	"github.com/hivecommons/hive/crux/config"
 )
 
 func clineLaunchCmd() string {
@@ -23,7 +24,7 @@ func clineTurnCommand(binary, model, effort, promptFile string) string {
 	return fmt.Sprintf("printf '\\n%s\\n'; %s; echo %s", cline.RunningMarker, strings.Join(args, " "), cline.ReadyMarker)
 }
 
-func validateClineLaunch(ctx context.Context, binary string, agent *AgentProcess) error {
+func validateClineDefinition(agent *AgentProcess) error {
 	if strings.TrimSpace(agent.Config.LaunchCmd) != "" {
 		return fmt.Errorf("Cline launch_cmd overrides are unsupported: use the canonical bounded cline-turn runner")
 	}
@@ -32,6 +33,13 @@ func validateClineLaunch(ctx context.Context, binary string, agent *AgentProcess
 	}
 	model := agent.effectiveModel()
 	if _, _, err := cline.Selection(model); err != nil {
+		return err
+	}
+	return config.ValidateReasoningEffort("cline", agent.Config.ReasoningEffort)
+}
+
+func validateClineLaunch(ctx context.Context, binary string, agent *AgentProcess) error {
+	if err := validateClineDefinition(agent); err != nil {
 		return err
 	}
 	if agent.UID <= 0 && os.Getenv("HIVE_CLINE_DANGEROUSLY_RUN_UNCONFINED") != "1" {
@@ -44,7 +52,7 @@ func validateClineLaunch(ctx context.Context, binary string, agent *AgentProcess
 	if source == "" {
 		source = filepath.Join(sharedAgentHome, ".cline")
 	}
-	return cline.CheckConfig(source, model)
+	return cline.CheckConfig(source, agent.effectiveModel())
 }
 
 func (m *Manager) deliverClineKickLocked(agent *AgentProcess, message, trigger string) error {

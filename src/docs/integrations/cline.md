@@ -52,6 +52,68 @@ events and the final text, then returns to a stable ready marker. This does not
 scrape Cline's changing TUI. Turns use the existing pane workspace and environment
 (including the policy proxy and credential-scrubbing wrappers).
 
+### Disposable sandbox kicks
+
+Cline does **not** have complete parity across the optional disposable sandbox
+runtimes. Kubernetes Jobs are supported through their existing
+`job.env_from_secrets` credential boundary. Rootless Podman kicks are not:
+`sandbox.LaunchSpec` has no credential-file mount or Secret reference, and its
+only filesystem grant is the Git workspace. This is a Cline-specific refusal,
+not a blanket refusal for all other coding backends.
+
+For the Job runtime, provision a **dedicated** Secret in the spoke's namespace
+with only `HIVE_CLINE_PROVIDERS_B64`, containing base64-encoded selected-provider
+JSON. The existing export narrows the source without inference; this pipeline
+keeps credential bytes out of arguments and the repository:
+
+```sh
+crux cline-turn --model openrouter/anthropic/claude-sonnet-4-6 \
+  --export-provider-config | base64 | tr -d '\n' |
+  kubectl -n your-spoke-namespace create secret generic cline-provider \
+    --from-file=HIVE_CLINE_PROVIDERS_B64=/dev/stdin
+```
+
+Use an approved image containing the matching `crux cline-turn` and official
+Cline CLI; a pre-integration image cannot execute this command. Configure the
+existing shared-workspace PVC and reference the Secret **on the Cline agent**:
+
+```yaml
+agent_sandbox:
+  enabled: true
+  image: your-approved-image-with-cline-turn
+  job:
+    workspace_claim: hive-data
+agents:
+  cline-worker:
+    backend: cline
+    model: openrouter/anthropic/claude-sonnet-4-6
+    reasoning_effort: high
+    enabled: false
+    sandbox:
+      enabled: true
+      runtime: job
+      job:
+        env_from_secrets: [cline-provider]
+```
+
+Enable the agent deliberately after provisioning credentials, the shared PVC
+(RWX when needed), namespace RBAC, and the existing restricted egress policy.
+The host neither reads the Job Secret nor puts its contents in the Job
+manifest. The worker's explicit `--provider-secret` path consumes and unsets
+the transport variable, revalidates/narrows the provider, and writes owner-only
+turn state outside the Git workspace, including through symlinks. No file or
+ambient-provider fallback is allowed. The bounded worker, Job cancellation,
+transcript scrubbing, review spool, publish verification and push broker remain
+in charge. Structured usage appears in the captured transcript; private usage
+files in an ephemeral Job are not automatically collected from its filesystem.
+
+Podman support requires a separate owner decision: approve a selected-provider,
+read-only, out-of-workspace credential mount with lifecycle/UID/SELinux rules,
+or provide a brokered inference endpoint that needs no provider credential in
+the workload. Neither capability exists in the current Podman launcher.
+Do not pass provider JSON through its environment allowlist, put credentials
+in the Git workspace/image, or turn off the sandbox to evade this refusal.
+
 ## ClankeR
 
 ClankeR is Hive's contributor relay, not a coding launcher in Dibs. No Dibs
@@ -100,11 +162,10 @@ Do not put credential JSON in a ConfigMap or CLI arguments.
   Cline's CLI. Such agent definitions are refused rather than silently dropping
   their restrictions. OAuth provider entries are also refused: copying
   single-use refresh tokens without a synchronization protocol is unsafe.
-- Custom `launch_cmd` overrides are refused for Cline. The separate disposable
-  sandbox executor also refuses Cline: its current boundary deliberately has no
-  provider-file credential mount/injection facility. Use the existing isolated
-  per-UID worker or contributor container; never stage keys in the Git workspace
-  or broaden the sandbox credential environment allowlist to make it work.
+- Custom `launch_cmd` overrides are refused for Cline, including sandbox Jobs.
+  Disposable Podman sandbox kicks remain unsupported; the Job runtime uses only
+  explicit Secret references as described above. Per-UID workers and contributor
+  containers are separate supported paths, not silent fallbacks.
 - Structured usage is retained as `CLINE_USAGE` in captured output and sanitized
   per-turn normalized records under `~/.local/state/crux/cline/usage` (30-day
   retention). Hive collects shared/per-agent home records through its existing

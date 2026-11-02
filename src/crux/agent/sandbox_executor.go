@@ -67,6 +67,7 @@ type SandboxKickSpec struct {
 	Generation   uint64
 	MaxWorktrees int
 	Image        string
+	Runtime      string
 	EnvAllowlist []string
 	NetworkMode  string
 	Timeout      time.Duration
@@ -83,9 +84,10 @@ type SandboxKickSpec struct {
 }
 
 type configSnapshot struct {
-	Backend   string
-	Model     string
-	LaunchCmd string
+	Backend         string
+	Model           string
+	LaunchCmd       string
+	ReasoningEffort string
 }
 
 type SandboxKickResult struct {
@@ -177,7 +179,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = err.Error()
 		return res, err
 	}
-	command, err := sandboxCommand(spec.AgentConfig, sandboxPromptRelPath)
+	command, err := sandboxKickCommand(spec, sandboxPromptRelPath)
 	if err != nil {
 		res.Error = err.Error()
 		return res, err
@@ -361,7 +363,7 @@ func truncateRunes(s string, max int) string {
 
 func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 	if cfg.Backend == "cline" {
-		return nil, fmt.Errorf("Cline needs dedicated provider-file credentials, which the disposable sandbox executor cannot inject; use an isolated per-UID worker or the contributor container rather than passing keys through the workspace")
+		return nil, fmt.Errorf("Cline needs provider-file credentials, which the Podman sandbox cannot inject; use sandbox runtime job with an operator-selected provider Secret, an isolated per-UID worker or the contributor container; never stage keys in the Git workspace")
 	}
 	if strings.TrimSpace(cfg.LaunchCmd) != "" {
 		return []string{"sh", "-lc", cfg.LaunchCmd + " < " + shellQuote(promptRel)}, nil

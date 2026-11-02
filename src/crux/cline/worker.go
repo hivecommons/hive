@@ -42,7 +42,9 @@ func Selection(model string) (provider, id string, err error) {
 func Probe(ctx context.Context, binary string) error {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, binary, "--help").Output()
+	cmd := exec.CommandContext(ctx, binary, "--help")
+	cmd.Env = workerEnv(os.Environ())
+	out, err := cmd.Output()
 	if err != nil {
 		return errors.New("Cline CLI unavailable: install npm install -g cline@3.0.74 and run cline --help")
 	}
@@ -68,7 +70,7 @@ func CheckConfig(configDir, model string) error {
 type options struct {
 	binary, model, effort, promptFile, cwd, configDir, stateDir, stageConfig string
 	timeout                                                                  time.Duration
-	check, exportConfig                                                      bool
+	check, exportConfig, providerSecret                                      bool
 }
 
 // Run is shared by hive/cline-turn and standalone crux/cline-turn. Prompts go
@@ -88,6 +90,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.DurationVar(&opts.timeout, "timeout", DefaultTimeout, "positive task timeout")
 	fs.BoolVar(&opts.check, "check", false, "check CLI capabilities and selected provider config without inference")
 	fs.BoolVar(&opts.exportConfig, "export-provider-config", false, "write selected provider credential JSON to stdout for Secret generation (sensitive)")
+	fs.BoolVar(&opts.providerSecret, "provider-secret", false, "consume HIVE_CLINE_PROVIDERS_B64 from an operator-selected sandbox Job Secret, without a credential source file")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -127,10 +130,18 @@ func run(opts options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if opts.configDir == "" {
+	if opts.configDir == "" && !opts.providerSecret {
 		opts.configDir = filepath.Join(home, ".cline")
 	}
-	credentials, err := selectedCredentials(opts.configDir, provider)
+	var credentials []byte
+	if opts.providerSecret {
+		if opts.configDir != "" || opts.stageConfig != "" || opts.exportConfig {
+			return errors.New("provider-secret cannot be combined with credential source, staging or export options")
+		}
+		credentials, err = selectedProviderSecret(provider)
+	} else {
+		credentials, err = selectedCredentials(opts.configDir, provider)
+	}
 	if err != nil {
 		return err
 	}
@@ -164,6 +175,11 @@ func run(opts options, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	if err := os.MkdirAll(opts.stateDir, 0o700); err != nil {
 		return err
+	}
+	if opts.providerSecret {
+		if err := secretStateOutsideWorkspace(opts.stateDir, opts.cwd); err != nil {
+			return err
+		}
 	}
 	state, err := os.MkdirTemp(opts.stateDir, "turn-")
 	if err != nil {
@@ -274,6 +290,10 @@ func selectedCredentials(configDir, provider string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("Cline provider config missing; run cline auth under the worker's credential source (HIVE_CLINE_CONFIG_DIR)")
 	}
+	return narrowCredentials(raw, provider)
+}
+
+func narrowCredentials(raw []byte, provider string) ([]byte, error) {
 	var stored struct {
 		Version   int                        `json:"version"`
 		Providers map[string]json.RawMessage `json:"providers"`
