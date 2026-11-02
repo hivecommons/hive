@@ -431,6 +431,19 @@ Admission provenance prevents a different lane's non-admission from revoking
 the owning lane's reservation or FIFO ticket. An old waiting ticket reserves
 order only: its head must qualify afresh in its lane before becoming owner.
 
+The persisted owner head is the **admitted source head**, so a different live
+head is not by itself a stale reservation: an App-authored refresh preserves
+that source and its write-ahead attempt while the new head earns CI and a fresh
+review. Required-green alone does not release ownership or confer approval.
+State-changing lane observations re-read the head/base, author, policy labels
+and review inputs outside the preparation lock, then compare the persisted
+owner/attempt or exact waiting ticket before settling it. Superseded callbacks
+cannot release a newer reservation or rewind a yielded head. An accepted refresh
+whose expected head is still live remains exclusive through the existing
+mutation-reconciliation window, even if an older evaluation reports failure.
+Unavailable or changed evidence retains ownership for normal reevaluation;
+neither this validation nor a dashboard snapshot forcibly clears the queue.
+
 Audit logs use `automerge base preparation selected`, `refresh claimed`,
 `waiting`, `released` and `completed owner yielded`, with repository, base, PR,
 head/base SHA where relevant, and release/skip reason. `automerge update-branch` and the sweep's
