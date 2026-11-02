@@ -224,8 +224,10 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
 	}
 	if !firstSeen.IsZero() && headOlderThan(c.now, firstSeen, workflowApprovalGrace) {
-		c.warn("automerge workflow approval still required after ok-to-test grace; install the self-contained hive ok-to-test workflow",
-			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
+		if c.markTerminalHoldLogged(owner, repo, number, headSHA, workflowApprovalWorkflowMissingPrefix+contextName) {
+			c.warn("automerge workflow approval still required after ok-to-test grace; install the self-contained hive ok-to-test workflow",
+				"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
+		}
 		return workflowApprovalWorkflowMissingPrefix + contextName
 	}
 	c.info("automerge workflow approval required; posted ok-to-test command if needed", "repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
