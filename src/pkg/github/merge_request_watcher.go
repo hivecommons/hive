@@ -225,6 +225,20 @@ func isRequiredCheckMergeBlocker(errMsg string) bool {
 	return false
 }
 
+// mergeQueueRequiredReason is the classified reason recorded when the base
+// branch's ruleset only accepts merges through GitHub's merge queue.
+const mergeQueueRequiredReason = "repo requires merge queue; direct merge not possible — enqueue via merge queue or merge by hand"
+
+// isMergeQueueRequiredMergeBlocker reports the 405 GitHub returns for a direct
+// REST merge on a base branch whose ruleset requires a merge queue
+// ("Repository rule violations found ... Changes must be made through the
+// merge queue"). No retry of PUT /merge can succeed there
+// (hivecommons/hive#16229); the automerge sweep classifies the same error as
+// a skip reason (hivecommons/hive#14018).
+func isMergeQueueRequiredMergeBlocker(errMsg string) bool {
+	return strings.Contains(strings.ToLower(errMsg), "must be made through the merge queue")
+}
+
 func isConflictMergeBlocker(errMsg string) bool {
 	m := strings.ToLower(errMsg)
 	return strings.Contains(m, "merge conflict") ||
@@ -502,6 +516,10 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 
 	res, err := c.MergePR(ctx, req.Repo, req.Number, req.Method, req.ExpectSHA)
 	if err != nil {
+		if isMergeQueueRequiredMergeBlocker(err.Error()) {
+			c.quarantineMergeQueueRequired(path, req, attempts, err.Error(), nowFn)
+			return
+		}
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
 		return
 	}
@@ -580,6 +598,25 @@ func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts 
 	c.logger.Warn("merge-request watcher: merge cannot proceed on this head, quarantined without retry",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", req.ExpectSHA), slog.String("reason", reason))
+}
+
+// quarantineMergeQueueRequired sets a request aside on the first
+// merge-queue-required refusal, without spending the retry budget. Like
+// quarantineMergeRequest it records the exhaustion against the PR+SHA, so a
+// re-request for the same head is refused quietly and the classified message
+// is logged once per head. It logs at INFO: the blocker is the target repo's
+// configuration, not a hive defect, and a WARN per head would surface as an
+// unclassified_error_repeated selfreport.
+func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
+	now := nowFn()
+	reason := mergeQueueRequiredReason + ": " + errMsg
+	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
+	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
+	_ = os.Rename(path, path+".exhausted")
+	c.logger.Info("merge-request watcher: "+mergeQueueRequiredReason,
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("sha", req.ExpectSHA), slog.Int("attempts", attempts),
+		slog.String("error", errMsg))
 }
 
 // refuseExhaustedMergeRequest answers a new request for a PR+SHA whose earlier
