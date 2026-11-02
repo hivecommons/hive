@@ -38,6 +38,7 @@ type preparationAPI struct {
 	dependencyBlocked bool
 	truncated         bool
 	onFiles           func(*preparationAPI, int)
+	onGet             func(*preparationAPI, int)
 }
 
 func preparationPR(number int, base, head string) *gh.PullRequest {
@@ -81,6 +82,9 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 		case "pulls":
 			n, _ := strconv.Atoi(path[4])
 			if len(path) == 5 {
+				if api.onGet != nil {
+					api.onGet(api, n)
+				}
 				if api.prs[n] == nil {
 					w.WriteHeader(http.StatusNotFound)
 				} else {
@@ -270,6 +274,7 @@ func TestBasePreparationReleasesInvalidFront(t *testing.T) {
 			case "expired":
 				now = now.Add(c.preparationWindow())
 			case "ci-red", "review-rejected", "withdrawn":
+				api.prs[1].Head.SHA = gh.Ptr("observed-refresh")
 				reason := "required-check-failing:build"
 				if why == "review-rejected" {
 					reason = autoMergeReasonReviewGatePrefix + ReviewGateOutcomeChangesRequested
