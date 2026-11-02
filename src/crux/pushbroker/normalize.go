@@ -31,11 +31,14 @@ import (
 // --only` need to record it: a file the agent had edited since HEAD is
 // snapshotted first and put back on disk — whether or not the amend
 // succeeds — so the edit's content is preserved. It is restored to the
-// working tree and, for a path the agent had staged changes to, the index:
-// `git add` of the normalised blob replaces the staged entry, so the exact
-// pre-operation index entry is put back with `git update-index --cacheinfo`.
-// A file still identical to HEAD is simply left normalised,
-// keeping the workspace clean after the amend.
+// working tree and, for a path the agent had a modified blob staged, the
+// index: `git add` of the normalised blob replaces the staged entry, so the
+// exact pre-operation stage-0 entry is put back with `git update-index
+// --cacheinfo`. Only that shape of staged state is restored: a staged
+// deletion (`git rm --cached`) has no index entry to snapshot and an
+// unmerged path has only conflict stages, so for both the normalised blob
+// is what `git add` leaves staged. A file still identical to HEAD is simply
+// left normalised, keeping the workspace clean after the amend.
 func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (amended bool, err error) {
 	if len(files) == 0 {
 		return false, nil
@@ -119,8 +122,11 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 }
 
 // stagedEntries returns, as `--cacheinfo` arguments (mode,blob,path), the
-// index entries of the files that have staged changes relative to HEAD, so
-// they can be restored exactly after `git add` overwrites them.
+// stage-0 index entries of the files that have staged changes relative to
+// HEAD, so they can be restored exactly after `git add` overwrites them. A
+// staged deletion has no entry to return and an unmerged path contributes
+// only conflict stages, which are skipped — neither can be put back with
+// --cacheinfo, and `git add` leaves the normalised blob staged instead.
 func (b *Broker) stagedEntries(ctx context.Context, files []string) ([]string, error) {
 	diffArgs := append([]string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--"}, files...)
 	out, err := b.git(ctx, diffArgs...)
