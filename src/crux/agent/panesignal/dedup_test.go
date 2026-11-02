@@ -106,6 +106,11 @@ func TestDeduplicateBlocksReturnsInputWhenUnchanged(t *testing.T) {
 // the -race shards without flaking on a slow runner.
 const dedupFullBufferBudget = 8 * time.Second
 
+// outputBufferCapacity mirrors agent.outputBufferCapacity, the ring-buffer
+// size of a live agent pane; panesignal is a leaf package and must not import
+// agent to read it.
+const outputBufferCapacity = 500
+
 // A full-size agent buffer must dedupe in well under the status rebuild
 // budget.
 func TestDeduplicateBlocksFullBufferIsFast(t *testing.T) {

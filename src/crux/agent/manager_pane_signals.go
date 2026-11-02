@@ -18,6 +18,8 @@ const (
 	codexInputPromptMarker    = panesignal.CodexInputPromptMarker
 	codexProductMarker        = panesignal.CodexProductMarker
 	copilotModelFailureMarker = panesignal.CopilotModelFailureMarker
+	agyHeadlessReadyMarker    = panesignal.AgyHeadlessReadyMarker
+	agyHeadlessRunningMarker  = panesignal.AgyHeadlessRunningMarker
 )
 
 var copilotTransportErrorPatterns = panesignal.CopilotTransportErrorPatterns
