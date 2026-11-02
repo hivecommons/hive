@@ -100,6 +100,19 @@ verdict:
 
 An API error while gathering that evidence is a failed attempt, never a pass.
 
+**A merge-queue-required refusal is terminal on the first attempt.** When the
+merge call itself (`PUT /pulls/{n}/merge`) answers `405 Changes must be made
+through the merge queue`, the base branch's ruleset forbids direct merges and no
+retry, code push or re-engaged fix loop can change that. The request is
+quarantined (`.exhausted`) for that head immediately, without consuming the
+retry budget, raising an operator alert or re-engaging the fix loop; the result
+file records `repo requires merge queue; direct merge not possible — enqueue via
+merge queue or merge by hand` followed by GitHub's message, and the watcher logs
+it once per head at INFO. Clear it by enqueuing the PR through the merge queue
+(see `auto_merge.native_merge_queue.enabled` in the
+[operator reference](operator-reference/README.md)) or merging by hand; a new
+head SHA starts fresh like any other exhausted request.
+
 **Wait state survives restarts and re-requests.** The attempt count, `ci_waits`,
 the pending-poll backoff and an "exhausted" record are kept per PR and head SHA
 in `/data/merge-request-state.json` (the PVC), not only in the tmpfs result

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 )
 
 const (
@@ -225,9 +227,7 @@ func NewCLIClassifier(backend, model string, dailyQuota int, now func() time.Tim
 func (c *CLIChatClient) argv(prompt string) []string {
 	spec := cliToollessArgs[c.backend]
 	argv := append([]string{c.binary}, spec.args...)
-	if c.model != "" {
-		argv = append(argv, "--model", c.model)
-	}
+	argv = append(argv, cruxconfig.ModelArgs(c.model)...)
 	if spec.promptViaArg {
 		argv = append(argv, spec.promptFlag, prompt)
 	}

@@ -31,18 +31,19 @@ type notificationTally struct {
 // notificationTallyNow is the tally's clock, replaced by tests.
 var notificationTallyNow = time.Now
 
-func (t *notificationTally) bump(counter *atomic.Int64, logger *slog.Logger) {
+func (t *notificationTally) bump(counter *atomic.Int64, logger *slog.Logger, extra ...any) {
 	if t == nil {
 		return
 	}
 	counter.Add(1)
-	t.maybeLog(logger)
+	t.maybeLog(logger, extra...)
 }
 
 // maybeLog writes the hourly line when at least notificationTallyLogEvery
 // has passed since the last one. The first bump after start logs at once
-// so a fresh process reports its baseline.
-func (t *notificationTally) maybeLog(logger *slog.Logger) {
+// so a fresh process reports its baseline. extra carries the shadow-mode
+// totals (github.notifications.shadow) and is empty while shadow is off.
+func (t *notificationTally) maybeLog(logger *slog.Logger, extra ...any) {
 	if logger == nil {
 		return
 	}
@@ -56,10 +57,12 @@ func (t *notificationTally) maybeLog(logger *slog.Logger) {
 	if !due {
 		return
 	}
-	logger.Info("github notifications",
+	args := []any{
 		slog.Int64("created", t.created.Load()),
 		slog.Int64("edited", t.edited.Load()),
-		slog.Int64("suppressed", t.suppressed.Load()))
+		slog.Int64("suppressed", t.suppressed.Load()),
+	}
+	logger.Info("github notifications", append(args, extra...)...)
 }
 
 // noteCommentCreated records a new issue/PR comment.
@@ -67,7 +70,7 @@ func (c *Client) noteCommentCreated() {
 	if c == nil {
 		return
 	}
-	c.notifications.bump(&c.notifications.created, c.logger)
+	c.notifications.bump(&c.notifications.created, c.logger, c.notificationShadowLogAttrs()...)
 }
 
 // noteCommentEdited records an in-place comment edit.
@@ -75,7 +78,7 @@ func (c *Client) noteCommentEdited() {
 	if c == nil {
 		return
 	}
-	c.notifications.bump(&c.notifications.edited, c.logger)
+	c.notifications.bump(&c.notifications.edited, c.logger, c.notificationShadowLogAttrs()...)
 }
 
 // noteCommentSuppressed records a comment the hive chose not to create.
@@ -83,7 +86,8 @@ func (c *Client) noteCommentSuppressed() {
 	if c == nil {
 		return
 	}
-	c.notifications.bump(&c.notifications.suppressed, c.logger)
+	c.noteShadowSuppressed()
+	c.notifications.bump(&c.notifications.suppressed, c.logger, c.notificationShadowLogAttrs()...)
 }
 
 // NotificationCounts returns the cumulative created/edited/suppressed

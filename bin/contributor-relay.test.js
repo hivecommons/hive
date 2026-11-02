@@ -192,7 +192,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
-    child.stdin = { end() {} };
+    child.stdin = new EventEmitter();
+    child.stdin.end = input => { child.input = input; };
     child.killed = false;
     let completed = false;
     const r = execFileResult || {};
@@ -396,6 +397,58 @@ function graceTicks(relay, tick) {
 
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
+test('Cline routes both relay modes through the bounded canonical adapter without prompt argv', () => {
+  const relay = loadRelay({ backend: 'cline', model: 'openrouter/anthropic/test', reasoningEffort: 'high' });
+  try {
+    assert.strictEqual(relay.CONTRIBUTOR_MODE, relay.MODE_HEADLESS);
+    assert.strictEqual(relay.headlessSupportsBackend(), true);
+    assert.strictEqual(relay.effectiveProvider(), 'openrouter');
+    const built = relay.buildHeadlessArgv('private prompt with quotes and $shell');
+    assert.strictEqual(built.bin, 'crux');
+    assert.deepStrictEqual(built.args, ['cline-turn', '--model', 'openrouter/anthropic/test', '--thinking', 'high']);
+    assert.strictEqual(built.input, 'private prompt with quotes and $shell');
+    assert(!built.args.some(a => a.includes('private prompt')));
+    const task = { task_id: 'cline-selection', task_gen: 1, kind: 'issue', repo: 'x/y', number: 1, title: 'Cline' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'Cline produced no completion receipt');
+    assert.strictEqual(complete.provider, 'openrouter');
+    assert.strictEqual(complete.model, 'openrouter/anthropic/test');
+    assert.strictEqual(complete.cli_backend, 'cline');
+  } finally { teardown(relay); }
+});
+
+test('Cline stdin EPIPE is a bounded task failure, not an uncaught relay error', () => {
+  const relay = loadRelay({ backend: 'cline', mode: 'headless', model: 'openrouter/test', execFileResult: { defer: true } });
+  try {
+    const task = { task_id: 'cline-epipe', task_gen: 1, kind: 'issue', repo: 'x/y', number: 1, title: 'Cline' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const child = relay.getHeadlessChild();
+    assert.ok(child.input && child.input.includes('Cline'), 'prompt was not delivered on stdin');
+    assert.doesNotThrow(() => child.stdin.emit('error', Object.assign(new Error('closed pipe'), { code: 'EPIPE' })));
+    relay.__completeDeferredExecFile(Object.assign(new Error('runner failed'), { code: 1 }));
+    assert.ok(relay.__sent.some(m => m.type === 'task_failed' && m.task_id === task.task_id));
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete' && m.task_id === task.task_id));
+  } finally { teardown(relay); }
+});
+
+test('Cline revoke requests graceful group cleanup and fences late completion', () => {
+  const relay = loadRelay({ backend: 'cline', mode: 'headless', model: 'openrouter/test', execFileResult: { defer: true } });
+  try {
+    const task = { task_id: 'cline-revoke', task_gen: 2, kind: 'issue', repo: 'x/y', number: 1, title: 'Cline' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const child = relay.getHeadlessChild();
+    let signal = '';
+    child.kill = value => { child.killed = true; signal = value; };
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: task.task_id, reason: 'operator stop' }));
+    assert.strictEqual(signal, 'SIGTERM');
+    relay.__completeDeferredExecFile(null, 'late success', '');
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete' && m.task_id === task.task_id));
+  } finally { teardown(relay); }
+});
 
 // ---------------------------------------------------------------------------
 // Bug 1 — the relaunch command must keep the model flag, and must never pass

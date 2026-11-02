@@ -73,6 +73,11 @@ func kickPromptNotReadyErr(name, reason string) error {
 	if reason == "" || reason == kickPromptNotReadyReason {
 		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
 	}
+	// A permission dialog is a named cause, not a flavour of "no prompt":
+	// surface it verbatim so the operator sees WHAT blocked the CLI.
+	if strings.HasPrefix(reason, claudePermissionDialogReason) {
+		return fmt.Errorf("agent %s %s", name, reason)
+	}
 	return fmt.Errorf("agent %s CLI did not reach input prompt: %s", name, reason)
 }
 

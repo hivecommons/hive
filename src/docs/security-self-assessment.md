@@ -152,7 +152,7 @@ Hive holds no formal certification (SOC 2, ISO 27001, FIPS). It holds the [OpenS
 
 ### Ecosystem
 
-Hive works with GitHub and GitHub Enterprise (GitLab and Gitea adapters exist but are not production-ready), takes work from GitHub Issues, GitHub Projects, Linear and Jira (a core design goal is to be work-source agnostic, so any tracker can feed the same agents), with the Claude Code, GitHub Copilot, Codex, Antigravity, Goose and Bob CLIs, and with self-hosted inference gateways such as LiteLLM, vLLM, llm-d and watsonx. It is used in production by Hive Commons itself (Hive maintains the `hivecommons/hive` repository and the other Hive Commons projects), KubeStellar Console, tunaos.org and Project Bluefin (see Case studies). Hive is a CNCF Sandbox candidate ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
+Hive works with GitHub and GitHub Enterprise (GitLab and Gitea adapters exist but are not production-ready), takes work from GitHub Issues, GitHub Projects, Linear and Jira (a core design goal is to be work-source agnostic, so any tracker can feed the same agents), with the Claude Code, GitHub Copilot, Codex, Antigravity, Goose and Bob CLIs, and with self-hosted inference gateways such as LiteLLM, vLLM, llm-d and watsonx. It is used in production by Hive Commons itself (Hive maintains the `hivecommons/hive` repository and the other Hive Commons projects), KubeStellar Console, tunaos.org and Project Bluefin (see Case studies). Hive is a CNCF Sandbox project ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 
 ## Security issue resolution
 
