@@ -189,7 +189,7 @@ var modelPrices = map[string]ModelPrice{
 	"kimi-k2-7-code":           {InputPerMTok: 0.60, OutputPerMTok: 3.50, CacheReadPerMTok: 0.15, CacheWritePerMTok: 0.60},
 	"mai-code-1-flash-picker":  {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	"claude-opus-4-6-thinking": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
-	"gpt-oss-120b-medium":      {InputPerMTok: 0.024, OutputPerMTok: 0.088, CacheReadPerMTok: 0.021, CacheWritePerMTok: 0.024},
+	"gpt-oss-120b-medium":      {InputPerMTok: 0.15, OutputPerMTok: 0.60, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.15},
 }
 
 // normalizeModelID canonicalizes a model id so the price table can be keyed
