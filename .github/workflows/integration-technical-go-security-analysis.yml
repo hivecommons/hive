@@ -119,7 +119,7 @@ jobs:
     - name: Scan
       working-directory: src
       continue-on-error: true
-      run: gosec -exclude-generated ./... ./crux/...
+      run: gosec -concurrency 4 -exclude-generated ./... ./crux/...
   golangci-lint:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
