@@ -267,7 +267,8 @@ func (m *matrixSource) persist() {
 		return
 	}
 	tmp := m.persistPath + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err == nil {
+	err = os.WriteFile(tmp, raw, 0o644)
+	if err == nil {
 		err = os.Rename(tmp, m.persistPath)
 	}
 	if err != nil {

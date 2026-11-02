@@ -374,7 +374,8 @@ func (s *sentinelHeadsSeen) saveLocked() {
 		return
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err == nil {
+	err = os.WriteFile(tmp, raw, 0o644)
+	if err == nil {
 		err = os.Rename(tmp, s.path)
 	}
 	if err != nil && s.logger != nil {
