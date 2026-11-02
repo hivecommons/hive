@@ -26,18 +26,24 @@ const headFirstSeenPruneAfter = 7 * 24 * time.Hour
 // and starts its own age) and caches the head commit's committer date, which
 // is immutable per SHA. One tracker is shared by every engine in the process
 // because the governor sweep builds a fresh engine per tick.
+//
+// hostFirstSeen pins the host clock at the first observation of each head.
+// It is the min_head_age fallback when GitHub's server-generated head time
+// runs ahead of the host (#16143): the head existed when it was first seen,
+// so measuring from there can only over-hold by one min_head_age window.
 type HeadFirstSeenTracker struct {
-	mu        sync.Mutex
-	firstSeen map[string]time.Time
-	commitAt  map[string]time.Time
-	lastSeen  map[string]time.Time
+	mu            sync.Mutex
+	firstSeen     map[string]time.Time
+	hostFirstSeen map[string]time.Time
+	commitAt      map[string]time.Time
+	lastSeen      map[string]time.Time
 }
 
 var sharedHeadFirstSeen = NewHeadFirstSeenTracker()
 
 // NewHeadFirstSeenTracker returns an empty tracker.
 func NewHeadFirstSeenTracker() *HeadFirstSeenTracker {
-	return &HeadFirstSeenTracker{firstSeen: make(map[string]time.Time), commitAt: make(map[string]time.Time), lastSeen: make(map[string]time.Time)}
+	return &HeadFirstSeenTracker{firstSeen: make(map[string]time.Time), hostFirstSeen: make(map[string]time.Time), commitAt: make(map[string]time.Time), lastSeen: make(map[string]time.Time)}
 }
 
 // observe returns the pinned head time for key, recording candidate when the
@@ -49,9 +55,13 @@ func (t *HeadFirstSeenTracker) observe(key string, candidate, now time.Time) tim
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if _, ok := t.hostFirstSeen[key]; !ok {
+		t.hostFirstSeen[key] = now
+	}
 	first, ok := t.firstSeen[key]
 	if !ok {
 		if candidate.IsZero() {
+			t.touchLocked(key, now)
 			return candidate
 		}
 		first = candidate
@@ -59,6 +69,17 @@ func (t *HeadFirstSeenTracker) observe(key string, candidate, now time.Time) tim
 	}
 	t.touchLocked(key, now)
 	return first
+}
+
+// hostObservedAt returns the host clock at the first observe of key, or zero
+// when the key has never been observed.
+func (t *HeadFirstSeenTracker) hostObservedAt(key string) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.hostFirstSeen[key]
 }
 
 // cachedCommitTime returns the head commit time recorded for key, if any.
@@ -92,6 +113,7 @@ func (t *HeadFirstSeenTracker) touchLocked(key string, now time.Time) {
 		if now.Sub(seen) > headFirstSeenPruneAfter {
 			delete(t.lastSeen, k)
 			delete(t.firstSeen, k)
+			delete(t.hostFirstSeen, k)
 			delete(t.commitAt, k)
 		}
 	}
@@ -152,6 +174,12 @@ func (c *Engine) headPushedAt(ctx context.Context, owner, repo string, number in
 // right after a hive comment/label write is still judged by when it was
 // committed. If the commit lookup fails the pin is kept: it can only
 // over-hold for one min_head_age window and cannot loop.
+//
+// A result ahead of the host clock is GitHub's server-generated timestamps
+// running ahead of this host (#16143), not a fresh push: measuring from it
+// clamped every head to "pushed 0s ago" for the whole skew. The host clock
+// pinned at this head's first observation is returned instead, so the gate
+// still holds slow check-runs for one min_head_age window and then clears.
 func (c *Engine) headPushedAtWith(ctx context.Context, tracker *HeadFirstSeenTracker, owner, repo string, number int, sha string, pr *gh.PullRequest) time.Time {
 	var updated time.Time
 	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
@@ -165,21 +193,35 @@ func (c *Engine) headPushedAtWith(ctx context.Context, tracker *HeadFirstSeenTra
 		now = c.now
 	}
 	key := contributorSoakKey(owner, repo, number, sha)
-	pinned := tracker.observe(key, updated, now())
-	if c == nil || c.minHeadAge <= 0 || pinned.IsZero() || now().Sub(pinned) >= c.minHeadAge {
+	at := now()
+	pinned := tracker.observe(key, updated, at)
+	if c == nil || c.minHeadAge <= 0 || pinned.IsZero() || at.Sub(pinned) >= c.minHeadAge {
 		return pinned
 	}
-	committed, ok := tracker.cachedCommitTime(key, now())
+	committed, ok := tracker.cachedCommitTime(key, at)
 	if !ok {
-		at, err := hgithub.HeadCommitPushedAt(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), c.gh, owner, repo, sha, pr)
+		got, err := hgithub.HeadCommitPushedAt(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), c.gh, owner, repo, sha, pr)
 		if err != nil {
-			return pinned
+			return hostClockBound(pinned, tracker.hostObservedAt(key), at)
 		}
-		tracker.recordCommitTime(key, at, now())
-		committed = at
+		tracker.recordCommitTime(key, got, at)
+		committed = got
 	}
 	if committed.Before(pinned) {
-		return committed
+		return hostClockBound(committed, tracker.hostObservedAt(key), at)
 	}
-	return pinned
+	return hostClockBound(pinned, tracker.hostObservedAt(key), at)
+}
+
+// hostClockBound returns headTime unless it is ahead of the host clock now,
+// in which case the host-clock first observation hostFirst (or now, when the
+// head has no pin) stands in for it (#16143).
+func hostClockBound(headTime, hostFirst, now time.Time) time.Time {
+	if !headTime.After(now) {
+		return headTime
+	}
+	if hostFirst.IsZero() || hostFirst.After(now) {
+		return now
+	}
+	return hostFirst
 }

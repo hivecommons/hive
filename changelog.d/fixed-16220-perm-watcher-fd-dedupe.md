@@ -1,0 +1,1 @@
+- On Linux, permissions watcher chown/chmod errors now name the entry's path instead of its `/proc/self/fd/N` link, so operator greps on the `error` field match the `path` field and the #4488 once-at-WARN dedupe keys on a stable path ([#4488](https://github.com/hivecommons/hive/issues/4488)).

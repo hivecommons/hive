@@ -76,7 +76,7 @@ export CRUX_DEFS=./defs            # or --defs ./defs on every command; a single
 crux run scout                     # start scout, stream its output, stop it on Ctrl-C
 crux run --detach scout            # start it and return
 crux ps                            # what is running
-crux logs scout -n 50              # its recent pane output (--buffer, --full, --json)
+crux logs -n 50 scout              # its recent pane output (--buffer, --full, --json)
 crux kick scout "look at issue 42" # send it work
 crux stop scout
 crux run ./defs/scout.yaml         # a definition file can be named directly

@@ -32,9 +32,11 @@ larger or ambiguous fronts retain FIFO instead of spending unbounded API work.
 Final sweep admission and merge calls share a per-repository/base guard with
 the GitHub merge-request relay. Production uses stable flock inodes under
 `/data/destination-merges`, shared by writers using the same durable volume;
-isolated test engines use process-local locks. Contention parks a caller
-rather than allowing it to retain stale evidence while waiting. Locks are
-released on return or process death, and retargeting cannot borrow another
+isolated test engines use process-local locks. Queued-lane contention returns
+`base-preparation:merge-guard` with `ErrDestinationMergeBusy`, not a `fetch-pr`
+failure; the caller retries on a later sweep rather than retaining stale
+evidence while waiting. Unrelated fetch failures keep their existing reasons.
+Locks are released on return or process death, and retargeting cannot borrow another
 destination's lease. No new parallel merge dispatch is introduced.
 
 The guard serializes Hive writers sharing that volume, not independent human

@@ -1,0 +1,1 @@
+- The contributor lane's workflow-path approval no longer accepts an edited comment as an approval: a `/hive decision approve` (or dashboard `/approve`) whose comment was modified after it was posted is ignored, the same rule the un-park sweep already applies, so rewriting a merger's earlier comment cannot be read as that merger's approval (#16127).

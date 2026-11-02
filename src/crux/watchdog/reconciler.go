@@ -292,31 +292,6 @@ func (r *Reconciler) TakeRestarted() []string {
 	return out
 }
 
-// Option customizes a Reconciler.
-type Option func(*Reconciler)
-
-// WithClock injects a fake clock for tests.
-func WithClock(now func() time.Time) Option {
-	return func(r *Reconciler) { r.now = now }
-}
-
-// WithAuthProbes registers per-provider credential probes.
-func WithAuthProbes(probes map[string]AuthProbe) Option {
-	return func(r *Reconciler) { r.authProbes = probes }
-}
-
-// WithBackendProvider injects the backend→provider mapping.
-func WithBackendProvider(f func(string) string) Option {
-	return func(r *Reconciler) { r.backendProvider = f }
-}
-
-// WithConditionReporter injects the host sink for the watchdog's
-// agent_crash_loop self-report (hive wires pkg/fleetreport). Without one the
-// crash loop still pauses and alerts; it just is not reported upstream.
-func WithConditionReporter(rep crux.ConditionReporter) Option {
-	return func(r *Reconciler) { r.conditions = rep }
-}
-
 func (r *Reconciler) observeCondition(class, key, message, diagnostics string) {
 	if r.conditions != nil {
 		r.conditions.Observe(class, key, message, diagnostics)
@@ -487,10 +462,13 @@ func (r *Reconciler) recordLocked(name string) *agentRecord {
 }
 
 // Tick runs one reconciliation sweep. It is synchronous and bounded: every
-// probe carries a deadline and every restart runs detached under the hard
-// RestartTimeout, so the governor tick that hosts it can never wedge on a
-// stuck agent (the RFC's control-plane guard). Calls inside ProbeInterval of
-// the previous sweep are no-ops.
+// probe carries a deadline (Source implementations must bound Observe —
+// crux/agent's WatchdogFleet caps its tmux probes at ObserveProbeTimeout) and
+// every restart runs detached under the hard RestartTimeout, so the governor
+// tick that hosts it can never wedge on a stuck agent (the RFC's control-plane
+// guard). ctx is checked between agents, so a cancelled ctx (shutdown) ends
+// the sweep early. Calls inside ProbeInterval of the previous sweep are
+// no-ops.
 func (r *Reconciler) Tick(ctx context.Context) {
 	now := r.now()
 	r.mu.Lock()
@@ -507,6 +485,9 @@ func (r *Reconciler) Tick(ctx context.Context) {
 
 	authCache := make(map[string]authVerdict)
 	for _, name := range r.fleet.AgentNames() {
+		if ctx.Err() != nil {
+			return
+		}
 		r.reconcileAgent(ctx, name, now, authCache)
 	}
 }

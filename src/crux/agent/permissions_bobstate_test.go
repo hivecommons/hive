@@ -47,7 +47,7 @@ func TestFixBobStateDirGroupWriteAddsGroupBits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	fixBobStateDirGroupWrite(dir, fi.Mode(), quietLogger())
+	fixBobStateDirGroupWrite(dir, fi.Mode(), func(m os.FileMode) error { return os.Chmod(dir, m) }, quietLogger())
 
 	got := statMode(t, dir)
 	if got&bobStateDirGroupRWX != bobStateDirGroupRWX {
@@ -72,7 +72,7 @@ func TestFixBobStateDirGroupWriteIsIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat: %v", err)
 		}
-		fixBobStateDirGroupWrite(dir, fi.Mode(), quietLogger())
+		fixBobStateDirGroupWrite(dir, fi.Mode(), func(m os.FileMode) error { return os.Chmod(dir, m) }, quietLogger())
 
 		if got := statMode(t, dir); got != mode {
 			t.Errorf("mode = %v, want it unchanged at %v: an already-group-writable dir must not be touched", got, mode)
@@ -110,7 +110,7 @@ func TestFixBobStateDirGroupWriteHandlesChmodFailure(t *testing.T) {
 			t.Fatalf("fixBobStateDirGroupWrite panicked on chmod failure: %v", r)
 		}
 	}()
-	fixBobStateDirGroupWrite(dir, fi.Mode(), quietLogger())
+	fixBobStateDirGroupWrite(dir, fi.Mode(), func(m os.FileMode) error { return os.Chmod(dir, m) }, quietLogger())
 
 	// The dir stays gone — the function did not recreate or otherwise mutate.
 	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {

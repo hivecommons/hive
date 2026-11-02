@@ -405,6 +405,19 @@ func TestSandboxExecutorZeroValueAccessors(t *testing.T) {
 	}
 }
 
+// The production runner feeds the push broker, whose normaliser commits
+// `git show` output as file content, so exit-0 stderr must stay out of a
+// successful result exactly as pushbroker.ExecRunner guarantees.
+func TestSandboxExecRunnerDropsStderrOnSuccess(t *testing.T) {
+	out, err := sandboxExecRunner{}.Run(context.Background(), t.TempDir(), []string{"PATH=" + os.Getenv("PATH")}, "sh", "-c", "echo noise >&2; printf data")
+	if err != nil {
+		t.Fatalf("exec runner: %v", err)
+	}
+	if string(out) != "data" {
+		t.Errorf("successful output = %q, want stdout only", out)
+	}
+}
+
 func TestSandboxExecRunnerRunsRealCommand(t *testing.T) {
 	dir := t.TempDir()
 	out, err := sandboxExecRunner{}.Run(context.Background(), dir, []string{"PATH=" + os.Getenv("PATH")}, "pwd")

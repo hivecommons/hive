@@ -197,7 +197,6 @@ func (c *Client) handleForgeMergeRequest(ctx context.Context, path string, req M
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("head_sha", req.ExpectSHA), slog.String("agent", req.Agent))
 	c.RecordPRMergedAudit(req.Repo, req.Number, method, req.ExpectSHA, PRAuditPathRelay)
-	c.clearMergeFailureAlertsForRepo(req.Repo)
 }
 
 // isRequiredCheckMergeBlocker classifies a merge-attempt error string as
@@ -477,7 +476,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	// the request without consuming an attempt; red and unverified verdicts
 	// are failed attempts that go through the same retry / exhaust /
 	// re-engage path a GitHub-side refusal does.
-	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA, now)
+	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA, now, prState.PendingSince)
 	if err != nil {
 		c.logCIVerdict(req, verdict, err.Error())
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
@@ -527,7 +526,6 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	c.logger.Info("merge-request watcher: PR merged by App bot",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", res.SHA), slog.String("agent", req.Agent))
-	c.clearMergeFailureAlertsForRepo(req.Repo)
 }
 
 // recordMergeFailure writes the failed attempt's result and applies the retry
@@ -538,7 +536,7 @@ func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int,
 	now := nowFn()
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: errMsg, At: now.UTC().Format(time.RFC3339)})
 	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: attempts >= mergeRequestMaxAttempts, Reason: errMsg, At: now})
-	c.raiseMergeFailureAlert(req.Repo, req.Number, errMsg)
+	c.raiseMergeFailureAlert(req.Repo, req.Number, errMsg, req.ExpectSHA, req.Method)
 	if attempts >= mergeRequestMaxAttempts {
 		// Terminal: a PR that still won't merge after N tries is blocked by
 		// something a retry can't fix. Fix #2: classify WHY. If the blocker
@@ -591,7 +589,7 @@ func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts 
 	now := nowFn()
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
 	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
-	c.raiseMergeFailureAlert(req.Repo, req.Number, reason)
+	c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
 	_ = os.Rename(path, path+".exhausted")
 	c.logger.Warn("merge-request watcher: merge cannot proceed on this head, quarantined without retry",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),

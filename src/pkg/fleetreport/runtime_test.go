@@ -839,6 +839,24 @@ func TestIsBenignMessageReviewPendingExpiry(t *testing.T) {
 	}
 }
 
+// #16112: a sentinel finding is the sweep working as designed; sweep failures
+// stay reportable.
+func TestIsBenignMessageSentinelAlert(t *testing.T) {
+	for _, msg := range []string{"sentinel alert", "  Sentinel Alert  "} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("sentinel finding %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"sentinel sweep failed",
+		"sentinel sweep: PR skipped",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
 func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	const msg = "policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default"
 	if !IsBenignMessage(msg) {
@@ -906,6 +924,18 @@ func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
 		if IsBenignMessage(m) {
 			t.Errorf("failure %q wrongly benign", m)
 		}
+	}
+}
+
+// hivecommons/hive#16170: an agent with no inference model configured is an
+// operator configuration condition; real translate failures stay classified.
+func TestIsBenignMessageInferenceModelNotConfigured(t *testing.T) {
+	const msg = "inference model not configured; request refused"
+	if !IsBenignMessage(msg) || LogFedClass(msg) != "" {
+		t.Errorf("missing-model notice %q reportable", msg)
+	}
+	if IsBenignMessage("inference translate request failed") || LogFedClass("inference translate request failed") != ClassInferenceUpstreamError {
+		t.Error("translate failure no longer reported as inference_upstream_error")
 	}
 }
 

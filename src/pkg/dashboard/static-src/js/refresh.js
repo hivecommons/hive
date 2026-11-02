@@ -484,6 +484,10 @@
         if (data.statusSeq < _statusSeqFloor || data.statusSeq < _lastStatusSeq) return;
         _lastStatusSeq = data.statusSeq;
       }
+      if (typeof data.matrixEnabled === 'boolean') {
+        const matrixTab = document.getElementById('oc-matrix-tab');
+        if (matrixTab) matrixTab.hidden = !data.matrixEnabled;
+      }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
       const scrollAnchor = captureScrollAnchor();
       updateNavbarClockTimeZone(data);

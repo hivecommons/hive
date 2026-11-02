@@ -181,7 +181,19 @@ func (m *mergeTrainMemory) forgetEta(self *StageTrackerItem) {
 	m.mu.Unlock()
 }
 
-// warn logs the stalled train once per hour; it returns true when it logged.
+// mergeTrainStallKey names the stall the hourly line is about: the head
+// that has not progressed, not the planner's train ID. Members of one
+// train can carry different planner fronts (records written on different
+// passes, or a front that left the train), so the same stuck head read as
+// several "trains" each logging on its own clock (hivecommons/hive#16107).
+func mergeTrainStallKey(repo string, mt *StageTrackerMergeTrain) string {
+	if mt.HeadNumber > 0 {
+		return repo + "|head#" + strconv.Itoa(mt.HeadNumber)
+	}
+	return repo + "|" + mt.ID
+}
+
+// warn logs the stalled head once per hour; it returns true when it logged.
 func (m *mergeTrainMemory) warn(repo string, mt *StageTrackerMergeTrain, now time.Time) bool {
 	if m == nil || mt == nil || !mt.Stalled {
 		return false
@@ -191,7 +203,7 @@ func (m *mergeTrainMemory) warn(repo string, mt *StageTrackerMergeTrain, now tim
 	if m.last == nil {
 		m.last = map[string]time.Time{}
 	}
-	key := repo + "|" + mt.ID
+	key := mergeTrainStallKey(repo, mt)
 	if at, ok := m.last[key]; ok && now.Sub(at) < mergeTrainStallLogEvery {
 		return false
 	}
@@ -202,7 +214,7 @@ func (m *mergeTrainMemory) warn(repo string, mt *StageTrackerMergeTrain, now tim
 }
 
 // stageTrackerMergeTrainStallWarnings runs the hourly log over the items:
-// one line per stalled train, read from any member.
+// one line per stalled head, read from any member.
 func stageTrackerMergeTrainStallWarnings(mem *mergeTrainMemory, items []StageTrackerItem, now time.Time) {
 	seen := map[string]bool{}
 	for i := range items {
@@ -210,7 +222,7 @@ func stageTrackerMergeTrainStallWarnings(mem *mergeTrainMemory, items []StageTra
 		if mt == nil || !mt.Stalled {
 			continue
 		}
-		key := items[i].Repo + "|" + mt.ID
+		key := mergeTrainStallKey(items[i].Repo, mt)
 		if seen[key] {
 			continue
 		}

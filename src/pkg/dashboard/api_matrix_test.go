@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -338,4 +339,79 @@ func TestMatrixLinesSSEFrame_ContentFree(t *testing.T) {
 	if got != matrixCodeLinesSSEFrame(100) {
 		t.Fatalf("broadcast payload = %q, want %q", got, matrixCodeLinesSSEFrame(100))
 	}
+}
+
+// Regression for hivecommons/hive#15979: max must count only lines the caller
+// may see, or a page whose raw lines are all filtered out comes back empty and
+// a client following the "last returned line's seq" contract can never advance.
+func TestHandleMatrixLines_MaxCountsOnlyAllowedLines(t *testing.T) {
+	s := newTestServer()
+	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"hivecommons/allowed"}})
+	src := s.matrix
+	for i := 0; i < 3; i++ {
+		helperAddMatrixLine(src, "hivecommons/denied", "hidden")
+	}
+	want4 := helperAddMatrixLine(src, "hivecommons/allowed", "a")
+	want5 := helperAddMatrixLine(src, "hivecommons/allowed", "b")
+
+	resp := getMatrixLines(t, s, "/api/matrix/lines?since=0&max=2")
+	if len(resp.Lines) != 2 || resp.Lines[0].Seq != want4.Seq || resp.Lines[1].Seq != want5.Seq {
+		t.Fatalf("max=2 lines = %+v, want seqs [%d %d]", resp.Lines, want4.Seq, want5.Seq)
+	}
+	if resp.Seq != want5.Seq {
+		t.Fatalf("resp.Seq = %d, want latest %d", resp.Seq, want5.Seq)
+	}
+}
+
+func TestHandleMatrixLines_PagingWithMaxVisitsEveryAllowedLine(t *testing.T) {
+	s := newTestServer()
+	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"hivecommons/allowed"}})
+	src := s.matrix
+	var want []uint64
+	for i := 0; i < 12; i++ {
+		repo := "hivecommons/denied"
+		if i%4 == 3 {
+			repo = "hivecommons/allowed"
+		}
+		if l := helperAddMatrixLine(src, repo, "x"); repo == "hivecommons/allowed" {
+			want = append(want, l.Seq)
+		}
+	}
+
+	var got []uint64
+	var since uint64
+	for page := 0; page < len(want)+1; page++ {
+		resp := getMatrixLines(t, s, "/api/matrix/lines?since="+strconv.FormatUint(since, 10)+"&max=1")
+		if len(resp.Lines) == 0 {
+			break
+		}
+		for _, l := range resp.Lines {
+			got = append(got, l.Seq)
+		}
+		since = resp.Lines[len(resp.Lines)-1].Seq
+	}
+	if len(got) != len(want) {
+		t.Fatalf("paged seqs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("paged seqs = %v, want %v", got, want)
+		}
+	}
+}
+
+func getMatrixLines(t *testing.T, s *Server, target string) matrixLinesResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
+	rr := httptest.NewRecorder()
+	s.handleMatrixLines(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("%s: code = %d, want 200", target, rr.Code)
+	}
+	var resp matrixLinesResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("%s: unmarshal: %v", target, err)
+	}
+	return resp
 }

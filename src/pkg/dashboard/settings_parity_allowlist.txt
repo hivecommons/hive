@@ -182,7 +182,7 @@ compliance.frameworks[] # TODO #11854
 contribute.token_idle_max # TODO #11854
 contribute.token_max_age # TODO #11854
 convergence.mutation.max_writers_per_target # boundary capacity tuning; yaml-only (#14645)
-dashboard.matrix.enabled # experimental default-off Matrix block; nothing reads it yet (#15862)
+dashboard.matrix.enabled # experimental default-off Matrix block; gates the header tab via /api/status, no Settings control (#15862, #16042)
 dashboard.matrix.exclude_paths[] # experimental default-off Matrix block; nothing reads it yet (#15862)
 dashboard.matrix.repos[] # experimental default-off Matrix block; nothing reads it yet (#15862)
 debug.pprof_addr # loopback-only pprof bind address, operator/debug knob, not a Settings control (#14681)

@@ -1,6 +1,6 @@
 package watchdog
 
-// Tests for the WithBackendProvider option (reconciler.go): New must install
+// Tests for the WithBackendProvider option (reconciler_options.go): New must install
 // the injected backend→provider mapping in place of DefaultBackendProvider,
 // and must keep the default when the option is absent.
 

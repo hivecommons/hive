@@ -337,6 +337,80 @@ func TestGetBufferOutput_EmptyBoth(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GetBufferSince — follow-by-offset reads
+// ---------------------------------------------------------------------------
+
+func TestGetBufferSince_NotFound(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	lines, next, err := m.GetBufferSince("nonexistent", 7)
+	if err == nil {
+		t.Fatal("expected error for nonexistent agent")
+	}
+	if lines != nil || next != 7 {
+		t.Errorf("lines, next = %v, %d; want nil, 7 (seq echoed back)", lines, next)
+	}
+}
+
+func TestGetBufferSince_NilBuffer(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude"},
+	}, discardLogger(), ProjectContext{})
+
+	m.mu.Lock()
+	m.agents["scanner"].OutputBuffer = nil
+	m.mu.Unlock()
+
+	lines, next, err := m.GetBufferSince("scanner", 3)
+	if err != nil {
+		t.Fatalf("GetBufferSince: %v", err)
+	}
+	if lines != nil || next != 3 {
+		t.Errorf("lines, next = %v, %d; want nil, 3 (seq echoed back)", lines, next)
+	}
+}
+
+func TestGetBufferSince_StreamsByOffset(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude"},
+	}, discardLogger(), ProjectContext{})
+
+	m.mu.Lock()
+	m.agents["scanner"].OutputBuffer.Write("line A")
+	m.agents["scanner"].OutputBuffer.Write("line B")
+	m.mu.Unlock()
+
+	lines, next, err := m.GetBufferSince("scanner", 0)
+	if err != nil {
+		t.Fatalf("GetBufferSince(0): %v", err)
+	}
+	if len(lines) != 2 || lines[0] != "line A" || lines[1] != "line B" || next != 2 {
+		t.Fatalf("GetBufferSince(0) = %v, %d; want [line A line B], 2", lines, next)
+	}
+
+	// A repeated line must not be dropped: the offset, not the content,
+	// decides what is new.
+	m.mu.Lock()
+	m.agents["scanner"].OutputBuffer.Write("line B")
+	m.mu.Unlock()
+
+	lines, next, err = m.GetBufferSince("scanner", next)
+	if err != nil {
+		t.Fatalf("GetBufferSince(2): %v", err)
+	}
+	if len(lines) != 1 || lines[0] != "line B" || next != 3 {
+		t.Fatalf("GetBufferSince(2) = %v, %d; want [line B], 3", lines, next)
+	}
+
+	lines, next, err = m.GetBufferSince("scanner", next)
+	if err != nil {
+		t.Fatalf("GetBufferSince(3): %v", err)
+	}
+	if len(lines) != 0 || next != 3 {
+		t.Errorf("GetBufferSince(3) = %v, %d; want none, 3", lines, next)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // KickHistory management
 // ---------------------------------------------------------------------------
 

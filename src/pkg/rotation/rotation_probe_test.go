@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1333,5 +1334,28 @@ func TestCodexProber_AppServerDeadline(t *testing.T) {
 				t.Fatal("timeout must retain fail-open behavior")
 			}
 		})
+	}
+}
+
+func TestCodexAuthRequiredIsNoCredentialsNotWarned(t *testing.T) {
+	err := fmt.Errorf(`codex app-server error: {"code":-32600,"message":"codex account authentication required to read rate limits"}`)
+	h := failOpen("openai", classifyCodexProbeError(err))
+	if h.ProbeErrCause != ProbeCauseNoCredentials {
+		t.Fatalf("cause = %q, want %q", h.ProbeErrCause, ProbeCauseNoCredentials)
+	}
+	if !h.Available {
+		t.Error("auth-required probe must stay fail-open (headroom unknown)")
+	}
+	if got := probeErrorCause(classifyCodexProbeError(errors.New("boom"))); got != ProbeCauseProbeFailed {
+		t.Errorf("unrelated error cause = %q, want probe_failed", got)
+	}
+
+	var buf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+	NewManager(config.RotationConfig{}).logProbeFailure(h)
+	if strings.Contains(buf.String(), "level=WARN") {
+		t.Errorf("auth-required probe logged at WARN: %s", buf.String())
 	}
 }

@@ -64,7 +64,7 @@ All routes are under `/v1`. Bodies and responses are JSON; errors are
 | `POST /v1/agents` | `{"name":…, "definition":{…}}` | `Definitions.AddAgent` (when `definition` is present), `Lifecycle.Start` | `201 {"agent":…, "process":Process}`; `400` bad name, `409` the name already has a definition, `422` the runtime refused it |
 | `GET /v1/agents/{name}` | | `Observer.GetStatus` | `Process` |
 | `GET /v1/agents/{name}/logs?source=pane\|buffer\|full&n=N` | | `GetOutput` / `GetBufferOutput` / `FullLogHeader`+`CaptureFullLog` | `{"agent","source","lines":[…]}` or `{"header","content"}` for `full` |
-| `GET /v1/agents/{name}/logs?follow=1` | | `GetBufferOutput`, polled | `text/event-stream` of `agent.log` records `{"agent","lines":[…]}` |
+| `GET /v1/agents/{name}/logs?follow=1&n=N` | | `GetBufferOutput`, polled | `text/event-stream` of `agent.log` records `{"agent","lines":[…]}`; the first replays the last `n` buffered lines (none for `n=0`; the 200-line follow window when `n` is absent) |
 | `POST /v1/agents/{name}/kick` | `{"message":…}` | `Kicker.SendKick` | `{"agent","process"}` |
 | `POST /v1/agents/{name}/stop` | | `Lifecycle.Stop` | `{"agent","process"}` |
 | `GET /v1/events` | | watcher + `Kicker.SetKickObserver` + the `crux.Host` observers | `text/event-stream` of `Event` records |
@@ -255,8 +255,8 @@ export CRUX_SERVER=/run/user/$(id -u)/crux/crux.sock
 crux run examples/agents/customized-agent.yaml   # definition parsed here, sent as JSON; follows output; Ctrl-C stops
 crux run --detach fixer                          # a name already defined on the server
 crux ps
-crux logs fixer -n 50 --buffer
-crux logs fixer -f                               # follow the ring buffer over SSE
+crux logs -n 50 --buffer fixer
+crux logs -f fixer                               # follow the ring buffer over SSE
 crux kick fixer "look at the failing build on main"
 crux stop fixer
 ```

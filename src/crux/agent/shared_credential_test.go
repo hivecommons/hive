@@ -198,7 +198,7 @@ func TestFixSharedCredential_UnfixableIsLoud(t *testing.T) {
 
 	// A path that cannot be chmod'ed: it does not exist.
 	missing := filepath.Join(t.TempDir(), "gone", ".credentials.json")
-	fixSharedCredentialGroupRead(missing, 0o600, 2010, logger)
+	fixSharedCredentialGroupRead(missing, 0o600, func(m os.FileMode) error { return os.Chmod(missing, m) }, 2010, logger)
 
 	logged := buf.String()
 	if !strings.Contains(logged, "level=ERROR") {
@@ -221,9 +221,9 @@ func TestFixSharedCredential_RepeatFailuresAreDeduped(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	missing := filepath.Join(t.TempDir(), "gone", ".credentials.json")
-	fixSharedCredentialGroupRead(missing, 0o600, 2010, logger)
-	fixSharedCredentialGroupRead(missing, 0o600, 2010, logger)
-	fixSharedCredentialGroupRead(missing, 0o600, 2010, logger)
+	fixSharedCredentialGroupRead(missing, 0o600, func(m os.FileMode) error { return os.Chmod(missing, m) }, 2010, logger)
+	fixSharedCredentialGroupRead(missing, 0o600, func(m os.FileMode) error { return os.Chmod(missing, m) }, 2010, logger)
+	fixSharedCredentialGroupRead(missing, 0o600, func(m os.FileMode) error { return os.Chmod(missing, m) }, 2010, logger)
 
 	if got := strings.Count(buf.String(), "level=ERROR"); got != 1 {
 		t.Errorf("standing failure logged at ERROR %d times, want 1 (the rest at debug)", got)

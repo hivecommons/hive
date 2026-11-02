@@ -535,3 +535,46 @@ func TestCard_BotAuthorOmitsIconURL(t *testing.T) {
 		t.Errorf("IconURL = %q, want empty for [bot] login", card.Author.IconURL)
 	}
 }
+
+func TestIsRelatedKey(t *testing.T) {
+	tests := []struct {
+		key string
+		want bool
+	}{
+		{"builds on", true},
+		{"supersedes", true},
+		{"related", true},
+		{"related rfcs", true},
+		{"related rfc", true},
+		{"related-anything", true},
+		{"status", false},
+		{"target", false},
+		{"field", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isRelatedKey(tt.key); got != tt.want {
+			t.Errorf("isRelatedKey(%q) = %v, want %v", tt.key, got, tt.want)
+		}
+	}
+}
+
+func TestIsTableHeaderOrSeparator(t *testing.T) {
+	tests := []struct {
+		key, val string
+		want bool
+	}{
+		{"field", "value", true},
+		{"key", "value", true},
+		{"---", "value", true},
+		{"normal", "---", true},
+		{"normal", "value", false},
+		{"target", "text", false},
+		{"status", "active", false},
+	}
+	for _, tt := range tests {
+		if got := isTableHeaderOrSeparator(tt.key, tt.val); got != tt.want {
+			t.Errorf("isTableHeaderOrSeparator(%q, %q) = %v, want %v", tt.key, tt.val, got, tt.want)
+		}
+	}
+}

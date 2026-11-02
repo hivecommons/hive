@@ -21,6 +21,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
 		}
+		if errors.Is(err, hgithub.ErrDestinationMergeBusy) {
+			return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
+		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
 	defer unlock()
@@ -373,6 +376,10 @@ func (c *Engine) commitCIForPRSkipping(ctx context.Context, owner, repo, branch,
 	})
 	if err != nil {
 		return st, actualKnown, err
+	}
+	if prNumber > 0 && st.HeadTimeAheadBy > 0 {
+		c.info("automerge head time ahead of host clock; min_head_age not evaluable from it, measured from first observation", "repo", owner+"/"+repo, "pr", prNumber,
+			"sha", sha, "ahead_by", st.HeadTimeAheadBy.Round(time.Second), "green", st.Green, "reason", st.Reason)
 	}
 	if len(st.Reporting) > 0 {
 		c.info("automerge CI reporting observation", "repo", owner+"/"+repo, "pr", prNumber,

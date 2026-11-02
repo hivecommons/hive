@@ -146,7 +146,7 @@ type KickDispatch struct {
 	Phase     string    `json:"phase"`
 	Error     string    `json:"error,omitempty"`
 	QueuedAt  time.Time `json:"queuedAt"`
-	SettledAt time.Time `json:"settledAt,omitempty"`
+	SettledAt time.Time `json:"settledAt,omitzero"`
 }
 
 // KickDispatchResponse is the body of GET /v1/agents/{name}/kick
