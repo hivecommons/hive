@@ -64,7 +64,7 @@ func dcoCommitStatsDetailedForAuthor(commits []*gh.RepositoryCommit, appLogin, p
 			} else {
 				stats.unsignedOther++
 			}
-		} else if dcoCommitByHive(rc, appLogin) && !messageHasPRAuthorSignoff(msg, prAuthor) {
+		} else if !botSquashAuthor(prAuthor) && dcoCommitByHive(rc, appLogin) && !messageHasPRAuthorSignoff(msg, prAuthor) {
 			stats.squashUnsafeHive++
 		}
 	}
@@ -96,7 +96,11 @@ func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key str
 			// none; an in-place adoption decides repair-vs-rehome on it,
 			// so read the commits once more for that case only.
 			if (u > 0 || rec.DCOSquashUnsafeKnown) && (u == 0 || rec.DCOSplitKnown(obs.HeadSHA) || !rec.AdoptedInPlace()) {
-				return dcoStats{total: t, unsigned: u, unsignedHive: rec.DCOUnsignedHive, unsignedOther: u - rec.DCOUnsignedHive, squashUnsafeHive: rec.DCOSquashUnsafeHive}, nil
+				unsafe := rec.DCOSquashUnsafeHive
+				if botSquashAuthor(obs.Author) {
+					unsafe = 0
+				}
+				return dcoStats{total: t, unsigned: u, unsignedHive: rec.DCOUnsignedHive, unsignedOther: u - rec.DCOUnsignedHive, squashUnsafeHive: unsafe}, nil
 			}
 		}
 	}
@@ -114,6 +118,12 @@ func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key str
 		opts.Page = resp.NextPage
 	}
 	return dcoCommitStatsDetailedForAuthor(all, c.transport.AppBotLogin(), obs.Author), nil
+}
+
+// Matches the bot-PR policy in check-squash-signoff-attribution.sh: a squash
+// remains bot-authored. Unsigned commits are still counted and rejected.
+func botSquashAuthor(login string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(login)), "[bot]")
 }
 
 func messageHasPRAuthorSignoff(message, prAuthor string) bool {

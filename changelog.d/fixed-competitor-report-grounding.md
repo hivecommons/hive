@@ -1,0 +1,1 @@
+- Ground weekly competitor reports in revision-pinned upstream source and dated evidence, and block publication or automatic work when provenance or existing-work checks fail.

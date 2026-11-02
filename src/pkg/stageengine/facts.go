@@ -286,6 +286,9 @@ type PRPassFacts struct {
 	// stagelabels.FixerExhaustedReason(n) so a person decides instead of
 	// the row claiming "Fixing" with nobody on it (hivecommons/hive#15744).
 	FixerExhausted int
+	// RecoveryUnauthorized is an observed exact-head CI recovery permission
+	// refusal. It parks the item without treating infrastructure as source work.
+	RecoveryUnauthorized string
 	// FixerExcluded is true when no fix job is active and the dispatcher
 	// bars one for any reason (exhausted, no enabled fixer, …): a stale
 	// answered decision on the same head must not pull the PR back from

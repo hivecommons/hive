@@ -245,7 +245,11 @@ type boot struct {
 	// (hivecommons/hive#13575).
 	lastPriorArtResumeSweep time.Time
 	lastSentinelSweep       time.Time
-	lastGFISweep            time.Time
+	// matrixIngestSt gates the incremental Matrix ingest pass (#16276),
+	// shared by its ticker goroutine and the per-cycle call in runSweeps.
+	matrixIngestSt      *matrixIngestState
+	matrixIngestStarted bool
+	lastGFISweep        time.Time
 	// lastLegacyFleetReportSweep gates runLegacyFleetReportSweepIfDue
 	// (hivecommons/hive#13470).
 	lastLegacyFleetReportSweep time.Time

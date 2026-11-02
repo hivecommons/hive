@@ -1,0 +1,1 @@
+- Collect review outputs for open PRs without rereading every historical report, request only missing current-body perspectives, settle reviewer slots only from fresh report receipts, preserve newer verdicts against late collection/restamps, and log collection lag plus pending versus delivery-confirmed occupancy.
