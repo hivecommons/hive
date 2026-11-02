@@ -109,7 +109,10 @@ reproduction by authorized owners, not independent public verification.
 Only this month's rendered outputs and provenance are staged. Raw/supplied
 input is never staged or uploaded. Root README graphics and prior reports are
 not refreshed. Identical already-merged input skips rendering; identical input
-on the open monthly branch makes no commit/push/repost. A serialized
+on the open monthly branch makes no commit/push/repost. If the branch push
+succeeds but PR creation fails, the run fails visibly; an unchanged rerun
+retries the missing PR without another commit or provenance update. A branch
+with no monthly report difference against `v5` does not open a PR. A serialized
 `automation/monthly-outcomes-YYYY-MM` branch has one PR against `v5`, updated
 with ordinary signed-off commits (no force push). Obsolete cards for that
 month are removed. A closed/declined or already-merged PR is not automatically
@@ -121,5 +124,6 @@ prove that mediated and unmediated PRs are causally comparable. Required
 source data/access and credential provisioning remain operator gates.
 CI's focused fixtures exercise UTC selection, malformed/partial/stale input,
 privacy projection, historical cost preservation, deterministic real rendering
-and no-op/error handling, including local-Git/Mock-GitHub one-PR reruns and
-closed-PR refusal; no fixture makes a live deployment/API request.
+and no-op/error handling, including local-Git/Mock-GitHub one-PR reruns,
+failed-creation recovery and closed-PR refusal; no fixture makes a live
+deployment/API request.

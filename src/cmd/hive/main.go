@@ -2437,6 +2437,10 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
+	// The Matrix backlog survives a restart so the kiosk never blanks
+	// (#16276); the paired sentinel head map is set in
+	// applyGitHubClientConfigHooks.
+	b.dashSrv.SetMatrixPersistPath(matrixLinesStatePath)
 	b.dashSrv.SetIntegrationExecutionEvaluators(b.integrationPreparationEligibility, b.integrationEligibility)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
@@ -6089,6 +6093,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		b.cfgReloadMu.Unlock()
 	}
 	b.startReviewEvents()
+	b.startMatrixIngest()
 
 	// Webhook health re-check: in webhook mode the base tick (900s) is longer
 	// than the health window (2 × eval_interval_s), so without this a lapse

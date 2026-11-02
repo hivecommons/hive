@@ -11,19 +11,36 @@ if [ "$(printf '%s' "$pr" | jq length)" -gt 1 ] || printf '%s' "$pr" | jq -e 'an
   echo "::error::A closed/merged monthly PR already exists; resolve it explicitly rather than reposting."
   exit 1
 fi
+remote_branch=false
 if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
   git fetch origin "$branch"
   git checkout -b "$branch" FETCH_HEAD
+  remote_branch=true
 else
   git checkout -b "$branch"
 fi
 dest="src/docs/benchmarks"
+ensure_pr() {
+  if [ "$remote_branch" = false ] || [ "$(printf '%s' "$pr" | jq length)" -ne 0 ]; then
+    return
+  fi
+  if git diff --quiet origin/v5...HEAD -- "$dest/outcomes-$MONTH.*" "$dest/assets/outcomes-$MONTH-*" ; then
+    echo "No monthly report diff against v5; no PR to create."
+    return
+  fi
+  # A successful push can outlive a failed PR creation. Retry without changing
+  # the approved report or its original provenance.
+  gh pr create --repo "$GITHUB_REPOSITORY" --base v5 --head "$branch" \
+    --title "📖 docs: monthly outcomes $MONTH" \
+    --body "Owner-supplied, sanitized monthly aggregates. Review the cohort, observation time, cost denominator and provenance before merging. No raw evidence, stories or deployment identities are published. Collection completeness and publication approval are owner attestations, not independently verified by this workflow. CI and normal review gates must pass; this workflow does not merge."
+}
 # Keep the original renderer revision when the approved input is unchanged,
 # even if unrelated v5 commits landed while this month's PR was open.
 provenance="outcomes-$MONTH.provenance.json"
 if [ -f "$dest/$provenance" ] &&
    [ "$(jq -er .input_sha256 "$dest/$provenance")" = "$(jq -er .input_sha256 ".monthly-outcomes/$provenance")" ]; then
-  echo "Approved input unchanged; preserving the existing monthly PR without a repost."
+  ensure_pr
+  echo "Approved input unchanged; preserving the monthly report and provenance."
   exit 0
 fi
 # Replace only this month's outputs, including obsolete cards.
@@ -34,15 +51,13 @@ cp ".monthly-outcomes/outcomes-$MONTH.provenance.json" "$dest/"
 cp .monthly-outcomes/assets/"outcomes-$MONTH-"* "$dest/assets/"
 git add -- "$dest/outcomes-$MONTH.json" "$dest/outcomes-$MONTH.md" "$dest/outcomes-$MONTH.provenance.json" "$dest/assets/outcomes-$MONTH-"*
 if git diff --cached --quiet; then
-  echo "No monthly report diff; no commit, push or stale PR repost."
+  ensure_pr
+  echo "No staged monthly report diff; no commit or push."
   exit 0
 fi
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 git commit -s -m "📖 docs: publish outcomes for $MONTH"
 git push origin "$branch"
-if [ "$(printf '%s' "$pr" | jq length)" -eq 0 ]; then
-  gh pr create --repo "$GITHUB_REPOSITORY" --base v5 --head "$branch" \
-    --title "📖 docs: monthly outcomes $MONTH" \
-    --body "Owner-supplied, sanitized monthly aggregates. Review the cohort, observation time, cost denominator and provenance before merging. No raw evidence, stories or deployment identities are published. Collection completeness and publication approval are owner attestations, not independently verified by this workflow. CI and normal review gates must pass; this workflow does not merge."
-fi
+remote_branch=true
+ensure_pr

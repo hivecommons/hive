@@ -194,7 +194,8 @@ class MonthlyOutcomes(unittest.TestCase):
             git("push", "origin", "v5", cwd=seed)
             heads = []
             for attempt, prs in enumerate(("[]", '[{"number":1,"state":"OPEN"}]',
-                                           '[{"number":1,"state":"CLOSED"}]')):
+                                           '[{"number":1,"state":"CLOSED"}]',
+                                           '[{"number":1,"state":"MERGED"}]')):
                 checkout = root / f"checkout-{attempt}"
                 git("clone", "--branch", "v5", str(origin), str(checkout))
                 stage = checkout / ".monthly-outcomes"
@@ -222,6 +223,98 @@ class MonthlyOutcomes(unittest.TestCase):
                     self.assertIn("already exists", result.stdout)
             self.assertEqual(heads[0], heads[1], "identical input must not create another commit")
             self.assertEqual(calls.read_text().splitlines(), ["create"])
+
+    def test_publication_recovers_orphan_branch_but_not_empty_publication(self):
+        publisher = monthly.ROOT / ".github/scripts/monthly-outcomes-pr.sh"
+        branch = "automation/monthly-outcomes-2026-10"
+        for scenario in ("orphan", "no-branch", "no-source-diff"):
+            with self.subTest(scenario=scenario), \
+                    tempfile.TemporaryDirectory(dir=monthly.ROOT) as directory:
+                root = Path(directory)
+                origin, seed, binary = root / "origin.git", root / "seed", root / "bin"
+                calls, prs, failures = root / "calls", root / "prs", root / "failures"
+                binary.mkdir()
+                prs.write_text("[]")
+                failures.write_text("2")
+                gh = binary / "gh"
+                gh.write_text(
+                    "#!/usr/bin/env bash\nset -eu\n"
+                    "if [ \"$2\" = list ]; then cat \"$MOCK_PRS_FILE\"; exit; fi\n"
+                    "[ \"$2\" = create ]\n"
+                    "echo create >> \"$MOCK_CALLS\"\n"
+                    "remaining=$(cat \"$MOCK_FAILURES\")\n"
+                    "if [ \"$remaining\" -gt 0 ]; then\n"
+                    "  echo $((remaining - 1)) > \"$MOCK_FAILURES\"\n"
+                    "  echo 'transient PR creation failure' >&2; exit 1\n"
+                    "fi\n"
+                    "printf '[{\"number\":1,\"state\":\"OPEN\"}]' > \"$MOCK_PRS_FILE\"\n")
+                gh.chmod(0o755)
+                env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
+                           GH_TOKEN="not-a-real-credential", GITHUB_REPOSITORY="fixture/repo",
+                           MONTH="2026-10", MOCK_PRS_FILE=str(prs), MOCK_CALLS=str(calls),
+                           MOCK_FAILURES=str(failures))
+
+                def git(*args, cwd=root):
+                    return subprocess.check_output(["git", *args], cwd=cwd, text=True,
+                                                   stderr=subprocess.DEVNULL).strip()
+
+                def outputs(dest, revision):
+                    (dest / "assets").mkdir(parents=True, exist_ok=True)
+                    for suffix in ("json", "md"):
+                        (dest / f"outcomes-2026-10.{suffix}").write_text("approved aggregate")
+                    (dest / "outcomes-2026-10.provenance.json").write_text(json.dumps(
+                        {"input_sha256": "a" * 64, "renderer_revision": revision}))
+                    (dest / "assets/outcomes-2026-10-bars.svg").write_text("approved chart")
+
+                git("init", "--bare", str(origin))
+                git("init", "-b", "v5", str(seed))
+                git("config", "user.name", "Fixture", cwd=seed)
+                git("config", "user.email", "fixture@example.invalid", cwd=seed)
+                dest = seed / monthly.REPORT_DIR
+                (dest / "assets").mkdir(parents=True)
+                (dest / "assets/keep.svg").write_text("unrelated")
+                if scenario != "orphan":
+                    outputs(dest, "base")
+                git("add", ".", cwd=seed)
+                git("commit", "-s", "-m", "fixture", cwd=seed)
+                git("remote", "add", "origin", str(origin), cwd=seed)
+                git("push", "origin", "v5", cwd=seed)
+                if scenario == "no-source-diff":
+                    git("checkout", "-b", branch, cwd=seed)
+                    (seed / "unrelated.txt").write_text("not a monthly publication")
+                    git("add", ".", cwd=seed)
+                    git("commit", "-s", "-m", "unrelated change", cwd=seed)
+                    git("push", "origin", branch, cwd=seed)
+
+                heads, provenances = [], []
+                for attempt in range(4 if scenario == "orphan" else 1):
+                    checkout = root / f"checkout-{attempt}"
+                    git("clone", "--branch", "v5", str(origin), str(checkout))
+                    outputs(checkout / ".monthly-outcomes", str(attempt))
+                    result = subprocess.run(["bash", str(publisher)], cwd=checkout, env=env,
+                                            text=True, capture_output=True, check=False)
+                    expected_failure = scenario == "orphan" and attempt < 2
+                    if expected_failure:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("transient PR creation failure", result.stderr)
+                        self.assertEqual(prs.read_text(), "[]")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                    heads.append(git("rev-parse", "HEAD", cwd=checkout))
+                    provenances.append((checkout / monthly.REPORT_DIR /
+                                        "outcomes-2026-10.provenance.json").read_bytes())
+                    remote = git("ls-remote", "--heads", "origin", branch, cwd=checkout)
+                    if scenario == "no-branch":
+                        self.assertEqual(remote, "", "a no-op must not push an orphan branch")
+                    else:
+                        self.assertEqual(remote.split()[0], heads[0])
+                self.assertEqual(len(set(heads)), 1, "recovery must not make another commit")
+                self.assertEqual(len(set(provenances)), 1, "recovery must retain original provenance")
+                if scenario == "orphan":
+                    self.assertEqual(calls.read_text().splitlines(), ["create"] * 3)
+                    self.assertEqual(json.loads(prs.read_text()), [{"number": 1, "state": "OPEN"}])
+                else:
+                    self.assertFalse(calls.exists(), "no monthly source diff means no PR")
 
 
 if __name__ == "__main__":

@@ -255,6 +255,13 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		}
 		_ = json.NewEncoder(w).Encode(payload)
 		return true
+	case r.Method == http.MethodGet && path == "/repos/acme/widget/branches/v5":
+		base := a.compareBase
+		if base == "" {
+			base = "base1"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "v5", "commit": map[string]string{"sha": base}})
+		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/compare/"):
 		if a.failCompare {
 			w.WriteHeader(http.StatusInternalServerError)
