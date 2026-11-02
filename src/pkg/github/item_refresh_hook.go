@@ -11,9 +11,9 @@ import (
 // ItemRefreshHook is told, with the configured repo name and the item number,
 // that the hive itself just changed an issue or pull request on GitHub in a
 // way the cached enumeration should reflect at once. The dashboard registers
-// one so a self-initiated unblock re-reads the row the same way an inbound
-// label webhook does, instead of showing the stale `blocked` label until the
-// next full enumeration pass.
+// one so a self-initiated unblock or maintainer decision re-reads the row the
+// same way an inbound label webhook does, instead of showing stale parking
+// labels until the next full enumeration pass.
 type ItemRefreshHook func(repo string, number int, isPR bool)
 
 var (

@@ -30,7 +30,7 @@ jobs:
       - name: Install pinned gh-aw compiler
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh extension install github/gh-aw --pin v0.89.21
+        run: gh extension install github/gh-aw --pin v1.0.1
       - name: Compile sample without engine secrets
         env:
           GH_TOKEN: ${{ github.token }}
