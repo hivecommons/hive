@@ -402,11 +402,20 @@ test('Cline routes both relay modes through the bounded canonical adapter withou
   try {
     assert.strictEqual(relay.CONTRIBUTOR_MODE, relay.MODE_HEADLESS);
     assert.strictEqual(relay.headlessSupportsBackend(), true);
+    assert.strictEqual(relay.effectiveProvider(), 'openrouter');
     const built = relay.buildHeadlessArgv('private prompt with quotes and $shell');
     assert.strictEqual(built.bin, 'crux');
     assert.deepStrictEqual(built.args, ['cline-turn', '--model', 'openrouter/anthropic/test', '--thinking', 'high']);
     assert.strictEqual(built.input, 'private prompt with quotes and $shell');
     assert(!built.args.some(a => a.includes('private prompt')));
+    const task = { task_id: 'cline-selection', task_gen: 1, kind: 'issue', repo: 'x/y', number: 1, title: 'Cline' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'Cline produced no completion receipt');
+    assert.strictEqual(complete.provider, 'openrouter');
+    assert.strictEqual(complete.model, 'openrouter/anthropic/test');
+    assert.strictEqual(complete.cli_backend, 'cline');
   } finally { teardown(relay); }
 });
 

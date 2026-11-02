@@ -3233,6 +3233,10 @@ function modelFlagFor() {
 }
 
 function effectiveProvider() {
+  if (BACKEND === 'cline') {
+    const slash = MODEL.indexOf('/');
+    return slash > 0 && slash < MODEL.length - 1 ? MODEL.slice(0, slash) : '';
+  }
   return BACKEND === 'pi' && PI_SELECTION.valid ? PI_SELECTION.provider : '';
 }
 
@@ -8798,7 +8802,7 @@ function handleMessage(data, hub) {
         seq: nextSeq(),
         registration_token: hub.regToken,
         cli_backend: BACKEND,
-        // Pi derives this evidence from the canonical provider/model input. It
+        // Pi/Cline derive this evidence from the canonical provider/model input. It
         // remains advisory and is never used by the hub to route work.
         provider: effectiveProvider() || undefined,
         // #4117: AGENT_MODEL if set, else the model detected from the CLI's

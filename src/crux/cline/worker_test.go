@@ -77,6 +77,9 @@ func TestSelectedCredentials(t *testing.T) {
 	}
 	for _, source := range []string{"broken", `{"version":2}`, `{"version":1,"providers":{}}`,
 		`{"version":1,"providers":{"openrouter":{"tokenSource":"oauth"}}}`,
+		`{"version":1,"providers":{"openrouter":{"settings":{},"tokenSource":"oauth"}}}`,
+		`{"version":1,"providers":{"openrouter":null}}`,
+		`{"version":1,"providers":{"openrouter":{"settings":[]}}}`,
 		`{"version":1,"providers":{"openrouter":[]}}`} {
 		credentials(t, root, source)
 		if _, err := selectedCredentials(root, "openrouter"); err == nil {

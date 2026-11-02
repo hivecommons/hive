@@ -286,9 +286,10 @@ func selectedCredentials(configDir, provider string) ([]byte, error) {
 		return nil, fmt.Errorf("Cline provider %q is not configured; run cline auth for that provider", provider)
 	}
 	var auth struct {
-		TokenSource string `json:"tokenSource"`
+		TokenSource string                     `json:"tokenSource"`
+		Settings    map[string]json.RawMessage `json:"settings"`
 	}
-	if err := json.Unmarshal(entry, &auth); err != nil {
+	if err := json.Unmarshal(entry, &auth); err != nil || auth.Settings == nil {
 		return nil, errors.New("invalid Cline provider config")
 	}
 	if auth.TokenSource == "oauth" {
