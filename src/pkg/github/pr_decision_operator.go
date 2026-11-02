@@ -268,14 +268,6 @@ func ParsePRApprovalCommandComment(body string) (command, actor, head string, ok
 	return command, actor, head, true
 }
 
-// openPullRequestHeadLabels returns the PR's head SHA, whether the hive
-// opened it, and its labels as read in the same fetch, or
-// ErrPullRequestClosed / a not-found error.
-func (c *Client) openPullRequestHeadLabels(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, labels []string, err error) {
-	t, err := c.openPullRequestDecisionTarget(ctx, owner, name, number)
-	return t.head, t.selfAuthored, t.labels, err
-}
-
 // prDecisionTarget is what one open-PR read tells a dashboard decision:
 // the head, whether the hive opened the PR, and — when it did not —
 // whether a contributor's hive did (author/clanker), so a direction has a
