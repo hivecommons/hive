@@ -230,7 +230,10 @@ does **not** render tokens, secrets, settings, webhooks, chat, or the
 operator's agent terminals; `?kiosk=1` additionally hides the sidebar, topbar,
 avatar/settings menus, notices, the Welcome and NPS dialogs, and every other
 dashboard section, and renders dark regardless of any stored theme
-(append `&theme=light` for a light stream). Do not point the streamer at a hive tracking private
+(append `&theme=light` for a light stream). Because the sidebar is hidden, the
+monitor's header carries its own live item count pill (the sidebar badge's twin,
+with the same ↑/↓ delta cue), enlarged in kiosk, pop-out, display and full-screen
+views so it reads at 1920×1080. Do not point the streamer at a hive tracking private
 repositories without reviewing what the tracker would show.
 
 The main `twitch.tv/hivecommons` stream never shows Matrix; it remains the

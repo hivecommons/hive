@@ -5536,15 +5536,20 @@
     .oc-nav-count--waiting:not([data-zero]) + .oc-nav-count { margin-left: var(--sp-1); }
     .oc-nav-count--waiting:not([data-zero]) { --component-status: var(--status-attention); background: color-mix(in srgb, var(--component-status) 16%, transparent); border-color: color-mix(in srgb, var(--component-status) 50%, transparent); color: var(--component-status); }
     .oc-nav-count--waiting[data-zero] { display: none; }
+    /* The activity monitor's own count pill (hivecommons/hive#16243): the
+       sidebar badge's twin inside the section title, so every chrome-less
+       view still shows the count. Same .badge-count recipe, title-cluster
+       letter case, and a tooltip rather than a nav row. */
+    .ham-header-count { flex: none; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
     /* A short, out-of-flow net delta on explicitly wired navigation counts.
        Keep the zero waiting badge visible just long enough to show its drop. */
-    .oc-nav-count[data-count-delta] { position: relative; }
+    .oc-nav-count[data-count-delta], .ham-header-count[data-count-delta] { position: relative; }
     .oc-nav-item:has(> .oc-nav-count[data-count-delta]) { overflow: visible; z-index: 1; }
     #activity-monitor-waiting-badge[data-zero][data-count-delta] {
       display: inline-flex; position: absolute; right: 3rem;
       visibility: hidden; padding: 0; border: 0;
     }
-    .oc-nav-count[data-count-delta]::after {
+    .oc-nav-count[data-count-delta]::after, .ham-header-count[data-count-delta]::after {
       content: attr(data-count-delta); position: absolute; bottom: calc(100% + 2px); right: 0;
       visibility: visible; pointer-events: none; z-index: 1; padding: var(--sp-0) var(--sp-2); border-radius: var(--r-pill);
       background: var(--surface); color: var(--brand); border: 1px solid var(--brand);
@@ -5554,6 +5559,10 @@
     #knowledge-sidebar-badge[data-count-delta]::after {
       bottom: auto; top: 50%; right: calc(100% + var(--sp-1)); translate: 0 -50%;
     }
+    /* The header pill's cue rides inside the pill ("57 ↑ +3") rather than
+       floating above it: the card edge is right there, and the number must
+       still read from across a room on a wall display. */
+    .ham-header-count[data-count-delta]::after { position: static; margin-left: var(--sp-2); white-space: nowrap; }
     [data-count-direction="up"] { --nav-count-start: 3px; }
     [data-count-direction="down"] { --nav-count-start: -3px; }
     [data-count-phase="a"]::after { animation: nav-count-a 220ms ease-out; }
@@ -6902,6 +6911,11 @@
     body.ham-chromeless .ham-sticky { top: 0; }
     body.ham-chromeless .ham-cols { top: var(--ham-sticky-bar-h); }
 
+    /* The title's count pill is the only count a wall can see: at 1920x1080
+       it reads from across a room. Kiosk sets no ham-chromeless, so it is
+       named too. 1.375rem is 22px at the default root size. */
+    body.kiosk-mode .ham-header-count, body.ham-chromeless .ham-header-count { font-size: var(--fs-2xl); min-height: 1.6em; padding: 0 var(--sp-3); }
+    body.kiosk-mode .ham-header-count[data-count-delta]::after, body.ham-chromeless .ham-header-count[data-count-delta]::after { font-size: var(--fs-lg); }
     /* Header tools: ⧉ pop out, ⛶ full screen and 📺 display sit beside the gear and
        share its chip styling; the return link is a pop-out-only text pill. */
     .ham-header-tool { width: auto; min-width: 15px; padding: 0 var(--sp-1); font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; }
@@ -9527,6 +9541,11 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-display-btn" id="activity-monitor-display" data-action="toggleStageTrackerDisplay" data-stop="1" aria-pressed="false" title="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)" aria-label="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)">📺</button>'
       + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
+    // The monitor's own item count (hivecommons/hive#16243): the sidebar
+    // badge's twin, written by the same navCountBind call in
+    // renderStageTracker so kiosk, pop-out, display and full screen — which
+    // hide the sidebar — still show the count and its ↑/↓ cue.
+    const STAGE_TRACKER_HEADER_COUNT_HTML = '<span id="activity-monitor-header-badge" class="badge-count ham-header-count" data-zero title="Open items in the hive activity monitor" aria-label="0 items">0</span>';
     // Display controls (hivecommons/hive#15929): the overlay
     // stageTrackerDisplayControlsInit() appends to the body in display mode
     // only. Full screen and Keep awake are explicit clicks; their disabled /
@@ -9567,7 +9586,7 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
-      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML, countHtml: STAGE_TRACKER_HEADER_COUNT_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -9651,7 +9670,9 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
     function sectionCardHeader(opts) {
       opts = opts || {};
       const id = opts.id || '';
-      const title = opts.titleHtml || esc(opts.title || id || 'Section');
+      // countHtml: a live count pill that reads as part of the title
+      // ("Hive activity monitor · 57"), before the help mark and the gear.
+      const title = (opts.titleHtml || esc(opts.title || id || 'Section')) + (opts.countHtml || '');
       const bodyId = opts.bodyId || (id + '-body');
       const action = opts.action || 'toggleSection';
       const keyAction = opts.keyAction || 'sectionHeaderKey';
@@ -9709,7 +9730,7 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
       if (!body) return;
       const bodyId = sectionId + '-body';
       const template = document.createElement('template');
-      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml, settingsHtml: cfg.settingsHtml }, '');
+      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml, settingsHtml: cfg.settingsHtml, countHtml: cfg.countHtml }, '');
       const card = template.content.firstElementChild;
       const newHeader = card.querySelector('.dash-card-header');
       const badges = newHeader.querySelector('.dash-card-badges');
@@ -20276,8 +20297,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       state.timer = setTimeout(state.clear, NAV_COUNT_CUE_MS);
     }
 
+    // One count, several pills. The tracker's item count is shown in the
+    // sidebar and again in the monitor's own header (hivecommons/hive#16243)
+    // so the chrome-less views — kiosk, pop-out, display, full screen —
+    // which hide the sidebar still show it. Every bound element receives
+    // the same text, tooltip, zero marker and delta cue from one call; a
+    // target that is not in the DOM is skipped, the others still update.
+    function navCountBind(ids, count, label, live = true) {
+      const known = Number.isSafeInteger(count) && count >= 0;
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (known) {
+          el.textContent = String(count);
+          el.title = label;
+          if (count) el.removeAttribute('data-zero'); else el.setAttribute('data-zero', '');
+        }
+        navCountDelta(el, count, label, live);
+      }
+    }
+    const STAGE_TRACKER_COUNT_BADGE_IDS = Object.freeze(['activity-monitor-sidebar-badge', 'activity-monitor-header-badge']);
+
     function stageTrackerSidebarCountsUnknown() {
-      for (const id of ['activity-monitor-sidebar-badge', 'activity-monitor-waiting-badge']) {
+      for (const id of STAGE_TRACKER_COUNT_BADGE_IDS.concat('activity-monitor-waiting-badge')) {
         navCountDelta(document.getElementById(id), null);
       }
     }
@@ -20793,13 +20835,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // disagree: the pill is the default view's row count (owner: rows,
       // not items — a covering PR shares its issue's row); needs-attention
       // is the warn-coloured header suffix and the pill's tooltip, counted
-      // over every item regardless of filter.
+      // over every item regardless of filter. The same count lands on the
+      // monitor header's own pill, the one chrome-less views can see.
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
       const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll, stageTrackerFoldedCount(d.items, ctx));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
-      const badge = document.getElementById('activity-monitor-sidebar-badge');
-      if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
-      navCountDelta(badge, counts.badge, counts.badgeTitle, !!data || countRefresh);
+      navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));

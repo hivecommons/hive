@@ -91,7 +91,7 @@ function load() {
   }
   vm.runInContext(source('tracker-filter'), ctx);
   vm.runInContext(`const STAGE_TRACKER_WAITING_TOOLTIP_MAX = 5; const STAGE_TRACKER_WAIT_KIND_WORDS = {};`, ctx);
-  return { ctx, document, timers, element, badge: id => elements.get(id),
+  return { ctx, document, timers, element, badge: id => elements.get(id), remove: id => elements.delete(id),
     tick(ms = 1400) {
       now += ms;
       for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.cb(); }
@@ -171,6 +171,67 @@ test('real tracker renderer: new issues, PR removal, batching, filters, invalid 
   render([]);
   assert.equal(badge.textContent, '0');
   assert.equal(delta(badge), undefined);
+});
+
+const HEADER = 'activity-monitor-header-badge';
+const mirror = (a, b) => {
+  assert.equal(b.textContent, a.textContent);
+  assert.equal(b.title, a.title);
+  assert.equal(b.attrs['data-zero'], a.attrs['data-zero']);
+  for (const k of ['data-count-delta', 'data-count-direction', 'data-count-phase', 'aria-label']) assert.equal(b.attrs[k], a.attrs[k], k);
+};
+
+test('header pill is the sidebar badge\'s twin: one render writes count, tooltip, zero marker and delta to both', () => {
+  const api = load(), sidebar = api.badge(IDS[0]), header = api.element(HEADER);
+  const render = items => api.ctx.renderStageTracker({ items });
+  render([item(1), item(2, 'pr')]);
+  assert.equal(header.textContent, '2');
+  assert.equal(header.attrs['data-zero'], undefined);
+  mirror(sidebar, header);
+  render([item(1), item(2, 'pr'), item(3), item(4)]);
+  assert.equal(delta(header), '↑ +2');
+  mirror(sidebar, header);
+  render([item(1)]);
+  assert.equal(delta(header), '↓ -3');
+  mirror(sidebar, header);
+  api.tick();
+  assert.equal(delta(header), undefined);
+  assert.equal(api.timers.size, 0);
+  render([]);
+  assert.equal(header.textContent, '0');
+  assert.equal(header.attrs['data-zero'], '');
+  assert.equal(delta(header), '↓ -1');
+  mirror(sidebar, header);
+  api.ctx.renderStageTracker();
+  mirror(sidebar, header);
+  assert.equal(vm.runInContext('STAGE_TRACKER_COUNT_BADGE_IDS.includes(' + JSON.stringify(HEADER) + ')', api.ctx), true);
+});
+
+test('kiosk: the sidebar badge is absent and the header pill alone still counts and animates', () => {
+  const api = load(), header = api.element(HEADER);
+  api.remove(IDS[0]);
+  assert.equal(api.document.getElementById(IDS[0]), null);
+  const render = items => api.ctx.renderStageTracker({ items });
+  render([item(1)]);
+  assert.equal(header.textContent, '1');
+  assert.equal(delta(header), undefined);
+  render([item(1), item(2), item(3)]);
+  assert.equal(header.textContent, '3');
+  assert.equal(delta(header), '↑ +2');
+  assert.match(header.attrs['aria-label'], /increased by 2/);
+  api.tick();
+  assert.equal(delta(header), undefined);
+  api.ctx.stageTrackerSidebarCountsUnknown();
+  render([item(1), item(2), item(3), item(4), item(5)]);
+  assert.equal(header.textContent, '5');
+  assert.equal(delta(header), undefined, 'unknown -> known seeds a new baseline on the header pill too');
+  // The pill ships in the card header for every mode and is styled off
+  // the shared delta rules, not a second copy of them.
+  const sections = source('sections');
+  assert.match(sections, /countHtml: STAGE_TRACKER_HEADER_COUNT_HTML/);
+  assert.match(sections, /<span id="activity-monitor-header-badge" class="badge-count ham-header-count" data-zero/);
+  const css = fs.readFileSync(path.join(__dirname, 'static-src/css/design-system.css'), 'utf8');
+  assert.match(css, /\.oc-nav-count\[data-count-delta\]::after, \.ham-header-count\[data-count-delta\]::after \{/);
 });
 
 test('real waiting badge writer: independent count, explicit zero and invalid header', () => {
