@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
@@ -35,6 +36,10 @@ func TestCountOnlineContributors(t *testing.T) {
 			"Karibhou": now.Add(-window),
 		}, want: 1},
 		{name: "case-insensitive login match", profiles: profiles, seen: map[string]time.Time{
+			"karibhou": now.Add(-time.Minute),
+		}, want: 1},
+		{name: "freshest case-variant session wins", profiles: profiles, seen: map[string]time.Time{
+			"Karibhou": now.Add(-time.Hour),
 			"karibhou": now.Add(-time.Minute),
 		}, want: 1},
 		{name: "mixed", profiles: profiles, seen: map[string]time.Time{
@@ -78,6 +83,29 @@ func TestBuildContributorPoolStatusOnline(t *testing.T) {
 	if !reflect.DeepEqual(got.OnlineIDs, []string{"id-fresh"}) {
 		t.Fatalf("online IDs = %v, want only id-fresh", got.OnlineIDs)
 	}
+	if !reflect.DeepEqual(got.OnlineLogins, []string{"fresh"}) {
+		t.Fatalf("online logins = %v, want only fresh", got.OnlineLogins)
+	}
+
+	w := httptest.NewRecorder()
+	s.handleContributorsList(w, httptest.NewRequest("GET", "/api/contributors", nil))
+	var roster struct {
+		Contributors []ContributorProfile  `json:"contributors"`
+		Pool         ContributorPoolStatus `json:"contributorPool"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &roster); err != nil {
+		t.Fatalf("decode roster: %v\n%s", err, w.Body.String())
+	}
+	var online int
+	for _, profile := range roster.Contributors {
+		if profile.Online {
+			online++
+		}
+	}
+	if online != 1 || roster.Pool.Online != online || roster.Pool.Registered != len(roster.Contributors) ||
+		!reflect.DeepEqual(roster.Pool.OnlineLogins, []string{"fresh"}) || roster.Pool.PresenceWindow != got.PresenceWindow {
+		t.Fatalf("roster and pool must share presence: %+v", roster)
+	}
 
 	// A second session for the same contributor does not add another row.
 	hub.connections["c3"] = &ContributorConnection{connID: "c3", profile: &ContributorProfile{ContributorID: "id-fresh", GitHubUsername: "fresh"}, lastPong: time.Now()}
@@ -105,6 +133,41 @@ func TestBuildContributorPoolStatusOnline(t *testing.T) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(data, &payload); err != nil || string(payload["online_ids"]) != "[]" {
 		t.Fatalf("empty pool must encode online_ids: [], got %s (%v)", data, err)
+	}
+	if string(payload["online_logins"]) != "[]" {
+		t.Fatalf("empty pool must encode online_logins: [], got %s", data)
+	}
+}
+
+func TestContributorPoolOnlineLogins(t *testing.T) {
+	profiles := []ContributorProfile{
+		{ContributorID: "relay-z", GitHubUsername: "Zed", Online: true},
+		{ContributorID: "relay-a", GitHubUsername: " Amy ", Online: true},
+		{ContributorID: "relay-a2", GitHubUsername: "AMY", Online: true},
+		{ContributorID: "relay-offline", GitHubUsername: "offline"},
+	}
+	pool := (&Server{}).contributorPoolStatus(profiles, 15*time.Minute)
+	if pool.Online != 3 || pool.Registered != 4 ||
+		!reflect.DeepEqual(pool.OnlineIDs, []string{"relay-a", "relay-a2", "relay-z"}) ||
+		!reflect.DeepEqual(pool.OnlineLogins, []string{"amy", "zed"}) {
+		t.Fatalf("pool must count online rows but list each person once: %+v", pool)
+	}
+}
+
+func TestContributorsListEmptyRoster(t *testing.T) {
+	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
+	w := httptest.NewRecorder()
+	(&Server{}).handleContributorsList(w, httptest.NewRequest("GET", "/api/contributors", nil))
+	var body struct {
+		Contributors json.RawMessage       `json:"contributors"`
+		Pool         ContributorPoolStatus `json:"contributorPool"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body.Contributors) != "[]" || body.Pool.Registered != 0 || body.Pool.Online != 0 ||
+		body.Pool.OnlineLogins == nil {
+		t.Fatalf("empty roster must serialize as an array with known zero counts: %s", w.Body.String())
 	}
 }
 

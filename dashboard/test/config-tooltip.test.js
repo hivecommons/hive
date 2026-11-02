@@ -75,6 +75,7 @@ class FakeElement {
   get textContent() { return this._textContent || ''; }
   set textContent(value) {
     this._textContent = String(value);
+    this.innerHTML = this._textContent.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     for (const child of this.children) child.parentNode = null;
     this.children = [];
   }
@@ -366,37 +367,41 @@ test('Contributors tooltip targets the count pill and supports focus without cha
   const pill = new FakeElement('span', 'badge-count oc-nav-count contributor-online-trigger');
   pill.id = 'contributors-sidebar-badge';
   h.root.appendChild(pill);
-  h.api.updateContributorBadge({ online: 2, registered: 4, presence_window: '15m', online_ids: ['clanker-a', 'clanker-b'] });
+  h.api.updateContributorBadge({ online: 2, registered: 4, presence_window: '15m', online_ids: ['clanker-a', 'clanker-b'], online_logins: ['amy', 'bob'] });
   assert.equal(pill.textContent, '2/4');
   assert.equal(pill.getAttribute('title'), null, 'no duplicate browser-native title');
   assert.match(pill.getAttribute('aria-label'), /2 online · 4 registered/);
   h.fire('document', 'focusin', pill);
   assert.equal(h.isOpen(), true);
-  assert.match(h.portal().innerHTML, /<li>clanker-a<\/li><li>clanker-b<\/li>/);
+  assert.match(h.portal().innerHTML, /<li>@amy<\/li><li>@bob<\/li>/);
+  assert.doesNotMatch(h.portal().innerHTML, /clanker-a|clanker-b|ClankeR/);
 
-  h.api.updateContributorBadge({ online: 1, registered: 4, online_ids: ['clanker-reconnected'] });
+  h.api.updateContributorBadge({ online: 1, registered: 4, online_ids: ['clanker-reconnected'], online_logins: ['zed'] });
   assert.equal(pill.textContent, '1/4');
-  assert.match(h.portal().innerHTML, /<li>clanker-reconnected<\/li>/);
-  assert.doesNotMatch(h.portal().innerHTML, /clanker-a|clanker-b/);
+  assert.match(h.portal().innerHTML, /<li>@zed<\/li>/);
+  assert.doesNotMatch(h.portal().innerHTML, /@amy|@bob|clanker-/);
 
-  h.api.updateContributorBadge({ online: 0, registered: 4, online_ids: [] });
+  h.api.updateContributorBadge({ online: 0, registered: 4, online_ids: [], online_logins: [] });
   assert.equal(pill.textContent, '0/4');
-  assert.match(h.portal().innerHTML, /No ClankeRs online/);
+  assert.match(h.portal().innerHTML, /No contributors online/);
+  h.api.updateContributorBadge(null);
+  assert.equal(pill.textContent, '0/4', 'failed refresh retains the last loaded count');
+  assert.match(h.portal().innerHTML, /presence unavailable/);
   h.api.hideConfigTooltip();
   h.fire('document', 'mouseover', pill);
   h.advance(h.api.openDelay);
   assert.equal(h.isOpen(), true, 'same pill also opens on hover');
 });
 
-test('Contributors tooltip escapes IDs and distinguishes unavailable IDs from no online ClankeRs', () => {
+test('Contributors tooltip escapes usernames and distinguishes unavailable names from nobody online', () => {
   const context = {};
   vm.runInNewContext(['esc', 'contributorsOnlineTitle', 'contributorsOnlineTooltip'].map(extractFunction).join('\n'), context);
-  const html = context.contributorsOnlineTooltip({ online: 1, registered: 2, online_ids: ['<img src=x onerror="bad">&'] });
-  assert.match(html, /<li>&lt;img src=x onerror=&quot;bad&quot;&gt;&amp;<\/li>/);
+  const html = context.contributorsOnlineTooltip({ online: 1, registered: 2, online_logins: ['<img src=x onerror="bad">&'] });
+  assert.match(html, /<li>@&lt;img src=x onerror=&quot;bad&quot;&gt;&amp;<\/li>/);
   assert.doesNotMatch(html, /<img/);
-  for (const pool of [{ online: 1, registered: 2 }, { online: 1, online_ids: [] }, { online: 1, online_ids: [''] }]) {
+  for (const pool of [{ online: 1, registered: 2 }, { online: 1, online_logins: [] }, { online: 1, online_logins: [''] }, { online: 0, online_logins: ['amy'] }]) {
     const tip = context.contributorsOnlineTooltip(pool);
-    assert.match(tip, /Online ClankeR IDs unavailable/);
-    assert.doesNotMatch(tip, /No ClankeRs online/);
+    assert.match(tip, /Online contributor names unavailable/);
+    assert.doesNotMatch(tip, /No contributors online/);
   }
 });

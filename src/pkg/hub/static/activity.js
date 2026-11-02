@@ -83,6 +83,17 @@ function activityDisplayFlags(href) {
   return { kiosk: kiosk, display: display && !kiosk };
 }
 
+// Whether the kiosk call-to-action badge (#16236) shows: kiosk=1 and not
+// cta=off, the same rule as the spoke's boot.js hiveKioskCTAOn.
+function activityKioskCTAOn(href) {
+  try {
+    const p = new URL(href).searchParams;
+    return p.get('kiosk') === '1' && p.get('cta') !== 'off';
+  } catch (e) {
+    return false;
+  }
+}
+
 // The { filter, group } a URL's am.* state describes, or the defaults.
 function activityUrlView(href) {
   return stageTrackerFilterFromUrl(href) || { filter: stageTrackerDefaultFilter(), group: STAGE_TRACKER_GROUP_DEFAULT };
@@ -579,6 +590,7 @@ function activityPlaylistTick() {
 
 function activityDisplayBoot(flags) {
   if (flags.kiosk) document.body.classList.add('kiosk-mode');
+  if (activityKioskCTAOn(window.location.href)) document.body.classList.add('kiosk-cta-on');
   if (!flags.display) return;
   document.body.classList.add('display-mode');
   document.body.dataset.displayView = ACTIVITY_DISPLAY_VIEW;

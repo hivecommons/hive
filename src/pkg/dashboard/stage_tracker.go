@@ -431,6 +431,10 @@ type StageTrackerItem struct {
 	SentinelAlert    bool   `json:"sentinel_alert,omitempty"`
 	SentinelFindings int    `json:"sentinel_findings,omitempty"`
 	SentinelReason   string `json:"sentinel_reason,omitempty"`
+	// SentinelDetails names each finding's rule and flagged paths (bounded
+	// per finding) so the decision dialog can say which files, not just how
+	// many.
+	SentinelDetails []SentinelDetail `json:"sentinel_details,omitempty"`
 	// SentinelNotice marks verified informational findings without the live
 	// blocking label. The notice remains visible but is not a decision gate.
 	SentinelNotice bool `json:"sentinel_notice,omitempty"`
@@ -696,9 +700,10 @@ type StageTrackerLinkedPR struct {
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
 	// SentinelAlert / SentinelReason mirror the nested PR's own row fields
 	// so a sub-row under an issue names the alert too.
-	SentinelAlert  bool   `json:"sentinel_alert,omitempty"`
-	SentinelReason string `json:"sentinel_reason,omitempty"`
-	SentinelNotice bool   `json:"sentinel_notice,omitempty"`
+	SentinelAlert   bool             `json:"sentinel_alert,omitempty"`
+	SentinelReason  string           `json:"sentinel_reason,omitempty"`
+	SentinelDetails []SentinelDetail `json:"sentinel_details,omitempty"`
+	SentinelNotice  bool             `json:"sentinel_notice,omitempty"`
 	// HumanApprover / ManualMerge / HumanMergeReason(Text) mirror the
 	// nested PR's 090 fields so a sub-row's gate cell says why a person
 	// merges it, as the top-level row would (hivecommons/hive#14658).
@@ -1106,7 +1111,7 @@ const stageTrackerSentinelMoreFormat = " (+%d more)"
 // notice-only alert asked for, so it clears the bundle-promoted alert (the
 // label, while still on, still stands); the reason then names who
 // acknowledged it.
-func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, repo string, number int, head string, labels []string) (alert bool, findings int, reason string) {
+func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, repo string, number int, head string, labels []string) (alert bool, findings int, reason string, details []SentinelDetail) {
 	label := s.sentinelLabel()
 	for _, l := range labels {
 		if strings.EqualFold(strings.TrimSpace(l), label) {
@@ -1115,12 +1120,14 @@ func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, r
 		}
 	}
 	if head == "" || verifier == nil {
-		return alert, 0, ""
+		return alert, 0, "", s.sentinelDetailsFor(repo, number, head)
 	}
 	b, err := github.LoadVerifiedReviewEvidence(github.ReviewEvidencePath("", repo, number, head), *verifier)
 	if err != nil || b == nil || len(b.Sentinel) == 0 {
-		return alert, 0, ""
+		// No bundle: the sweep's own ring still knows the paths.
+		return alert, 0, "", s.sentinelDetailsFor(repo, number, head)
 	}
+	details = sentinelDetailsFromEvidence(b.Sentinel)
 	findings = len(b.Sentinel)
 	reason = strings.TrimSpace(b.Sentinel[0].Summary)
 	if reason == "" {
@@ -1132,7 +1139,7 @@ func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, r
 	if by := b.SentinelAcknowledgedBy(); by != "" {
 		// The label, while still on, is the sweep's live block; only the
 		// bundle-promoted alert is answered by the acknowledgment.
-		return alert, findings, reason + stageTrackerSentinelAckSuffix + by
+		return alert, findings, reason + stageTrackerSentinelAckSuffix + by, details
 	}
 	for _, f := range b.Sentinel {
 		if f.Notice {
@@ -1140,7 +1147,7 @@ func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, r
 			break
 		}
 	}
-	return alert, findings, reason
+	return alert, findings, reason, details
 }
 
 // stageTrackerSentinelAckSuffix precedes the login of the person whose

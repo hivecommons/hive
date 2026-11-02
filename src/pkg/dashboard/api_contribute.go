@@ -83,9 +83,8 @@ var inviteTrustTiers = map[string]bool{"trusted": true, "merger": true, "advisor
 // the inviter username. An empty string means the token is invalid, tampered,
 // or expired — the caller must treat that as "no attribution" (a plain
 // self-registration), never as an error.
-// ContributorPoolStatus feeds the sidebar's Contributors "online/total"
-// pill and the section header. Online uses the SAME presence predicate the
-// stage tracker's "waiting on @x (offline 13m)" reads
+// ContributorPoolStatus summarizes the Contributors roster. Online uses the
+// same presence predicate the stage tracker's waiting-on captions read
 // (ContributeWSHub.Presence): a registered contributor whose relay
 // heartbeat landed within governor.labels.stage.presence_window (15m by
 // default). Active is the older "has a live socket" count kept for callers
@@ -96,6 +95,8 @@ type ContributorPoolStatus struct {
 	Registered int `json:"registered"`
 	// OnlineIDs contains the ClankeR contributor IDs counted by Online.
 	OnlineIDs []string `json:"online_ids"`
+	// OnlineLogins names the people whose contributor relays are online.
+	OnlineLogins []string `json:"online_logins"`
 	// PresenceWindow is the window Online was judged against ("15m").
 	PresenceWindow string         `json:"presence_window"`
 	ByRole         map[string]int `json:"by_role,omitempty"`
@@ -107,16 +108,42 @@ type ContributorPoolStatus struct {
 
 func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 	profiles := listContributorProfiles()
+	var heartbeats map[string]time.Time
+	window := config.DefaultPresenceWindow
+	if s.contributeHub != nil {
+		heartbeats = s.contributeHub.LastHeartbeats()
+		window = s.contributeHub.presenceWindow()
+	}
+	now := time.Now()
+	for i := range profiles {
+		profiles[i].Online = countOnlineContributors(profiles[i:i+1], heartbeats, window, now) == 1
+	}
+	return s.contributorPoolStatus(profiles, window)
+}
+
+func (s *Server) contributorPoolStatus(profiles []ContributorProfile, window time.Duration) *ContributorPoolStatus {
 	active := 0
 	onlineIDs := []string{}
+	onlineLogins := []string{}
+	seenLogins := make(map[string]bool)
 	var byRole map[string]int
-	window := config.DefaultPresenceWindow
 	if s.contributeHub != nil {
 		active = s.contributeHub.ActiveCount()
 		byRole = s.contributeHub.RoleBreakdown()
-		window = s.contributeHub.presenceWindow()
-		onlineIDs = onlineContributorIDs(profiles, s.contributeHub.LastHeartbeats(), window, time.Now())
 	}
+	for _, p := range profiles {
+		if !p.Online {
+			continue
+		}
+		onlineIDs = append(onlineIDs, p.ContributorID)
+		login := strings.ToLower(strings.TrimSpace(p.GitHubUsername))
+		if login != "" && !seenLogins[login] {
+			seenLogins[login] = true
+			onlineLogins = append(onlineLogins, login)
+		}
+	}
+	sort.Strings(onlineIDs)
+	sort.Strings(onlineLogins)
 	abandoned, abandonedByLogin := contributorAbandonedCounts(profiles)
 	return &ContributorPoolStatus{
 		Abandoned:        abandoned,
@@ -124,6 +151,7 @@ func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 		Active:           active,
 		Online:           len(onlineIDs),
 		OnlineIDs:        onlineIDs,
+		OnlineLogins:     onlineLogins,
 		Registered:       len(profiles),
 		PresenceWindow:   stageTrackerShortDuration(window),
 		ByRole:           byRole,
@@ -163,7 +191,10 @@ func onlineContributorIDs(profiles []ContributorProfile, lastSeen map[string]tim
 	}
 	byUser := make(map[string]time.Time, len(lastSeen))
 	for user, t := range lastSeen {
-		byUser[strings.ToLower(strings.TrimSpace(user))] = t
+		login := strings.ToLower(strings.TrimSpace(user))
+		if t.After(byUser[login]) {
+			byUser[login] = t
+		}
 	}
 	for _, p := range profiles {
 		t, ok := byUser[strings.ToLower(strings.TrimSpace(p.GitHubUsername))]

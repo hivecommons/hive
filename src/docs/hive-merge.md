@@ -417,17 +417,23 @@ existing mutation-reconciliation TTL it can retry only with an authoritative,
 still-identical head and the API's expected-head guard. Accepted updates must
 complete their normal current-head gates; no approval is transferred.
 Release occurs on merge, closed/missing/retargeted/draft/conflicting/held heads,
-failed checks, rejected review, or lost admission. Expected pending CI/review
-keeps ownership, bounded by the existing review-pending dwell (its default when
-stall detection is disabled), so a genuinely hung owner yields to successors.
-Waiting tickets are removed when their head changes or stops qualifying.
+failed checks, rejected review, or lost admission. An unresolved refresh or active
+repair keeps exclusive ownership. A completed refresh whose new head has known
+pending CI/review can yield to an independently ready successor under the
+[readiness-first preparation gates](../../docs/readiness-preparation.md); the
+former owner retains its ticket, original priority and attempt deduplication.
+Pending ownership remains bounded by the existing review-pending dwell (its
+default when stall detection is disabled), so a genuinely hung owner yields to
+successors.
+Ordinary waiting tickets are removed when their head changes or stops qualifying;
+yielded owners retain their tickets through pending CI/review observations.
 Admission provenance prevents a different lane's non-admission from revoking
 the owning lane's reservation or FIFO ticket. An old waiting ticket reserves
 order only: its head must qualify afresh in its lane before becoming owner.
 
 Audit logs use `automerge base preparation selected`, `refresh claimed`,
-`waiting` and `released`, with repository, base, PR, head/base SHA where relevant,
-and release/skip reason. `automerge update-branch` and the sweep's
+`waiting`, `released` and `completed owner yielded`, with repository, base, PR,
+head/base SHA where relevant, and release/skip reason. `automerge update-branch` and the sweep's
 `updated_branches` count actual successful refresh effects; queued/preparing
 reasons do not consume the branch-update budget. Ready-only train seating and
 reviewer dispatch scheduling are separate policies.

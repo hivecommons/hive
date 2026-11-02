@@ -88,17 +88,20 @@ func (s *Server) handleWritebackSuppressed(w http.ResponseWriter, r *http.Reques
 // SentinelFinding is one sentinel evaluation the dashboard keeps for the
 // Security tab and /api/sentinel, whether or not it reached GitHub.
 type SentinelFinding struct {
-	At               time.Time `json:"at"`
-	Repo             string    `json:"repo"`
-	Number           int       `json:"number"`
-	Author           string    `json:"author"`
-	Title            string    `json:"title,omitempty"`
-	HeadSHA          string    `json:"head_sha,omitempty"`
-	Rules            []string  `json:"rules"`
-	Blocked          bool      `json:"blocked"`
-	TrustedReason    string    `json:"trusted_reason,omitempty"`
-	Suppressed       bool      `json:"suppressed"`
-	SuppressedReason string    `json:"suppressed_reason,omitempty"`
+	At      time.Time `json:"at"`
+	Repo    string    `json:"repo"`
+	Number  int       `json:"number"`
+	Author  string    `json:"author"`
+	Title   string    `json:"title,omitempty"`
+	HeadSHA string    `json:"head_sha,omitempty"`
+	Rules   []string  `json:"rules"`
+	// Findings names each rule's flagged paths (bounded per finding), so
+	// the Security tab and the decision dialog can say which files.
+	Findings         []SentinelDetail `json:"findings,omitempty"`
+	Blocked          bool             `json:"blocked"`
+	TrustedReason    string           `json:"trusted_reason,omitempty"`
+	Suppressed       bool             `json:"suppressed"`
+	SuppressedReason string           `json:"suppressed_reason,omitempty"`
 }
 
 const maxSentinelFindings = 1000
@@ -113,7 +116,7 @@ func (f *sentinelFindings) record(ev github.SentinelSweepEvent, now time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	item := SentinelFinding{At: now.UTC(), Repo: ev.Repo, Number: ev.Number, Author: ev.Author, Title: ev.Title, HeadSHA: ev.HeadSHA,
-		Rules: ev.Rules(), Blocked: ev.Blocked, TrustedReason: ev.TrustedReason, Suppressed: ev.Suppressed, SuppressedReason: ev.SuppressedReason}
+		Rules: ev.Rules(), Findings: sentinelDetailsFromSweep(ev), Blocked: ev.Blocked, TrustedReason: ev.TrustedReason, Suppressed: ev.Suppressed, SuppressedReason: ev.SuppressedReason}
 	// One row per repo#number@head: a re-evaluation of the same head
 	// replaces the earlier row rather than stacking.
 	for i := range f.items {
@@ -135,6 +138,19 @@ func (f *sentinelFindings) list() []SentinelFinding {
 	copy(out, f.items)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
 	return out
+}
+
+// detailsFor returns the findings recorded for repo#number at head, or nil.
+func (f *sentinelFindings) detailsFor(repo string, number int, head string) []SentinelDetail {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		it := &f.items[i]
+		if it.Number == number && strings.EqualFold(it.Repo, repo) && strings.EqualFold(it.HeadSHA, head) {
+			return append([]SentinelDetail(nil), it.Findings...)
+		}
+	}
+	return nil
 }
 
 // RecordSentinelFinding is the sentinel sweep's Audit hook target: every

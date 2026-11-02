@@ -160,6 +160,11 @@ func TestAdoptedRecoveryPreparationWaitDoesNotConsumeAttempt(t *testing.T) {
 			h.e.basePreparation = NewBasePreparationStore("")
 			h.adopt.compareBehind = 2
 			h.adopt.baseChecks = map[string]string{"coverage": "success"}
+			h.adopt.superseders[7] = map[string]any{
+				"number": 7, "state": "open",
+				"head": map[string]string{"sha": "aaa"},
+				"base": map[string]string{"ref": "v5", "sha": "base1"},
+			}
 			front, head, wantReason := 8, "head8", preparationQueued(8)
 			if duplicate {
 				front, head, wantReason = 7, "aaa", basePreparationReady
