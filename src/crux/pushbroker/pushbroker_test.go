@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -1176,6 +1177,116 @@ func TestBrokerAmendExcludesWorkingTreeEditsOfTouchedFile(t *testing.T) {
 	}
 }
 
+// An edit the agent had staged for a touched path must still be staged after
+// normalisation: `git add` of the normalised blob replaces the index entry, so
+// the broker has to put the exact entry back.
+func TestBrokerRestoresStagedEditOfTouchedFile(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	edited := "package main\n\nfunc main() { staged() }\n\n"
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "main.go")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, dir, "diff", "--cached", "--name-only")); got != "main.go" {
+		t.Fatalf("staged paths = %q, want main.go still staged", got)
+	}
+	if got := runGitOutput(t, dir, "show", ":main.go"); got != edited {
+		t.Fatalf("index blob = %q, want the staged edit %q", got, edited)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, dir, "diff", "--name-only")); got != "" {
+		t.Fatalf("unstaged paths = %q, want working tree to match the index", got)
+	}
+	onDisk, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(onDisk) != edited {
+		t.Fatalf("working-tree file = %q, want %q", onDisk, edited)
+	}
+}
+
+// A touched path whose index entry is unmerged (conflict stages 1-3, no
+// stage 0) has nothing --cacheinfo can put back, so stagedEntries skips it
+// and `git add` is allowed to resolve the conflict with the normalised blob
+// rather than the broker failing or leaving the conflict in place. The
+// stages are injected with update-index --index-info rather than a real
+// merge so no MERGE_HEAD forbids the partial amend.
+func TestBrokerSkipsUnmergedIndexEntriesOfTouchedFile(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	var stages strings.Builder
+	stages.WriteString("0 0000000000000000000000000000000000000000\tmain.go\n")
+	for i, content := range []string{"base\n", "ours\n", "theirs\n"} {
+		blob := strings.TrimSpace(runGitInput(t, dir, content, "hash-object", "-w", "--stdin"))
+		fmt.Fprintf(&stages, "100644 %s %d\tmain.go\n", blob, i+1)
+	}
+	runGitInput(t, dir, stages.String(), "update-index", "--index-info")
+	if got := runGitOutput(t, dir, "ls-files", "-s"); !strings.Contains(got, " 3\tmain.go") {
+		t.Fatalf("precondition: index has no conflict stages: %q", got)
+	}
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	want := "package main\n\nfunc main() {}\n"
+	if got := runGitOutput(t, dir, "show", "HEAD:main.go"); got != want {
+		t.Fatalf("amended blob = %q, want %q", got, want)
+	}
+	if got := runGitOutput(t, dir, "ls-files", "-s"); strings.Count(got, "main.go") != 1 || !strings.Contains(got, " 0\tmain.go") {
+		t.Fatalf("index = %q, want a single stage-0 entry for main.go (conflict resolved by git add)", got)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, dir, "diff", "--cached", "--name-only")); got != "" {
+		t.Fatalf("staged paths = %q, want nothing staged (no stage-0 entry to restore)", got)
+	}
+}
+
+// Each git call stagedEntries makes, and the restore of the snapshot it
+// took, must fail attributably: the broker may not guess at the index state
+// it is about to overwrite, nor report success when it could not put it back.
+func TestBrokerSurfacesStagedEntryFailuresDuringNormalisation(t *testing.T) {
+	cases := []struct {
+		name       string
+		failSubstr string
+		wantErr    string
+	}{
+		{"listing staged paths", "diff --cached --name-only", "listing staged paths"},
+		{"reading staged entries", "ls-files -s -z", "reading staged entries"},
+		{"restoring staged entry", "update-index --add --cacheinfo", "restoring staged edit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+			edited := "package main\n\nfunc main() { staged() }\n\n"
+			path := filepath.Join(dir, "main.go")
+			if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, dir, "add", "main.go")
+			r := &failingRunner{failSubstr: tc.failSubstr, failErr: errors.New("injected")}
+			_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Run error = %v, want it to mention %q", err, tc.wantErr)
+			}
+			onDisk, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(onDisk) != edited {
+				t.Fatalf("working-tree file = %q, want the uncommitted edit %q restored", onDisk, edited)
+			}
+		})
+	}
+}
+
 // The uncommitted edit must come back even when the amend itself fails:
 // the broker's error path may not leave HEAD's blob sitting over the
 // agent's work.
@@ -1296,6 +1407,20 @@ func runGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+// runGitInput is runGitOutput with stdin fed from input, for plumbing such
+// as hash-object --stdin and update-index --index-info.
+func runGitInput(t *testing.T, dir, input string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
