@@ -97,6 +97,10 @@ func defaultRunLoopDeps() runLoopDeps {
 				runSharedCIRerunSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSharedCIRerunSweep, b.logger)
 				runBlockedIssuesSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastBlockedIssuesSweep, b.logger)
 			}
+			// The Matrix ingest pass is cheap for unchanged heads and is
+			// what keeps the kiosk current, so it runs ahead of the
+			// optional block and outside its budget gate (#16276).
+			runMatrixIngest(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.matrixIngest(), time.Now(), b.logger)
 			if decision.SkipOptional {
 				return
 			}
