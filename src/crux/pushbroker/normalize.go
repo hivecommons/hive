@@ -48,6 +48,10 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 	if err != nil {
 		return false, err
 	}
+	root, err := filepath.EvalSymlinks(b.Workspace)
+	if err != nil {
+		return false, fmt.Errorf("resolving workspace: %w", err)
+	}
 	var touched []string
 	var edited []workingTreeSnapshot
 	var staged, deleted []string
@@ -80,6 +84,16 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (a
 		info, err := os.Lstat(abs)
 		if err != nil || !info.Mode().IsRegular() {
 			continue // removed from disk, a directory entry from a rename, or a symlink — nothing to normalise
+		}
+		// Lstat only refuses a symlink at the leaf. A parent directory the
+		// agent has swapped for a symlink (uncommitted, so it is not in HEAD
+		// and git itself would refuse to add through it) still resolves, and
+		// the write below would put HEAD's blob — content the agent chose —
+		// into whatever hive-owned file the link points at. The sandbox has
+		// exited by the time the broker runs, so resolving the parent once
+		// here is not racing the agent.
+		if !insideRoot(root, abs) {
+			continue // escapes the workspace through a symlinked directory — nothing to normalise
 		}
 		data, err := b.git(ctx, "show", "HEAD:"+rel)
 		if err != nil {
@@ -198,6 +212,16 @@ type workingTreeSnapshot struct {
 	abs  string
 	data []byte
 	perm os.FileMode
+}
+
+// insideRoot reports whether the directory holding abs, with every symlink
+// in it resolved, is root or lies beneath it. root must already be resolved.
+func insideRoot(root, abs string) bool {
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return false
+	}
+	return dir == root || strings.HasPrefix(dir, root+string(filepath.Separator))
 }
 
 func isEmptyAmendError(err error) bool {
