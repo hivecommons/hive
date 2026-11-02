@@ -38,6 +38,7 @@ import (
 //   - Anthropic Claude:    https://platform.claude.com/docs/en/about-claude/models/overview
 //   - OpenAI (GPT-5.x):    https://openai.com/api/pricing/
 //   - DeepSeek:            https://api-docs.deepseek.com/quick_start/pricing
+//   - Kimi:                https://platform.kimi.ai/docs/pricing/chat
 //   - Meta Llama / Gemini: representative OpenRouter/provider list prices
 const priceTableDate = "2026-11-02"
 
@@ -77,6 +78,10 @@ type ModelPrice struct {
 // published cached-input rate where one exists; cache writes fall back to the
 // input rate (these providers do not charge a separate cache-write premium the
 // way Anthropic does).
+//
+// Kimi K3 uses the published default 5-minute cache-write rate ($3/MTok);
+// its optional 1-hour tier ($6/MTok) is not tracked here. K2.7 Code publishes
+// cached-input pricing but no separate write rate, so writes use input pricing.
 //
 // The literals are authoritative; the inline comments record the tier a row
 // was added at and are not rewritten by the automated refresh.
@@ -185,8 +190,8 @@ var modelPrices = map[string]ModelPrice{
 	// These reuse the closest sibling tier so every offered dropdown value has
 	// a deterministic price entry instead of relying on the coarse fallback.
 	"grok-4-5":                 {InputPerMTok: 2.00, OutputPerMTok: 6.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 2.00},
-	"kimi-k3":                  {InputPerMTok: 0.192, OutputPerMTok: 15.00, CacheReadPerMTok: 0.182, CacheWritePerMTok: 0.192},
-	"kimi-k2-7-code":           {InputPerMTok: 0.60, OutputPerMTok: 3.50, CacheReadPerMTok: 0.15, CacheWritePerMTok: 0.60},
+	"kimi-k3":                  {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},
+	"kimi-k2-7-code":           {InputPerMTok: 0.95, OutputPerMTok: 4.00, CacheReadPerMTok: 0.19, CacheWritePerMTok: 0.95},
 	"mai-code-1-flash-picker":  {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	"claude-opus-4-6-thinking": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
 	"gpt-oss-120b-medium":      {InputPerMTok: 0.15, OutputPerMTok: 0.60, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.15},

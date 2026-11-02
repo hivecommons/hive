@@ -1,1 +1,1 @@
-- Refreshed the model list-price table from OpenRouter (2 rows moved; list prices as of 2026-11-02); the Cost panel estimate now uses the new rates.
+- Refreshed the Kimi K3 and K2.7 Code list-price estimates from Kimi's direct API pricing as of 2026-11-02, using K3's default 5-minute cache-write rate; all other model rates remain unchanged.
