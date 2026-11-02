@@ -96,30 +96,34 @@ var sentinelPatchObserverTimeout = 2 * time.Second
 // sentinelRepoPrivate reports whether the PR's repository is private. The PR
 // payload's base.repo can be absent, which would read as public, so a missing
 // one is resolved from the repository record; if that fails, assume private.
-func (c *Client) sentinelRepoPrivate(ctx context.Context, displayRepo string, pr *gh.PullRequest) bool {
+func (c *Client) sentinelRepoPrivate(ctx context.Context, owner, name string, pr *gh.PullRequest) bool {
 	if repo := pr.GetBase().GetRepo(); repo != nil && repo.Private != nil {
 		return repo.GetPrivate()
 	}
-	owner, name, ok := strings.Cut(displayRepo, "/")
-	if !ok || c.client == nil {
+	if owner == "" || name == "" || c.client == nil {
 		return true
 	}
 	r, _, err := c.client.Repositories.Get(ctx, owner, name)
 	if err != nil || r == nil || r.Private == nil {
-		c.logger.Warn("sentinel repo privacy lookup failed; treating as private", "repo", displayRepo)
+		c.logger.Warn("sentinel repo privacy lookup failed; treating as private", "repo", owner+"/"+name)
 		return true
 	}
 	return r.GetPrivate()
 }
 
-func (c *Client) observeSentinelPatch(ctx context.Context, displayRepo string, pr *gh.PullRequest, files []sentinel.File, observe func(SentinelPatchObservation)) {
+// observeSentinelPatch hands the fetched patch to the observer. The
+// observation names the repository as owner/name, never the configured slug:
+// the slug is a bare name once config loading strips the org, and the
+// observer's allowlist (dashboard.matrix.repos) holds owner/name entries.
+func (c *Client) observeSentinelPatch(ctx context.Context, owner, name string, pr *gh.PullRequest, files []sentinel.File, observe func(SentinelPatchObservation)) {
+	fullRepo := owner + "/" + name
 	obs := SentinelPatchObservation{
-		Repo:           displayRepo,
+		Repo:           fullRepo,
 		Number:         pr.GetNumber(),
 		HeadSHA:        pr.GetHead().GetSHA(),
 		Author:         pr.GetUser().GetLogin(),
 		HiveIdentified: c.knowsOwnAccounts() && c.isHiveAccount(pr.GetUser()),
-		Private:        c.sentinelRepoPrivate(ctx, displayRepo, pr),
+		Private:        c.sentinelRepoPrivate(ctx, owner, name, pr),
 		Files:          append([]sentinel.File(nil), files...),
 		At:             time.Now(),
 	}
@@ -128,7 +132,7 @@ func (c *Client) observeSentinelPatch(ctx context.Context, displayRepo string, p
 		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
-				c.logger.Warn("sentinel patch observer panicked", "repo", displayRepo, "number", obs.Number, "panic", fmt.Sprint(r))
+				c.logger.Warn("sentinel patch observer panicked", "repo", fullRepo, "number", obs.Number, "panic", fmt.Sprint(r))
 			}
 		}()
 		observe(obs)
@@ -138,7 +142,7 @@ func (c *Client) observeSentinelPatch(ctx context.Context, displayRepo string, p
 	select {
 	case <-done:
 	case <-timer.C:
-		c.logger.Warn("sentinel patch observer exceeded its time bound", "repo", displayRepo, "number", obs.Number)
+		c.logger.Warn("sentinel patch observer exceeded its time bound", "repo", fullRepo, "number", obs.Number)
 	}
 }
 
@@ -502,7 +506,7 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		return SentinelSweepEvent{}, false, err
 	}
 	if opts.PatchObserver != nil {
-		c.observeSentinelPatch(ctx, displayRepo, pr, files, opts.PatchObserver)
+		c.observeSentinelPatch(ctx, owner, repo, pr, files, opts.PatchObserver)
 	}
 	findings := sentinel.Evaluate(sentinel.PR{Author: author, Title: pr.GetTitle(), Files: files}, opts.Evaluator)
 	if len(findings) == 0 {
