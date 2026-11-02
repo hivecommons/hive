@@ -480,6 +480,7 @@ func TestSignedAPIRefusal(t *testing.T) {
 		{"rest 422", fmt.Errorf("creating ref: %w", resp(422)), true},
 		{"rest 404", resp(404), true},
 		{"rest 502", resp(502), false},
+		{"compare 404 missing head", fmt.Errorf("comparing: %w", &errMissingHead{repo: "o/r", head: "b", repoVisible: true, cause: resp(404)}), true},
 		{"graphql 422", &signedGraphQLError{status: 422, body: "x"}, true},
 		{"graphql 500", fmt.Errorf("wrapped: %w", &signedGraphQLError{status: 500}), false},
 		{"network", errors.New("dial tcp: i/o timeout"), false},
