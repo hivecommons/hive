@@ -3860,7 +3860,9 @@ const MUSE_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'
 // the flag; inference routes (litellm) that drive the same binary do not.
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-function effectiveReasoningEffort() {
+// requestedReasoningEffort is the effort the launch command builder applies:
+// what buildLaunchCommand() and buildHeadlessArgv() pass to the CLI.
+function requestedReasoningEffort() {
   // agy is the only backend whose effort is conditional on a model being passed.
   if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
   // muse applies effort with or without a model, but only for values it takes.
@@ -3871,6 +3873,87 @@ function effectiveReasoningEffort() {
   // selection), read by detectOmpSelection; the env var still wins when set,
   // the same precedence effectiveModel() applies (#7760).
   return REASONING_EFFORT || detectedEffort || '';
+}
+
+// effortFlagFor is the effort flag the builder adds for this backend, or ''
+// when the backend gets none. At most one backend case applies.
+function effortFlagFor() {
+  if (BACKEND === 'codex') return REASONING_EFFORT ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'` : '';
+  const effort = requestedReasoningEffort();
+  if (!effort) return '';
+  // agy: paired with --model, never on its own — requestedReasoningEffort()
+  // is '' without one. claude: only claude-valid levels (#8377). muse: only
+  // values muse accepts, so the report never advertises an effort it rejected.
+  if (BACKEND === 'agy' || BACKEND === 'claude') return `--effort ${effort}`;
+  if (BACKEND === 'muse') return `--reasoning-effort ${effort}`;
+  return '';
+}
+
+// --- Launch line reconciliation (hivecommons/hive#16222) ---------------------
+//
+// An entrypoint-resolved AGENT_LAUNCH_CMD is reused verbatim (see
+// buildLaunchCommand), so the flags the builder would add are NOT added to it.
+// When that line lacks the --model or effort flag, the CLI never received the
+// value, and reporting AGENT_MODEL / AGENT_REASONING_EFFORT to the hub would
+// advertise a configuration that is not running — standby model tiers and the
+// PR attribution trailer both read that report. The relay then reports only
+// what it can observe (the transcript-detected model/effort, or nothing).
+// Headless mode never types that line, so it is unaffected.
+
+// shellWords splits a shell command line into words with the quoting the
+// launchers use removed: '…' around a word, and backslash escapes (printf %q).
+function shellWords(line) {
+  return line.split(/\s+/).filter(Boolean).map((w) => {
+    if (w.length >= 2 && w.startsWith("'") && w.endsWith("'")) return w.slice(1, -1);
+    return w.replace(/\\(.)/g, '$1');
+  });
+}
+
+// entrypointLineCarries reports whether the entrypoint launch line contains
+// flag's words, consecutively.
+function entrypointLineCarries(flag) {
+  const line = shellWords(ENTRYPOINT_LAUNCH_CMD);
+  const want = shellWords(flag);
+  for (let i = 0; i + want.length <= line.length; i++) {
+    if (want.every((w, j) => line[i + j] === w)) return true;
+  }
+  return false;
+}
+
+function entrypointLineGoverns() {
+  return !!ENTRYPOINT_LAUNCH_CMD && CONTRIBUTOR_MODE === MODE_INTERACTIVE;
+}
+
+const warnedLaunchLineDrops = new Set();
+function warnLaunchLineDrop(what, flag) {
+  if (warnedLaunchLineDrops.has(what)) return;
+  warnedLaunchLineDrops.add(what);
+  console.error(`AGENT_LAUNCH_CMD does not carry \`${flag}\`; the CLI is not running with that ${what}, so it is not reported to the hub (#16222)`);
+}
+
+function launchLineDropsModel() {
+  if (!entrypointLineGoverns() || !MODEL || NO_MODEL_FLAG_BACKENDS.includes(BACKEND)) return false;
+  const flag = `--model ${MODEL}`;
+  if (entrypointLineCarries(flag)) return false;
+  warnLaunchLineDrop('model', flag);
+  return true;
+}
+
+function launchLineDropsEffort() {
+  if (!entrypointLineGoverns()) return false;
+  // agy applies effort only alongside a model the CLI actually received.
+  if (BACKEND === 'agy' && launchLineDropsModel()) return true;
+  const flag = effortFlagFor();
+  if (!flag || entrypointLineCarries(flag)) return false;
+  warnLaunchLineDrop('effort', flag);
+  return true;
+}
+
+// effectiveReasoningEffort is the effort reported to the hub: the requested
+// one, unless the entrypoint launch line never applied it.
+function effectiveReasoningEffort() {
+  if (launchLineDropsEffort()) return detectedEffort || '';
+  return requestedReasoningEffort();
 }
 
 // --- Model auto-detection from the CLI's own session transcript (#4117) ----
@@ -4349,8 +4432,10 @@ function advisorFields() {
 }
 
 // effectiveModel is the model counterpart of effectiveReasoningEffort(): the
-// single source of truth for the model actually reported to the hub.
+// single source of truth for the model actually reported to the hub. A model
+// the entrypoint launch line never passed is not reported (#16222).
 function effectiveModel() {
+  if (launchLineDropsModel()) return detectedModel || '';
   return MODEL || detectedModel || '';
 }
 
@@ -4374,24 +4459,11 @@ function buildLaunchCommand() {
     return cachedLaunchCommand;
   }
   const { cmd, perm } = resolveBackendShell();
-  const modelFlag = modelFlagFor();
-  const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
-    ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
-    : '';
-  // Paired with modelFlag, never on its own: agy without --model needs no
-  // --effort, and passing one alone would be a flag agy has no model to apply.
-  const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${effectiveReasoningEffort()}` : '';
-  // muse takes effort on its own, independent of --model (unlike agy), and
-  // validates the value itself. Only values muse actually accepts are passed,
-  // so effectiveReasoningEffort() never advertises an effort muse rejected.
-  const museEffortFlag = BACKEND === 'muse' && effectiveReasoningEffort()
-    ? `--reasoning-effort ${effectiveReasoningEffort()}`
-    : '';
-  // claude: `--effort <v>` only when a claude-valid effort is set (#8377).
-  const claudeEffortFlag = BACKEND === 'claude' && effectiveReasoningEffort()
-    ? `--effort ${effectiveReasoningEffort()}`
-    : '';
-  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag, museEffortFlag, claudeEffortFlag].filter(Boolean).join(' ');
+  // effortFlagFor() pairs agy's --effort with --model, never on its own: agy
+  // without --model needs no --effort, and passing one alone would be a flag
+  // agy has no model to apply. config/backends.conf's
+  // backend_selection_flags_shell emits the same two flags for local mode.
+  cachedLaunchCommand = [cmd, perm, modelFlagFor(), effortFlagFor()].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
 
@@ -4518,12 +4590,12 @@ function buildHeadlessArgv(prompt) {
   // tokens for backends needing a sub-command plus a flag (goose). Normalize
   // to an array so both shapes spread the same way ahead of the prompt.
   const oneShotArgs = Array.isArray(spec.flag) ? spec.flag : [spec.flag];
-  const museEffortArgs = BACKEND === 'muse' && effectiveReasoningEffort()
-    ? ['--reasoning-effort', effectiveReasoningEffort()]
+  const museEffortArgs = BACKEND === 'muse' && requestedReasoningEffort()
+    ? ['--reasoning-effort', requestedReasoningEffort()]
     : [];
   // Same claude-valid-only rule as the interactive launch (#8377).
-  const claudeEffortArgs = BACKEND === 'claude' && effectiveReasoningEffort()
-    ? ['--effort', effectiveReasoningEffort()]
+  const claudeEffortArgs = BACKEND === 'claude' && requestedReasoningEffort()
+    ? ['--effort', requestedReasoningEffort()]
     : [];
   const flagArgs = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...museEffortArgs, ...claudeEffortArgs];
   // Sub-command-first CLIs parse their options on the sub-command, not the

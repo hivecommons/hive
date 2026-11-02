@@ -781,6 +781,115 @@ test('#5652 the launcher-resolved line is the WHOLE command — no flags are app
   } finally { teardown(relay); }
 });
 
+// ---------------------------------------------------------------------------
+// hivecommons/hive#16222 — local mode dropped AGENT_MODEL and the effort from
+// the launch line, yet the relay still reported both to the hub. The local
+// launcher now appends config/backends.conf's backend_selection_flags_shell
+// output to AGENT_LAUNCH_CMD, and the relay reports a model/effort only when
+// that line carries the flag its own builder would have added.
+// ---------------------------------------------------------------------------
+
+const SELECTION_CASES = [
+  ['claude', 'claude-sonnet-5-5', 'medium'],
+  ['claude', 'claude-sonnet-5-5', 'turbo'],
+  ['claude', '', 'xhigh'],
+  ['litellm', 'anthropic/claude-sonnet-4', 'high'],
+  ['copilot', 'gpt-5.6-luna', ''],
+  ['codex', 'gpt-5.5', 'high'],
+  ['codex', '', 'low'],
+  ['agy', 'gemini-3.6-flash-high', 'medium'],
+  ['agy', 'gemini-3.6-flash-high', 'xhigh'],
+  ['agy', '', 'high'],
+  ['muse', 'muse-1', 'ultra'],
+  ['muse', '', 'bogus'],
+  ['pi', 'openai/gpt-5', 'high'],
+  ['omp', 'github-copilot/gpt-5.6-luna', 'high'],
+  ['goose', 'llama3.2:3b', 'high'],
+  ['bob', 'auto', ''],
+  ['openhands', 'anthropic/claude-sonnet-4-6', 'high'],
+];
+
+function localSelectionFlags(backend, model, effort) {
+  const conf = path.join(__dirname, '..', 'config', 'backends.conf');
+  const r = require('child_process').spawnSync('bash', ['-c', 'source "$1"; backend_selection_flags_shell "$2" "$3" "$4"', '_', conf, backend, model, effort], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return r.stdout.trim();
+}
+
+test('#16222 local-mode selection flags match the relay builder for every backend', () => {
+  for (const [backend, model, effort] of SELECTION_CASES) {
+    const relay = loadRelay({ backend, model, reasoningEffort: effort, backendPerm: '' });
+    try {
+      const built = relay.buildLaunchCommand();
+      const builderFlags = built === backend ? '' : built.slice(backend.length + 1);
+      assert.strictEqual(localSelectionFlags(backend, model, effort), builderFlags,
+        `${backend} model=${model} effort=${effort}: local launch flags diverge from the relay builder`);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#16222 a launch line carrying the local selection flags reports what the builder would', () => {
+  for (const [backend, model, effort] of SELECTION_CASES) {
+    const expected = loadRelay({ backend, model, reasoningEffort: effort, backendPerm: '' });
+    let want;
+    try {
+      want = { model: expected.effectiveModel(), effort: expected.effectiveReasoningEffort() };
+    } finally { teardown(expected); }
+    const flags = localSelectionFlags(backend, model, effort);
+    const relay = loadRelay({
+      backend, model, reasoningEffort: effort, backendPerm: '',
+      env: { AGENT_LAUNCH_CMD: `HIVE_WORKSPACE_DIR=/w ${backend} --sandboxed${flags ? ` ${flags}` : ''}` },
+    });
+    try {
+      assert.deepStrictEqual({ model: relay.effectiveModel(), effort: relay.effectiveReasoningEffort() }, want,
+        `${backend} model=${model} effort=${effort}`);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#16222 a launch line without --model/--effort does not report them to the hub', () => {
+  const relay = loadRelay({
+    backend: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'medium',
+    env: { AGENT_LAUNCH_CMD: LOCAL_SANDBOXED_CLAUDE_CMD },
+  });
+  try {
+    assert.strictEqual(relay.effectiveModel(), '');
+    assert.strictEqual(relay.effectiveReasoningEffort(), '');
+    assert.deepStrictEqual(relay.progressModelFields(), {});
+    assert.deepStrictEqual(relay.effectiveSelectionFields(), { cli_backend: 'claude' });
+    relay.__setDetectedModel('claude-sonnet-5');
+    assert.strictEqual(relay.effectiveModel(), 'claude-sonnet-5',
+      'the transcript-detected model is what is really running');
+  } finally { teardown(relay); }
+});
+
+test('#16222 agy effort is not reported when the launch line drops its --model', () => {
+  const relay = loadRelay({
+    backend: 'agy', model: 'gemini-3.6-flash-high', reasoningEffort: 'high',
+    env: { AGENT_LAUNCH_CMD: 'agy --dangerously-skip-permissions --effort high' },
+  });
+  try {
+    assert.strictEqual(relay.effectiveModel(), '');
+    assert.strictEqual(relay.effectiveReasoningEffort(), '');
+  } finally { teardown(relay); }
+});
+
+test('#16222 headless mode ignores the launch line and keeps the requested selection', () => {
+  const relay = loadRelay({
+    backend: 'claude', mode: 'headless', model: 'claude-sonnet-5-5', reasoningEffort: 'medium',
+    backendPerm: '--dangerously-skip-permissions',
+    env: { AGENT_LAUNCH_CMD: LOCAL_SANDBOXED_CLAUDE_CMD },
+  });
+  try {
+    assert.strictEqual(relay.effectiveModel(), 'claude-sonnet-5-5');
+    assert.strictEqual(relay.effectiveReasoningEffort(), 'medium');
+    const argv = relay.buildHeadlessArgv('do the thing');
+    const args = argv.args.join(' ');
+    assert.match(args, /--model claude-sonnet-5-5/);
+    assert.match(args, /--effort medium/);
+  } finally { teardown(relay); }
+});
+
 test('a shell in the pane is only a death after consecutive confirmations', () => {
   const relay = loadRelay({ backend: 'agy', procAlive: false });
   try {
