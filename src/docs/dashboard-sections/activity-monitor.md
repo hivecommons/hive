@@ -233,6 +233,8 @@ A pull request the suspicious-activity sentinel flagged — it wears the `sentin
 
 The tooltip reads "Sentinel flagged security-relevant changes at `<sha7>`: `<reason>`" (a generic description stands in when the bundle has no reason). An issue carried by one flagged PR shows the lane text too, and a nested PR sub-row shows its own. The *Decide…* dialogs for a flagged PR open with a ⚠ line per flagged PR naming the sentinel reason, and *Approve* is styled as a dangerous action.
 
+The payload also carries `sentinel_details`: one entry per finding with its `rule` (`sensitive_path`, `permission_escalation`, `ci_gate_weakening`, …), `summary`, the flagged `paths` (sorted, at most 10 per finding) and `more_paths` for any cut. The *Let hive decide* dialog's ▼ Details and the ⚠ chip tooltip list them under the sentinel line — `· sensitive_path: .github/workflows/release.yml (+N more)` — so the person can see *which* files tripped the sentinel, not just how many; `/api/sentinel` serves the same `findings` per row, and the hive's "reviewed, intended" decision comment on a trusted author's flagged PR names the same files after the reason. The findings come from the head's review evidence bundle or the sweep's own record; nothing is re-fetched from GitHub.
+
 A person's *Approve* through that dialog **is** the human review the alert asked for: it removes the `sentinel-alert` label when present and records a `sentinel_acknowledged` human action keyed to the head in the review evidence bundle, so a bundle-only alert (findings but no label — hivecommons/crux#30) clears too; the payload then reads `sentinel_alert: false` with `sentinel_reason` suffixed `— acknowledged by @login`, the findings stay on record, and a new head starts over.
 
 The delegated *Let hive decide* path never clears it. Hovering the lit chevron of a parked row names the parking stage itself (`Needs human decision`), not the 080 column it rides on; `Next move` follows the real stage (human at 085, hive at 080). Lane text and chip update in place on refresh (keyed reconcile, no flash).
@@ -244,6 +246,19 @@ A pull request the hive cannot move because its GitHub App lacks a permission fo
 It counts under **Needs attention**. Before the merge gate only the held-workflow-runs step shows (see *Pills before the merge gate*). Its tooltip (payload `unauthorized`) names the missing permission and the human step; on the **Needs human decision** lane the lit chevron and the caption read **Awaiting human: approve workflow runs** (payload `unauthorized_step`, from the `unauthorized:<step>` stage reason). The pill, label and payload fields clear themselves in the tick the step is no longer needed.
 
 #### Merge train
+
+**Preparation is a separate, not-yet-ready train.** Its compact gold header and
+original thin rail annotate actual preparation members without changing their
+CI/review stages. Before pagination, complete issue/PR row units form a contiguous
+block at the first preparation unit's position: the recorded front is first,
+then waiters in durable ticket FIFO. Nonmember units retain their relative order.
+Related PRs stay with their issue; nested preparation children follow FIFO while
+nonmember siblings retain their relative order. Explicit ticket positions remain
+the authority when one issue contains non-adjacent tickets. Adjacent members share
+one header and a continuous connector through expanded captions, row padding and
+nested PR spacing. An unrelated row or child ends the rail rather than acquiring
+misleading membership. A missing, closed or stale front is never synthesized as a
+verified owner; recorded/unverified metadata remains explicit.
 
 When several approved PRs to the same base touch the same files, the automerge lanes merge them one at a time ([#15117](https://github.com/hivecommons/hive/issues/15117)). The tracker renders every train contiguously, in merge order, with a thin left rail linking the rows and a header chip `🚆 merge train · 4 PRs · 1st: #15074` — the glyph is an inline-SVG railcar (14px, currentColor, hover *Merge queue*), the same icon the **Merge queue** column header and its chevrons wear; overlapping files are listed beside it. Pill wording per state is the PR's place in the queue (the owner's words — `front` and `queued-behind` appear nowhere a person reads): the head reads "Merge queued · 1st of 4 · ~13m" (its own soak left plus the next pass); the others "Merge queued · 2nd of 4 · ~4m", "Merge queued · 3rd of 4", … (`1st 2nd 3rd 4th … 11th 12th 13th 21st`, always with the queue length, countdown to its turn); when the page draws more than one train each queue word ends with its train's tag — "Merge queued · 1st of 2 · train main.go" (the first overlapping file's basename, else the head `#N`) — and the hover leads *Train of 2 PRs overlapping main.go; merges after #15567.*, so two "1st"s on one page tell apart (one train → no tag); the header and every member row of a train share one rail accent (`.ham-train-k0…k3`, cycling in page order); once the front merged and the hive is rebasing a conflicting sibling, "Rebasing · attempt 1/2"; when the loop guard (`auto_merge.merge_train.max_rebase_attempts`) is spent, "Needs human decision · rebase failed twice" at stage/085 with the decision option "Rebase, then merge as maintainer".
 

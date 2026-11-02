@@ -63,10 +63,13 @@ func (c *Engine) preparationInvalid(ctx context.Context, owner, repo, base strin
 	if err != nil {
 		return "", err
 	}
+	if why := c.preparationInvalidPR(pr, base, repair); why != "" {
+		return why, nil
+	}
 	if expectedHead != "" && pr.GetHead().GetSHA() != expectedHead {
 		return "head-changed-before-preparation", nil
 	}
-	return c.preparationInvalidPR(pr, base, repair), nil
+	return "", nil
 }
 
 func (c *Engine) preparationInvalidPR(pr *gh.PullRequest, base string, repair bool) string {
@@ -99,6 +102,7 @@ func preparationQueued(front int) string {
 // durable owner is not a ready merge-train seat.
 func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base string, number int, head, lane string, repair bool) (string, error) {
 	reason := ""
+	yieldedOwner := preparationCandidate{}
 	now := c.now()
 	key := preparationKey(owner, repo, base)
 	err := c.preparationStore().change(key, func(st *basePreparation) error {
@@ -125,24 +129,66 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 		} else {
 			st.Waiting[i].Head = head
 		}
+		candidate, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
+		if err != nil {
+			return err
+		}
+		if candidate.GetHead().GetSHA() != head || c.preparationInvalidPR(candidate, base, repair) != "" {
+			reason = basePreparationPrefix + "snapshot-changed"
+			return nil
+		}
+		var yielded preparationCandidate
+		if st.Owner.Number != 0 {
+			front, _, err := c.gh.PullRequests.Get(ctx, owner, repo, st.Owner.Number)
+			if err != nil {
+				return err
+			}
+			if st.Owner.Repair || repair || !c.preparationCompleted(ctx, owner, repo, front, st.Attempts[st.Owner.Number]) ||
+				!c.preparationMayPass(ctx, owner, repo, base, candidate, front, lane, st.Owner.Lane) {
+				reason = preparationQueued(st.Owner.Number)
+				return nil
+			}
+			yielded = st.Owner
+			ticket := yielded
+			ticket.Head = front.GetHead().GetSHA()
+			ticket.Yielded = true
+			st.Waiting = append([]preparationCandidate{ticket}, st.Waiting...)
+			st.Owner = preparationCandidate{}
+		}
 		if st.Owner.Number == 0 {
-			for len(st.Waiting) > 0 {
-				next := st.Waiting[0]
+			passed := 0
+			for index := 0; index < len(st.Waiting); {
+				next := st.Waiting[index]
 				why, err := c.preparationInvalid(ctx, owner, repo, base, next.Number, next.Head, next.Repair)
 				if err != nil {
 					return err
 				}
-				if why != "" || now.Sub(next.Since) >= c.preparationWindow() {
-					st.Waiting = st.Waiting[1:]
-					continue
-				}
-				if next.Number != number {
-					// Only the caller has just passed its lane's gates.
-					// Never turn an old FIFO ticket into a sticky owner.
+				if why == "head-changed-before-preparation" && next.Yielded {
 					reason = preparationQueued(next.Number)
 					break
 				}
-				st.Waiting = st.Waiting[1:]
+				if why != "" || (!next.Yielded && now.Sub(next.Since) >= c.preparationWindow()) {
+					st.Waiting = slices.Delete(st.Waiting, index, index+1)
+					continue
+				}
+				if next.Number != number {
+					if passed >= preparationMaxPredecessors {
+						reason = preparationQueued(next.Number)
+						break
+					}
+					front, _, err := c.gh.PullRequests.Get(ctx, owner, repo, next.Number)
+					if err != nil {
+						return err
+					}
+					if !repair && !next.Repair && c.preparationMayPass(ctx, owner, repo, base, candidate, front, lane, next.Lane) {
+						passed++
+						index++
+						continue
+					}
+					reason = preparationQueued(next.Number)
+					break
+				}
+				st.Waiting = slices.Delete(st.Waiting, index, index+1)
 				next.Since = now
 				next.Lane = lane
 				next.Repair = repair
@@ -150,6 +196,14 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 				c.info("automerge base preparation selected", "repo", owner+"/"+repo, "base", base, "pr", next.Number, "head", next.Head, "lane", next.Lane)
 				break
 			}
+		}
+		if yielded.Number != 0 && st.Owner.Number != number {
+			// A later ambiguous predecessor prevented admission; do not
+			// relinquish a completed owner's durable priority for nothing.
+			st.Owner = yielded
+			st.Waiting = slices.DeleteFunc(st.Waiting, func(w preparationCandidate) bool { return w.Number == yielded.Number })
+		} else if yielded.Number != 0 {
+			yieldedOwner = yielded
 		}
 		if st.Owner.Number != number {
 			if reason == "" {
@@ -163,6 +217,9 @@ func (c *Engine) admitBasePreparation(ctx context.Context, owner, repo, base str
 		}
 		return nil
 	})
+	if err == nil && yieldedOwner.Number != 0 {
+		c.info("automerge base preparation completed owner yielded", "repo", owner+"/"+repo, "base", base, "pr", number, "head", head, "former_owner", yieldedOwner.Number, "former_since", yieldedOwner.Since)
+	}
 	return reason, err
 }
 
@@ -175,7 +232,12 @@ func (c *Engine) claimBasePreparationUpdate(ctx context.Context, owner, repo str
 	if err != nil {
 		return err
 	}
-	base, baseSHA := pr.GetBase().GetRef(), pr.GetBase().GetSHA()
+	base := pr.GetBase().GetRef()
+	branch, _, err := c.gh.Repositories.GetBranch(ctx, owner, repo, base, 0)
+	if err != nil {
+		return err
+	}
+	baseSHA := branch.GetCommit().GetSHA()
 	if head == "" || pr.GetHead().GetSHA() != head || base == "" || baseSHA == "" {
 		return &preparationWait{basePreparationPrefix + "snapshot-changed"}
 	}
@@ -197,7 +259,7 @@ func (c *Engine) claimBasePreparationUpdate(ctx context.Context, owner, repo str
 			wait = basePreparationReady
 			return nil
 		}
-		st.Attempts[number] = preparationAttempt{Head: head, Base: baseSHA, At: c.now()}
+		st.Attempts[number] = preparationAttempt{Head: head, Base: baseSHA, At: c.now(), AuthoritativeBase: true}
 		c.info("automerge base preparation refresh claimed", "repo", owner+"/"+repo, "base", base, "pr", number, "head", head, "base_sha", baseSHA)
 		return nil
 	})
@@ -259,7 +321,15 @@ func (c *Engine) observeBasePreparation(lane, owner, repo string, pr *gh.PullReq
 		}
 		// Waiting is not preparation yet: a changed or now-pending waiting
 		// head loses its admission ticket and must qualify again.
+		for i := range st.Waiting {
+			if st.Waiting[i].Yielded && st.Waiting[i].Number == pr.GetNumber() && keep {
+				st.Waiting[i].Head = pr.GetHead().GetSHA()
+			}
+		}
 		st.Waiting = slices.DeleteFunc(st.Waiting, func(w preparationCandidate) bool {
+			if w.Yielded && keep && !merged {
+				return false
+			}
 			return w.Lane == lane && w.Number == pr.GetNumber() && (w.Head != pr.GetHead().GetSHA() || !strings.HasPrefix(reason, basePreparationPrefix))
 		})
 		if !keep && st.Owner.Lane == lane && st.Owner.Number == pr.GetNumber() {

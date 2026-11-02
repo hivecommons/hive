@@ -23,16 +23,19 @@ func TestSidebarPairBadgeWiring(t *testing.T) {
 		`const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted);`,
 		`setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);`,
 		`if (data && data.actionableNow) setSidebarPairBadge(document.getElementById('governor-sidebar-badge'), issueCount, prCount, 'actionable: ' + issueCount + ' issues / ' + prCount + ' PRs')`,
-		// Contributors reads online/total off /api/status.contributorPool
-		// with the tracker's presence window in the tooltip (#15651).
+		// Contributors uses the roster response for both cards and counts.
 		`<span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count contributor-online-trigger" tabindex="0" role="link" aria-label="Contributors" data-keydown-action="ocNavigate" data-arg0="contributors-section" data-zero hidden>0/0</span></a>`,
 		`setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);`,
 		`tooltip.innerHTML = contributorsOnlineTooltip(pool);`,
+		`updateContributorBadge(data.contributorPool);`,
 		`function contributorsOnlineTitle(online, total, window)`,
 		`<span id="contributors-status-badge" class="contrib-status-badge" title="0 online · 0 registered"></span>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing sidebar x/y pill wiring %q", want)
+		}
+		if strings.Contains(html, "updateContributorBadge(data.contributorPool || null)") {
+			t.Fatal("cached /api/status must not overwrite the live contributor roster counts")
 		}
 	}
 	// The Overview pill is no longer fed by the stage tracker (that counted

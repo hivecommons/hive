@@ -1,0 +1,1 @@
+- Refresh an issue's cached tracker snapshot after an accepted maintainer decision so its Actionable ribbon no longer retains stale needs-human badges and decision questions while waiting for a GitHub webhook.

@@ -39,11 +39,14 @@ function load() {
   vm.runInContext(source('nav-count-delta'), ctx);
   vm.runInContext(`
     var _kbCache = null, _kbInitialLoad = true, _kbRendered = false, _kbSetupView = 'none';
-    var _cachedContributors = [], _stageTracker = null, _stageTrackerMoves = {}, _stageTrackerEvents = [];
+    var _cachedContributors = [], _contributorFetchID = 0, _stageTracker = null, _stageTrackerMoves = {}, _stageTrackerEvents = [];
     var _stageTrackerFilter = {repo: 'filtered-out'}, _stageTrackerGroup = 'none', _stageTrackerCelebrating = {};
     function refreshSectionCardShell() {}
     function setSectionSummary() {}
     function contributorsSectionSummary() { return ''; }
+    function renderContributorFilters() {}
+    function renderContributors(rows) { renderedContributors = rows; }
+    var renderedContributors = null;
     function formatNumber(n) { return Number(n).toLocaleString('en-US'); }
     var knowledgeRenders = 0;
     function renderKnowledge() { knowledgeRenders++; }
@@ -76,7 +79,7 @@ function load() {
   `, ctx);
   for (const [file, names] of [
     ['knowledge', ['sidebarPairBadgeText', 'setSidebarPairBadge', 'setSidebarCountBadge', 'kbTotalFactsFromStats', 'kbFactsLabel', 'kbSidebarFactCount', 'fetchKnowledgeStats']],
-    ['contributors', ['contributorsOnlineTitle', 'contributorsOnlineTooltip', 'updateContributorBadge']],
+    ['contributors', ['contributorsOnlineTitle', 'contributorsOnlineTooltip', 'updateContributorBadge', 'fetchContributors']],
     ['tracker-waiting', ['stageTrackerWaitingOnYou', 'stageTrackerWaitingTitle', 'stageTrackerWaitKindWords', 'stageTrackerRenderWaiting']],
     ['tracker-words-stage', ['stageTrackerDefaultFilter']],
     ['tracker-filter-render', ['renderStageTracker']],
@@ -91,7 +94,7 @@ function load() {
   }
   vm.runInContext(source('tracker-filter'), ctx);
   vm.runInContext(`const STAGE_TRACKER_WAITING_TOOLTIP_MAX = 5; const STAGE_TRACKER_WAIT_KIND_WORDS = {};`, ctx);
-  return { ctx, document, timers, element, badge: id => elements.get(id),
+  return { ctx, document, timers, element, badge: id => elements.get(id), remove: id => elements.delete(id),
     tick(ms = 1400) {
       now += ms;
       for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.cb(); }
@@ -173,6 +176,67 @@ test('real tracker renderer: new issues, PR removal, batching, filters, invalid 
   assert.equal(delta(badge), undefined);
 });
 
+const HEADER = 'activity-monitor-header-badge';
+const mirror = (a, b) => {
+  assert.equal(b.textContent, a.textContent);
+  assert.equal(b.title, a.title);
+  assert.equal(b.attrs['data-zero'], a.attrs['data-zero']);
+  for (const k of ['data-count-delta', 'data-count-direction', 'data-count-phase', 'aria-label']) assert.equal(b.attrs[k], a.attrs[k], k);
+};
+
+test('header pill is the sidebar badge\'s twin: one render writes count, tooltip, zero marker and delta to both', () => {
+  const api = load(), sidebar = api.badge(IDS[0]), header = api.element(HEADER);
+  const render = items => api.ctx.renderStageTracker({ items });
+  render([item(1), item(2, 'pr')]);
+  assert.equal(header.textContent, '2');
+  assert.equal(header.attrs['data-zero'], undefined);
+  mirror(sidebar, header);
+  render([item(1), item(2, 'pr'), item(3), item(4)]);
+  assert.equal(delta(header), '↑ +2');
+  mirror(sidebar, header);
+  render([item(1)]);
+  assert.equal(delta(header), '↓ -3');
+  mirror(sidebar, header);
+  api.tick();
+  assert.equal(delta(header), undefined);
+  assert.equal(api.timers.size, 0);
+  render([]);
+  assert.equal(header.textContent, '0');
+  assert.equal(header.attrs['data-zero'], '');
+  assert.equal(delta(header), '↓ -1');
+  mirror(sidebar, header);
+  api.ctx.renderStageTracker();
+  mirror(sidebar, header);
+  assert.equal(vm.runInContext('STAGE_TRACKER_COUNT_BADGE_IDS.includes(' + JSON.stringify(HEADER) + ')', api.ctx), true);
+});
+
+test('kiosk: the sidebar badge is absent and the header pill alone still counts and animates', () => {
+  const api = load(), header = api.element(HEADER);
+  api.remove(IDS[0]);
+  assert.equal(api.document.getElementById(IDS[0]), null);
+  const render = items => api.ctx.renderStageTracker({ items });
+  render([item(1)]);
+  assert.equal(header.textContent, '1');
+  assert.equal(delta(header), undefined);
+  render([item(1), item(2), item(3)]);
+  assert.equal(header.textContent, '3');
+  assert.equal(delta(header), '↑ +2');
+  assert.match(header.attrs['aria-label'], /increased by 2/);
+  api.tick();
+  assert.equal(delta(header), undefined);
+  api.ctx.stageTrackerSidebarCountsUnknown();
+  render([item(1), item(2), item(3), item(4), item(5)]);
+  assert.equal(header.textContent, '5');
+  assert.equal(delta(header), undefined, 'unknown -> known seeds a new baseline on the header pill too');
+  // The pill ships in the card header for every mode and is styled off
+  // the shared delta rules, not a second copy of them.
+  const sections = source('sections');
+  assert.match(sections, /countHtml: STAGE_TRACKER_HEADER_COUNT_HTML/);
+  assert.match(sections, /<span id="activity-monitor-header-badge" class="badge-count ham-header-count" data-zero/);
+  const css = fs.readFileSync(path.join(__dirname, 'static-src/css/design-system.css'), 'utf8');
+  assert.match(css, /\.oc-nav-count\[data-count-delta\]::after, \.ham-header-count\[data-count-delta\]::after \{/);
+});
+
 test('real waiting badge writer: independent count, explicit zero and invalid header', () => {
   const api = load(), badge = api.badge(IDS[1]);
   const write = count => api.ctx.stageTrackerRenderWaiting({ waiting_on_human: { count, items: [] } }, 0);
@@ -223,6 +287,79 @@ test('contributors use online only, not active sockets or denominator changes', 
   assert.equal(badge.textContent, '0/12', 'unknown does not replace display with a fabricated zero');
   write(4);
   assert.equal(delta(badge), undefined);
+});
+
+test('contributor tooltip lists people only, with no relay IDs or repeated branding', () => {
+  const api = load();
+  const tooltip = api.ctx.contributorsOnlineTooltip({
+    online: 3, registered: 12, presence_window: '15m',
+    online_ids: ['c-first', 'c-second', 'c-third'], online_logins: ['amy', 'zed'],
+  });
+  assert.match(tooltip, /3 online/);
+  assert.match(tooltip, /<li>@amy<\/li><li>@zed<\/li>/);
+  assert.doesNotMatch(tooltip, /ClankeR|c-first|c-second|c-third/);
+  const unavailable = api.ctx.contributorsOnlineTooltip({ online: 1, registered: 12, online_ids: ['c-private'] });
+  assert.match(unavailable, /names unavailable/);
+  assert.doesNotMatch(unavailable, /c-private|ClankeR/);
+  assert.match(api.ctx.contributorsOnlineTooltip({ online: 0, registered: 12, online_logins: [] }), /No contributors online/);
+});
+
+test('contributor cards and badge refresh from the same roster response', async () => {
+  const api = load(), badge = api.badge(IDS[2]);
+  const rows = [{ github_username: 'amy', online: true }, { github_username: 'zed', online: true }];
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: rows, contributorPool: { online: 2, registered: 2, online_logins: ['amy', 'zed'] },
+  }) });
+  await api.ctx.fetchContributors();
+  assert.equal(api.ctx.renderedContributors, rows);
+  assert.equal(badge.textContent, '2/2');
+  assert.match(badge.children[0].innerHTML, /@amy/);
+  assert.match(badge.children[0].innerHTML, /@zed/);
+  assert.doesNotMatch(source('refresh'), /updateContributorBadge\(/, 'status polling must not overwrite roster presence');
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: [], contributorPool: { online: 0, registered: 0, online_logins: [] },
+  }) });
+  await api.ctx.fetchContributors();
+  assert.equal(api.ctx.renderedContributors.length, 0, 'removing the final contributor clears the roster');
+  assert.equal(badge.textContent, '0/0');
+  assert.match(badge.children[0].innerHTML, /No contributors online/);
+});
+
+test('out-of-order contributor responses cannot replace a newer roster or badge', async () => {
+  const api = load(), badge = api.badge(IDS[2]);
+  let releaseOld;
+  api.ctx.fetch = () => new Promise(resolve => { releaseOld = resolve; });
+  const old = api.ctx.fetchContributors();
+  const rows = [{ github_username: 'new', online: true }];
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: rows, contributorPool: { online: 1, registered: 1, online_logins: ['new'] },
+  }) });
+  await api.ctx.fetchContributors();
+  releaseOld({ ok: true, json: async () => ({
+    contributors: [], contributorPool: { online: 0, registered: 0, online_logins: [] },
+  }) });
+  await old;
+  assert.equal(api.ctx.renderedContributors, rows);
+  assert.equal(badge.textContent, '1/1');
+  assert.match(badge.children[0].innerHTML, /@new/);
+});
+
+test('failed contributor refresh reports unknown without replacing the last roster with zero', async () => {
+  const api = load(), badge = api.badge(IDS[2]);
+  const rows = [{ github_username: 'amy', online: true }];
+  api.ctx.fetch = async () => ({ ok: true, json: async () => ({
+    contributors: rows, contributorPool: { online: 1, registered: 1, online_logins: ['amy'] },
+  }) });
+  await api.ctx.fetchContributors();
+  const warnings = [];
+  api.ctx.console = { warn: (...args) => warnings.push(args) };
+  api.ctx.fetch = async () => ({ ok: false, status: 503 });
+  await api.ctx.fetchContributors();
+  assert.equal(warnings.length, 1);
+  assert.equal(api.ctx.renderedContributors, rows);
+  assert.equal(badge.textContent, '1/1');
+  assert.match(badge.attrs['aria-label'], /presence unavailable/);
+  assert.match(badge.children[0].textContent, /presence unavailable/);
 });
 
 test('knowledge uses numeric layer fact totals, independent of formatting and disabled priming', async () => {

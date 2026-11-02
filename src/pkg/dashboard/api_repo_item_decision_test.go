@@ -39,6 +39,7 @@ type repoItemDecisionMock struct {
 	prNoMaintainerEdits bool
 	workflowPath        string
 	prMergeState        string
+	prHeadSHA           string
 	updates             int
 	prRedCI             bool
 	prNoCI              bool
@@ -151,8 +152,12 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			if m.prFork {
 				headRepo = "someone/testrepo"
 			}
+			headSHA := m.prHeadSHA
+			if headSHA == "" {
+				headSHA = "feedfacefeedfacefeedfacefeedfacefeedface"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "maintainer_can_modify": !m.prNoMaintainerEdits,
-				"head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface", "repo": map[string]any{"full_name": headRepo}},
+				"head": map[string]any{"sha": headSHA, "repo": map[string]any{"full_name": headRepo}},
 				"base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "testorg/testrepo"}}})
 		case r.Method == http.MethodGet && strings.Contains(path, "/compare/"):
 			files := []map[string]string{}

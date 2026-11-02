@@ -4988,6 +4988,12 @@ type DashboardConfig struct {
 	// "redirect_uri is invalid". Validated at load time by
 	// ValidateDashboardPublicURL.
 	PublicURL string `yaml:"public_url,omitempty" json:"public_url,omitempty"`
+	// KioskCTAURL and KioskCTAText are the destination and copy of the
+	// call-to-action badge every `?kiosk=1` view shows bottom-right (#16236,
+	// pkg/webassets/kioskcta). Empty takes the hosted-hive request page and
+	// its default line. Read once at dashboard start-up, like branding.
+	KioskCTAURL  string `yaml:"kiosk_cta_url,omitempty" json:"kiosk_cta_url,omitempty"`
+	KioskCTAText string `yaml:"kiosk_cta_text,omitempty" json:"kiosk_cta_text,omitempty"`
 	// Theme names the built-in dashboard theme id ("hive" by default) or
 	// "custom" when theme_overrides supplies the complete operator palette.
 	Theme string `yaml:"theme,omitempty" json:"theme,omitempty"`

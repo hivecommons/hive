@@ -3785,7 +3785,11 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			)
 			h.recordDecision(s.contributor.profile.GitHubUsername, decisionStaleGenRejected,
 				msg.TaskID, "", 0,
-				"task_progress fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment")
+				"task_progress fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment; task_revoke sent")
+			// hivecommons/hive#16218: without a revoke the relay keeps pinging
+			// every tick for a task it no longer owns, logging a WARN each time.
+			// Live-connection write: go through send (writeMu + write deadline).
+			_ = s.contributor.send(WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: "stale task generation; the task was released or reassigned"})
 			return
 		}
 		s.contributor.tmuxOutput = msg.TmuxOutput

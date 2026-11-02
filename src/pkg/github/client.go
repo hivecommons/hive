@@ -157,6 +157,7 @@ type Client struct {
 	mergeAlertIDsByRepo       map[string]map[string]*mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	mergedClaimScanTransient  sync.Map        // repo -> true while its merged-PR scan is timing out
 	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState
 	appAuth                   *AppAuth // nil for token-authenticated clients
@@ -1437,6 +1438,12 @@ var HoldLabels = []string{"hold", "on-hold", "hold/review"}
 
 var PermanentExemptLabels = []string{"do-not-merge"}
 
+// wipMirrorLabel is the label prow's `wip` plugin applies to every draft PR
+// as a mirror of the draft bit. It carries no information beyond "this is a
+// draft", so it must not shield a hive-authored draft from the stale-draft
+// rule the way a deliberate do-not-merge/hold does (#16246).
+const wipMirrorLabel = "do-not-merge/work-in-progress"
+
 // AutoMergeQueuedLabel is the fallback label a merger/owner queue action
 // applies when a hive has not configured `governor.labels.automerge`. Prefer
 // Client.AutoMergeLabel(), which honours that configuration; this constant
@@ -2236,7 +2243,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			continue
 		}
 
-		if c.isExempt(labels) {
+		if c.isExempt(labels) && !c.isDraftExemptOnlyByWIPMirror(pr.GetDraft(), labels) {
 			breakdown.Filtered++
 			sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRFiltered, "Exempt label"))
 			continue
@@ -3859,6 +3866,23 @@ func (c *Client) AutoMergeLabel() string {
 
 func (c *Client) isExempt(labels []string) bool {
 	return HasExemptLabel(labels, c.exemptLabels)
+}
+
+// isDraftExemptOnlyByWIPMirror reports whether a draft PR's exemption comes
+// solely from prow's do-not-merge/work-in-progress mirror label. Such a draft
+// must fall through to the draft branch so the stale-draft rule can still
+// surface it; any other exempt label keeps the PR filtered (#16246).
+func (c *Client) isDraftExemptOnlyByWIPMirror(draft bool, labels []string) bool {
+	if !draft {
+		return false
+	}
+	rest := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if !strings.EqualFold(l, wipMirrorLabel) {
+			rest = append(rest, l)
+		}
+	}
+	return len(rest) != len(labels) && !c.isExempt(rest)
 }
 
 func HasExemptLabel(labels, exemptLabels []string) bool {

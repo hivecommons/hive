@@ -1543,13 +1543,20 @@
     .ham-row.ham-train-front::after { background: var(--text); }
     .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-preparation-head { flex-wrap: wrap; }
+    .ham-row.ham-preparation-member::before { top: calc(-1 * var(--line-width)); }
+    .ham-row.ham-preparation-member.ham-train-last::before { bottom: 0; }
+    .ham-row.ham-preparation-member::after { display: none; }
     .ham-preparation-head .ham-train-chip { white-space: normal; }
     .ham-preparation-head .ham-preparation-help { background: none; border-color: var(--ham-train-accent); color: var(--muted); }
     .ham-preparation-help::before { content: '?'; }
-    .config-info.ham-preparation-node { position: absolute; left: calc(var(--sp-2) - 2px); top: calc(50% - var(--sp-2)); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
+    .config-info.ham-preparation-node { position: absolute; left: calc(var(--sp-2) - 2px); top: 50%; transform: translateY(-50%); width: calc(var(--sp-2) * 2); height: calc(var(--sp-2) * 2); margin: 0; padding: 0; border: 0; background: transparent; z-index: 1; }
+    .ham-row.ham-preparation-member > .ham-strip-row > .ham-preparation-node { left: calc(var(--sp-2) - var(--sp-5) - 2px); }
+    .ham-preparation-node::before { content: none; }
+    .ham-preparation-node::after { content: ''; position: absolute; left: 1px; top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
+    .ham-train-front > .ham-strip-row > .ham-preparation-node::after { background: var(--text); }
     .ham-preparation-node:focus-visible { outline: var(--focus-ring-width) solid var(--ham-train-accent); outline-offset: var(--sp-1); }
     .ham-row.ham-preparation-gap::before, .ham-sub.ham-preparation-member.ham-preparation-gap::before { border-left-style: dashed; }
-    .ham-row.ham-preparation-unverified::after, .ham-sub.ham-preparation-member.ham-preparation-unverified::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
+    .ham-preparation-unverified > .ham-strip-row > .ham-preparation-node::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
     .ham-preparation-comment { animation: none; }
     .ham-human-context { animation: none; }
     /* Mixed issue trees keep their existing children; only actual prep PRs
@@ -1557,10 +1564,9 @@
     .ham-row > .ham-preparation-head { margin-left: calc(-1 * var(--sp-2)); }
     .ham-sub.ham-preparation-member { position: relative; --ham-train-accent: var(--amber); }
     .ham-sub.ham-preparation-member::before { content: ''; position: absolute; left: 2px; top: calc(-1 * var(--sp-3) - var(--sp-2)); bottom: 0; border-left: var(--line-width) solid var(--ham-train-accent); }
-    .ham-sub.ham-preparation-member.ham-train-last::before { bottom: 50%; }
-    .ham-sub.ham-preparation-member::after { content: ''; position: absolute; left: -1px; top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ham-train-accent); }
-    .ham-sub.ham-preparation-member.ham-train-front::after { background: var(--text); }
+    .ham-sub.ham-preparation-member.ham-train-last::before { bottom: 0; }
     .ham-sub .config-info.ham-preparation-node { left: calc(-1 * var(--sp-1)); }
+    .ham-sub .ham-preparation-node::after { left: 3px; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
     .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
     .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }
@@ -1778,7 +1784,7 @@
     .ham-plan-details > summary:hover { color: var(--text); }
     .ham-plan-details > :not(summary) { margin: var(--sp-3) 0 0; }
     .ham-plan-details .ham-plan-label { margin-top: var(--sp-4); }
-    .ham-plan-finding { color: var(--status-error); }
+    .ham-plan-finding { color: var(--status-error); white-space: pre-line; }
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
     /* The preview opens as a skeleton while the plan is gathered
@@ -5530,15 +5536,20 @@
     .oc-nav-count--waiting:not([data-zero]) + .oc-nav-count { margin-left: var(--sp-1); }
     .oc-nav-count--waiting:not([data-zero]) { --component-status: var(--status-attention); background: color-mix(in srgb, var(--component-status) 16%, transparent); border-color: color-mix(in srgb, var(--component-status) 50%, transparent); color: var(--component-status); }
     .oc-nav-count--waiting[data-zero] { display: none; }
+    /* The activity monitor's own count pill (hivecommons/hive#16243): the
+       sidebar badge's twin inside the section title, so every chrome-less
+       view still shows the count. Same .badge-count recipe, title-cluster
+       letter case, and a tooltip rather than a nav row. */
+    .ham-header-count { flex: none; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
     /* A short, out-of-flow net delta on explicitly wired navigation counts.
        Keep the zero waiting badge visible just long enough to show its drop. */
-    .oc-nav-count[data-count-delta] { position: relative; }
+    .oc-nav-count[data-count-delta], .ham-header-count[data-count-delta] { position: relative; }
     .oc-nav-item:has(> .oc-nav-count[data-count-delta]) { overflow: visible; z-index: 1; }
     #activity-monitor-waiting-badge[data-zero][data-count-delta] {
       display: inline-flex; position: absolute; right: 3rem;
       visibility: hidden; padding: 0; border: 0;
     }
-    .oc-nav-count[data-count-delta]::after {
+    .oc-nav-count[data-count-delta]::after, .ham-header-count[data-count-delta]::after {
       content: attr(data-count-delta); position: absolute; bottom: calc(100% + 2px); right: 0;
       visibility: visible; pointer-events: none; z-index: 1; padding: var(--sp-0) var(--sp-2); border-radius: var(--r-pill);
       background: var(--surface); color: var(--brand); border: 1px solid var(--brand);
@@ -5548,6 +5559,10 @@
     #knowledge-sidebar-badge[data-count-delta]::after {
       bottom: auto; top: 50%; right: calc(100% + var(--sp-1)); translate: 0 -50%;
     }
+    /* The header pill's cue rides inside the pill ("57 ↑ +3") rather than
+       floating above it: the card edge is right there, and the number must
+       still read from across a room on a wall display. */
+    .ham-header-count[data-count-delta]::after { position: static; margin-left: var(--sp-2); white-space: nowrap; }
     [data-count-direction="up"] { --nav-count-start: 3px; }
     [data-count-direction="down"] { --nav-count-start: -3px; }
     [data-count-phase="a"]::after { animation: nav-count-a 220ms ease-out; }
@@ -6832,6 +6847,32 @@
     body.kiosk-mode #activity-monitor-section > .section-label { pointer-events: none; }
     body.kiosk-mode .ham-sticky { top: 0; }
     body.kiosk-mode .ham-cols { top: var(--ham-sticky-bar-h); }
+
+/* ---- kiosk call-to-action badge (#16236) ----
+   pkg/webassets/kioskcta markup, injected by the server where
+   html/faq.html leaves the hive-kiosk-cta placeholder comment. Hidden unless
+   boot.js set body.kiosk-cta-on (kiosk=1 and not cta=off), so the operator
+   dashboard never shows it. Bottom-right, under the toast stack's corner
+   and above the tracker; sized to read off a 720p Twitch transcode of a
+   1920x1080 capture (URL >= 22px). The Matrix view (css/matrix.css) lifts
+   it above its fixed canvas and dims it. */
+    #kiosk-cta { display: none; }
+    body.kiosk-cta-on #kiosk-cta {
+      display: flex; align-items: center; gap: var(--sp-4);
+      position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 9000;
+      padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-3);
+      border-radius: var(--radius-lg);
+      background: var(--surface-0); color: var(--text);
+      border: 1px solid var(--brand);
+      box-shadow: var(--shadow-modal);
+      font-family: var(--font-ui, system-ui, sans-serif);
+      line-height: 1.2; pointer-events: none; user-select: none;
+    }
+    /* The QR PNG carries its own white quiet zone, so no backdrop is needed. */
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-qr { width: 110px; height: 110px; border-radius: var(--r-sm); display: block; }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-copy { display: flex; flex-direction: column; gap: var(--sp-2); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-text { font-size: var(--fs-xl); font-weight: 600; color: var(--text-muted); }
+    body.kiosk-cta-on #kiosk-cta .kiosk-cta-url { font-size: var(--fs-2xl); font-weight: 800; letter-spacing: .01em; color: var(--brand); }
 /* ---- pop-out & full screen: the activity monitor on its own (#15829) ----
    `?popout=1` (see js/boot.js) is what the ⧉ header button opens in a
    named popup window so an operator can park the tracker on a second
@@ -6870,6 +6911,11 @@
     body.ham-chromeless .ham-sticky { top: 0; }
     body.ham-chromeless .ham-cols { top: var(--ham-sticky-bar-h); }
 
+    /* The title's count pill is the only count a wall can see: at 1920x1080
+       it reads from across a room. Kiosk sets no ham-chromeless, so it is
+       named too. 1.375rem is 22px at the default root size. */
+    body.kiosk-mode .ham-header-count, body.ham-chromeless .ham-header-count { font-size: var(--fs-2xl); min-height: 1.6em; padding: 0 var(--sp-3); }
+    body.kiosk-mode .ham-header-count[data-count-delta]::after, body.ham-chromeless .ham-header-count[data-count-delta]::after { font-size: var(--fs-lg); }
     /* Header tools: ⧉ pop out, ⛶ full screen and 📺 display sit beside the gear and
        share its chip styling; the return link is a pop-out-only text pill. */
     .ham-header-tool { width: auto; min-width: 15px; padding: 0 var(--sp-1); font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; }
@@ -6984,6 +7030,7 @@ body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; overf
 body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 1rem; }
 body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
 body.matrix-mode #hive-matrix [hidden] { display: none !important; }
+body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -7384,6 +7431,13 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
   window.HIVE_DISPLAY_DENSITY=window.HIVE_DISPLAY?density:'';
   window.HIVE_DISPLAY_SHIFT=window.HIVE_DISPLAY&&shift;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
+  // Kiosk call-to-action badge (#16236): shown in every kiosk view unless
+  // the URL says `cta=off`; never in the operator dashboard, pop-out or
+  // display mode. Pure so pkg/dashboard/kiosk_cta.test.js can run it.
+  window.hiveKioskCTAOn=function(href){
+    try { var q=new URL(href).searchParams; return q.get('kiosk')==='1' && q.get('cta')!=='off'; } catch(e) { return false; }
+  };
+  if(window.hiveKioskCTAOn(window.location.href)) document.body.classList.add('kiosk-cta-on');
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
   window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
   window.hiveDisplayMode=function(){ return !!window.HIVE_DISPLAY; };
@@ -8604,6 +8658,11 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
   </div>
 
 </div><!-- /#hive-dashboard-root -->
+<!-- Kiosk call-to-action badge (#16236). The server replaces this comment
+     with pkg/webassets/kioskcta markup at start-up; it sits outside
+     #hive-dashboard-root because the Matrix view hides the root. Visible
+     only with body.kiosk-cta-on (kiosk=1 and not cta=off, see js/boot.js). -->
+<!-- hive-kiosk-cta -->
 
   <script>
     // Wrap fetch to inject auth token for mutation requests (PUT/POST/PATCH/DELETE)
@@ -9482,6 +9541,11 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
       + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-display-btn" id="activity-monitor-display" data-action="toggleStageTrackerDisplay" data-stop="1" aria-pressed="false" title="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)" aria-label="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)">📺</button>'
       + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
+    // The monitor's own item count (hivecommons/hive#16243): the sidebar
+    // badge's twin, written by the same navCountBind call in
+    // renderStageTracker so kiosk, pop-out, display and full screen — which
+    // hide the sidebar — still show the count and its ↑/↓ cue.
+    const STAGE_TRACKER_HEADER_COUNT_HTML = '<span id="activity-monitor-header-badge" class="badge-count ham-header-count" data-zero title="Open items in the hive activity monitor" aria-label="0 items">0</span>';
     // Display controls (hivecommons/hive#15929): the overlay
     // stageTrackerDisplayControlsInit() appends to the body in display mode
     // only. Full screen and Keep awake are explicit clicks; their disabled /
@@ -9522,7 +9586,7 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
-      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML, countHtml: STAGE_TRACKER_HEADER_COUNT_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -9572,7 +9636,7 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
       return `https://github.com/hivecommons/hive/blob/${line}/src/docs/${page}.md${anchor ? '#' + anchor : ''}`;
     }
     function dashboardDocsHrefFromPath(path) {
-      const m = /^\/docs\/([\w-]+)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
+      const m = /^\/docs\/([\w-]+(?:\/[\w-]+)*)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
       return m ? dashboardDocsHref(m[1], m[2] || '') : String(path || '');
     }
     function setDashboardDocsLine(branch) {
@@ -9606,7 +9670,9 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
     function sectionCardHeader(opts) {
       opts = opts || {};
       const id = opts.id || '';
-      const title = opts.titleHtml || esc(opts.title || id || 'Section');
+      // countHtml: a live count pill that reads as part of the title
+      // ("Hive activity monitor · 57"), before the help mark and the gear.
+      const title = (opts.titleHtml || esc(opts.title || id || 'Section')) + (opts.countHtml || '');
       const bodyId = opts.bodyId || (id + '-body');
       const action = opts.action || 'toggleSection';
       const keyAction = opts.keyAction || 'sectionHeaderKey';
@@ -9664,7 +9730,7 @@ body.matrix-mode #hive-matrix [hidden] { display: none !important; }
       if (!body) return;
       const bodyId = sectionId + '-body';
       const template = document.createElement('template');
-      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml, settingsHtml: cfg.settingsHtml }, '');
+      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml, settingsHtml: cfg.settingsHtml, countHtml: cfg.countHtml }, '');
       const card = template.content.firstElementChild;
       const newHeader = card.querySelector('.dash-card-header');
       const badges = newHeader.querySelector('.dash-card-badges');
@@ -17003,6 +17069,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const fallback = item.sentinel_notice ? 'informational findings; no blocking sentinel label' : STAGE_TRACKER_SENTINEL_TIP_FALLBACK;
       return lead + (head ? ' at ' + head : '') + ': ' + (reason || fallback);
     }
+    // Pure: one line per sentinel finding naming its rule and the files it
+    // fired on — "sensitive_path: .github/workflows/ci.yml, OWNERS (+3
+    // more)" — from the row's sentinel_details (hivecommons/hive: "knowing
+    // what the sensitive path(s) (and files) are in this alert dialog would
+    // really help me make a decision"). The server bounds the paths per
+    // finding and reports the rest as more_paths. [] without details.
+    function stageTrackerSentinelPathLines(item) {
+      const details = item && Array.isArray(item.sentinel_details) ? item.sentinel_details : [];
+      return details.map(d => {
+        const rule = String((d && d.rule) || '').trim();
+        const summary = String((d && d.summary) || '').trim();
+        const paths = (d && Array.isArray(d.paths) ? d.paths : []).map(p => String(p || '').trim()).filter(Boolean);
+        const more = Number(d && d.more_paths) || 0;
+        const label = rule || summary;
+        if (!label) return '';
+        if (!paths.length) return rule && summary ? rule + ' (' + summary + ')' : label;
+        return label + ': ' + paths.join(', ') + (more > 0 ? ' (+' + more + ' more)' : '');
+      }).filter(Boolean);
+    }
+    // Pure: the sentinel tip followed by its path lines, one per line and
+    // indented, for the decision dialogs and result toasts; the tip alone
+    // when the row carries no details.
+    function stageTrackerSentinelTipWithPaths(item) {
+      const tip = stageTrackerSentinelTip(item);
+      if (!tip) return '';
+      const lines = stageTrackerSentinelPathLines(item);
+      return lines.length ? tip + lines.map(l => '\n   · ' + l).join('') : tip;
+    }
     // Whether the item's lit chevron word carries the alert itself (a PR
     // parked at 085, or an issue riding one): the chip then adds nothing.
     function stageTrackerSentinelInLane(item) {
@@ -18176,7 +18270,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
@@ -18350,12 +18444,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>`;
       }
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(pr, stages, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
-          ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : ''))}
           </div>
           <div class="ham-strip-row">
+            ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
@@ -18603,7 +18697,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -18656,12 +18750,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const trainKey = typeof stageTrackerTrainKey === 'function' ? stageTrackerTrainKey(item) : '';
       if (typeof stageTrackerPreparationMark === 'function') stageTrackerPreparationMark(shown);
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
-        ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''), prTargetKey)}
         </div>
         <div class="ham-strip-row">
+          ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}
         </div>${typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(item, stages, nowMs, subRows) : ''}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, ctx, stageTrackerItemKey(item)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(item), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
@@ -20203,12 +20297,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       state.timer = setTimeout(state.clear, NAV_COUNT_CUE_MS);
     }
 
+    // One count, several pills. The tracker's item count is shown in the
+    // sidebar and again in the monitor's own header (hivecommons/hive#16243)
+    // so the chrome-less views — kiosk, pop-out, display, full screen —
+    // which hide the sidebar still show it. Every bound element receives
+    // the same text, tooltip, zero marker and delta cue from one call; a
+    // target that is not in the DOM is skipped, the others still update.
+    function navCountBind(ids, count, label, live = true) {
+      const known = Number.isSafeInteger(count) && count >= 0;
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (known) {
+          el.textContent = String(count);
+          el.title = label;
+          if (count) el.removeAttribute('data-zero'); else el.setAttribute('data-zero', '');
+        }
+        navCountDelta(el, count, label, live);
+      }
+    }
+    const STAGE_TRACKER_COUNT_BADGE_IDS = Object.freeze(['activity-monitor-sidebar-badge', 'activity-monitor-header-badge']);
+
     function stageTrackerSidebarCountsUnknown() {
-      for (const id of ['activity-monitor-sidebar-badge', 'activity-monitor-waiting-badge']) {
+      for (const id of STAGE_TRACKER_COUNT_BADGE_IDS.concat('activity-monitor-waiting-badge')) {
         navCountDelta(document.getElementById(id), null);
       }
     }
-    // Preparation decorates the existing rows; it never sorts or admits them.
+    // Keep complete issue/PR row units together in recorded preparation order.
+    // This changes display order only, never admission or pipeline stage.
     var _stageTrackerPreparationShown = new Map();
     var _stageTrackerPreparationRendered = new Map();
     var _stageTrackerPreparationInline = [];
@@ -20224,7 +20340,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of adopted) {
         if (!it) continue;
         const put = pr => {
-          const key = stageTrackerPreparationKey(it.repo, pr.number);
+          const key = stageTrackerPreparationKey(pr.repo || it.repo, pr.number);
           if (it.kind === 'pr' || !byKey.has(key)) byKey.set(key, { item: pr, host: it, nested: it.kind === 'issue' });
         };
         if (it.kind === 'pr') put(it);
@@ -20235,6 +20351,44 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
       }
       return byKey;
+    }
+    function stageTrackerPreparationContiguous(items, entryOf) {
+      const groups = new Map(), membership = new Map();
+      items.forEach((item, index) => {
+        const entry = item && entryOf(item);
+        if (!entry) return;
+        if (!groups.has(entry.groupIndex)) groups.set(entry.groupIndex, []);
+        groups.get(entry.groupIndex).push({ item, index, sequence: entry.sequence });
+        membership.set(index, entry.groupIndex);
+      });
+      for (const members of groups.values()) members.sort((a, b) => a.sequence - b.sequence || a.index - b.index);
+      const emitted = new Set(), out = [];
+      items.forEach((item, index) => {
+        if (!membership.has(index)) { out.push(item); return; }
+        const group = membership.get(index);
+        if (emitted.has(group)) return;
+        emitted.add(group);
+        out.push(...groups.get(group).map(member => member.item));
+      });
+      return out;
+    }
+    function stageTrackerPreparationOrderRows(data, items, stages) {
+      const byHost = new Map();
+      stageTrackerPreparationVisualModel(data, items, items, stages).forEach((group, groupIndex) => {
+        for (const entry of group.members) {
+          if (!entry.row || entry.location !== 'page') continue;
+          const host = entry.row.host;
+          if (typeof stageTrackerTrainKey === 'function' && stageTrackerTrainKey(host)) continue;
+          const key = stageTrackerItemKey(host), prior = byHost.get(key);
+          if (!prior || (prior.groupIndex === groupIndex && entry.sequence < prior.sequence)) {
+            byHost.set(key, { groupIndex, sequence: entry.sequence });
+          }
+        }
+      });
+      return stageTrackerPreparationContiguous(items, item => byHost.get(stageTrackerItemKey(item)));
+    }
+    function stageTrackerPreparationOrderLinked(linked, issue) {
+      return stageTrackerPreparationContiguous(linked, lp => stageTrackerPreparationEntry(stageTrackerLinkedPRItem(issue, lp)));
     }
     function stageTrackerPreparationVisualModel(data, listedRows, pageRows, stages) {
       const known = stageTrackerPreparationRows(data && data.items, stages);
@@ -20310,20 +20464,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPreparationRowInfo(item, stages) {
       if (!item || (typeof stageTrackerTrainKey === 'function' && stageTrackerTrainKey(item))) return null;
       const prs = item.kind === 'pr' ? [item] : item.kind === 'issue'
-        ? stageTrackerLinkedSorted(item, stages).map(lp => stageTrackerLinkedPRItem(item, lp)) : [];
+        ? stageTrackerPreparationOrderLinked(stageTrackerLinkedSorted(item, stages), item).map(lp => stageTrackerLinkedPRItem(item, lp)) : [];
       const members = prs.map(pr => stageTrackerPreparationEntry(pr));
       if (!members.length || members.some(e => !e) || members.some(e => e.groupIndex !== members[0].groupIndex)) return null;
       const ordered = members.every((e, i) => !i || e.sequence > members[i - 1].sequence);
       return { groupIndex: members[0].groupIndex, members, ordered };
     }
     function stageTrackerPreparationAdjacent(a, b) {
-      return !!(a && b && a.ordered && b.ordered && a.groupIndex === b.groupIndex
-        && a.members[a.members.length - 1].sequence < b.members[0].sequence);
+      return !!(a && b && a.groupIndex === b.groupIndex);
     }
     function stageTrackerPreparationHelp(group) {
       const q = group.queue;
       const details = [`${q.repo || 'Repository unknown'} → ${q.base_ref || 'base unknown'}`,
         q.message || 'FIFO follows first qualifying admission, not PR age or guaranteed merge order.',
+        'The recorded front is first, then waiting tickets in preparation FIFO. Complete issue/PR row units stay together; ticket positions remain explicit when related PRs share one issue.',
         'Preparation is not CI, review approval, a ready train seat, or native queue membership.'];
       if (q.observed_at) details.push('Snapshot ' + q.observed_at);
       for (const e of group.members) {
@@ -20379,8 +20533,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!info || ctx && ctx.preparationParent) return '';
       const prev = ctx && ctx.preparationPrev !== undefined ? ctx.preparationPrev : stageTrackerPreparationRowInfo(ctx && ctx.prevRow, stages);
       const next = ctx && ctx.preparationNext !== undefined ? ctx.preparationNext : stageTrackerPreparationRowInfo(ctx && ctx.nextRow, stages);
-      const gap = !info.ordered || info.members.some((e, i) => i && e.sequence !== info.members[i - 1].sequence + 1)
-        || stageTrackerPreparationAdjacent(prev, info) && info.members[0].sequence !== prev.members[prev.members.length - 1].sequence + 1;
+      const trail = stageTrackerPreparationAdjacent(prev, info)
+        ? [prev.members[prev.members.length - 1]].concat(info.members) : info.members;
+      const gap = trail.some((e, i) => i && Math.abs(e.sequence - trail[i - 1].sequence) > 1);
       return ' ham-train' + stageTrackerTrainAccentClass(STAGE_TRACKER_PREPARATION_ACCENT) + ' ham-preparation-member'
         + (info.members.some(e => e.role === 'owner' && e.state === 'current') ? ' ham-train-front' : '')
         + (!stageTrackerPreparationAdjacent(info, next) ? ' ham-train-last' : '')
@@ -20410,14 +20565,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         && eventHtml && !eventHtml.includes('cue-event-tucked');
       const parts = caption && !captionVisible ? [caption] : [];
       if (!caption) parts.push('Current pipeline blocker unknown');
-      parts.push(e.state === 'unverified'
+      const preparation = e.state === 'unverified'
         ? stageTrackerPreparationPlace(e) + ' · ' + (e.ticket.detail || 'current identity or eligibility unknown')
-        : e.role === 'owner' ? 'preparing base' : 'queued for base refresh' + (e.ticket.behind ? ' behind PR #' + e.ticket.behind : ' · owner unknown'));
+        : e.role === 'owner' ? 'preparing base' : 'queued for base refresh' + (e.ticket.behind ? ' behind PR #' + e.ticket.behind : ' · owner unknown');
+      if (!caption.split(/\s+[·—]\s+/).includes(preparation)) parts.push(preparation);
       parts.push('ticket age ' + stageTrackerPreparationAge(e.ticket, _stageTrackerPreparationNow));
       if (e.row.nested) parts.push('shown under issue #' + e.row.host.number);
       return eventHtml + `<div class="cue-event ham-preparation-comment"><span class="cue-event-body">${esc(parts.join(' · '))}</span></div>`;
     }
     function stageTrackerPreparationSubRows(linked, issue, stages, nowMs, ctx) {
+      linked = stageTrackerPreparationOrderLinked(linked, issue);
       const parent = stageTrackerPreparationRowInfo(issue, stages);
       const infos = linked.map(lp => stageTrackerPreparationRowInfo(stageTrackerLinkedPRItem(issue, lp), stages));
       const seen = new Set();
@@ -20645,7 +20802,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
-      const ordered = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
       const tv = typeof stageTrackerDisplayTv === 'function' && stageTrackerDisplayTv();
@@ -20677,13 +20835,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // disagree: the pill is the default view's row count (owner: rows,
       // not items — a covering PR shares its issue's row); needs-attention
       // is the warn-coloured header suffix and the pill's tooltip, counted
-      // over every item regardless of filter.
+      // over every item regardless of filter. The same count lands on the
+      // monitor header's own pill, the one chrome-less views can see.
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
       const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll, stageTrackerFoldedCount(d.items, ctx));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
-      const badge = document.getElementById('activity-monitor-sidebar-badge');
-      if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
-      navCountDelta(badge, counts.badge, counts.badgeTitle, !!data || countRefresh);
+      navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
@@ -22423,7 +22580,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // flagged PR, so the operator reads the security reason before
     // choosing Approve; '' when nothing in items is flagged.
     function stageTrackerSentinelPreface(items) {
-      return (items || []).filter(it => it && it.sentinel_alert && !it.sentinel_notice).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
+      return (items || []).filter(it => it && it.sentinel_alert && !it.sentinel_notice).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTipWithPaths(it)).join('\n');
     }
     // Every confirm a row action raises can be opted out of per browser,
     // per action id (the dialog's "Don't ask again for this action" box;
@@ -37211,8 +37368,6 @@ function burnAreaChart() {
     const EV_THROUGHPUT_GOOD = 0.85;        // ≥ → Good
     const EV_THROUGHPUT_FAIR = 0.70;        // ≥ → Fair, below → Weak
     const EV_QUEUE_GROWTH_MAX = 0.10;       // week-end queue depth growing more than this week over week → Weak regardless of ratio
-    const EV_BLOCKED_STRONG = 0.01;         // proxy-blocked share of ALL agent writes (direct + hive-mediated) ≤ → Strong
-    const EV_BLOCKED_FAIR = 0.05;           // ≤ → Fair, above → Weak
     // CI gate, grade A (integrity): breaches ÷ merged PRs with a known merge-time check state.
     const EV_GATE_BREACH_GOOD = 0.01;       // 0 breaches → Excellent; ≤ this share → Good
     const EV_GATE_BREACH_FAIR = 0.03;       // ≤ this share → Fair, above → Weak
@@ -37504,15 +37659,14 @@ function burnAreaChart() {
         const sentinelWeeks = Array.isArray(sentinel.weeks) ? sentinel.weeks : [];
         const sentinelHits = sentinelWeeks.reduce((sum, wk) => sum + (Number(wk && wk.hits) || 0), 0);
         const blockedRate = evRate(blocked, total);
-        const grade = evGrade(blockedRate, total, EV_BLOCKED_STRONG, EV_BLOCKED_FAIR, false);
         const coverage = direct.recorded === false ? 'Direct-write counters have not been recorded on this hive yet, so the total only holds hive-mediated writes.' : direct.partial_coverage ? `Direct-write counters have only been recorded since ${direct.since}, so earlier weeks in this window hold hive-mediated writes only.` : '';
         return {
-          matters: 'Agents change GitHub either through the hive (comments, issues, PRs, reviews it files on their behalf, all audited) or directly through a proxy that enforces the trust tiers. A handful of refusals out of thousands of writes means the boundary is doing its job quietly; a refusal rate in the percent range means agents are repeatedly trying things they are not allowed to do.',
-          measured: 'The headline is blocked ÷ ALL agent GitHub writes in the window: every hive-mediated write from the audit log plus every direct write the proxy saw, per trust tier, and how many the proxy refused and why. Separately: how many evidence records per week carry a "sentinel hit", a canary that fires when an agent touched something it should not have.',
+          matters: 'A recorded block is positive evidence that enforcement worked on that attempt. Attempted-agent compliance is a separate question: frequent prohibited attempts do not make successful blocking a failure, and generating more prohibited attempts is not a goal.',
+          measured: 'Observed prohibited writes blocked, with ALL observed agent GitHub writes as denominator context. Separately, Sentinel detections are informational observations, not proof that a write was blocked.',
           how: `Denominator = hive-mediated writes (audit entries for agent comments, issues, PRs, reviews, labels, closes and pushes) + direct proxied writes (the proxy’s weekly tally per tier, kept under /data so it survives restarts). Numerator = writes the proxy refused (plus audited refusals of mediated writes). Per-tier bars show blocked ÷ direct writes for that tier. Would-block counts from intent verification are shown separately and are never in the blocked count. ${coverage}`,
-          good: `Blocked at or below ${Math.round(EV_BLOCKED_STRONG * 100)}% of all agent writes is Strong — a boundary that is exercised but rarely needed — ${Math.round(EV_BLOCKED_FAIR * 100)}% or less is Fair, above that Weak. The sentinel line should sit at zero; any hit is worth reading the record for.`,
+          good: 'One or more observed blocks demonstrates enforcement on those attempts, even in a small window. Zero means enforcement was not observed, not that it failed. There is no target refusal rate or reward for more prohibited attempts. These counts do not establish that bypasses or false positives are absent.',
           ours: `${formatNumber(total)} agent writes in this window (${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct across ${tiers.length} tier(s)), ${blocked} blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})${topReason ? `, most often for ${topReason[0]} (${topReason[1]})` : ''}.${evaluated ? ` Intent verification evaluated ${evaluated} write(s) and would have blocked ${wouldBlock} (not counted above).` : ''} ${sentinel.n ? `${sentinel.n} record(s) with ${sentinelHits} sentinel hit(s)` : 'No sentinel hits'} in this window. ${coverage} Direct writes that bypass both the hive and the proxy are not seen at all.`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent writes` : `${blocked} of ${formatNumber(total)} agent writes blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})`,
+          grade: 'ungraded', reason: blocked > 0 ? `Enforcement demonstrated — ${blocked} prohibited write(s) blocked` : 'Enforcement not observed — 0 blocked writes',
         };
       },
       'opens-merges': (dto) => {
@@ -37552,7 +37706,9 @@ function burnAreaChart() {
       const section = (h, body) => body ? `<h4>${h}</h4><p>${escapeHtml(body)}</p>` : '';
       const sc = evServerCard(dto, key);
       const g = sc && sc.grade && typeof sc.grade === 'object' ? sc.grade : null;
-      const gradeHtml = g
+      const gradeHtml = key === 'boundary-enforcement'
+        ? `<div class="ev-grade-rubric"><b>Not graded:</b> ${escapeHtml(g ? String(g.reason || '') : x.reason)}.${g && g.rubric ? ` ${escapeHtml(String(g.rubric))}.` : ''}</div>`
+        : g
         ? `<div class="ev-grade-rubric"><b>${g.enough_data ? `Grade ${escapeHtml(String(g.letter || '—'))}` : 'Not graded yet'}:</b> ${escapeHtml(String(g.reason || ''))}.${g.rubric ? ` Rubric: ${escapeHtml(String(g.rubric))}.` : ''}</div>`
         : evGradeLine(x.grade, x.reason);
       const button = `<button type="button" class="ev-info" data-action="toggleEvidenceExplainer" data-arg0="${key}" data-stop="1" data-prevent="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${id}" aria-label="Explain ${escapeHtml(title)}">ⓘ</button>`;
@@ -37592,7 +37748,9 @@ function burnAreaChart() {
       const band = g && ['a', 'b', 'c'].includes(g.band) ? g.band : 'none';
       const letter = g && g.letter ? String(g.letter) : '—';
       const why = g ? (g.enough_data ? String(g.reason || '') : `Not enough data yet: ${g.reason || ''}`) : 'Grade not reported by this hive';
-      const grade = `<span class="ev-letter ev-band-${band}" title="${escapeHtml(why)}" aria-label="Grade ${escapeHtml(letter)}: ${escapeHtml(why)}">${escapeHtml(letter)}</span>`;
+      const grade = key === 'boundary-enforcement'
+        ? `<span class="ev-letter ev-band-none" title="Observed enforcement, not a refusal-rate grade" aria-label="Boundary enforcement is not graded">Not graded</span>`
+        : `<span class="ev-letter ev-band-${band}" title="${escapeHtml(why)}" aria-label="Grade ${escapeHtml(letter)}: ${escapeHtml(why)}">${escapeHtml(letter)}</span>`;
       const plain = sc && sc.plain_summary ? `<div class="ev-plain">${escapeHtml(String(sc.plain_summary))}</div>` : '';
       return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}${ex.button}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span>${grade}</summary>${plain}${ex.body}${bodyHtml}</details>`;
     }
@@ -37868,7 +38026,8 @@ function burnAreaChart() {
       const total = Number(act.total_writes) || 0, blocked = Number(act.blocked) || 0;
       const rate = evRate(blocked, total);
       evDetails['boundary-enforcement'] = `${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct through the proxy${direct.recorded === false ? ' · direct-write counters not recorded yet' : direct.partial_coverage ? ` · direct-write counters recorded since ${String(direct.since || '')}` : ''}.`;
-      const headline = `<div class="ev-headline"><b>${blocked} of ${formatNumber(total)} agent writes blocked</b> · ${rate == null ? '—' : (rate * 100).toFixed(2) + '%'}</div>`;
+      const status = blocked > 0 ? 'Enforcement demonstrated' : 'Enforcement not observed';
+      const headline = `<div class="ev-headline"><b>${status} — ${blocked} prohibited write(s) blocked</b> · ${formatNumber(total)} observed agent writes · ${rate == null ? '—' : (rate * 100).toFixed(2) + '%'}</div>`;
       const tiers = EV_WRITE_TIERS.concat(Object.keys(byTier).filter((k) => !EV_WRITE_TIERS.includes(k)).sort());
       const rows = tiers.map((tier) => {
         const c = byTier[tier] || {};
@@ -38278,7 +38437,6 @@ function burnAreaChart() {
         renderEvidenceSummary(dto);
       } catch (e) { if (!evLast) renderEvidenceSummary(null); }
     }
-
     // ---- Approvals desk (RFC #4000) -------------------------------------
     // Pending operator-lane approvals. The panel stays hidden entirely unless
     // the desk is enabled, so a hive that has not opted in sees no new chrome.
@@ -43255,6 +43413,7 @@ function burnAreaChart() {
     let _contributorFilters = new Set();
     // Cache the last fetched contributor list for re-rendering on filter change
     let _cachedContributors = [];
+    let _contributorFetchID = 0;
 
     const CONTRIBUTOR_FILTER_ALL = 'all';
     const CONTRIBUTOR_FILTER_ACTIVE = 'active';
@@ -43316,14 +43475,22 @@ function burnAreaChart() {
     }
 
     async function fetchContributors() {
+      const requestID = ++_contributorFetchID;
       try {
         const res = await fetch('/api/contributors');
-        if (!res.ok) return;
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
-        _cachedContributors = data.contributors || [];
+        if (requestID !== _contributorFetchID) return;
+        if (!Array.isArray(data.contributors)) throw new Error('Invalid contributor roster');
+        _cachedContributors = data.contributors;
         renderContributorFilters(_cachedContributors);
         renderContributors(_cachedContributors);
-      } catch (e) { /* silently retry on next poll */ }
+        updateContributorBadge(data.contributorPool);
+      } catch (e) {
+        if (requestID !== _contributorFetchID) return;
+        console.warn('Failed to refresh contributors:', e);
+        updateContributorBadge(null);
+      }
     }
 
     const CONTRIB_TINT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -43669,7 +43836,11 @@ function burnAreaChart() {
       const statusBadge = document.getElementById('contributors-status-badge');
       if (!pool || !Number.isSafeInteger(pool.online) || pool.online < 0 ||
           !Number.isSafeInteger(pool.registered) || pool.registered < 0) {
-        navCountDelta(sidebarBadge, null);
+        navCountDelta(sidebarBadge, null, 'Contributor presence unavailable');
+        const tooltip = sidebarBadge && sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (tooltip) tooltip.textContent = 'Contributor presence unavailable; showing the last loaded roster';
+        if (tooltip && _configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
+        if (statusBadge) statusBadge.title = 'Contributor presence unavailable; showing the last loaded roster';
         return;
       }
       const onlineCount = pool.online;
@@ -43702,13 +43873,14 @@ function burnAreaChart() {
     function contributorsOnlineTooltip(pool) {
       const online = Number(pool.online) || 0;
       const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
-      const ids = pool.online_ids;
-      if (!Array.isArray(ids) || ids.length !== online || ids.some(id => typeof id !== 'string' || !id)) {
-        return summary + '<div>Online ClankeR IDs unavailable</div>';
+      const logins = pool.online_logins;
+      if (!Array.isArray(logins) || logins.length > online || (online > 0 && !logins.length) ||
+          logins.some(login => typeof login !== 'string' || !login.trim())) {
+        return summary + '<div>Online contributor names unavailable</div>';
       }
-      if (!ids.length) return summary + '<div>No ClankeRs online</div>';
-      return summary + '<div>Online ClankeRs</div><ul class="contributor-online-ids">' +
-        ids.map(id => '<li>' + esc(id) + '</li>').join('') + '</ul>';
+      if (!logins.length) return summary + '<div>No contributors online</div>';
+      return summary + '<div>Online contributors</div><ul class="contributor-online-ids">' +
+        logins.map(login => '<li>@' + esc(login) + '</li>').join('') + '</ul>';
     }
 
     // contributorsOnlineTitle is the presence summary: "3 online · 12 registered
@@ -44290,7 +44462,6 @@ function burnAreaChart() {
       renderSwarm(data.swarm || {});
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
-      updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
       renderHiveAdvice(data.hiveAdvice || null);
       renderFleetReport(data.fleetReport || null);
@@ -44341,7 +44512,6 @@ function burnAreaChart() {
         if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       }
     }
-
     // ── Inception section ──
     let _inceptionState = null;
     let _campaigns = [];
@@ -53815,15 +53985,15 @@ function burnAreaChart() {
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">API quota, PR scans and authorship</div>
           <div class="config-field-row">
-            ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode). 0 uses the default (800).', true, settingHelpMark('operator-reference', 'github-api-budget-governor', 'API reserve', 'Below this many remaining core REST calls the governor enters conserve mode: optional sweeps are skipped and the eval interval is multiplied. 0 restores the default (800).'))}
-            ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve. 0 uses the default (250).', true, settingHelpMark('operator-reference', 'github-api-budget-governor', 'API critical floor', 'Below this many remaining calls the governor also sheds unstick steps and stretches the eval interval 4x. Must stay below the reserve; 0 restores the default (250).'))}
-            ${num('agent_reserve_floor', 'Agent reserve floor', 'github.agent_reserve_floor', d.agent_reserve_floor || 400, 'Agent reads through the API proxy get a 429 once the shared core bucket drops below this, so daemon merge and scan work is never starved.', true, settingHelpMark('operator-reference', 'github-api-quota', 'Agent reserve floor', 'Protects the shared core bucket from agent traffic: once the latest rate-limit reading drops below the floor, agent reads through the API proxy are refused with a 429 until the bucket recovers. 0 uses the default.'))}
+            ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode). 0 uses the default (800).', true, settingHelpMark('operator-reference/sweeps-and-operations', 'github-api-budget-governor', 'API reserve', 'Below this many remaining core REST calls the governor enters conserve mode: optional sweeps are skipped and the eval interval is multiplied. 0 restores the default (800).'))}
+            ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve. 0 uses the default (250).', true, settingHelpMark('operator-reference/sweeps-and-operations', 'github-api-budget-governor', 'API critical floor', 'Below this many remaining calls the governor also sheds unstick steps and stretches the eval interval 4x. Must stay below the reserve; 0 restores the default (250).'))}
+            ${num('agent_reserve_floor', 'Agent reserve floor', 'github.agent_reserve_floor', d.agent_reserve_floor || 400, 'Agent reads through the API proxy get a 429 once the shared core bucket drops below this, so daemon merge and scan work is never starved.', true, settingHelpMark('operator-reference/runtime-and-quota', 'github-api-quota', 'Agent reserve floor', 'Protects the shared core bucket from agent traffic: once the latest rate-limit reading drops below the floor, agent reads through the API proxy are refused with a 429 until the bucket recovers. 0 uses the default.'))}
           </div>
           <div class="config-field-row">
-            ${num('pr_detail_ttl_s', 'PR detail cache TTL (seconds)', 'github.pr_detail_ttl_s', d.pr_detail_ttl_s || 1800, 'Reuses a PR detail response while the PR list still reports the same head SHA and updated_at. 0 uses the default.', false, settingHelpMark('operator-reference', 'notable-fields', 'PR detail cache TTL', 'How long a GET /pulls/{number} detail response is reused while the cheap PR list still reports the same head SHA and updated_at and GitHub has resolved mergeable_state. 0 uses the default.'))}
-            ${num('graphql_pr_batch_page_size', 'GraphQL PR batch page size', 'github.graphql_pr_batch_page_size', d.graphql_pr_batch_page_size || 50, 'Page size for the batched pullRequests query, 1–100. 0 uses the default.', false, settingHelpMark('operator-reference', 'notable-fields', 'GraphQL PR batch page size', 'Page size for the GraphQL pullRequests(first:) batch query. Values above GitHub&#39;s maximum of 100 are rejected; 0 uses the default.'))}
+            ${num('pr_detail_ttl_s', 'PR detail cache TTL (seconds)', 'github.pr_detail_ttl_s', d.pr_detail_ttl_s || 1800, 'Reuses a PR detail response while the PR list still reports the same head SHA and updated_at. 0 uses the default.', false, settingHelpMark('operator-reference/README', 'notable-fields', 'PR detail cache TTL', 'How long a GET /pulls/{number} detail response is reused while the cheap PR list still reports the same head SHA and updated_at and GitHub has resolved mergeable_state. 0 uses the default.'))}
+            ${num('graphql_pr_batch_page_size', 'GraphQL PR batch page size', 'github.graphql_pr_batch_page_size', d.graphql_pr_batch_page_size || 50, 'Page size for the batched pullRequests query, 1–100. 0 uses the default.', false, settingHelpMark('operator-reference/README', 'notable-fields', 'GraphQL PR batch page size', 'Page size for the GraphQL pullRequests(first:) batch query. Values above GitHub&#39;s maximum of 100 are rejected; 0 uses the default.'))}
           </div>
-          ${toggle('graphql_pr_batch', 'Batch open-PR scans with GraphQL', 'github.graphql_pr_batch', 'one paginated query per repo instead of per-PR detail and check-run reads.', false, settingHelpMark('operator-reference', 'notable-fields', 'Batch open-PR scans with GraphQL', 'On by default. One paginated GraphQL query per repository scan fills the PR detail and CI rollup caches, replacing most per-PR detail and check-run reads. Off returns to the REST-only scan path.'))}
+          ${toggle('graphql_pr_batch', 'Batch open-PR scans with GraphQL', 'github.graphql_pr_batch', 'one paginated query per repo instead of per-PR detail and check-run reads.', false, settingHelpMark('operator-reference/README', 'notable-fields', 'Batch open-PR scans with GraphQL', 'On by default. One paginated GraphQL query per repository scan fills the PR detail and CI rollup caches, replacing most per-PR detail and check-run reads. Off returns to the REST-only scan path.'))}
           ${toggle('app_authored_prs', 'Author agent PRs as the App bot', 'github.app_authored_prs', 'agents open PRs and commit as &lt;slug&gt;[bot] with the App installation token when project.ai_author is empty.', true, settingHelpMark('github-app-setup', '', 'Author agent PRs as the App bot', 'With a GitHub App installed, agents open PRs and commit as &lt;slug&gt;[bot] using the installation token whenever project.ai_author is empty, so PR authorship is the App rather than a personal account.'))}
           ${toggle('app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'github.app_signed_commits', 'needed when a base branch requires signed commits; rewrites the agent branch before the PR opens.', false, settingHelpMark('github-app-setup', 'signed-commits-on-agent-prs-app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'Opt-in; needs an installed App. Before a PR opens, the watcher squashes the agent branch into one commit created through the GraphQL createCommitOnBranch mutation, which GitHub signs and shows as Verified, so a required_signatures ruleset accepts it. Unsigned follow-up commits are reconciled the same way.'))}
           ${owner ? '<button class="hv-btn btn-primary mt-4" id="forge-gh-save-btn" data-action="saveForgeGitHubSettings">Save</button>' : '<div class="config-help mt-3">Owner role required to change these settings.</div>'}
@@ -57430,7 +57600,7 @@ function burnAreaChart() {
         ['open_to_merge_h', 'Open → merge', 'Hours from the issue opening on GitHub to the fixing PR merging.'],
       ];
       return `<div class="config-field mb-7">
-          <label>Delivery SLA targets (hours) ${settingHelpMark('operator-reference', 'delivery-sla', 'Delivery SLA targets', `Per-span budgets the Throughput section's Delivery SLA tiles and sparklines are coloured against: green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. 0 restores the default (${defaults.start_to_pr_h} / ${defaults.pr_to_merge_h} / ${defaults.open_to_merge_h} h).`)}</label>
+          <label>Delivery SLA targets (hours) ${settingHelpMark('operator-reference/sweeps-and-operations', 'delivery-sla', 'Delivery SLA targets', `Per-span budgets the Throughput section's Delivery SLA tiles and sparklines are coloured against: green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. 0 restores the default (${defaults.start_to_pr_h} / ${defaults.pr_to_merge_h} / ${defaults.open_to_merge_h} h).`)}</label>
           <div class="config-field-row">${fields.map(([key, label, tip]) => {
             const v = dirty[key] !== undefined ? dirty[key] : (eff[key] !== undefined ? eff[key] : defaults[key]);
             return `<div class="config-field" data-setting-key="sla.targets.${esc(key)}"><label for="cfg-sla-${esc(key)}" title="${esc(tip)}">${esc(label)}</label><input type="number" min="0" max="8760" step="0.5" id="cfg-sla-${esc(key)}" value="${esc(String(v))}" data-input-action="markDirty" data-arg0="sla" data-arg1="${esc(key)}" data-arg-types="s,s,N" data-setting-path="sla.targets.${esc(key)}" aria-label="${esc(label)} target in hours"></div>`;
@@ -58175,15 +58345,15 @@ function burnAreaChart() {
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
             <div class="config-toggle-switch ${ldApproval.trustOrgMembers !== false ? 'on' : ''} ${ldLocked ? 'disabled' : ''}" data-action="${ldLocked ? '' : 'toggleLabelDrivenTrustOrgMembers'}" data-arg-types="t" title="Prow's own rule: public members of the repo's org may apply the approval label. Off: only triage/write/maintain/admin collaborators and trusted bots."></div>
-            <span class="config-toggle-label">Label-driven repos: trust public org members to apply approval labels ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trust org members', 'When on (default), a public member of the repository owner org who applies the approval label is trusted, matching Prow. Collaborators with the triage role or higher are always trusted.')}</span>
+            <span class="config-toggle-label">Label-driven repos: trust public org members to apply approval labels ${settingHelpMark('operator-reference/README', 'label-driven-approval', 'Trust org members', 'When on (default), a public member of the repository owner org who applies the approval label is trusted, matching Prow. Collaborators with the triage role or higher are always trusted.')}</span>
           </div>
           <div class="config-field-row">
             <div class="config-field">
-              <label>Default approval labels ${settingHelpMark('operator-reference', 'label-driven-approval', 'Default approval labels', 'Comma-separated. Applies to every label-driven repo without its own list. Empty restores triage/accepted.')}</label>
+              <label>Default approval labels ${settingHelpMark('operator-reference/README', 'label-driven-approval', 'Default approval labels', 'Comma-separated. Applies to every label-driven repo without its own list. Empty restores triage/accepted.')}</label>
               <input type="text" id="cfg-label-driven-approval-labels" ${ldLocked ? 'disabled' : ''} value="${esc(ldDefaultLabels.join(', '))}" placeholder="triage/accepted" data-change-action="setLabelDrivenApprovalDefault" data-arg-types="v">
             </div>
             <div class="config-field">
-              <label>Trusted bots ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trusted bots', 'Comma-separated bot logins (for example kubestellar-prow[bot]) whose label additions count as a trusted triager. Empty restores the built-in list.')}</label>
+              <label>Trusted bots ${settingHelpMark('operator-reference/README', 'label-driven-approval', 'Trusted bots', 'Comma-separated bot logins (for example kubestellar-prow[bot]) whose label additions count as a trusted triager. Empty restores the built-in list.')}</label>
               <input type="text" id="cfg-label-driven-trusted-bots" ${ldLocked ? 'disabled' : ''} value="${esc((ldApproval.trustedBots || []).join(', '))}" placeholder="kubestellar-prow[bot]" data-change-action="setLabelDrivenTrustedBots" data-arg-types="v">
             </div>
           </div>
@@ -59798,31 +59968,31 @@ function burnAreaChart() {
       const snBehaviors = (sn.behaviors || []).map(b => `
         <div class="config-toggle">
           <div class="config-toggle-switch ${b.enabled ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelBehavior" data-rule="${esc(b.name)}"></div>
-          <span class="config-toggle-label"><code>${esc(b.name)}</code> ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', b.name, `${esc(b.description || '')}`)}</span>
+          <span class="config-toggle-label"><code>${esc(b.name)}</code> ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', b.name, `${esc(b.description || '')}`)}</span>
         </div>`).join('');
       const suspicious = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sn.enabled ? 'on' : ''}" data-action="toggleSentinelEnabled"></div>
-          <span class="config-toggle-label">Suspicious-activity alerts ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Suspicious-activity alerts', `Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets one explanatory comment per push; untrusted authors also get the blocking alert label, while trusted Hive authors default to informational notices that do not block merge.`)}</span>
+          <span class="config-toggle-label">Suspicious-activity alerts ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Suspicious-activity alerts', `Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets one explanatory comment per push; untrusted authors also get the blocking alert label, while trusted Hive authors default to informational notices that do not block merge.`)}</span>
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${sn.trustedAuthorsBlock ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelTrustedAuthorsBlock"></div>
-          <span class="config-toggle-label">Block trusted authors ${yamlHint('sentinel.trusted_authors_block')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
+          <span class="config-toggle-label">Block trusted authors ${yamlHint('sentinel.trusted_authors_block')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
         </div>
         <div class="config-field-row">
           <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
-          <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
         </div>
         <div class="config-field">
-          <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
           <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
         </div>
         <div class="config-field">
-          <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
+          <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
           ${snBehaviors}
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Exempt logins ${yamlHint('sentinel.exempt_logins[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Exempt logins ${yamlHint('sentinel.exempt_logins[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
           <div class="config-field"><label>Repos (optional allow-list) ${yamlHint('sentinel.repos[]')}</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
         </div>`;
       setTimeout(loadSentinelFindings, 0);
@@ -60438,21 +60608,21 @@ function burnAreaChart() {
 
         ${featuresSectionHtml('auto-merge', `
         <div class="settings-subsection">
-          <div class="settings-subsection-title">Auto-Merge ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-Merge', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</div>
+          <div class="settings-subsection-title">Auto-Merge ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Auto-Merge', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${amSelfOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="self_authored"></div>
-            <span class="config-toggle-label">Auto-merge App-authored PRs ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-merge App-authored PRs', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</span>
+            <span class="config-toggle-label">Auto-merge App-authored PRs ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Auto-merge App-authored PRs', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</span>
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Max merges per sweep ${yamlHint('auto_merge.max_merges')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
+            <label>Max merges per sweep ${yamlHint('auto_merge.max_merges')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
             <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
           </div>
           <div class="config-field mt-4">
-            <label>Minimum head age ${yamlHint('auto_merge.min_head_age')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Minimum head age', `How old a PR head must be before the sweep trusts an unknown required-check set. Closes the window after a push where slow GitHub Actions checks have not registered yet. Positive Go duration such as 3m.`)}</label>
+            <label>Minimum head age ${yamlHint('auto_merge.min_head_age')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Minimum head age', `How old a PR head must be before the sweep trusts an unknown required-check set. Closes the window after a push where slow GitHub Actions checks have not registered yet. Positive Go duration such as 3m.`)}</label>
             <input type="text" value="${esc(am.min_head_age || '')}" placeholder="3m0s" data-change-action="markDirty" data-arg0="auto-merge" data-arg1="min_head_age" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Required CI checks ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated default status-check/check-run names the sweep must see green before merging, e.g. build-gate. For heterogeneous hives use auto_merge.repos.<repo>.required_checks per repository; keys may be bare repo names or owner/repo.`)}</label>
+            <label>Required CI checks ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated default status-check/check-run names the sweep must see green before merging, e.g. build-gate. For heterogeneous hives use auto_merge.repos.<repo>.required_checks per repository; keys may be bare repo names or owner/repo.`)}</label>
             <input type="text" value="${esc(amChecks.join(', '))}" placeholder="build-gate, lint" data-change-action="gh72">
             <p class="config-help">Applies to repos without an override. Use <code>auto_merge.repos.&lt;repo&gt;.required_checks</code> for per-repo required checks.</p>
           </div>
@@ -60466,7 +60636,7 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${am.bot_takeover_enabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="bot_takeover_enabled"></div>
-            <span class="config-toggle-label">Take over github-actions[bot] PRs whose checks cannot run ${yamlHint('auto_merge.bot_takeover.enabled')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Take over github-actions[bot] PRs', `On by default. Applies only when github-actions[bot] is a trusted bot author above. A PR that bot opens with a workflow GITHUB_TOKEN never triggers pull_request checks, so it can never go green. Once its head is older than both the minimum head age and 30 minutes with no pull_request run, the App pushes the same change as one signed-off commit to hive/takeover-&lt;n&gt;, opens a PR that supersedes it and closes the bot PR. One attempt per bot head SHA. Applies on the next sweep.`)}</span>
+            <span class="config-toggle-label">Take over github-actions[bot] PRs whose checks cannot run ${yamlHint('auto_merge.bot_takeover.enabled')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Take over github-actions[bot] PRs', `On by default. Applies only when github-actions[bot] is a trusted bot author above. A PR that bot opens with a workflow GITHUB_TOKEN never triggers pull_request checks, so it can never go green. Once its head is older than both the minimum head age and 30 minutes with no pull_request run, the App pushes the same change as one signed-off commit to hive/takeover-&lt;n&gt;, opens a PR that supersedes it and closes the bot PR. One attempt per bot head SHA. Applies on the next sweep.`)}</span>
           </div>
           <div class="config-field" id="am-trusted-authors">
             <label>Trusted-author auto-merge ${settingHelpMark('hive-merge', 'trusted-author-auto-merge', 'Trusted-author auto-merge', `Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.`)}</label>
@@ -60635,7 +60805,7 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${am.require_current_base_default ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="require_current_base_default"></div>
-            <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
+            <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
           </div>
           <div class="config-field">
             <label>Native GitHub merge queue ${yamlHint('auto_merge.native_merge_queue')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native GitHub merge queue', `Default off. Hive controls admission and repair; GitHub tests and merges the synthetic group. Settings requires explicit repositories and exact repo#base pairs. Existing CI, trust, review, hold and attribution gates stay in force.`)}</label>
