@@ -104,18 +104,18 @@ func TestRunMatrixIngest(t *testing.T) {
 	st := &matrixIngestState{}
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 
-	if runMatrixIngest(ctx, nil, matrixIngestTestConfig(true), dashSrv, st, now, logger) {
+	if ran, _ := runMatrixIngest(ctx, nil, matrixIngestTestConfig(true), dashSrv, st, now, logger); ran {
 		t.Fatal("nil client ran a pass")
 	}
-	if runMatrixIngest(ctx, ghClient, matrixIngestTestConfig(false), dashSrv, st, now, logger) {
+	if ran, _ := runMatrixIngest(ctx, ghClient, matrixIngestTestConfig(false), dashSrv, st, now, logger); ran {
 		t.Fatal("inactive matrix ran a pass")
 	}
 	if gets, files := fake.counts(); gets != 0 || files != 0 {
 		t.Fatalf("inactive matrix touched GitHub: gets=%d files=%d", gets, files)
 	}
 
-	if !runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now, logger) {
-		t.Fatal("active matrix did not run a pass")
+	if ran, cached := runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now, logger); !ran || cached != 1 {
+		t.Fatalf("active matrix: ran=%v cached=%d, want a pass over 1 cached repo", ran, cached)
 	}
 	if gets, files := fake.counts(); gets != 1 || files != 1 {
 		t.Fatalf("new head read once: gets=%d files=%d", gets, files)
@@ -126,10 +126,10 @@ func TestRunMatrixIngest(t *testing.T) {
 	}
 
 	// Inside the interval the gate holds; past it an unchanged head is free.
-	if runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now.Add(matrixIngestInterval/2), logger) {
+	if ran, _ := runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now.Add(matrixIngestInterval/2), logger); ran {
 		t.Fatal("pass ran inside matrixIngestInterval")
 	}
-	if !runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now.Add(matrixIngestInterval), logger) {
+	if ran, _ := runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now.Add(matrixIngestInterval), logger); !ran {
 		t.Fatal("pass did not run after matrixIngestInterval")
 	}
 	if gets, files := fake.counts(); gets != 1 || files != 1 {
@@ -139,7 +139,7 @@ func TestRunMatrixIngest(t *testing.T) {
 	// The head moves: exactly one more read, one more line.
 	fake.setHead("bbb222")
 	cache.snaps["o/r"].PRs[7] = forgestate.Item{Kind: forgestate.KindPR, Number: 7, State: "open", HeadSHA: "bbb222"}
-	if !runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now.Add(2*matrixIngestInterval), logger) {
+	if ran, _ := runMatrixIngest(ctx, ghClient, cfg, dashSrv, st, now.Add(2*matrixIngestInterval), logger); !ran {
 		t.Fatal("pass did not run for the moved head")
 	}
 	if gets, files := fake.counts(); gets != 2 || files != 2 {

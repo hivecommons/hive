@@ -8,6 +8,8 @@ package github
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/forgestate"
@@ -380,5 +382,95 @@ func TestSweepSentinelNewHeadsHonoursRepoGateAndNeedsCache(t *testing.T) {
 
 	if _, err := (*Client)(nil).SweepSentinelNewHeads(context.Background(), opts); err == nil {
 		t.Fatal("nil client must error")
+	}
+}
+
+// The evaluated-head map persists (#16276): a fresh map on the same path
+// knows the heads the old one evaluated, closed PRs are pruned against the
+// cached open set, and a malformed file starts empty rather than failing.
+func TestSentinelHeadsSeenPersistRestore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sentinel-heads.json")
+	var s sentinelHeadsSeen
+	s.setPath(path, nil) // missing file is the first boot
+	if s.unchanged("o/r#7", "aaa") || s.unchanged("o/r#8", "bbb") {
+		t.Fatal("first sightings are changes")
+	}
+	var restored sentinelHeadsSeen
+	restored.setPath(path, nil)
+	if !restored.isSeen("o/r#7", "aaa") || !restored.isSeen("o/r#8", "bbb") || restored.isSeen("o/r#7", "ccc") {
+		t.Fatalf("restored map = %v", restored.seen)
+	}
+	if !restored.unchanged("o/r#7", "aaa") {
+		t.Fatal("restored head must read as unchanged")
+	}
+
+	// PR 8 closed: retain against the open set drops it and persists that.
+	restored.retain("o", "r", map[int]forgestate.Item{7: cachedPR(7, "aaa")})
+	var pruned sentinelHeadsSeen
+	pruned.setPath(path, nil)
+	if !pruned.isSeen("o/r#7", "aaa") || pruned.isSeen("o/r#8", "bbb") {
+		t.Fatalf("pruned map = %v", pruned.seen)
+	}
+	// Another repo's keys are untouched by that repo's retain.
+	pruned.unchanged("o/x#1", "zzz")
+	pruned.retain("o", "r", map[int]forgestate.Item{})
+	if !pruned.isSeen("o/x#1", "zzz") || pruned.isSeen("o/r#7", "aaa") {
+		t.Fatalf("cross-repo retain = %v", pruned.seen)
+	}
+
+	if err := os.WriteFile(path, []byte("nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var bad sentinelHeadsSeen
+	bad.setPath(path, nil)
+	if len(bad.seen) != 0 {
+		t.Fatalf("malformed file loaded %v", bad.seen)
+	}
+
+	// No path: nothing is written.
+	var mem sentinelHeadsSeen
+	mem.unchanged("k", "v")
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Fatalf("unexpected files: %v", entries)
+	}
+	(*Client)(nil).SetSentinelHeadsPath(path)
+}
+
+// A client given a heads path skips, on its first cached sweep, every head a
+// previous client already evaluated: the restart re-diffs nothing.
+func TestSweepSentinelHeadsSurviveClientRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sentinel-heads.json")
+	f := &sentinelFixture{
+		prs:   []map[string]any{sentinelPR(7, "alice", "aaa111")},
+		files: map[int][]map[string]any{7: {{"filename": "README.md", "status": "modified", "additions": 1, "patch": "+hi\n"}}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	cache := &fakeSentinelPRCache{snaps: map[string]forgestate.Snapshot{
+		"o/r": {Repo: "o/r", Ready: true, PRs: map[int]forgestate.Item{7: cachedPR(7, "aaa111")}},
+	}}
+	opts := defaultSentinelOpts(nil)
+	opts.PRCache = cache
+
+	first := newTestClient(t, srv, "o", []string{"o/r"})
+	first.SetSentinelHeadsPath(path)
+	if _, err := first.SweepSentinelNewHeads(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.getHits) != 1 || f.filesHits != 1 {
+		t.Fatalf("first client reads once: gets=%v files=%d", f.getHits, f.filesHits)
+	}
+
+	second := newTestClient(t, srv, "o", []string{"o/r"})
+	second.SetSentinelHeadsPath(path)
+	res, err := second.SweepSentinelNewHeads(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Fetched != 0 || len(f.getHits) != 1 || f.filesHits != 1 {
+		t.Fatalf("restarted client re-read a known head: res=%+v gets=%v files=%d", res, f.getHits, f.filesHits)
+	}
+	if _, err := second.SweepSentinel(context.Background(), opts); err != nil || len(f.getHits) != 1 {
+		t.Fatalf("full sweep after restart: err=%v gets=%v", err, f.getHits)
 	}
 }

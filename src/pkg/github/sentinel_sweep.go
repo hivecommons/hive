@@ -2,8 +2,13 @@ package github
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -264,13 +269,16 @@ func (r *SentinelSweepResult) actions() int {
 
 // sentinelHeadsSeen remembers the head SHA each PR was last evaluated at so
 // an unchanged PR costs nothing on the cadence pass (no PR read, no files
-// fetch). It is in-memory only: a restart or a second replica starts empty
-// and re-evaluates every open PR once, so it is a cost optimisation, not the
-// record of a maintainer's clearance — that lives on GitHub
-// (sentinelClearedByMaintainer).
+// fetch). It is a cost optimisation, not the record of a maintainer's
+// clearance — that lives on GitHub (sentinelClearedByMaintainer). With no
+// path it is in-memory only and a restart re-evaluates every open PR once;
+// SetSentinelHeadsPath persists it so a restart neither re-diffs every head
+// nor leaves the Matrix line source blind until it has (#16276).
 type sentinelHeadsSeen struct {
-	mu   sync.Mutex
-	seen map[string]string
+	mu     sync.Mutex
+	seen   map[string]string
+	path   string
+	logger *slog.Logger
 }
 
 // isSeen reports whether key was last evaluated at head without recording
@@ -292,7 +300,97 @@ func (s *sentinelHeadsSeen) unchanged(key, head string) bool {
 		return true
 	}
 	s.seen[key] = head
+	s.saveLocked()
 	return false
+}
+
+// retain drops the remembered heads of PRs in owner/repo that are no longer
+// in the cached open set, so the persisted map does not grow with every PR
+// the repo ever had.
+func (s *sentinelHeadsSeen) retain(owner, repo string, open map[int]forgestate.Item) {
+	prefix := strings.ToLower(owner+"/"+repo) + "#"
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := false
+	for key := range s.seen {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(key, prefix))
+		if err != nil {
+			continue
+		}
+		if _, ok := open[n]; !ok {
+			delete(s.seen, key)
+			dropped = true
+		}
+	}
+	if dropped {
+		s.saveLocked()
+	}
+}
+
+// setPath installs the persistence path and loads whatever it holds. An
+// unreadable or malformed file is logged and treated as empty.
+func (s *sentinelHeadsSeen) setPath(path string, logger *slog.Logger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.path = strings.TrimSpace(path)
+	s.logger = logger
+	if s.path == "" {
+		return
+	}
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) && logger != nil {
+			logger.Warn("sentinel heads: state file unreadable; starting empty", "path", s.path, "error", err)
+		}
+		return
+	}
+	var loaded map[string]string
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		if logger != nil {
+			logger.Warn("sentinel heads: state file malformed; starting empty", "path", s.path, "error", err)
+		}
+		return
+	}
+	if s.seen == nil {
+		s.seen = map[string]string{}
+	}
+	for k, v := range loaded {
+		if k != "" && v != "" {
+			s.seen[k] = v
+		}
+	}
+}
+
+// saveLocked writes the map to path atomically; no path is a no-op.
+func (s *sentinelHeadsSeen) saveLocked() {
+	if s.path == "" {
+		return
+	}
+	raw, err := json.Marshal(s.seen)
+	if err != nil {
+		return
+	}
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err == nil {
+		err = os.Rename(tmp, s.path)
+	}
+	if err != nil && s.logger != nil {
+		s.logger.Warn("sentinel heads: state file write failed", "path", s.path, "error", err)
+	}
+}
+
+// SetSentinelHeadsPath persists the sentinel's evaluated-head map at path
+// (loaded now, written on every change) so a restart or client rebuild
+// neither re-diffs every open PR nor blanks the Matrix line source until
+// the next full sweep (#16276). Empty disables persistence.
+func (c *Client) SetSentinelHeadsPath(path string) {
+	if c == nil {
+		return
+	}
+	c.sentinelHeads.setPath(path, c.logger)
 }
 
 func sentinelKey(owner, repo string, number int) string {
@@ -340,6 +438,7 @@ func (c *Client) SweepSentinel(ctx context.Context, opts SentinelSweepOptions) (
 			if snap, ok := cache.Snapshot(repo); ok && snap.Ready {
 				result.CachedRepos++
 				c.sweepSentinelCached(ctx, result, repo, owner, repoName, snap, label, maxActions, opts)
+				c.sentinelHeads.retain(owner, repoName, snap.PRs)
 				c.writebackSweepSummary(repo)
 				continue
 			}
