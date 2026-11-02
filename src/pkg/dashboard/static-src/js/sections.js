@@ -210,7 +210,9 @@
     function sectionCardHeader(opts) {
       opts = opts || {};
       const id = opts.id || '';
-      const title = opts.titleHtml || esc(opts.title || id || 'Section');
+      // countHtml: a live count pill that reads as part of the title
+      // ("Hive activity monitor · 57"), before the help mark and the gear.
+      const title = (opts.titleHtml || esc(opts.title || id || 'Section')) + (opts.countHtml || '');
       const bodyId = opts.bodyId || (id + '-body');
       const action = opts.action || 'toggleSection';
       const keyAction = opts.keyAction || 'sectionHeaderKey';
@@ -221,9 +223,6 @@
       const grip = opts.grip === false ? '' : `<button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move ${esc(gripLabel)} section" aria-pressed="false">⠿</button>`;
       const subtitle = opts.subtitleHtml ? `<span class="dash-card-subtitle">${opts.subtitleHtml}</span>` : '';
       const settings = opts.settingsHtml || '';
-      // countHtml: a live count pill that reads as part of the title
-      // ("Hive activity monitor · 57"), before the help mark and the gear.
-      const count = opts.countHtml || '';
       const badges = opts.badgeHtml ? `<span class="dash-card-badges">${opts.badgeHtml}</span>` : '<span class="dash-card-badges"></span>';
       const actions = opts.actionsHtml ? `<span class="dash-card-actions">${opts.actionsHtml}</span>` : '<span class="dash-card-actions"></span>';
       const summaryText = textOrDash(opts.summaryHtml || opts.summary || '');
@@ -233,7 +232,7 @@
       // so a re-render never inserts an expanded body that is collapsed a
       // moment later (#12512).
       const chevronCls = 'section-chevron ' + [opts.chevronClass || '', opts.collapsed ? 'collapsed' : ''].filter(Boolean).join(' ');
-      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="${opts.collapsed ? 'false' : 'true'}" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="${chevronCls}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${count}${dashboardSectionHelpMark(id)}${settings}${subtitle}</span>${badges}${actions}${summary}</div>`;
+      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="${opts.collapsed ? 'false' : 'true'}" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="${chevronCls}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${dashboardSectionHelpMark(id)}${settings}${subtitle}</span>${badges}${actions}${summary}</div>`;
     }
     function sectionCardShell(opts, bodyHtml) {
       opts = opts || {};
