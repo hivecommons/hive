@@ -33901,7 +33901,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
     // preset), so it appears in every backend/method picker even before a matching
     // Model Gateway is configured — the user picks it, then funds/configures it.
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'codex', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'codex', 'goose', 'aider', 'cline', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     let CONFIG_BACKEND_OPTIONS = [];
@@ -34072,7 +34072,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // BACKEND_MODELS. Every CLI with a server-served inventory must appear
     // here; otherwise its entry is dropped and modelsForBackend falls back to
     // the pre-discovery catalog (or, for an omitted unknown CLI, Copilot's).
-    const CLI_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'goose', 'codex'];
+    const CLI_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'goose', 'codex', 'cline'];
     // BACKEND_MODELS holds the live-discovered model list for every backend
     // (inference AND cli), keyed by backend id. INFERENCE_MODELS is kept as
     // an alias to the same object for backward compatibility with existing
@@ -34084,6 +34084,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Hardcoded fallbacks per CLI backend, used only until /api/config/backends
     // responds for the first time (so a dropdown is never empty on paint).
     const CLI_FALLBACK_MODELS = {
+      cline: [],
       claude: CLAUDE_CLI_MODELS,
       copilot: COPILOT_CLI_MODELS,
       bob: BOB_CLI_MODELS,
@@ -55916,9 +55917,9 @@ function burnAreaChart() {
         </div>
         <div class="config-field">
           <label>Model ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Model', `Per-agent model override. Precedence: this model if set → otherwise the backend default (a gateway's default_model from Settings → Model Gateways, or the CLI's own default). Pick "(backend default — …)" to clear the per-agent model. A model marked "not allowed by gateway" fails every call with a 403. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.`)}</label>
-          <select id="cfg-model" title="${esc(MODEL_PRECEDENCE_TITLE)}" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
+          ${_agentBackend === 'cline' ? `<input id="cfg-model" type="text" value="${esc(g.model || '')}" placeholder="provider/model (required)" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">` : `<select id="cfg-model" title="${esc(MODEL_PRECEDENCE_TITLE)}" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
             ${modelSelectOptionsHtml(_agentBackend, g.model || '', _modelOpts)}
-          </select>
+          </select>`}
         </div>
         <div class="config-field">
           <label>Caveman Mode ${settingHelpMark('agent-configuration', 'caveman-prompt-compression', 'Caveman Mode', `Enable Caveman output compression to reduce token usage by ~65%. Modes: lite (removes filler), full (caveman-speak), ultra (telegraphic), wenyan (classical Chinese). Leave empty to disable.`)}</label>
@@ -64074,9 +64075,22 @@ function burnAreaChart() {
     // current model stays selected (as "(current)" when the new backend does
     // not offer it) so the switch never silently changes the model.
     function refreshModelOptions(backend) {
-      const sel = document.getElementById('cfg-model');
+      let sel = document.getElementById('cfg-model');
       if (!sel) return;
       const current = sel.value;
+      const tag = backend === 'cline' ? 'INPUT' : 'SELECT';
+      if (sel.tagName !== tag) {
+        const replacement = document.createElement(tag.toLowerCase());
+        Array.from(sel.attributes).forEach(a => replacement.setAttribute(a.name, a.value));
+        sel.replaceWith(replacement);
+        sel = replacement;
+      }
+      if (backend === 'cline') {
+        sel.type = 'text';
+        sel.placeholder = 'provider/model (required)';
+        sel.value = current;
+        return;
+      }
       const opts = modelsForBackend(backend) || [];
       const match = opts.find(m => _modelsEqual(current, m.value));
       sel.innerHTML = modelSelectOptionsHtml(backend, current, opts);

@@ -360,6 +360,9 @@ func truncateRunes(s string, max int) string {
 }
 
 func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
+	if cfg.Backend == "cline" {
+		return nil, fmt.Errorf("Cline needs dedicated provider-file credentials, which the disposable sandbox executor cannot inject; use an isolated per-UID worker or the contributor container rather than passing keys through the workspace")
+	}
 	if strings.TrimSpace(cfg.LaunchCmd) != "" {
 		return []string{"sh", "-lc", cfg.LaunchCmd + " < " + shellQuote(promptRel)}, nil
 	}

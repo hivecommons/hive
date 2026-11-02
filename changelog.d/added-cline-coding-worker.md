@@ -1,0 +1,1 @@
+- Add opt-in Cline CLI coding workers to Crux, Hive and the ClankeR contributor relay, with explicit provider/model selection, isolated API-key credentials, bounded turns, streaming results and cancellation; unsupported tool policies and OAuth refresh sharing fail closed.

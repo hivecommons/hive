@@ -144,6 +144,11 @@ if [[ ${#DIRECT_CMD[@]} -gt 0 ]]; then
   CMD="${DIRECT_CMD[0]}"
   BACKEND="$(basename "$CMD")"
   FULL_CMD=("${DIRECT_CMD[@]}")
+elif [[ "$BACKEND" == "cline" ]]; then
+  CMD="${HIVE_CLINE_RUNNER:-crux}"
+  FULL_CMD=("$CMD" cline-turn --model "$MODEL")
+  if [[ -n "$REASONING_EFFORT" ]]; then FULL_CMD+=(--thinking "$REASONING_EFFORT"); fi
+  FULL_CMD+=("${EXTRA_ARGS[@]}")
 else
   CMD=$(backend_binary "$BACKEND")
   PERM_FLAG=$(backend_perm_flag "$BACKEND")

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cline"
 	"github.com/hivecommons/hive/crux/watchdog"
 )
 
@@ -52,6 +53,7 @@ var cliPaneMarkers = []string{
 	// launch, reuse, crash-detection and startup-kick gates keep working
 	// without treating a bare shell as a live backend.
 	agyHeadlessReadyMarker,
+	cline.ReadyMarker,
 }
 
 const (
@@ -143,6 +145,9 @@ const bobBusyMarker = "Enter to steer"
 // be kicked again and the hive would stall silently. Backends that render no
 // working marker (goose, codex) never match here and are unaffected.
 func paneShowsAgentWorking(pane string) bool {
+	if strings.LastIndex(pane, cline.RunningMarker) > strings.LastIndex(pane, cline.ReadyMarker) {
+		return true
+	}
 	if pane == "" {
 		return false
 	}
@@ -190,7 +195,7 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, bobInputPlaceholderDefault) ||
 		strings.Contains(output, codexInputPromptMarker) ||
 		strings.Contains(output, piContextMarker) ||
-		strings.Contains(output, agyHeadlessReadyMarker) ||
+		strings.Contains(output, agyHeadlessReadyMarker) || strings.Contains(output, cline.ReadyMarker) ||
 		strings.Contains(output, "π >") ||
 		strings.Contains(output, "╰─")
 }

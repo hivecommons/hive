@@ -197,7 +197,7 @@ let lastHubsSeenWrite = 0;
 // (#2537) are the explicit follow-ons and are NOT built here.
 const MODE_INTERACTIVE = 'interactive';
 const MODE_HEADLESS = 'headless';
-const CONTRIBUTOR_MODE = process.env.CONTRIBUTOR_MODE === MODE_HEADLESS
+const CONTRIBUTOR_MODE = BACKEND === 'cline' || process.env.CONTRIBUTOR_MODE === MODE_HEADLESS
   ? MODE_HEADLESS
   : MODE_INTERACTIVE;
 // contributor-agent.sh creates and exports this before starting the relay. Pin
@@ -3831,6 +3831,9 @@ function buildLaunchCommand() {
 // task time rather than silently stalling. Extending this table is how a
 // future PR adds a backend once its headless invocation is verified.
 const HEADLESS_BACKENDS = {
+  // Use the canonical Crux adapter for capability checks, isolated auth/state,
+  // NDJSON results and cancellation. The task is sent on stdin, not argv.
+  cline: { flag: [] },
   // claude -p "<prompt>" — print mode: runs the prompt non-interactively and
   // exits. Same perm flags as the interactive launch (bypass permissions).
   claude: { flag: '-p' },
@@ -3923,6 +3926,11 @@ function headlessSupportsBackend() {
 function buildHeadlessArgv(prompt) {
   const spec = HEADLESS_BACKENDS[BACKEND];
   if (!spec) return null;
+  if (BACKEND === 'cline') {
+    const args = ['cline-turn', '--model', MODEL];
+    if (REASONING_EFFORT) args.push('--thinking', REASONING_EFFORT);
+    return { bin: process.env.HIVE_CLINE_RUNNER || 'crux', args, input: prompt };
+  }
   if (BACKEND === 'pi' && !PI_SELECTION.valid) throw new Error(PI_SELECTION.error);
   if (BACKEND === 'pi') checkMlxRuntime(MODEL, PI_ENV);
   const { cmd, perm } = resolveBackend();
@@ -4075,7 +4083,7 @@ function installRepoToolchain(task, then) {
   child.stderr.on('data', (d) => { output += d.toString(); });
   const timer = setTimeout(() => {
     console.error(`repo-toolchain did not finish within ${REPO_TOOLCHAIN_TIMEOUT_MS} ms — continuing without the declared tools`);
-    try { child.kill('SIGKILL'); } catch (_) { /* already gone */ }
+    try { child.kill(BACKEND === 'cline' ? 'SIGTERM' : 'SIGKILL'); } catch (_) { /* already gone */ }
     finish();
   }, REPO_TOOLCHAIN_TIMEOUT_MS);
   child.on('error', (e) => {
@@ -4183,7 +4191,7 @@ function spawnParallelFix(msg, hub) {
     console.log(`fix-pr ${fixPRLabel(msg)}: parallel fix session ${ok ? 'completed' : 'failed: ' + reason}`);
   };
   timeout = setTimeout(() => {
-    if (entry.child && !entry.child.killed) entry.child.kill('SIGKILL');
+    if (entry.child && !entry.child.killed) entry.child.kill(BACKEND === 'cline' ? 'SIGTERM' : 'SIGKILL');
     finish(false, `fix session exceeded ${formatDuration(FIX_PR_CHILD_TIMEOUT_MS)}`);
   }, FIX_PR_CHILD_TIMEOUT_MS);
   if (timeout.unref) timeout.unref();
@@ -4198,7 +4206,10 @@ function spawnParallelFix(msg, hub) {
   if (child.stdout) child.stdout.on('data', chunk => output.append(chunk));
   if (child.stderr) child.stderr.on('data', chunk => output.append(chunk));
   child.on('error', err => finish(false, `spawn error: ${err.message}`));
-  if (child.stdin) child.stdin.end();
+  if (child.stdin) {
+    child.stdin.on('error', err => finish(false, `stdin error: ${err.code || 'write failed'}`));
+    child.stdin.end(built.input);
+  }
   child.on('close', (code, signal) => {
     if (code === 0) finish(true);
     else finish(false, `fix session exited ${code === null ? `on ${signal}` : code}`);
@@ -4325,7 +4336,7 @@ function runHeadlessTask(task) {
   let spawnError = null;
   const timeout = setTimeout(() => {
     timedOut = true;
-    if (headlessChild && !headlessChild.killed) headlessChild.kill('SIGKILL');
+    if (headlessChild && !headlessChild.killed) headlessChild.kill(BACKEND === 'cline' ? 'SIGTERM' : 'SIGKILL');
   }, HEADLESS_TASK_TIMEOUT_MS);
   if (timeout.unref) timeout.unref();
 
@@ -4343,7 +4354,10 @@ function runHeadlessTask(task) {
   // headless codex task produced zero output and hung until the timeout
   // killed it (found live by bin/test_backend_smoke.sh). Close stdin for
   // every backend — a one-shot child has no interactive input coming.
-  if (headlessChild.stdin) headlessChild.stdin.end();
+  if (headlessChild.stdin) {
+    headlessChild.stdin.on('error', err => { spawnError = err; });
+    headlessChild.stdin.end(built.input);
+  }
   // #7778: keep the hub's progress lease alive for as long as the child is.
   // Without this the hub heard exactly one task_progress per headless task and
   // reclaimed it at wsTaskTimeout (30 min), two hours or more before the
@@ -6647,7 +6661,7 @@ function stopAgentForTaskExit(opts) {
   }
   if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
     if (headlessChild) {
-      try { headlessChild.kill('SIGKILL'); } catch (_) {}
+      try { headlessChild.kill(BACKEND === 'cline' ? 'SIGTERM' : 'SIGKILL'); } catch (_) {}
       headlessChild = null;
       writeHeadlessStatus(HEADLESS_STATE_WAITING);
     }

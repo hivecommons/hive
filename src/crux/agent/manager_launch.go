@@ -13,37 +13,6 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 )
 
-// backendDefersStartupKick reports whether a backend's bootstrap prompt is
-// delivered AFTER the CLI is ready (deliverStartupKick) instead of being
-// embedded in the launch command.
-//
-// Embedding raced the CLI boot: the prompt-bearing launch line was typed into
-// the pane in the same second as the (re)start (observed live: `audit: agent
-// kicked trigger=startup` 60ms after `audit: agent restarting`), before the
-// CLI — or even bash — was ready to consume it, so the kick text landed in
-// bash and an unbalanced quote left the shell in PS2 continuation.
-//
-// goose is deliberately NOT in this set: `goose run` needs the embedded --text
-// prompt to stay interactive at all, and it exits on the ^C that
-// readiness-gated delivery sends (see deliverKickLocked). Unknown backends are
-// likewise excluded — they never embed and have no verified readiness signal.
-//
-// bob and pi belong in this set, not the goose set. Both are long-lived
-// interactive TUIs that sit at their prompts with no
-// prompt argument at all, so it has no goose-style reason to embed — and
-// embedding would expose it to exactly the PS2 race above. Before this it was
-// in NEITHER group: it fell through to the write-a-file branch in launchInTmux,
-// so its bootstrap prompt was serialized to /tmp/.hive-bootstrap-<name>.txt and
-// then never read, leaving the CLI idle at its prompt after every launch.
-func backendDefersStartupKick(backend string) bool {
-	switch backend {
-	case "claude", "copilot", "gemini", "pi", bobBackend, "agy":
-		return true
-	default:
-		return false
-	}
-}
-
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -54,6 +23,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	}
 
 	launchCmdOverride, missing := effectiveLaunchCmd(agent, backend)
+	if backend == "cline" {
+		if err := validateClineLaunch(ctx, "cline", agent); err != nil {
+			return err
+		}
+	}
 	if missing != "" {
 		m.logger.Warn("launch_cmd names a backend binary path that does not exist; using the built-in launcher for this backend",
 			"name", agent.Name, "backend", backend, "missing", missing, "launch_cmd", strings.TrimSpace(agent.Config.LaunchCmd))
@@ -307,7 +281,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	envCmd := m.buildEnvPrefix(agent)
 	fullCmd := envCmd + launchCmd
-	if agentUsesAgyHeadless(backend, agent) {
+	if agentUsesAgyHeadless(backend, agent) || backend == "cline" {
 		fullCmd = agyHeadlessFullLaunchCmd(envCmd, launchCmd)
 	}
 
@@ -915,6 +889,8 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 func backendLaunchCmdWithBobSession(binary, model, backend string, isInference bool, effort, bobLabel string) string {
 	var launchCmd string
 	switch backend {
+	case "cline":
+		return clineLaunchCmd()
 	case "claude":
 		bareFlag := ""
 		if isInference {

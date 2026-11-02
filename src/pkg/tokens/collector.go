@@ -207,6 +207,7 @@ type Collector struct {
 	claudeSessionsDir         string
 	copilotSessionsDir        string
 	bobSessionsDir            string
+	clineHomesRoot            string
 	sandboxRunHistoryPath     string
 	copilotLiveCaptureSinceMs int64
 	persistPath               string
@@ -334,6 +335,7 @@ func (c *Collector) scan() {
 		return
 	}
 	diag := Diagnostics{LiveCaptureEnabled: c.copilotLiveCaptureSince() > 0}
+	c.mergeClineUsage(agg)
 
 	if c.claudeSessionsDir != "" {
 		claudeAgg, err := ScanClaudeSessionsWithPathDetection(c.claudeSessionsDir)
