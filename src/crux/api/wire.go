@@ -39,6 +39,7 @@ const unixBaseURL = "http://crux"
 //	./crux.sock, ../x/crux.sock            a unix socket by relative path
 //	http://127.0.0.1:7777                  a TCP listener by URL
 //	https://crux.example:7777              a TLS listener by URL
+//	https://ops.example/crux               a TLS listener behind a path prefix
 //	127.0.0.1:7777, [::1]:7777             a TCP listener, http implied
 //
 // Plain http (explicit or implied) is accepted only for a loopback host:
@@ -71,7 +72,13 @@ func ParseAddress(s string) (Address, error) {
 		if u.Scheme == "http" && !LoopbackHost(u.Host) {
 			return Address{}, fmt.Errorf("server address %q: http is allowed only for loopback hosts (the bearer token would cross the network in cleartext); use https:// for a remote server", s)
 		}
-		return Address{Network: "tcp", Host: u.Host, BaseURL: u.Scheme + "://" + u.Host}, nil
+		if u.User != nil {
+			return Address{}, fmt.Errorf("server address %q: userinfo is not supported (pass the token separately)", s)
+		}
+		if u.RawQuery != "" {
+			return Address{}, fmt.Errorf("server address %q: a query string is not supported", s)
+		}
+		return Address{Network: "tcp", Host: u.Host, BaseURL: u.Scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/")}, nil
 	}
 	if strings.Contains(s, "://") {
 		return Address{}, fmt.Errorf("server address %q: unsupported scheme (use unix://, http:// or https://)", s)
