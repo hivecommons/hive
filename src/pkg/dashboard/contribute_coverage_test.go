@@ -87,3 +87,29 @@ func TestFrontendLaneCoverage(t *testing.T) {
 		t.Fatalf("frontendLaneCoverage = %+v, want %+v", got, want)
 	}
 }
+
+// The operator's "Suspend contributions" switch refuses work to every relay
+// while their sockets stay up. A connected relay is then covering nothing, so
+// no coverage may be reported — otherwise pausing contributors would also
+// pause the resident agent and the lane would have no worker at all.
+func TestRoleCoverage_SuspendedContributionsCoverNothing(t *testing.T) {
+	hub, s := covK2Hub(t)
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	hub.mu.Lock()
+	hub.connections["alice"] = coverageConn("alice", "quality", now)
+	hub.mu.Unlock()
+
+	s.deps.Config.Hub.ContributeSuspended = true
+	if got := hub.RoleCoverage(now); got != nil {
+		t.Fatalf("suspended contributions: RoleCoverage = %+v, want nil", got)
+	}
+	if got := s.ContributorRoleCoverage(now); got != nil {
+		t.Fatalf("suspended contributions: ContributorRoleCoverage = %+v, want nil", got)
+	}
+
+	s.deps.Config.Hub.ContributeSuspended = false
+	got := hub.RoleCoverage(now)
+	if len(got["quality"].Contributors) != 1 || got["quality"].Contributors[0] != "alice" {
+		t.Fatalf("contributions resumed: RoleCoverage = %+v, want quality covered by alice", got)
+	}
+}
