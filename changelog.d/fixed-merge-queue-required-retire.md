@@ -1,0 +1,1 @@
+A merge-queue-required operator alert now clears on its own once the base branch's rules no longer include a merge queue, instead of lingering until the PR closes.

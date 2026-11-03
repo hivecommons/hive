@@ -141,7 +141,10 @@ five minutes (`mergeAlertRevalidateInterval` in
 `src/pkg/github/merge_failure_alert.go`): an alert is dropped once the blocked
 PR is no longer open, and a fork-approval alert is dropped as soon as the PR
 head has no workflow runs still `action_required` — i.e. the operator approved
-them or relaxed the repo/org setting. API errors keep the alert in place.
+them or relaxed the repo/org setting. A merge-queue-required alert is dropped
+once the base branch's active rules, read successfully, no longer include a
+merge queue; otherwise it stays until the PR is closed or merged. API errors
+keep the alert in place.
 
 **Unprotected base branches are allowed.** The watcher no longer makes a
 separate branch-protection lookup and no longer refuses solely because the base
