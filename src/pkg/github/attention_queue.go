@@ -345,6 +345,6 @@ func (c *Client) findAttentionQueueIssue(ctx context.Context, owner, repo, label
 		if resp == nil || resp.NextPage == 0 {
 			return closed, nil
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 }
