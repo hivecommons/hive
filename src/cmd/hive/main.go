@@ -3931,6 +3931,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// firing, so a later config reload that arms or disarms hooks is picked up
 	// without re-registering.
 	installGovernorModeChangeEmitter(b.gov)
+	b.installLaneParticipant()
 	installAgentPauseEmitter(b.agentMgr)
 
 	// Register custom GHE hostnames with the proxy allowlist so mode

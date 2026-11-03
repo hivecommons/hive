@@ -7,7 +7,9 @@ Stage 3 process boundary of the Crux design record
 [#13536](https://github.com/hivecommons/hive/issues/13536), stage 2/3 tracker
 [#14138](https://github.com/hivecommons/hive/issues/14138)): a harness other
 than hive drives agents through it, and the `crux` CLI has a remote mode that
-talks to it. Hive itself does not use the API yet; that is a later decision.
+talks to it. Hive's optional [durable lane participant](crux-lanes.md) uses
+separate project-authenticated lane RPCs on this server; that does not change
+its agent-control hosting mode or grant lane tokens agent-control authority.
 
 The wire contract is the stdlib-only package `crux/api`
 (`src/crux/api`), which a client can import without pulling in the runtime.
@@ -31,6 +33,7 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
 | `--socket PATH`, `CRUX_SOCKET` | unix socket to serve on. Default `$XDG_RUNTIME_DIR/crux/crux.sock`, else `<tmp>/crux-<uid>/crux.sock`. The directory is created `0700`, the socket `0600`, and it is never reachable at that path with wider permissions (it is bound under a temporary name, chmod'ed, then renamed). A socket somebody already answers on is refused; a stale one is replaced. |
 | `--listen HOST:PORT` | also serve on TCP. **Refused without a token.** |
 | `--token T`, `CRUX_TOKEN` | bearer token every request must carry. When set it gates the socket too. |
+| `--lanes-config PATH`, `CRUX_LANES_CONFIG` | opt into [durable event/work lanes](crux-lanes.md) on this same server, backed by NATS JetStream. Lane project credentials are separate from agent-control credentials. |
 | `--hive-callback ADDR`, `CRUX_HIVE_SOCKET` (+ `CRUX_HIVE_TOKEN`) | dial hive's callback endpoint (`crux/api/callback`) for the capabilities hive owns — scoped GitHub tokens, PR creation, Linear credentials, text/canary scanners, conditions — and feed the runtime's seams from it instead of leaving them nil. Health reports it under `hive_callback`; an unreachable endpoint raises the `hive_callback_unavailable` condition. (#14246) When the runtime is a manager it also polls hive's host policy from the same endpoint; see [Host policy from hive](#host-policy-from-hive-14138-stage-4). |
 
 `serve` does not use the per-work-dir control socket that a foreground

@@ -9,7 +9,9 @@ import (
 
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/lanes"
 	"github.com/hivecommons/hive/crux/serve"
+	"github.com/nats-io/nats.go"
 )
 
 // cmdServe is `crux serve`: build the runtime from --config and expose it
@@ -29,12 +31,14 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	fs.StringVar(&cfg.Listen, "listen", "", "also serve on this loopback TCP host:port (plain http); requires a token")
 	fs.StringVar(&cfg.Token, "token", "", "bearer token every request must carry (default $"+config.ServeTokenEnvVar+")")
 	var hiveAddr string
+	var laneConfig string
+	fs.StringVar(&laneConfig, "lanes-config", "", "opt-in durable lane configuration file (default $CRUX_LANES_CONFIG)")
 	fs.StringVar(&hiveAddr, "hive-callback", "", "hive capability endpoint to dial (default $"+callback.SocketEnvVar+"; none when unset)")
 	if code, ok := parseSub(fs, args); !ok {
 		return code
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR]")
+		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR] [-lanes-config PATH]")
 		return ExitUsage
 	}
 	if cfg.Token == "" {
@@ -66,6 +70,37 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	srv := serve.New(rt)
 	srv.Token = cfg.Token
 	srv.Logger = slog.New(slog.NewTextHandler(e.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	if laneConfig == "" {
+		laneConfig = os.Getenv("CRUX_LANES_CONFIG")
+	}
+	if laneConfig != "" {
+		lc, err := lanes.LoadConfig(laneConfig)
+		if err != nil {
+			fmt.Fprintln(e.Stderr, "crux: lanes:", err)
+			return ExitUsage
+		}
+		auth, err := lanes.Bind(lc, os.Getenv, cfg.Token)
+		if err != nil {
+			fmt.Fprintln(e.Stderr, "crux: lanes:", err)
+			return ExitUsage
+		}
+		var options []nats.Option
+		if lc.CredentialsEnv != "" {
+			path := os.Getenv(lc.CredentialsEnv)
+			if path == "" {
+				fmt.Fprintln(e.Stderr, "crux: lanes: missing broker credential file binding")
+				return ExitUsage
+			}
+			options = append(options, nats.UserCredentials(path))
+		}
+		broker, err := lanes.Open(ctx, lc, options...)
+		if err != nil {
+			fmt.Fprintln(e.Stderr, "crux: lanes: cannot initialize durable broker")
+			return ExitError
+		}
+		defer broker.Close()
+		srv.Lanes, srv.LaneAuth = broker, auth
+	}
 	if hive != nil {
 		hive.install(ctx, rt, srv, e.Stdout)
 		hive.watchPolicy(ctx, rt, e.Stdout, e.Stderr)
