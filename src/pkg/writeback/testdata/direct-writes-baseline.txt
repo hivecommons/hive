@@ -38,6 +38,7 @@ raw pkg/github/pr_contributor_link.go 1
 raw pkg/github/pr_issue_link.go 2
 raw pkg/github/pr_level_hold.go 5
 raw pkg/github/pr_signed_reconcile.go 1
+raw pkg/github/pr_status_comment.go 2
 raw pkg/github/pr_supersession_autoclose.go 3
 raw pkg/github/pr_supersession_resolve.go 1
 raw pkg/github/pr_supersession_sweep.go 2
@@ -106,7 +107,7 @@ wrap pkg/github/pr_duplicate_guard.go 1
 wrap pkg/github/pr_level_hold.go 1
 wrap pkg/github/pr_reporter_trust_release.go 1
 wrap pkg/github/pr_request_watcher.go 3
-wrap pkg/github/pr_status_comment.go 1
+wrap pkg/github/pr_status_comment.go 2
 wrap pkg/github/pr_supersession_autoclose.go 1
 wrap pkg/github/pr_supersession_decision.go 1
 wrap pkg/github/pr_supersession_resolve.go 6
