@@ -414,6 +414,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostNoteOrFold` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
 | `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
@@ -448,6 +449,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
+| `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
