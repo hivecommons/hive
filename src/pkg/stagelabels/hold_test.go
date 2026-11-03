@@ -114,7 +114,7 @@ func TestStoreNoteHold(t *testing.T) {
 func TestRouteHumanNamesWhoHeld(t *testing.T) {
 	base := Evidence{Head: "abc1234", Verdict: VerdictApproved, Checks: CheckSummary{Total: 3, Green: 3, Known: true}, DCO: DCOYes, Holds: []string{"hold"}, Cause: CauseDecision, SelfAuthored: true}
 	plain := RouteHuman(base)
-	if plain.Stage != NeedsDecision || strings.Join(plain.Reasons, "|") != "the `hold` label is set|the automerge lane will not merge this unattended" || plain.Hold != nil {
+	if plain.Stage != NeedsDecision || strings.Join(plain.Reasons, "|") != "the `hold` label is set|"+decisionConsequenceReason || plain.Hold != nil {
 		t.Fatalf("plain route = %+v", plain)
 	}
 	hive := base
@@ -131,7 +131,7 @@ func TestRouteHumanNamesWhoHeld(t *testing.T) {
 	person.Holds = []string{"do-not-merge", "hold"}
 	person.Hold = &HoldProvenance{By: "clubanderson", Source: HoldSourceLabel}
 	route = RouteHuman(person)
-	if strings.Join(route.Reasons, "|") != "the `do-not-merge` label is set|the `hold` label was set by @clubanderson|the automerge lane will not merge this unattended" {
+	if strings.Join(route.Reasons, "|") != "the `do-not-merge` label is set|the `hold` label was set by @clubanderson|"+decisionConsequenceReason {
 		t.Fatalf("person-held route reasons = %q", route.Reasons)
 	}
 }
