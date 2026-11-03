@@ -1,0 +1,1 @@
+- Destination-merge guard now shares one claims/dependency-evidence helper in the automerge readiness checks and creates its state directory and lock files owner-only (#16054, #16055).

@@ -25,6 +25,12 @@ const (
 type GitHubNotificationsConfig struct {
 	// Mode is "quiet" (default when empty) or "normal".
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Shadow turns on would-notify instrumentation: every
+	// notification-capable GitHub write (new comment, review, review
+	// request, @-mention) is classified and counted, and a would-suppress
+	// decision is recorded for repeats of the same condition. Measurement
+	// only — nothing is suppressed or rerouted. Default off.
+	Shadow bool `yaml:"shadow,omitempty" json:"shadow,omitempty"`
 }
 
 // Quiet reports whether the hive should fold its PR notes into one edited

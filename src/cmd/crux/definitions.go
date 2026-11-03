@@ -138,6 +138,9 @@ func projectContextFromConfig(cfg *config.Config) crux.ProjectContext {
 		AppAuthoredPRs:     cfg.GitHub.AppAuthoredPRsEnabled(),
 		AppBotLogin:        cfg.GitHub.BotLogin(),
 		BobSessionPrefix:   cfg.Governor.Bob.SessionPrefix,
+		InferenceDefaultModel: func(backend string) string {
+			return cfg.Governor.DefaultInferenceModel(backend)
+		},
 	}
 	if cfg.GitHub.IsGHE() {
 		pc.GHHost = cfg.GitHub.HostLabel()

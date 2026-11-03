@@ -238,9 +238,10 @@ type persistedTimeline struct {
 //
 // The zero value is NOT ready for use — construct with NewStore.
 type Store struct {
-	mu       sync.RWMutex
-	journeys map[string]*Journey
-	cap      int
+	mu        sync.RWMutex
+	persistMu sync.Mutex
+	journeys  map[string]*Journey
+	cap       int
 
 	// persistence (all guarded by mu)
 	path        string
@@ -248,6 +249,9 @@ type Store struct {
 	dirty       bool
 	lastPersist time.Time
 	lastErrLog  time.Time
+	// writeFile is nil in production; tests can block the atomic writer
+	// without making filesystem latency a scheduler-dependent assertion.
+	writeFile func(string, []byte, string) error
 }
 
 // NewStore returns a Store retaining up to MaxJourneys journeys.
@@ -324,6 +328,18 @@ func (s *Store) EnablePersistence(path string, logger *slog.Logger) error {
 // (<= 0) it is stamped with the current time. Events with an empty IssueRef
 // or Kind carry no journey identity and are dropped. Safe for concurrent use.
 func (s *Store) Record(e Event) {
+	s.record(e, false)
+}
+
+// RecordObservation folds immutable historical evidence into a journey without
+// counting or persisting an unchanged replay. New stages, earlier/later times
+// and metadata corrections retain Record's immediate precious-stage durability.
+// A replay also retries dirty state left by a failed write.
+func (s *Store) RecordObservation(e Event) {
+	s.record(e, e.At > 0)
+}
+
+func (s *Store) record(e Event, observation bool) {
 	if s == nil || e.IssueRef == "" || e.Kind == "" {
 		return
 	}
@@ -336,6 +352,10 @@ func (s *Store) Record(e Event) {
 	defer s.mu.Unlock()
 
 	j := s.journeys[e.IssueRef]
+	if observation && observationUnchanged(j, e, at) {
+		s.persistMaybeLocked(e.Kind)
+		return
+	}
 	if j == nil {
 		s.enforceCapForOneMoreLocked()
 		j = &Journey{
@@ -381,6 +401,23 @@ func (s *Store) Record(e Event) {
 
 	s.dirty = true
 	s.persistMaybeLocked(e.Kind)
+}
+
+func observationUnchanged(j *Journey, e Event, at int64) bool {
+	if j == nil {
+		return false
+	}
+	st := j.Stages[e.Kind]
+	if st == nil || at < st.FirstAt || at > st.LastAt ||
+		(e.Agent != "" && (e.Agent != st.Agent || e.Agent != j.Agent)) {
+		return false
+	}
+	for k, v := range e.Attrs {
+		if old, ok := st.Attrs[k]; !ok || old != v {
+			return false
+		}
+	}
+	return true
 }
 
 // deriveCurrent computes a journey's current stage: merged is sticky-terminal;
@@ -937,6 +974,16 @@ func (s *Store) persistMaybeLocked(kind Kind) {
 	if !force && time.Since(s.lastPersist) < persistMinInterval {
 		return
 	}
+	// Never hold the journey lock while waiting for another disk writer.
+	// Historical accounting may be slow, but readers/current-work status
+	// must still see the in-memory journeys. Writers remain serialized.
+	s.mu.Unlock()
+	s.persistMu.Lock()
+	s.mu.Lock()
+	defer s.persistMu.Unlock()
+	if !s.dirty || (!force && time.Since(s.lastPersist) < persistMinInterval) {
+		return
+	}
 	if err := s.persistLocked(); err != nil {
 		if time.Since(s.lastErrLog) >= persistErrLogInterval {
 			s.lastErrLog = time.Now()
@@ -947,7 +994,6 @@ func (s *Store) persistMaybeLocked(kind Kind) {
 		}
 		return
 	}
-	s.dirty = false
 	s.lastPersist = time.Now()
 }
 
@@ -966,7 +1012,21 @@ func (s *Store) persistLocked() error {
 	if err != nil {
 		return fmt.Errorf("marshaling lifecycle timeline: %w", err)
 	}
-	return writeFileAtomic(s.path, data, "lifecycle timeline")
+	path := s.path
+	write := s.writeFile
+	if write == nil {
+		write = writeFileAtomic
+	}
+	// Clear only this snapshot's dirty bit. Record may set it again while
+	// I/O is in flight; that newer state must not be acknowledged by this save.
+	s.dirty = false
+	s.mu.Unlock()
+	err = write(path, data, "lifecycle timeline")
+	s.mu.Lock()
+	if err != nil {
+		s.dirty = true
+	}
+	return err
 }
 
 // writeFileAtomic commits data to path with the repo's atomic-persist idiom

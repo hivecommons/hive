@@ -149,9 +149,22 @@
     // current model stays selected (as "(current)" when the new backend does
     // not offer it) so the switch never silently changes the model.
     function refreshModelOptions(backend) {
-      const sel = document.getElementById('cfg-model');
+      let sel = document.getElementById('cfg-model');
       if (!sel) return;
       const current = sel.value;
+      const tag = backend === 'cline' ? 'INPUT' : 'SELECT';
+      if (sel.tagName !== tag) {
+        const replacement = document.createElement(tag.toLowerCase());
+        Array.from(sel.attributes).forEach(a => replacement.setAttribute(a.name, a.value));
+        sel.replaceWith(replacement);
+        sel = replacement;
+      }
+      if (backend === 'cline') {
+        sel.type = 'text';
+        sel.placeholder = 'provider/model (required)';
+        sel.value = current;
+        return;
+      }
       const opts = modelsForBackend(backend) || [];
       const match = opts.find(m => _modelsEqual(current, m.value));
       sel.innerHTML = modelSelectOptionsHtml(backend, current, opts);

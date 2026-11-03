@@ -126,6 +126,17 @@ Hive logs an `agent sandbox posture` warning at boot and on every config reload 
 
 The second gate is deliberate rather than an oversight, and it is not safe to simply collapse. A sandboxed agent runs a different execution model — no tmux CLI at all, and every kick is a Podman run against the primary repo — and `startSandboxKickLocked` has **no fallback to the tmux path**: an agent opted in without a resolvable image fails every kick outright rather than degrading. Making the global flag sufficient would therefore convert working agents into permanently failing ones on any hive that set it without an image. Changing that default is a fleet-affecting decision that wants measurement, not a code-reading; the warning above is the part that is safe today.
 
+**Cline's provider capability is separate from the Git workspace.** Its bounded
+worker uses dedicated provider Secrets through existing `job.env_from_secrets`
+for Jobs, or an opaque, per-run selected-provider file mounted `ro,Z` outside
+the workspace for Podman. The latter requires an explicit absolute
+`HIVE_CLINE_CONFIG_DIR`; it does not grant arbitrary host mounts, share the full
+operator config, or change other engines' mounts. Private UID-owned tmpfs state,
+container teardown and staged-file revocation/cleanup are part of that scoped
+capability. GitHub credentials still never enter. No silent tmux fallback,
+expanded credential environment allowlist, or confinement bypass is provided.
+See [Cline sandbox setup](integrations/cline.md#disposable-sandbox-kicks).
+
 For sandboxed agents, a kick now follows this path:
 
 1. Hive prepares a per-kick host workspace under the sandbox workspace root by cloning/fetching the primary repo with hive-owned credentials before the sandbox starts. The clone URL and sandbox environment are sanitized so GitHub/token variables are not carried into the workspace or container.

@@ -247,6 +247,13 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		{"HIVE_BACKEND", backend, false},
 		{"HIVE_MODEL", model, false},
 	}
+	if backend == "cline" {
+		source := os.Getenv("HIVE_CLINE_CONFIG_DIR")
+		if source == "" {
+			source = filepath.Join(sharedAgentHome, ".cline")
+		}
+		vars = append(vars, agentEnvPair{"HIVE_CLINE_CONFIG_DIR", source, false})
+	}
 	if hiveID := os.Getenv("HIVE_ID"); hiveID != "" {
 		vars = append(vars, agentEnvPair{"HIVE_ID", hiveID, false})
 	}

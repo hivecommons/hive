@@ -107,7 +107,12 @@ func recordMergedOnLinkedIssues(store *timeline.Store, prRef, agent string, at i
 		for k, v := range attrs {
 			copyAttrs[k] = v
 		}
-		store.Record(timeline.Event{IssueRef: issue, Kind: timeline.KindMerged, Agent: agent, At: at, Attrs: copyAttrs})
+		event := timeline.Event{IssueRef: issue, Kind: timeline.KindMerged, Agent: agent, At: at, Attrs: copyAttrs}
+		if at > 0 {
+			store.RecordObservation(event)
+		} else {
+			store.Record(event)
+		}
 	}
 }
 
@@ -133,7 +138,7 @@ func recordObservedMerge(rec lifecycleRecorder, org, repo string, number int, ob
 	if !observedAt.IsZero() {
 		event.At = observedAt.UnixMilli()
 	}
-	store.Record(event)
+	store.RecordObservation(event)
 	recordMergedOnLinkedIssues(store, ref, "", event.At, attrs)
 }
 
@@ -163,13 +168,18 @@ func recordPROpenedForIssuesAt(rec lifecycleRecorder, org, agent, repo string, n
 		if n <= 0 || n == number {
 			continue
 		}
-		store.Record(timeline.Event{
+		event := timeline.Event{
 			IssueRef: timelineRef(org, repo, n),
 			Kind:     timeline.KindPROpened,
 			Agent:    agent,
 			At:       at,
 			Attrs:    map[string]string{timeline.AttrPRRef: prRef, "url": url},
-		})
+		}
+		if at > 0 {
+			store.RecordObservation(event)
+		} else {
+			store.Record(event)
+		}
 	}
 }
 
@@ -322,7 +332,7 @@ func backfillMergedPROnIssues(rec lifecycleRecorder, org string, obs github.PRTe
 		if obs.Actor != "" {
 			attrs["actor"] = obs.Actor
 		}
-		store.Record(timeline.Event{IssueRef: ref, Kind: timeline.KindMerged, At: mergedAt, Attrs: attrs})
+		store.RecordObservation(timeline.Event{IssueRef: ref, Kind: timeline.KindMerged, At: mergedAt, Attrs: attrs})
 	}
 	return len(needMerged)
 }

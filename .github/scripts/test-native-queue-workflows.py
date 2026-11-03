@@ -68,7 +68,9 @@ class NativeQueueWorkflows(unittest.TestCase):
         job = verifier["jobs"]["verify"]
         self.assertNotIn("if", job)
         self.assertEqual(job["name"], "verify PR contents")
-        self.assertIn("docker run --rm", job["steps"][-1]["run"])
+        verify_step = next(step for step in job["steps"]
+                           if step.get("name") == "Verifier action")
+        self.assertIn("docker run --rm", verify_step["run"])
 
     def test_gosec_concurrency_fits_the_runner_cpu_limit(self):
         # gosec defaults -concurrency to runtime.NumCPU(), which inside a

@@ -578,7 +578,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// these non-DevUID dirs. Only the group r/w/x bits are added — owner and
 	// other bits are preserved — so an already-770 dir is left untouched.
 	if fi.IsDir() && filepath.Base(path) == bobStateDirBase {
-		fixBobStateDirGroupWrite(path, mode, chmod, logger)
+		fixBobStateDirGroupWrite(path, mode, chmod, logger, stat.Uid)
 	}
 
 	// Shared CLI credentials are the other class the watcher must widen even
@@ -656,7 +656,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 // Safe and non-fatal: a chmod we are not permitted to perform (EPERM — we are
 // neither the owner nor privileged) is logged and swallowed, exactly like the
 // watcher's other chmod/chown arms, so it never blocks or panics.
-func fixBobStateDirGroupWrite(path string, mode os.FileMode, chmod func(os.FileMode) error, logger *slog.Logger) {
+func fixBobStateDirGroupWrite(path string, mode os.FileMode, chmod func(os.FileMode) error, logger *slog.Logger, ownerUID ...uint32) {
 	perm := mode.Perm()
 	// Nothing to do when the group already has all of r/w/x — this keeps an
 	// already-remediated (>= 0770) dir untouched and the walk idempotent.
@@ -664,22 +664,16 @@ func fixBobStateDirGroupWrite(path string, mode os.FileMode, chmod func(os.FileM
 		permWarnDedupe.clear(dedupeKey("chmod bob state dir", path))
 		return
 	}
+	if len(ownerUID) > 0 && skipBobStateDirNotOwned(logger, path, mode, ownerUID[0]) {
+		return
+	}
 	newPerm := perm | bobStateDirGroupRWX
+	var owner uint32
+	if len(ownerUID) > 0 {
+		owner = ownerUID[0]
+	}
 	if err := chmod(newPerm); err != nil {
-		if warn, _ := permWarnDedupe.shouldWarn(dedupeKey("chmod bob state dir", path), err.Error(), dedupeClass("chmod bob state dir", err)); warn {
-			logger.Error("permissions watcher: chmod bob state dir failed; bob will keep reporting 'error saving your latest settings changes' and run degraded",
-				"path", path,
-				"old_mode", perm.String(),
-				"want_mode", newPerm.String(),
-				"error", err,
-				"note", "identical repeats logged at debug until this changes",
-			)
-		} else {
-			logger.Debug("permissions watcher: chmod bob state dir failed",
-				"path", path,
-				"error", err,
-			)
-		}
+		logBobStateDirChmodFailure(logger, path, perm, newPerm, err, owner)
 		return
 	}
 	permWarnDedupe.clear(dedupeKey("chmod bob state dir", path))

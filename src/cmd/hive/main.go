@@ -1747,6 +1747,9 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		AppBotLogin:        b.cfg.GitHub.BotLogin(),
 		AppBotUserID:       b.appBotUserIDResolver(),
 		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
+		InferenceDefaultModel: func(backend string) string {
+			return b.cfg.Governor.DefaultInferenceModel(backend)
+		},
 	}
 	return true
 }
@@ -2736,6 +2739,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
+	b.tokenCollector.SetClineHomesRoot("/data/home")
 	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
@@ -3692,6 +3696,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		prevACMMLevel := b.cfg.ACMMLevelOrZero()
 		nextACMMLevel := prevACMMLevel
 		defer func() {
+			b.publishSweepConfig()
 			b.cfgReloadMu.Unlock()
 			if prevACMMLevel != nextACMMLevel {
 				b.onACMMLevelChanged(prevACMMLevel, nextACMMLevel)
@@ -5962,24 +5967,40 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	if loopNow == nil {
 		loopNow = time.Now
 	}
+	b.cfgReloadMu.Lock()
+	b.publishSweepConfig()
+	b.cfgReloadMu.Unlock()
+	if deps.startSweeps != nil {
+		defer deps.startSweeps(b)()
+	}
+	// Cadence is measured from the start, including the first (often slow)
+	// enumerate pass, not from completion of startup evaluation.
+	lastEnumerateAt := loopNow()
+	b.cfgReloadMu.Lock()
+	initialTickStarted := time.Now()
 	b.evalCycles++
 	deps.runEval(b, nil, evalSourceEnumerate)
+	initialEvalDuration := time.Since(initialTickStarted)
 	// lastEnumerateAt is when the last reconcile pass started. Wake-driven
 	// cycles plan from the cached snapshot, and a busy spoke can be woken
 	// every few minutes for hours; the reconcile cadence must not depend on
 	// the ticker tick winning the select against those wakes
 	// (hivecommons/hive#15779). reconcileOverdue is the one check both the
 	// wake paths and the loop top consult.
-	lastEnumerateAt := loopNow()
 	reconcileOverdue := func(now time.Time) bool {
 		return lastEvalInterval > 0 && now.Sub(lastEnumerateAt) >= lastEvalInterval
 	}
+	initialRotationStarted := time.Now()
 	deps.runRotation(b)
+	initialRotationDuration := time.Since(initialRotationStarted)
 	if b.wd != nil {
 		b.wd.Tick(b.ctx)
 	}
-	deps.runSweeps(b)
 	deps.persist(b)
+	b.cfgReloadMu.Unlock()
+	b.logger.Info("governor tick complete", "tick_wall_s", time.Since(initialTickStarted).Seconds(),
+		"eval_s", initialEvalDuration.Seconds(), "rotation_s", initialRotationDuration.Seconds(), "sweeps_s", 0,
+		"source", evalSourceEnumerate.String(), "startup", true)
 
 	// tick is one governor pass. The cadence ticker runs it with
 	// evalSourceEnumerate (the reconcile pass that re-lists every repo). The
@@ -5988,6 +6009,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// gates, planning from the stored snapshot — already patched by the
 	// delivery's targeted re-read — so a wake costs no listing.
 	tick := func(source evalCycleSource) {
+		tickStarted := time.Now()
 		if now := loopNow(); source == evalSourceCached && reconcileOverdue(now) {
 			b.logger.Info("cached snapshot older than eval interval; enumerating",
 				"snapshot_age", now.Sub(lastEnumerateAt).Round(time.Second).String(),
@@ -5998,6 +6020,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			lastEnumerateAt = loopNow()
 		}
 		b.cfgReloadMu.Lock()
+		b.publishSweepConfig()
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
 			b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
@@ -6056,9 +6079,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		b.evalCycles++
+		evalStarted := time.Now()
 		deps.runEval(b, restarted, source)
+		evalDuration := time.Since(evalStarted)
+		rotationStarted := time.Now()
 		deps.runRotation(b)
-		deps.runSweeps(b)
+		rotationDuration := time.Since(rotationStarted)
 		// Trajectory review runs after the eval cycle (so kicks/intents are
 		// current) on its own cadence, gated by Due().
 		if b.trajLane != nil && b.trajLane.Due(time.Now()) {
@@ -6091,6 +6117,9 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			b.evalLoop.setInterval(effectiveEvalInterval, mode)
 		}
 		b.cfgReloadMu.Unlock()
+		b.logger.Info("governor tick complete", "tick_wall_s", time.Since(tickStarted).Seconds(),
+			"eval_s", evalDuration.Seconds(), "rotation_s", rotationDuration.Seconds(), "sweeps_s", 0,
+			"source", source.String())
 	}
 	b.startReviewEvents()
 	b.startMatrixIngest()
@@ -7088,6 +7117,8 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
+	case "cline-turn":
+		return true, cruxruntime.RunClineTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.

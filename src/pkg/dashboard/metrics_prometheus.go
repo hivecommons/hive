@@ -71,6 +71,9 @@ func metricsToken() string {
 //	hive_stage_transition_anomaly_total{hive_id,kind,from,to}    — transitions the admission table rejected
 //	hive_stage_writer_writes_total{hive_id,kind,op}        — label writes by the single StageWriter
 //	hive_stage_duplicate_pills_healed_total{hive_id,kind}  — duplicate stage pills the writer removed
+//	hive_github_comments_total{hive_id,op}                — hive comments created / edited / suppressed
+//	hive_github_notification_<metric>_total{hive_id,producer,class} — github.notifications.shadow counters
+//	hive_github_notification_active_items{hive_id}         — items with a notification-capable write in 24h (shadow)
 //
 // The hive_pr_followup_* series (#9583) appear only once the PR follow-up
 // resume feature has written its counter file.
@@ -179,6 +182,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writePRFollowUpMetrics(&b, hiveID, writeHeader)
 	writeTrajectoryMetrics(&b, hiveID, writeHeader)
 	writeStageEngineMetrics(&b, hiveID, writeHeader, stageengine.DefaultCounters())
+	if s.deps != nil && s.deps.GHClient != nil {
+		writeGitHubNotificationMetrics(&b, hiveID, writeHeader, githubNotificationSnapshotFrom(s.deps.GHClient))
+	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))

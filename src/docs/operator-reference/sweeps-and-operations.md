@@ -586,6 +586,14 @@ already present), so the effect of the mode can be charted from the logs.
 `normal` restores the previous behaviour: every note is its own comment,
 every perspective's verdict its own review, every new head its own mention.
 
+`github.notifications.shadow: true` (default off) adds would-notify
+instrumentation without changing any write: every new comment, review,
+review request and @-mention is classified by producer and class, repeats of
+the same condition are counted as would-suppress, and the counters are
+exported on `/metrics`. See [GitHub writes: inventory and shadow
+mode](../notifications.md#github-writes-inventory-and-shadow-mode-githubnotificationsshadow)
+for the write-site inventory and how to compare baseline windows.
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel evaluates open PRs in the watched repos — human, bot, or agent —

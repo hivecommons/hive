@@ -124,15 +124,17 @@ type Server struct {
 	matrixNudge       stageTrackerNudger
 	matrixPersistPath string
 
-	port       int
-	authToken  string
-	statusMu   sync.RWMutex
-	status     *StatusPayload
-	sseClients map[chan []byte]struct{}
-	sseMu      sync.Mutex
-	logger     *slog.Logger
-	mux        *http.ServeMux
-	deps       *Dependencies
+	port         int
+	authToken    string
+	sweepMu      sync.RWMutex
+	sweepCadence map[string]sweepCadence
+	statusMu     sync.RWMutex
+	status       *StatusPayload
+	sseClients   map[chan []byte]struct{}
+	sseMu        sync.Mutex
+	logger       *slog.Logger
+	mux          *http.ServeMux
+	deps         *Dependencies
 	// stageStore is the stage-label memory /api/stage-tracker reads; nil
 	// means the process-wide stagelabels.Shared(). Tests inject one.
 	stageStore *stagelabels.Store
@@ -3246,7 +3248,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "starting"})
 		return
 	}
-	body := map[string]any{"status": "ok", "runtime": runtimeobs.Take()}
+	body := map[string]any{"status": "ok", "runtime": runtimeobs.Take(), "sweeps": s.sweepCadences(time.Now())}
 	if s.deps != nil && s.deps.CruxRuntimeHealth != nil {
 		rt := s.deps.CruxRuntimeHealth()
 		body["crux_runtime"] = rt

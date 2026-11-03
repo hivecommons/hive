@@ -92,8 +92,17 @@ func TestDelegatedDecisionUntrustedReadyForHumanMergeDecides(t *testing.T) {
 			if len(mock.merges) != 0 {
 				t.Fatalf("the dashboard merges nothing itself: %v", mock.merges)
 			}
-			if len(mock.comments) == 0 || !strings.Contains(mock.comments[0], tc.wantRule) {
+			decisionComment := false
+			for _, comment := range mock.comments {
+				if job.Marker != "" && strings.Contains(comment, tc.wantRule) && strings.Contains(comment, job.Marker) {
+					decisionComment = true
+				}
+			}
+			if !decisionComment {
 				t.Fatalf("decision comment must carry rule %q: %v", tc.wantRule, mock.comments)
+			}
+			if !tc.wantAdopt && job.ApprovalRecordedAt == nil {
+				t.Fatal("approved native decision must be recorded before optional comments")
 			}
 
 			// The ✓ hover reads the ledger detail: recorded from the response

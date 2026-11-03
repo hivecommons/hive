@@ -48,3 +48,16 @@ updates:
       - "dependencies"
       - "no-changelog"
     open-pull-requests-limit: 10
+
+  # dashboard/ ships in the v2 image (/opt/hive/dashboard, build-snapshot.mjs)
+  # and its lockfile pins express's transitive deps (qs, proxy-addr,
+  # body-parser) that have each needed a hand bump; let Dependabot own them.
+  - package-ecosystem: "npm"
+    directory: "/dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "no-changelog"
+    open-pull-requests-limit: 10

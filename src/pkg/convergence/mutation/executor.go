@@ -1,6 +1,7 @@
 package mutation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -85,6 +86,10 @@ func (x Executor) now() time.Time {
 // operation whose latest attempt is Unknown replays as ErrNeedsReconciliation,
 // never as a success carrying an empty result.
 func (x Executor) Execute(e Effect, epoch uint64, holder string, effect EffectFunc) (Operation, error) {
+	return x.ExecuteContext(context.Background(), e, epoch, holder, effect)
+}
+
+func (x Executor) ExecuteContext(ctx context.Context, e Effect, epoch uint64, holder string, effect EffectFunc) (Operation, error) {
 	if !JournalingEnabled(x.Mode) {
 		result, err := effect()
 		if err != nil {
@@ -107,7 +112,7 @@ func (x Executor) Execute(e Effect, epoch uint64, holder string, effect EffectFu
 	}
 
 	// Intent before effect, durably.
-	op, err := x.Journal.Begin(e, epoch, holder, now)
+	op, err := x.Journal.BeginContext(ctx, e, epoch, holder, now)
 	if err != nil {
 		if errors.Is(err, ErrAlreadyApplied) {
 			// Dedup replay: the journal already holds this logical operation
@@ -122,18 +127,24 @@ func (x Executor) Execute(e Effect, epoch uint64, holder string, effect EffectFu
 		return Operation{}, err
 	}
 
+	if err := ctx.Err(); err != nil {
+		// Physical persistence cannot be interrupted safely. If cancellation
+		// arrived during it, leave the durable intent for reconciliation,
+		// rather than starting an external call after the caller has gone.
+		return Operation{}, fmt.Errorf("mutation canceled after intent; reconciliation required: %w", err)
+	}
 	result, effectErr := effect()
 	after := x.now()
 
 	if effectErr != nil && errors.Is(effectErr, effects.ErrNotApplied) {
-		if _, recErr := x.Journal.RecordResult(op.LogicalID, epoch, StatusNotApplied, "", after); recErr != nil {
+		if _, recErr := x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusNotApplied, "", after); recErr != nil {
 			return Operation{}, fmt.Errorf("recording refused effect: %v (effect error: %w)", recErr, effectErr)
 		}
 		return Operation{}, effectErr
 	}
 	if effectErr != nil {
 		// Uncertain: the call failed but the effect may exist externally.
-		if _, recErr := x.Journal.RecordResult(op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
+		if _, recErr := x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
 			return Operation{}, fmt.Errorf("recording uncertain effect: %v (effect error: %w)", recErr, effectErr)
 		}
 		return Operation{}, fmt.Errorf("effect outcome uncertain, reconciliation required: %w", effectErr)
@@ -144,11 +155,11 @@ func (x Executor) Execute(e Effect, epoch uint64, holder string, effect EffectFu
 		// The effect happened but this owner may no longer speak for it:
 		// record Unknown so the CURRENT owner reconciles the same logical
 		// operation from authoritative external state — never a duplicate.
-		if _, recErr := x.Journal.RecordResult(op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
+		if _, recErr := x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
 			return Operation{}, fmt.Errorf("recording unacknowledgeable effect: %v (fence: %w)", recErr, err)
 		}
 		return Operation{}, fmt.Errorf("acknowledgment fenced, reconciliation required: %w", err)
 	}
 
-	return x.Journal.RecordResult(op.LogicalID, epoch, StatusApplied, result, after)
+	return x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusApplied, result, after)
 }

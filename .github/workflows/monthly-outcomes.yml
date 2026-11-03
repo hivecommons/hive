@@ -1,0 +1,75 @@
+name: Monthly outcomes
+
+on:
+  schedule:
+    # Prior month, after every merge has the existing 14-day maturation period.
+    - cron: '17 6 15 * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Completed UTC month (YYYY-MM); empty selects prior month'
+        type: string
+        default: ''
+  pull_request:
+    paths:
+      - '.github/workflows/monthly-outcomes.yml'
+      - '.github/scripts/monthly-outcomes-pr.sh'
+      - 'src/scripts/monthly-outcomes.py'
+      - 'src/scripts/test-monthly-outcomes.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monthly-outcomes-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'publication' }}
+  cancel-in-progress: false
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache: false
+      - run: python3 src/scripts/test-monthly-outcomes.py
+
+  publish:
+    if: github.event_name != 'pull_request' && github.repository == 'hivecommons/hive'
+    needs: selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Require supplied input and existing publication credential
+        env:
+          SUPPLIED: ${{ secrets.MONTHLY_OUTCOMES_INPUT }}
+          PUSH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN }}
+        run: |
+          if [ -z "$SUPPLIED" ] || [ -z "$PUSH_TOKEN" ]; then
+            echo "::error::Monthly outcomes is not operational: an owner must supply MONTHLY_OUTCOMES_INPUT and the existing TOPUP_PUSH_TOKEN. No deployment collection is configured."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v5
+          fetch-depth: 0
+          token: ${{ secrets.TOPUP_PUSH_TOKEN }}
+          persist-credentials: true
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache: false
+      - name: Validate, sanitize and render supplied aggregate
+        id: generate
+        env:
+          MONTHLY_OUTCOMES_INPUT: ${{ secrets.MONTHLY_OUTCOMES_INPUT }}
+          MONTH: ${{ inputs.month }}
+        run: python3 src/scripts/monthly-outcomes.py render --month "$MONTH" --out "$GITHUB_WORKSPACE/.monthly-outcomes"
+      - name: Open or update the month's reviewed PR
+        if: steps.generate.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN }}
+          MONTH: ${{ steps.generate.outputs.month }}
+        run: bash .github/scripts/monthly-outcomes-pr.sh

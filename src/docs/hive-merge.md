@@ -100,6 +100,19 @@ verdict:
 
 An API error while gathering that evidence is a failed attempt, never a pass.
 
+**A merge-queue-required refusal is terminal on the first attempt.** When the
+merge call itself (`PUT /pulls/{n}/merge`) answers `405 Changes must be made
+through the merge queue`, the base branch's ruleset forbids direct merges and no
+retry, code push or re-engaged fix loop can change that. The request is
+quarantined (`.exhausted`) for that head immediately, without consuming the
+retry budget, raising an operator alert or re-engaging the fix loop; the result
+file records `repo requires merge queue; direct merge not possible — enqueue via
+merge queue or merge by hand` followed by GitHub's message, and the watcher logs
+it once per head at INFO. Clear it by enqueuing the PR through the merge queue
+(see `auto_merge.native_merge_queue.enabled` in the
+[operator reference](operator-reference/README.md)) or merging by hand; a new
+head SHA starts fresh like any other exhausted request.
+
 **Wait state survives restarts and re-requests.** The attempt count, `ci_waits`,
 the pending-poll backoff and an "exhausted" record are kept per PR and head SHA
 in `/data/merge-request-state.json` (the PVC), not only in the tmpfs result
@@ -153,6 +166,29 @@ naming the path(s); a person must merge it. The same key guards the automerge
 sweep lanes whatever the intent tier. If the changed-file list for a configured
 repo cannot be fetched completely, the merge is withheld (fail closed). See
 [operator-reference.md](operator-reference.md).
+
+**Pin-only exception rollout (#16242).** The proposed opt-in key is
+`auto_merge.human_merge_pin_only`; see the
+[operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
+for its configuration and deployment prerequisites. The schema/classifier
+(#16262), relay admission (#16265), and sweep admission (#16266) are separate
+changes: this attribution change alone does **not** enable the exception.
+New path-hold comments retain `<!-- hive-human-merge-path -->` and append
+`<!-- hive-human-merge-path-head: <40-character SHA> -->` only when Hive
+observes that exact head without a pre-existing hold. Legacy comments and
+pre-existing holds are not retroactively attributed.
+
+The shared release API requires a later, qualifying exact head, the configured
+App identity, an unedited App marker, and complete label-event history proving
+one App-applied path hold immediately before the notice. Human-applied or
+re-added holds, ambiguous history, and timeline errors keep the hold. Admission
+callers must supply their live writeback gate (a missing gate or denied
+hold-gate notice leaves the hold intact), wire that API after pin-only
+qualification, and re-read labels;
+that wiring remains part of the rollout, not an authorization to clear labels
+manually. Required checks and their producer bindings, strict freshness,
+current reviews and substantive objections, other holds, and configured soak
+remain mandatory. Neither a pin-looking diff nor this API authorizes a merge.
 
 **Contributor PRs are held to the contributor-lane policy.** A merge request
 for a PR whose author is not the hive App, a configured trusted bot, or a
@@ -430,6 +466,19 @@ yielded owners retain their tickets through pending CI/review observations.
 Admission provenance prevents a different lane's non-admission from revoking
 the owning lane's reservation or FIFO ticket. An old waiting ticket reserves
 order only: its head must qualify afresh in its lane before becoming owner.
+
+The persisted owner head is the **admitted source head**, so a different live
+head is not by itself a stale reservation: an App-authored refresh preserves
+that source and its write-ahead attempt while the new head earns CI and a fresh
+review. Required-green alone does not release ownership or confer approval.
+State-changing lane observations re-read the head/base, author, policy labels
+and review inputs outside the preparation lock, then compare the persisted
+owner/attempt or exact waiting ticket before settling it. Superseded callbacks
+cannot release a newer reservation or rewind a yielded head. An accepted refresh
+whose expected head is still live remains exclusive through the existing
+mutation-reconciliation window, even if an older evaluation reports failure.
+Unavailable or changed evidence retains ownership for normal reevaluation;
+neither this validation nor a dashboard snapshot forcibly clears the queue.
 
 Audit logs use `automerge base preparation selected`, `refresh claimed`,
 `waiting`, `released` and `completed owner yielded`, with repository, base, PR,
