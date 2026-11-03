@@ -31,5 +31,5 @@ test('badge wiring: placeholder outside the root, hidden without the body class,
   assert.ok(root > 0 && ph > root, 'placeholder must follow the dashboard root');
   assert.ok(html.includes('#kiosk-cta { display: none; }'));
   assert.ok(html.includes('body.kiosk-cta-on #kiosk-cta {'));
-  assert.ok(html.includes('body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }'));
+  assert.ok(html.includes('body.matrix-mode #kiosk-cta { position: fixed; right: 1rem; bottom: 1rem; z-index: 100001; opacity: .85; }'));
 });

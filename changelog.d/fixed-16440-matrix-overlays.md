@@ -1,0 +1,1 @@
+- Keep the Matrix freshness HUD and get-started QR card above the canvas in every effect, and reserve their space when scrolling terminal rows.

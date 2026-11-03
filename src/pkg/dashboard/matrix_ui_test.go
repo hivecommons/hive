@@ -45,6 +45,20 @@ func TestMatrixUIWiring(t *testing.T) {
 			}
 		}
 	}
+	// The canvas must have an explicit lower layer even when its fill is opaque.
+	for selector, declarations := range map[string][]string{
+		"body.matrix-mode .matrix-canvas": {"position: fixed", "z-index: 0"},
+		"body.matrix-mode .matrix-labels": {"position: fixed", "z-index: 1", "bottom: 1rem"},
+		"body.matrix-mode #kiosk-cta":     {"position: fixed", "z-index: 100001", "bottom: 1rem"},
+	} {
+		_, after, found := strings.Cut(css, selector+" {")
+		rule, _, _ := strings.Cut(after, "}")
+		for _, declaration := range declarations {
+			if !found || !strings.Contains(rule, declaration+";") {
+				t.Errorf("%s missing overlay layout declaration %q", selector, declaration)
+			}
+		}
+	}
 	manifest := read("manifest.txt")
 	for _, file := range []string{"js/matrix.js", "css/matrix.css"} {
 		if !strings.Contains(manifest, file+"\n") {
@@ -77,14 +91,16 @@ const matrix = fs.readFileSync('static-src/js/matrix.js', 'utf8');
 const boot = fs.readFileSync('static-src/js/boot.js', 'utf8').split('})();')[0] + '})();';
 async function scenario(query, reduced = false, status = 200) {
   const events = {}, docEvents = {}, raf = new Map(), timers = new Map(), requests = [], draws = [];
-  let id = 0, responseStatus = status, responseSeq = 1;
+  let id = 0, responseStatus = status, responseSeq = 1, overlayTop = 440;
   const context = {clearRect(){}, fillRect(){}, fillText(...a){draws.push(a)}, drawImage(...a){draws.push(a)}};
   const elements = [];
   function el(tag) { const e = {tagName: tag.toUpperCase(), children: [], style: {setProperty(){}},
     classList: {add(){}}, setAttribute(){}, append(...a){this.children.push(...a)},
+    getBoundingClientRect(){return {top: this.id === 'kiosk-cta' ? overlayTop : 500, height: this.id === 'kiosk-cta' ? (query.includes('cta=off') ? 0 : 140) : 80}},
     appendChild(a){this.children.push(a)}, replaceChildren(...a){this.children = a}, getContext(){return context}};
     elements.push(e); return e; }
   const body = el('body');
+  const cta = el('aside'); cta.id = 'kiosk-cta'; body.appendChild(cta);
   const doc = {body, hidden: false, createElement: el,
     getElementById(id){return elements.find(e => e.id === id)},
     addEventListener(n, fn){(docEvents[n] ||= []).push(fn)}};
@@ -122,7 +138,17 @@ async function scenario(query, reduced = false, status = 200) {
     assert(draws.length > 0);
     if (/cascade|ghost|terminal/.test(query)) assert(draws.some(a => a[0] === 'org/repo#2 · main.go'));
     if (query.includes('ghost')) assert(draws.some(a => a[0] === 'main.go'));
-    if (query.includes('terminal')) assert(draws.some(a => a[0] === '+ <script>alert(1)</script>'));
+    if (query.includes('terminal')) {
+      assert(draws.some(a => a[0] === '+ <script>alert(1)</script>'));
+      assert(draws.every(a => a[2] <= (query.includes('cta=off') ? 500 : overlayTop) - 20), 'terminal rows must clear visible overlays');
+      overlayTop = 320; draws.length = 0;
+      const fn = [...raf.values()][0]; raf.clear(); fn(200);
+      assert(draws.length > 0);
+      assert(draws.every(a => a[2] <= (query.includes('cta=off') ? 500 : overlayTop) - 20), 'terminal must follow resized overlays');
+    }
+    assert(!byClass('matrix-labels').hidden);
+    assert(byClass('matrix-labels').children[1].textContent.includes('last line'));
+    assert.equal(win.hiveKioskCTAOn(win.location.href), !query.includes('cta=off'));
   }
   doc.hidden = true; docEvents.visibilitychange.forEach(fn => fn());
   assert.equal(raf.size, 0); assert.equal(timers.size, 0);
@@ -142,6 +168,7 @@ async function scenario(query, reduced = false, status = 200) {
   await scenario('?kiosk=1&view=matrix&mx.effect=cascade');
   await scenario('?kiosk=1&view=matrix&mx.effect=ghost');
   await scenario('?kiosk=1&view=matrix&mx.effect=terminal');
+  await scenario('?kiosk=1&view=matrix&mx.effect=terminal&cta=off');
   await scenario('?kiosk=1&view=matrix', true);
   for (const status of [404, 401, 403]) await scenario('?kiosk=1&view=matrix', false, status);
 })().catch(e => {console.error(e); process.exit(1)});

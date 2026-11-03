@@ -200,7 +200,14 @@
       if (!termRows.length) emitTerminal();
       termClock += dt * 4;
       while (termClock >= 1) { termClock -= 1; emitTerminal(); }
+      // The QR card can be taller than the freshness HUD. Reserve the full
+      // overlay band, including after viewport or font-size changes.
       var bottom = height - 100;
+      [labels, document.getElementById('kiosk-cta')].forEach(function(overlay){
+        if (!overlay) return;
+        var bounds = overlay.getBoundingClientRect();
+        if (bounds.height) bottom = Math.min(bottom, bounds.top - rowH);
+      });
       ctx.font = '16px monospace';
       termRows.forEach(function(row, i){
         var y = bottom - (termRows.length - 1 - i + termClock) * rowH;
