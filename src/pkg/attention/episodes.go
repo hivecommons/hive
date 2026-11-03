@@ -328,6 +328,7 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 					e.State = Notified
 				}
 				if !e.AckedAt.IsZero() {
+					e.QuietReopen = true
 					e.State = Acknowledged
 				}
 			}
