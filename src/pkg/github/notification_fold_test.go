@@ -94,6 +94,7 @@ func TestPostUnblockedNoteIdempotentPerCause(t *testing.T) {
 	t.Run("quiet", func(t *testing.T) {
 		s := &statusCommentServer{}
 		c := testClient(t, s.start(t).URL)
+		c.SetAppBotLogin("hive-app[bot]")
 		c.SetNotificationsQuiet(func() bool { return true })
 		c.postUnblockedNote(ctx, "o/r", 5, note, logger)
 		c.postUnblockedNote(ctx, "o/r", 5, note, logger)
@@ -141,6 +142,7 @@ func TestPostNoteOrFoldQuietEditsNormalCreates(t *testing.T) {
 	ctx := context.Background()
 	s := &statusCommentServer{}
 	c := testClient(t, s.start(t).URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	c.SetNotificationsQuiet(func() bool { return true })
 	key := prstatus.KeyAgentNotePrefix + agentNoteAwaitingCI
 	if created, err := c.PostNoteOrFold(ctx, "o/r", 3, key, "hive/awaiting-ci: CI pending — sweep will merge when green."); err != nil || !created {
