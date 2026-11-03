@@ -84,8 +84,10 @@ mutation journal remains in the GitHub write path as an additional safeguard.
 The file is bounded to 4096 episodes and 4096 initialized items. Resolved
 episodes are pruned once the flap window has passed (recurrence would start a
 fresh episode anyway); uncertain episodes and history-seeded baselines are kept.
-Capacity errors fail closed and retain history instead of evicting an active
-incident and replaying it. Operators must reconcile/archive inventory before
+When the item cap is reached, the least recently touched item whose episodes
+are all resolved is evicted to admit a new one (History re-seeds it without
+replay). Capacity errors fail closed and retain history instead of evicting an
+active incident and replaying it. Operators must reconcile/archive inventory before
 resetting a full ledger; a reset re-enters baseline recovery, never an automatic
 re-page. Status displays up to 20 active conditions with an overflow count; all
 records remain in the ledger. Status includes owner/action, last evidence,

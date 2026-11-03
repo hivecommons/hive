@@ -8339,6 +8339,10 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+
+	// HumanMergePinOnly stages opt-in pin-only policy. Admission wiring must
+	// independently prove trusted identity, exact-head evidence and upstream review.
+	HumanMergePinOnly map[string]PinOnlyException `yaml:"human_merge_pin_only,omitempty" json:"human_merge_pin_only,omitempty"`
 	// HumanMergeTitlePrefixes lists title prefixes (matched after trimming
 	// the title) that mark a PR as one the owner merges by hand; no lane and
 	// no merge train merges it (hivecommons/hive#15442). Unset means the

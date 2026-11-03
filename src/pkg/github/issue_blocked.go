@@ -661,7 +661,9 @@ func (c *Client) postUnblockedNote(ctx context.Context, repo string, number int,
 			return
 		}
 	}
-	if c.notificationsQuiet() {
+	// The attention pilot folds dependency progress into the issue's
+	// status card whatever github.notifications.mode says.
+	if c.notificationsQuiet() || c.attentionPilot() {
 		if created, err := c.UpsertPRStatusSection(ctx, repo, number, prstatus.KeyUnblocked, note); err != nil {
 			logger.Warn("blocked sweep: unblock note not recorded on status comment", "repo", repo, "issue", number, "error", err)
 		} else if !created {
