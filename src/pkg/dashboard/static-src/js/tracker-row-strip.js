@@ -27,10 +27,12 @@
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
-      const active = matches && a.active && Number.isFinite(observed) && !stale;
+      const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      if (matches && (a.active || ['running', 'reviewing', 'adjudicating'].includes(state)) && (!Number.isFinite(observed) || stale)) caption = name + ' activity unknown · last observed ' + state;
-      const cls = Number.isFinite(observed) && !stale && (state === 'passing' || state === 'approved') ? 'done' : active ? 'active' : 'todo';
+      const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
+      const active = known && a.active;
+      if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
+      const cls = known && (state === 'passing' || state === 'approved') ? 'done' : active ? 'active' : 'todo';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
@@ -45,12 +47,21 @@
       let decided = kind === 'review' && sg.state === 'active' && item.decided && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
       const codeObserved = Date.parse(code && code.observed_at || '');
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
-      if (!codeFresh) decided = decided.replace(/>Fixing(?=\s|<)/g, '>Fix requested');
-      const word = esc(caption.replace(new RegExp('^' + name + ' ?'), '') || state);
+      if (!codeFresh) decided = decided.replace(/>(?:Fixing|Remediating)(?=\s|<)/g, '>Fix requested');
+      const word = esc(caption);
       const evidenceURL = matches && /^https?:\/\//i.test(String(a.url || '')) ? a.url : '';
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${word}</a>` : word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
-      return `<li class="ham-seg ham-activity-track ${cls}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}"${sg.state === 'active' ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(tip + (codeNote ? ' · ' + codeNote : ''))}"` : ''} aria-label="${esc(name + ': ' + tip + (codeNote ? ' · ' + codeNote : ''))}"><span class="ham-track-name">${name}</span><span class="ham-track-state">${evidenceLink}</span>${codeNote || contextWord ? `<span class="ham-track-code-note">${esc(codeNote || contextWord)}</span>` : ''}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}${stale || !Number.isFinite(observed) ? '<span class="ham-track-freshness">?</span>' : ''}</li>`;
+      const hold = item.hold;
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + tip +
+        (matches && a.actor ? ' · actor ' + a.actor : '') +
+        (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
+        (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '');
+      const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
+      const icon = stageTrackerIcon(50, 'ham-ico', name);
+      const content = known ? `<span class="ham-chevron-copy ham-track-state">${evidenceLink}</span>` : icon;
+      const linkedIcon = !known && ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}</a>` : content;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${linkedIcon}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -108,6 +119,7 @@
         const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
+        let gateCaption = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
@@ -119,7 +131,10 @@
           // With merge_gate in the payload the sentence is the gate's own
           // (what holds it, next sweep, soak left — #15073).
           const gateInfo = !sg.detour && typeof stageTrackerMergeGateInfo === 'function' ? stageTrackerMergeGateInfo(item, nowMs, trains) : null;
-          if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;
+          if (gateInfo) {
+            tip = sg.label + ' — ' + gateInfo.tip;
+            gateCaption = [gateInfo.word, gateInfo.detail].filter(Boolean).join(' · ');
+          }
           else if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
@@ -170,8 +185,17 @@
         // The cap chevron is the ✓ only once the PR is merged; until then
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
-        else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);
-        else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        else if (active) {
+          const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short), item.caption, item.reason,
+            item.head ? 'head ' + item.head : '',
+            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          const caption = gateWord || word;
+          const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
+          const content = `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
+          // A decision's dialog is its sole hover/focus detail surface.
+          inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
+        } else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
@@ -195,7 +219,7 @@
         const activityFreshMS = 2 * 60 * 1000;
         const clock = Number(nowMs) || Date.now();
         const working = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
-        const word = !working && decidedInfo.word === 'Fixing' ? 'Fix requested' : decidedInfo.word;
+        const word = !working && ['Fixing', 'Remediating'].includes(decidedInfo.word) ? 'Fix requested' : decidedInfo.word;
         text = word + (decidedInfo.detail ? ' · ' + decidedInfo.detail : '') + (regressed ? ' · ' + regressed : '');
       }
       const tracks = (item.kind === 'pr' || item.via_pr) && item.head ? ['ci', 'review'].map(kind => {

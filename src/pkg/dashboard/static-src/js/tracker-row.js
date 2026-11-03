@@ -29,7 +29,7 @@
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
       const codeWorking = codeMatches && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
-      const codeCaption = codeMatches ? (!codeWorking && code.state === 'fixing' ? 'Fix task assigned · activity unknown' : code.caption) : 'Code activity unknown';
+      const codeCaption = codeMatches ? (!codeWorking && code.state === 'fixing' ? 'Fix task assigned · activity unknown' : (code.state === 'fixing' ? String(code.caption || '').replace(/^Fixing\b/, 'Remediating') : code.caption)) : 'Code activity unknown';
       if (detour && !code && cur === 70 && !detour.sentinel) detour.text = 'Waiting for fixer · activity unknown';
       if (detour && code && [70, 71, 72].includes(cur)) detour.text = codeCaption || detour.text;
       if (detour && code && cur === 74 && codeWorking) detour.text += ' · ' + codeCaption;

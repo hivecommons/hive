@@ -23,7 +23,8 @@ func TestStageTrackerMergeFailedColumnNode(t *testing.T) {
 		`const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind, item);`,
 		`stageTrackerAnchor(item.stage, stages, item.via_pr ? 'pr' : item.kind, item);`,
 		`label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n)`,
-		`.ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; display: inline-block; vertical-align: bottom; max-width: 12em; overflow: hidden; text-overflow: ellipsis; }`,
+		`.ham-gate-detail { font-weight: normal; opacity: 0.85; font-variant-numeric: tabular-nums; }`,
+		`.ham-chevron-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines);`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing merge-outcome column wiring %q", want)

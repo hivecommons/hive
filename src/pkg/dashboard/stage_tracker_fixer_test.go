@@ -24,7 +24,7 @@ func TestStageTrackerApplyFixerStatusExhausted(t *testing.T) {
 
 	it := base()
 	stageTrackerApplyFixerStatus(&it, exhausted, nil)
-	if !strings.HasPrefix(it.Caption, "Fixing paused — fixer gave up after 6 attempts") || !strings.Contains(it.Caption, "conflicting with the base branch") {
+	if !strings.HasPrefix(it.Caption, "Remediation paused — fixer gave up after 6 attempts") || !strings.Contains(it.Caption, "conflicting with the base branch") {
 		t.Fatalf("caption = %q", it.Caption)
 	}
 	if it.StageActor.Kind != StageActorNone || it.StageActor.Login != "" || it.Actor != "maintainer" {

@@ -416,7 +416,7 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 		// Bind an observed successful, worktree-verified edit to the exact
 		// actor/repo/head assignment; unsupported instrumentation is unknown.
 		if codeWork := trackerAssignedCodeWorker(status, it.Repo, it.Number, it.Head, fix.Agent, fix.Dispatched, now); codeWork != nil {
-			out.State, out.Caption, out.Active = "fixing", "Fixing · "+fix.Agent, true
+			out.State, out.Caption, out.Active = "fixing", "Remediating · "+fix.Agent, true
 			out.Source, out.ObservedAt = "fix-dispatch+"+codeWork.Source, timePtr(codeWork.At)
 			it.DisplayColumn = trackerNumberPRInProgress
 		}
@@ -462,15 +462,19 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 	if it.Stage == trackerNumberNeedsDecision || it.Stage >= trackerNumberAwaitingMerge || it.Superseded != nil {
 		it.DisplayColumn = 0
 	}
-	if out.State == "waiting_fixer" && strings.HasPrefix(it.Caption, "Fixing paused") {
-		out.Blocker = strings.Replace(it.Caption, "Fixing paused", "Fix task blocked", 1)
+	if out.State == "waiting_fixer" && (strings.HasPrefix(it.Caption, "Remediation paused") || strings.HasPrefix(it.Caption, "Fixing paused")) {
+		detail := strings.TrimPrefix(it.Caption, "Remediation paused")
+		if detail == it.Caption {
+			detail = strings.TrimPrefix(it.Caption, "Fixing paused")
+		}
+		out.Blocker = "Fix task blocked" + detail
 		out.Source += "+fix-dispatch-status"
 	}
 	it.CodeActivity = out
 	// Replace generic or previously projected activity, not independent
 	// native facts such as a foreign bot conflict, hold or rebase episode.
 	if it.Stage == trackerNumberFixing && it.Superseded == nil &&
-		(it.Caption == "" || strings.HasPrefix(it.Caption, "Fixing") || activityCaption || out.Active) {
+		(it.Caption == "" || strings.HasPrefix(it.Caption, "Remediating") || strings.HasPrefix(it.Caption, "Remediation paused") || strings.HasPrefix(it.Caption, "Fixing") || activityCaption || out.Active) {
 		it.Caption = out.Caption
 		if out.Actor != "" && !out.Active {
 			it.Caption += " · " + out.Actor

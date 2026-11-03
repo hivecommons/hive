@@ -971,7 +971,7 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.Reviewed:
 		return "Review passed"
 	case stagelabels.Fixing:
-		return "Fixing"
+		return "Remediating"
 	case stagelabels.NeedsAuthor:
 		return "Needs author"
 	case stagelabels.ReturnedToContributor:
@@ -996,9 +996,13 @@ func stageTrackerStages(overrides map[string]time.Duration) []StageTrackerStage 
 	out := make([]StageTrackerStage, 0, len(stagelabels.Table))
 	for _, d := range stagelabels.Table {
 		branch := stageTrackerBranchFrom(d.Number)
+		description := d.Description
+		if d.Stage == stagelabels.Fixing {
+			description = stageTrackerRemediationNeededCaption
+		}
 		out = append(out, StageTrackerStage{
 			Number: d.Number, Slug: d.Slug, Label: d.Stage.Label(), Short: stageTrackerShort(d.Stage),
-			Description: d.Description, Issue: d.Issue, PR: d.PR, Main: branch == 0, BranchFrom: branch,
+			Description: description, Issue: d.Issue, PR: d.PR, Main: branch == 0, BranchFrom: branch,
 			DwellSeconds: int64(stagelabels.Dwell(d.Stage, overrides) / time.Second),
 			FallsTo:      stageTrackerFallsTo(d),
 		})

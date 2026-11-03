@@ -1,0 +1,217 @@
+// Dedicated preview only: evaluate (<file contents>)({ dedicatedPreview: true }).
+// Scrolls every header control into view for hit-testing, then restores scroll.
+// Never run in the user's live tab; never activates controls or changes rows.
+(async ({ dedicatedPreview = false } = {}) => {
+  if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
+  const tolerance = 1;
+  const failures = [];
+  const coverage = { issueOnly: 0, linked: 0, prOnly: 0, nested: 0, multiIssue: 0, unknown: 0, queuedApproved: 0, wrapped: 0, controls: 0, controlTargets: 0, hitTested: 0, currentRows: 0, preparation: 0, superseded: 0, states: {} };
+  const near = (a, b) => Math.abs(a - b) <= tolerance;
+  const visible = el => el && el.getClientRects().length && getComputedStyle(el).display !== 'none';
+  const rect = el => el.getBoundingClientRect();
+  const assert = (ok, label) => { if (!ok) failures.push(label); };
+  const settleScroll = async (control, name) => {
+    const maxFrames = 12;
+    const requiredStableFrames = 2;
+    let previous = '', stable = 0;
+    for (let frame = 0; frame < maxFrames; frame++) {
+      await new Promise(requestAnimationFrame);
+      const box = rect(control), viewport = window.visualViewport;
+      const next = JSON.stringify([box.x, box.y, scrollX, scrollY,
+        viewport?.offsetLeft, viewport?.offsetTop, viewport?.scale]);
+      stable = next === previous ? stable + 1 : 0;
+      if (stable >= requiredStableFrames) return;
+      previous = next;
+    }
+    assert(false, name + 'control/visual viewport must settle before its mandatory hit-test');
+  };
+  const inspectControl = async (control, toolbar, name) => {
+    coverage.controlTargets++;
+    assert(visible(control), name + 'expected header control is not hidden');
+    if (!visible(control)) return; // Already a failure, never an untested success.
+    assert(!control.closest('[inert]'), name + 'controls remain focusable/clickable');
+    const contained = () => {
+      const box = rect(control), bounds = rect(toolbar);
+      assert(box.width > 0 && box.height > 0 && box.left >= Math.max(0, bounds.left) - tolerance &&
+        box.right <= Math.min(innerWidth, bounds.right) + tolerance, name + 'entire header control stays horizontally inside the toolbar and viewport');
+      return box;
+    };
+    contained(); // Horizontal overflow must fail even if scrolling could hide it.
+    const scrollParents = [];
+    for (let parent = control.parentElement; parent; parent = parent.parentElement) {
+      if (parent.scrollHeight > parent.clientHeight || parent.scrollWidth > parent.clientWidth) {
+        scrollParents.push({ el: parent, left: parent.scrollLeft, top: parent.scrollTop });
+      }
+    }
+    try {
+      control.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+      await settleScroll(control, name);
+      const box = contained();
+      assert(box.top >= -tolerance && box.bottom <= innerHeight + tolerance, name + 'entire control is vertically reachable after deliberate scrolling');
+      const hit = document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2);
+      coverage.hitTested++;
+      assert(hit === control || control.contains(hit), name + 'every control center hits that control, not an overlay or offscreen null: ' +
+        JSON.stringify({ control: control.className, box: box.toJSON(), hit: hit?.className || hit?.tagName || null,
+          viewport: window.visualViewport?.toJSON?.() || { offsetLeft: window.visualViewport?.offsetLeft,
+            offsetTop: window.visualViewport?.offsetTop, width: window.visualViewport?.width,
+            height: window.visualViewport?.height, scale: window.visualViewport?.scale } }));
+    } finally {
+      for (const { el, left, top } of scrollParents) el.scrollTo({ left, top, behavior: 'instant' });
+      await new Promise(requestAnimationFrame);
+    }
+  };
+  const rows = [...document.querySelectorAll('#activity-monitor-section .ham-row, #activity-monitor-section .ham-sub')];
+  const references = new Map();
+  for (const [index, row] of rows.entries()) {
+    const header = row.querySelector(':scope > .ham-row-head > .ham-head-cols');
+    const strip = row.querySelector(':scope > .ham-strip-row > ol[aria-label="Pipeline progress"]');
+    if (!visible(header) || !visible(strip)) continue;
+    const lead = header.querySelector('.ham-head-lead');
+    const pr = header.querySelector('.ham-head-pr');
+    const badges = header.querySelector('.ham-badges');
+    const columns = [...strip.children];
+    // The renderer emits this boundary from its private canonical lane path.
+    const prStart = Number(header.style.getPropertyValue('--ham-pr-start')) - 1;
+    const lastLane = columns.length - 2;
+    const name = 'row ' + index + ' ';
+    if (row.matches('.ham-sub')) coverage.nested++;
+    else if (row.dataset.hamKind === 'pr') coverage.prOnly++;
+    else if (pr) coverage.linked++;
+    else coverage.issueOnly++;
+    if (row.matches('.ham-preparation-member')) coverage.preparation++;
+    if ([...row.querySelectorAll(':scope > .ham-current-stage, :scope > .ham-human-context')]
+      .some(context => /superseded/i.test(context.textContent))) coverage.superseded++;
+    if (row.matches('.ham-row') && row.querySelectorAll(':scope > .ham-sub').length > 1) coverage.multiIssue++;
+    const signature = columns.map(cell => ({ left: rect(cell).left - rect(strip).left, width: rect(cell).width, height: rect(cell).height }));
+    const stripLeft = rect(strip.parentElement).left;
+    // Recorded preparation roots retain the existing rail gutter. Compare
+    // like gutters across rows; header-to-lane checks below remain exact.
+    const gutter = row.closest('.ham-row.ham-train') ? 'train' : 'ordinary';
+    if (!references.has(gutter)) references.set(gutter, { signature, left: stripLeft });
+    const reference = references.get(gutter);
+    assert(near(stripLeft, reference.left), name + 'root/nested progress containers with the same rail gutter share one horizontal origin');
+    for (const [lane, box] of signature.entries()) {
+      assert(near(box.left, reference.signature[lane].left) && near(box.width, reference.signature[lane].width), name + 'physical lane ' + lane + ' aligns across issue, PR-only and multi-PR rows');
+      assert(near(box.height, reference.signature[lane].height), name + 'physical lane ' + lane + ' has the same compact height across rows');
+    }
+    const flow = [...row.children].filter(child => visible(child) && !['absolute', 'fixed'].includes(getComputedStyle(child).position));
+    const rowGap = parseFloat(getComputedStyle(row).rowGap) || 0;
+    for (let child = 1; child < flow.length; child++) {
+      const previous = flow[child - 1], next = flow[child];
+      const spacing = rowGap + (parseFloat(getComputedStyle(previous).marginBottom) || 0) + (parseFloat(getComputedStyle(next).marginTop) || 0);
+      const measured = rect(next).top - rect(previous).bottom;
+      assert(measured >= -tolerance && measured <= spacing + tolerance, name + 'no overlap or unexplained vertical gap between successive content/sub-rows: ' +
+        JSON.stringify({ previous: previous.className, next: next.className, measured, allowed: spacing }));
+    }
+    if (matchMedia('(min-width: 1101px)').matches) {
+      assert(near(rect(lead).left, rect(columns[0]).left), name + 'issue starts at Open');
+      assert(near(rect(lead).right, rect(columns[prStart - 1]).right), name + 'issue ends at Claimed');
+      if (pr) {
+        assert(near(rect(pr).left, rect(columns[prStart]).left), name + 'PR starts at PR in progress');
+        assert(near(rect(pr).right, rect(columns[lastLane]).right), name + 'PR ends at Merge gate');
+        if (visible(badges) && badges.children.length) {
+          assert(rect(badges).top >= rect(pr).bottom - tolerance, name + 'badges below PR metadata');
+        }
+      }
+    } else if (pr && visible(lead)) {
+      assert(rect(pr).top >= rect(lead).bottom - tolerance, name + 'narrow PR below issue');
+    }
+    for (const slot of [lead, pr, badges]) {
+      if (!visible(slot)) continue;
+      const bounds = rect(slot);
+      for (const child of slot.querySelectorAll('.ham-title, .ham-pr-title, .ham-badge, .ham-pr-ref, button')) {
+        if (!visible(child)) continue;
+        const box = rect(child);
+        assert(box.left >= bounds.left - tolerance && box.right <= bounds.right + tolerance, name + child.className + ' within its header slot');
+        if (child.clientWidth) assert(child.scrollWidth <= child.clientWidth + tolerance, name + child.className + ' no horizontal clipping');
+      }
+    }
+    if (badges) {
+      if (badges.children.length) {
+        assert(visible(badges), name + 'nonempty action/history toolbar is not hidden');
+        coverage.controls++;
+        const toolbar = badges.parentElement;
+        const headerStrip = header.querySelector('.ham-strip');
+        const expectedRight = matchMedia('(min-width: 1101px)').matches ? rect(headerStrip).right : rect(header).right;
+        assert(near(rect(toolbar).right, expectedRight), name + 'full-row toolbar reaches the far right');
+        assert(near(rect(badges).right, expectedRight), name + 'controls are right-anchored, not in an issue-side column');
+        assert(rect(toolbar).top >= rect(lead).bottom - tolerance, name + 'toolbar does not intersect issue metadata');
+        if (pr) assert(rect(toolbar).top >= rect(pr).bottom - tolerance, name + 'toolbar does not intersect PR metadata');
+        for (const control of badges.querySelectorAll('button, a, [tabindex]')) {
+          if (!control.closest('.config-tooltip')) await inspectControl(control, toolbar, name);
+        }
+      }
+      const chips = [...badges.children].filter(visible).map(rect);
+      for (let a = 0; a < chips.length; a++) for (let b = a + 1; b < chips.length; b++) {
+        const overlapX = Math.min(chips[a].right, chips[b].right) - Math.max(chips[a].left, chips[b].left);
+        const overlapY = Math.min(chips[a].bottom, chips[b].bottom) - Math.max(chips[a].top, chips[b].top);
+        assert(overlapX <= tolerance || overlapY <= tolerance, name + 'badges do not overlap');
+      }
+    }
+    const heights = columns.map(cell => rect(cell).height);
+    assert(Math.max(...heights) - Math.min(...heights) <= tolerance, name + 'all physical chevrons have uniform height');
+    const ci = strip.querySelector('[data-track="ci"]');
+    const review = strip.querySelector('[data-track="review"]');
+    const current = columns.filter(cell => !cell.classList.contains('cap') &&
+      (cell.classList.contains('active') || cell.classList.contains('ham-current')));
+    const delegated = row.matches('.ham-row') && row.querySelector(':scope > .ham-sub ol[aria-label="Pipeline progress"]');
+    assert(current.length > 0 || !!delegated, name + 'every actionable row owns a visible current-phase location or delegates to drawn PR children');
+    if (current.length) coverage.currentRows++;
+    if (ci?.dataset.activityState === 'queued' && review?.dataset.activityState === 'approved') coverage.queuedApproved++;
+    for (const cell of columns) {
+      if (cell.dataset.activityState) coverage.states[cell.dataset.activityState] = (coverage.states[cell.dataset.activityState] || 0) + 1;
+      if (cell.dataset.routeState?.split(' ').includes('active')) {
+        assert(cell.classList.contains('ham-current'), name + 'current phase remains highlighted independently of work');
+        const style = getComputedStyle(cell);
+        assert(Number(style.opacity) >= 0.9 && style.boxShadow !== 'none', name + 'queued/unknown/assigned/completed current tracks retain a visible steady outline');
+      }
+      if (cell.dataset.displayState === 'unknown') {
+        coverage.unknown++;
+        assert(cell.innerText.trim() === '', name + 'unknown track is icon-only');
+        assert(!!cell.querySelector('svg'), name + 'unknown track retains the column glyph');
+        assert(!cell.hasAttribute('data-motion'), name + 'unknown cannot animate as observed work');
+      }
+      const info = cell.querySelector('.ham-chevron-info');
+      if (info?.classList.contains('ham-chevron-decision')) {
+        const button = info.querySelector('.ham-decision-trigger');
+        assert(!!button && button.getAttribute('aria-haspopup') === 'dialog', name + 'decision retains its native keyboard/pointer trigger');
+        assert(!info.matches('.config-info, [tabindex]') && !info.querySelector('.config-tooltip') && !button?.closest('.config-info'), name + 'decision dialog is the sole hover/focus detail surface');
+        assert(!!button?.dataset.hamTip, name + 'decision dialog receives full unclamped overflow details');
+      } else if (info) {
+        const tip = document.getElementById(info.getAttribute('aria-describedby'));
+        assert(info.tabIndex === 0 && !!tip && tip.getAttribute('role') === 'tooltip', name + 'full details are keyboard/hover accessible');
+        assert(!!info.getAttribute('aria-label'), name + 'full accurate accessible label is retained');
+      }
+      for (const copy of cell.querySelectorAll('.ham-chevron-copy, .cue-acting-cap')) {
+        if (!visible(copy)) continue;
+        const style = getComputedStyle(copy);
+        const lineHeight = parseFloat(style.lineHeight);
+        const bounds = rect(copy);
+        assert(style.whiteSpace === 'normal' && style.overflowWrap === 'anywhere', name + 'text wraps, including unbroken handles');
+        assert(bounds.height <= lineHeight * 2 + tolerance, name + 'maximum two visible text lines');
+        if (bounds.height > lineHeight + tolerance) coverage.wrapped++;
+        assert(bounds.left >= rect(cell).left + parseFloat(getComputedStyle(cell).paddingLeft) - tolerance, name + 'text clears the left chevron notch');
+        assert(bounds.right <= rect(cell).right - parseFloat(getComputedStyle(cell).paddingRight) + tolerance, name + 'text clears the right chevron point');
+        const icons = info ? [...info.querySelectorAll(':scope > svg, :scope > .ham-active-ico-wrap svg, :scope > .ham-gate-ico svg')].filter(visible) : [];
+        for (const icon of icons) {
+          const box = rect(icon);
+          assert(box.right <= bounds.left + tolerance || box.left >= bounds.right - tolerance, name + 'text does not overlap reserved icons');
+        }
+      }
+    }
+    const progressTop = rect(strip).top;
+    for (const slot of [lead, pr, badges]) {
+      if (visible(slot)) assert(rect(slot).bottom <= progressTop + tolerance, name + 'header above progress tracks');
+    }
+  }
+  assert(coverage.issueOnly > 0 && coverage.linked > 0 && coverage.prOnly > 0, 'preview must contain issue-only, linked, and PR-only fixtures');
+  assert(coverage.multiIssue > 0 && coverage.nested >= 2, 'preview must contain a real multi-PR issue with independent nested rows');
+  assert(coverage.preparation >= 2 && coverage.superseded > 0, 'preview must contain recorded/unverified preparation fronts and an actionable superseded-human-decision row');
+  for (const state of ['queued', 'unknown', 'assigned', 'approved', 'waiting', 'failing', 'passing', 'running']) {
+    assert(coverage.states[state] > 0, 'preview must exercise current-head activity state ' + state);
+  }
+  assert(coverage.unknown > 0 && coverage.queuedApproved > 0 && coverage.wrapped > 0 && coverage.controls > 0, 'preview must include unknown, queued-CI/approved-review, long wrapped text and action/history controls');
+  assert(coverage.controlTargets > 0 && coverage.controlTargets === coverage.hitTested, 'every relevant header control must be hit-tested, never skipped as offscreen');
+  if (failures.length) throw new Error(JSON.stringify({ viewport: innerWidth, coverage, failures }));
+  return { viewport: innerWidth, coverage, failures };
+})
