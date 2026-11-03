@@ -569,11 +569,19 @@ issue gets the same card, written through the same single status writer
   "Fixed by #N … Reply /reopen if the problem persists" and the decomposed
   parent's all-children-delivered close — (`issue-close`),
   reopened-after-merge (`issue-reopened`), a lapsed claim's stage regression
-  (`stage-regressed`), the covering-PR stage note (`issue-pr-link`) and the
-  blocker-settled note (`unblocked`, whatever `mode` says). Claim notes
-  already fold under `claim` in quiet mode. The legacy markers stay inside
-  each section, so every reader that greps for them still finds them, and
-  the reopen/release guidance stays visible on the card.
+  (`stage-regressed`), the covering-PR stage note (`issue-pr-link`), the
+  relay's one-line state notes — awaiting CI, parking, already fixed —
+  (`agent-note:<state>`), the decision-downgrade note left when a label
+  change walks back an earlier maintainer decision
+  (`issue-decision-downgrade`) and the blocker-settled note (`unblocked`,
+  whatever `mode` says). Claim notes and the relay state notes already fold
+  under `claim` and `agent-note:<state>` in quiet mode; the
+  decision-downgrade note folds under the pilot only. The legacy markers
+  stay inside each section, so every reader that greps for them still finds
+  them, and the reopen/release guidance stays visible on the card. Section
+  text that quotes issue-authored prose has the card's own
+  `<!-- hive:status… -->` markers neutralised, so it cannot close its
+  section or open another.
 - **Native events notify instead.** The issue is still closed (with its
   state reason) by the API call, which is GitHub's own notification; the
   hive no longer adds a "for visibility" comment beside it.
