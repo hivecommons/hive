@@ -61,7 +61,7 @@ func TestIssueDecisionDoesNotRefreshUnchangedItem(t *testing.T) {
 	}))
 	t.Cleanup(bad.Close)
 	failed := newTestClient(t, bad, "org", []string{"repo"})
-	if err := failed.clearIssueParkingLabels(context.Background(), "org", "repo", 7, []string{issueNeedsHumanLabel}, "maintainer", true); err == nil {
+	if _, err := failed.clearIssueParkingLabels(context.Background(), "org", "repo", 7, []string{issueNeedsHumanLabel}, "maintainer", true); err == nil {
 		t.Fatal("expected label removal failure")
 	}
 	if calls != 0 {

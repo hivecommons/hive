@@ -27,28 +27,28 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `DELETE` | `/api/contribute/wall/{id}` | Post author | Author deletes their own wall post; action is audit logged. | `pkg/dashboard/api_contribute.go` |
 | `POST` | `/api/contribute/wall/{id}/hide` | Owner/read-write | Hide a wall post from public readers while leaving it visible to the author; action is audit logged and pushed over `/api/contribute/events`. | `pkg/dashboard/api_contribute.go` |
 | `POST` | `/api/contribute/wall/{id}/flag` | Signed-in contributor | Flag a wall post for Management review; action is audit logged. | `pkg/dashboard/api_contribute.go` |
-| `GET` | `/api/contribute/triage` | Public | Contribute Triage | `pkg/dashboard/api_contribute.go:255` |
-| `PUT` | `/api/contribute/queue/order` | Public | Contribute Queue Order | `pkg/dashboard/api_contribute.go:259` |
-| `POST` | `/api/contribute/queue/hold` | Public | Contribute Queue Hold | `pkg/dashboard/api_contribute.go:264` |
-| `POST` | `/api/contribute/queue/hold/clear` | Public | Contribute Queue Hold Clear | `pkg/dashboard/api_contribute.go:268` |
-| `GET` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:281` |
-| `PUT` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:282` |
-| `GET` | `/api/contributors` | Dashboard auth/session | Contributors List | `pkg/dashboard/api_contribute.go:290` |
-| `GET` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Get | `pkg/dashboard/api_contribute.go:291` |
+| `GET` | `/api/contribute/triage` | Public | Contribute Triage | `pkg/dashboard/api_contribute.go:317` |
+| `PUT` | `/api/contribute/queue/order` | Public | Contribute Queue Order | `pkg/dashboard/api_contribute.go:321` |
+| `POST` | `/api/contribute/queue/hold` | Public | Contribute Queue Hold | `pkg/dashboard/api_contribute.go:326` |
+| `POST` | `/api/contribute/queue/hold/clear` | Public | Contribute Queue Hold Clear | `pkg/dashboard/api_contribute.go:330` |
+| `GET` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:343` |
+| `PUT` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:344` |
+| `GET` | `/api/contributors` | Dashboard auth/session | Contributors List | `pkg/dashboard/api_contribute.go:352` |
+| `GET` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Get | `pkg/dashboard/api_contribute.go:353` |
 | `POST` | `/api/contributors/{id}/wall-mute` | Owner only | Mute or unmute a contributor from posting to the contributor wall; action is audit logged. | `pkg/dashboard/api_contribute.go` |
-| `PUT` | `/api/contributors/{id}/trust` | Owner only | Contributor Trust | `pkg/dashboard/api_contribute.go:293` |
-| `PUT` | `/api/contributors/{id}/agent-role` | Owner only | Contributor Agent Role | `pkg/dashboard/api_contribute.go:294` |
-| `PUT` | `/api/contributors/{id}/agent-role-grants` | Owner only | Contributor Agent Role Grants | `pkg/dashboard/api_contribute.go:295` |
-| `POST` | `/api/contributors/{id}/revoke` | Owner only | Contributor Revoke | `pkg/dashboard/api_contribute.go:296` |
-| `POST` | `/api/contributors/{id}/requeue` | Dashboard auth/session | Contributor Requeue | `pkg/dashboard/api_contribute.go:297` |
-| `DELETE` | `/api/contributors/{id}` | Owner only | Contributor Delete | `pkg/dashboard/api_contribute.go:298` |
-| `GET` | `/contribute/dossier/{username}` | Public | Contributor Dossier Page (HTML) | `pkg/dashboard/api_contribute.go:178` |
-| `GET` | `/api/contribute/run-stats` | Public | Contribute Run Stats | `pkg/dashboard/api_contribute.go:242` |
-| `GET` | `/api/contribute/runs` | Public | Contribute Per-Run History | `pkg/dashboard/api_contribute.go:339` |
-| `GET` | `/api/contribute/decisions` | Owner/read-write | Contribute Hub Decisions | `pkg/dashboard/api_contribute.go:349` |
-| `GET` | `/api/contribute/dossier` | Public | Contribute Dossier Get | `pkg/dashboard/api_contribute.go:286` |
-| `POST` | `/api/contribute/dossier` | Public | Contribute Dossier Update | `pkg/dashboard/api_contribute.go:287` |
-| `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:319` |
+| `PUT` | `/api/contributors/{id}/trust` | Owner only | Contributor Trust | `pkg/dashboard/api_contribute.go:355` |
+| `PUT` | `/api/contributors/{id}/agent-role` | Owner only | Contributor Agent Role | `pkg/dashboard/api_contribute.go:356` |
+| `PUT` | `/api/contributors/{id}/agent-role-grants` | Owner only | Contributor Agent Role Grants | `pkg/dashboard/api_contribute.go:357` |
+| `POST` | `/api/contributors/{id}/revoke` | Owner only | Contributor Revoke | `pkg/dashboard/api_contribute.go:358` |
+| `POST` | `/api/contributors/{id}/requeue` | Dashboard auth/session | Contributor Requeue | `pkg/dashboard/api_contribute.go:359` |
+| `DELETE` | `/api/contributors/{id}` | Owner only | Contributor Delete | `pkg/dashboard/api_contribute.go:360` |
+| `GET` | `/contribute/dossier/{username}` | Public | Contributor Dossier Page (HTML) | `pkg/dashboard/api_contribute.go:240` |
+| `GET` | `/api/contribute/run-stats` | Public | Contribute Run Stats | `pkg/dashboard/api_contribute.go:304` |
+| `GET` | `/api/contribute/runs` | Public | Contribute Per-Run History | `pkg/dashboard/api_contribute.go:401` |
+| `GET` | `/api/contribute/decisions` | Owner/read-write | Contribute Hub Decisions | `pkg/dashboard/api_contribute.go:411` |
+| `GET` | `/api/contribute/dossier` | Public | Contribute Dossier Get | `pkg/dashboard/api_contribute.go:348` |
+| `POST` | `/api/contribute/dossier` | Public | Contribute Dossier Update | `pkg/dashboard/api_contribute.go:349` |
+| `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:381` |
 | `GET` | `/api/cards/player/{asset}` | Public | OpenAPI alias for a cacheable contributor social-card SVG (`asset` is `<github-login>.svg`). | `pkg/dashboard/social_cards.go:112` |
 | `GET` | `/api/cards/achievement/{login}/{asset}` | Public | OpenAPI alias for a cacheable attained-achievement SVG (`asset` is `<achievement-id>.svg`). | `pkg/dashboard/social_cards.go:113` |
 | `GET` | `/api/cards/leaderboard/{asset}` | Public | OpenAPI alias for a cacheable leaderboard-summary SVG (`contributors.svg`, `teams.svg`, or `swarm.svg`). | `pkg/dashboard/social_cards.go:114` |
@@ -58,10 +58,10 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/share/player/{login}` | Public | Share landing page with Open Graph/Twitter metadata for a contributor card and link to the public dossier. | `pkg/dashboard/social_cards.go:115` |
 | `GET` | `/share/achievement/{login}/{achievementID}` | Public | Share landing page with metadata for an unlocked achievement card and link to the public dossier. | `pkg/dashboard/social_cards.go:116` |
 | `GET` | `/share/leaderboard/{board}` | Public | Share landing page with metadata for a public leaderboard card and link to live standings. | `pkg/dashboard/social_cards.go:117` |
-| `PUT` | `/api/contribute/help-links` | Owner/read-write | Contribute Help Links | `pkg/dashboard/api_contribute.go:195` |
-| `GET` | `/api/contribute/operators/message` | Public path; caller identity resolved server-side (401 anonymous, 403 without a profile) | Returns only the signed-in contributor's unacknowledged operator messages; no username/body field can select another recipient ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:235` |
-| `POST` | `/api/contribute/operators/message` | Owner/read-write | Sends a sanitized, length-capped one-to-one operator note to a contributor profile, persists it until acknowledgement, and pushes it to matching live relay sockets only ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:236` |
-| `POST` | `/api/contribute/operators/message/ack` | Public path; caller identity resolved server-side | Acknowledges the signed-in contributor's own message, optionally recording a short sanitized reply for operators. | `pkg/dashboard/api_contribute.go:237` |
+| `PUT` | `/api/contribute/help-links` | Owner/read-write | Contribute Help Links | `pkg/dashboard/api_contribute.go:257` |
+| `GET` | `/api/contribute/operators/message` | Public path; caller identity resolved server-side (401 anonymous, 403 without a profile) | Returns only the signed-in contributor's unacknowledged operator messages; no username/body field can select another recipient ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:297` |
+| `POST` | `/api/contribute/operators/message` | Owner/read-write | Sends a sanitized, length-capped one-to-one operator note to a contributor profile, persists it until acknowledgement, and pushes it to matching live relay sockets only ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:298` |
+| `POST` | `/api/contribute/operators/message/ack` | Public path; caller identity resolved server-side | Acknowledges the signed-in contributor's own message, optionally recording a short sanitized reply for operators. | `pkg/dashboard/api_contribute.go:299` |
 
 ### Issue claims (hivecommons/hive#8380)
 

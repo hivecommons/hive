@@ -532,7 +532,9 @@ func TestSpekInitAgentMatchesLaunchedBinary(t *testing.T) {
 func TestSpekHubExecutorBobAPIKeyReadsGovernorConfig(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "bob", "", nil, nil)
-	keyFile := filepath.Join(t.TempDir(), "bob-key")
+	dir := t.TempDir()
+	t.Cleanup(config.SetSecretFileRootsForTest(dir))
+	keyFile := filepath.Join(dir, "bob-key")
 	if err := os.WriteFile(keyFile, []byte("bob-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

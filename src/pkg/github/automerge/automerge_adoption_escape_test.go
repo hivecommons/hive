@@ -938,7 +938,7 @@ func TestAdoptionStaleWaitsForFixerQueue(t *testing.T) {
 			if got := adoptionStale(obs, tc.rec, policy, tc.at); got != tc.want {
 				t.Fatalf("adoptionStale=%v, want %v", got, tc.want)
 			}
-			if got := inPlaceRehomeReason(obs, tc.rec, policy, tc.at); got != "" && !tc.want {
+			if got := inPlaceRehomeReason(obs, tc.rec, policy, tc.at, false); got != "" && !tc.want {
 				t.Fatalf("inPlaceRehomeReason=%q while waiting on the fixer queue", got)
 			}
 		})

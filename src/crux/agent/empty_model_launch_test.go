@@ -44,7 +44,7 @@ func TestLaunchBuilders_EmptyModelOmitsModelFlag(t *testing.T) {
 			}
 		}
 	}
-	assertNoBareModelFlag(t, "agyHeadlessTurnShellCommand", agyHeadlessTurnShellCommand("hive", "agy", " ", "", "/p", true))
+	assertNoBareModelFlag(t, "agyHeadlessTurnShellCommand", agyHeadlessTurnShellCommand("hive", "agy", " ", "", "/p", true, ""))
 }
 
 // TestLaunchBuilders_ClaudeEmptyModelKeepsBypassFlagFirst is the exact live

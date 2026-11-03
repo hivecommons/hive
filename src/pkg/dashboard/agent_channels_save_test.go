@@ -27,7 +27,7 @@ func TestAgentConfigChannelsRejectsRemovedRuntimesWithoutMutation(t *testing.T) 
 		}
 		body := decodeJSON(t, rec)
 		msg, _ := body["error"].(string)
-		if !strings.Contains(msg, "no trigger runtime") || !strings.Contains(msg, `"kick" is supported`) {
+		if !strings.Contains(msg, "no trigger runtime") || !strings.Contains(msg, `only "kick" and "mention" are supported`) {
 			t.Fatalf("%s: missing actionable validation error: %v", channelType, body)
 		}
 		if !reflect.DeepEqual(s.deps.Config.Agents["scanner"], before) {

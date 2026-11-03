@@ -100,7 +100,8 @@ const CONTRIBUTOR_AVATAR_PX=32;
 function linkedAvatar(){return '';}
 function trustTierBadge(){return '';}
 function setIfChanged(el,html){el.innerHTML=html;}
-` + extractJSFunc(t, string(dashboard), "function renderLeaderboard(entries) {") + `
+` + extractJSFunc(t, string(dashboard), "function leaderboardStagesText(e) {") + "\n" +
+		extractJSFunc(t, string(dashboard), "function renderLeaderboard(entries) {") + `
 renderLeaderboard(entries);
 assert.match(panel.innerHTML, />Abandoned<\/th>/);
 const rows=panel.innerHTML.match(/<tbody>([\s\S]*)<\/tbody>/)[1].split('</tr>').filter(r=>r.trim());

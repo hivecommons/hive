@@ -58,7 +58,7 @@ const STAGE_TRACKER_PAGE_SIZES = [25, 50, 100];
 const STAGE_TRACKER_DEFAULT_PAGE_SIZE = 50;
 const STAGE_TRACKER_AGE_MS = { '1h': 3600000, '1d': 86400000, '1w': 604800000 };
 const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
-const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
+const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number', 'finisher'];
 const STAGE_TRACKER_GROUPS = ['hive', 'none'];
 const STAGE_TRACKER_GROUP_DEFAULT = 'hive';
 // The view kind every playlist entry on this page is: the Fleet activity

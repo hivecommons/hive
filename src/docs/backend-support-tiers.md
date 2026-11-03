@@ -534,6 +534,7 @@ agent spend, and the `advisor_records` admin MCP tool.
 | `aider` | No | n/a | Nothing; reported not active |
 | `gemini` | No | n/a | Nothing; reported not active |
 | `agy` | No | n/a | Nothing; reported not active |
+| `cline` | No | n/a | Nothing; reported not active |
 | `opencode` | No | n/a | Nothing; reported not active |
 | `kilo` | No | n/a | Nothing; reported not active |
 | `muse` | No | n/a | Nothing; reported not active |
