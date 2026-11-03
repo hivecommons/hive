@@ -2888,16 +2888,12 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	status.ContributorPool = s.BuildContributorPoolStatus()
 	status.Inception = s.buildFrontendInception()
 	if s.contributeHub != nil {
-		// The paused lanes' own queues, so the count honours item tiers
-		// (RFC #7629 S7). Nil when no enumeration has run yet, which is only
-		// visible on a hive whose owner has written an item-tier list.
-		var actionable *github.ActionableResult
-		if s.deps != nil && s.deps.Scheduler != nil {
-			actionable = s.deps.Scheduler.GetLastActionable()
-		}
+		// Use the admission queue that standby dispatch reads, so qualification
+		// counts cannot include work assigned to another lane or held from dispatch.
+		queue := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, withheldNone).queue
 		status.Governor.QualifiedStandbys = s.contributeHub.QualifiedStandbyCounts(
 			status.Governor.SuppressedLanes,
-			standbyLaneItems(status.Governor.SuppressedLanes, actionable))
+			standbyLaneItems(status.Governor.SuppressedLanes, queue))
 		status.Governor.SuspendedStandbys = s.contributeHub.SuspendedStandbyCounts(status.Governor.SuppressedLanes)
 	}
 	status.Swarm = s.SwarmSnapshot()

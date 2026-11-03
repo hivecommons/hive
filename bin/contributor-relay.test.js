@@ -16879,3 +16879,20 @@ test('tls-mismatch: an ordinary error still reconnects with backoff — only the
     teardown(relay);
   }
 });
+
+test('#16422 standby assignment from an acknowledging non-active hub is accepted', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_STANDBY: '1' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[0], []);
+    scopeAuth(relay, hubs[1], ['standby_v1']);
+    relay.handleMessage(JSON.stringify({ type: 'standby_ack', standby: { accepted: [{ lane: 'guide' }], rejected: [] } }), hubs[1]);
+    const offer = { type: 'task_assign', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' };
+    relay.handleMessage(JSON.stringify({ ...offer, task_id: 'plain' }), hubs[1]);
+    assert.ok(sentB.some(m => m.type === 'task_failed' && m.reason === 'Hub is not the active polling slot'),
+      'non-standby work from a non-active hub is still rejected');
+    relay.handleMessage(JSON.stringify({ ...offer, task_id: 'sb', standby_lane: 'guide' }), hubs[1]);
+    assert.ok(sentB.some(m => m.type === 'task_accepted' && m.task_id === 'sb'));
+    assert.strictEqual(sentA.filter(m => m.type === 'task_failed').length, 0);
+  } finally { relay.setCurrentTask(null); teardown(relay); }
+});

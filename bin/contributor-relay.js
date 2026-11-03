@@ -9733,6 +9733,7 @@ function handleMessage(data, hub) {
       const accepted = (msg.standby && Array.isArray(msg.standby.accepted)) ? msg.standby.accepted.length : 0;
       const rejected = (msg.standby && Array.isArray(msg.standby.rejected)) ? msg.standby.rejected.length : 0;
       console.log(`Standby acknowledged by ${hub.url}: ${accepted} accepted, ${rejected} rejected`);
+      hub.standbyAcked = accepted > 0;
       break;
     }
 
@@ -9754,7 +9755,10 @@ function handleMessage(data, hub) {
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hive disabled by contributor', failure_kind: 'environment' });
         break;
       }
-      if (!currentTask && hub !== hubs[activeHubIndex]) {
+      // A standby assignment is pushed by the hub that acknowledged this relay's
+      // standby; the relay is not polling, so that hub is never the active slot.
+      const standbyPush = !!msg.standby_lane && hub.standbyAcked === true;
+      if (!currentTask && !standbyPush && hub !== hubs[activeHubIndex]) {
         console.log(`Rejecting task ${taskDisplay(msg)} from ${hub.url} — hub is not the active polling slot`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
         break;

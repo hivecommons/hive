@@ -723,8 +723,9 @@ meets the list, and it is where the proposal stops: it is carried for logging
 and decides nothing. The no-writer guard that protects the floor was widened to
 cover the list's key (`TestStandbyItemTiersHaveNoWriterOutsideConfig`), so no
 surface may name it, let alone write it. The tile's "M qualify" counts
-contributors who could be offered at least one item queued on the lane, from
-the same per-lane split `buildLaneQueueDepths` uses for the N beside it.
+contributors who could be offered at least one item from the dispatchable
+admission queue routed to the lane; it uses that exact lane assignment rather
+than the broader lane-depth split.
 
 ### S8 — Automatic dispatch, opt-in per lane
 
