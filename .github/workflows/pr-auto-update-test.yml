@@ -7,6 +7,7 @@ on:
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
       - '.github/scripts/native-queue-*.cjs'
+      - '.github/scripts/diagnose-dco-provider*.cjs'
       - 'src/pkg/dashboard/static-src/js/config-helpers.js'
       - 'src/pkg/dashboard/static-src/js/config-features.js'
       - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
@@ -23,6 +24,7 @@ on:
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
       - '.github/scripts/native-queue-*.cjs'
+      - '.github/scripts/diagnose-dco-provider*.cjs'
       - 'src/pkg/dashboard/static-src/js/config-helpers.js'
       - 'src/pkg/dashboard/static-src/js/config-features.js'
       - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
@@ -52,7 +54,7 @@ jobs:
         with:
           node-version: '22'
       - name: Exercise native queue policy with mocked APIs
-        run: node --test .github/scripts/native-queue-policy.test.cjs .github/scripts/native-queue-settings.test.cjs .github/scripts/native-queue-tracker.test.cjs
+        run: node --test .github/scripts/native-queue-policy.test.cjs .github/scripts/native-queue-settings.test.cjs .github/scripts/native-queue-tracker.test.cjs .github/scripts/diagnose-dco-provider.test.cjs
       - name: Ensure YAML parser for workflow contracts
         run: |
           python3 -c 'import yaml' 2>/dev/null && exit 0
