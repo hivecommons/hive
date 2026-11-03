@@ -49,6 +49,13 @@ the head-bound assignment. Source work additionally requires a successful edit
 tool receipt, a real changed file in the matching Git origin/head worktree and
 fresh event/observation times within two minutes. A comment, claim, label,
 review request or investigation intention is never source-work proof.
+Verification uses the existing Crux pushbroker's workspace config policy through
+a credential-free, read-only inspector. Hooks, fsmonitor, diff/textconv/clean
+filters and remote helpers cannot run during observation; inherited `GIT_*`
+settings cannot retarget the inspected repository. Inspection has a single
+two-second deadline and bounded output, rechecks actual origin/head/path, and
+leaves unsafe configuration, unsupported content normalization or changing
+metadata unknown rather than claiming active fixing.
 The existing cached runtime transcript scan currently observes supported
 Copilot absolute-path edit/create/patch completions; unsupported backends,
 relative paths, oversized/partial transcripts and unverifiable changes remain

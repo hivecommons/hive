@@ -1,4 +1,4 @@
-// Package pushbroker performs the trusted, credentialed post-step for sandboxed agents.
+// Package pushbroker provides trusted Git inspection and credentialed post-steps for sandboxed agents.
 package pushbroker
 
 import (
@@ -165,6 +165,14 @@ func (b *Broker) rejectHostileWorkspaceConfig(ctx context.Context) error {
 	}
 	remote := strings.ToLower(b.remote())
 	want := expectedRemoteURL(b.Repo)
+	offenders := workspaceConfigOffenders(out, remote, &want)
+	if len(offenders) == 0 {
+		return nil
+	}
+	return fmt.Errorf("pushbroker: refusing to run git in a workspace whose repository config sets %s; a sandbox workspace may only carry the keys a fresh clone writes", strings.Join(offenders, ", "))
+}
+
+func workspaceConfigOffenders(out []byte, remote string, expectedURL *string) []string {
 	var offenders []string
 	// The record layout is "<scope>\x00<key>\n<value>\x00", so splitting on
 	// NUL yields alternating scope and key/value elements.
@@ -177,17 +185,14 @@ func (b *Broker) rejectHostileWorkspaceConfig(ctx context.Context) error {
 		}
 		key = strings.ToLower(key)
 		if workspaceConfigKeyAllowed(key, remote) {
-			if (key == "remote."+remote+".url" || key == "remote."+remote+".pushurl") && !sameRemoteURL(value, want) {
+			if expectedURL != nil && (key == "remote."+remote+".url" || key == "remote."+remote+".pushurl") && !sameRemoteURL(value, *expectedURL) {
 				offenders = append(offenders, key+"="+value)
 			}
 			continue
 		}
 		offenders = append(offenders, key)
 	}
-	if len(offenders) == 0 {
-		return nil
-	}
-	return fmt.Errorf("pushbroker: refusing to run git in a workspace whose repository config sets %s; a sandbox workspace may only carry the keys a fresh clone writes", strings.Join(offenders, ", "))
+	return offenders
 }
 
 func workspaceConfigKeyAllowed(key, remote string) bool {

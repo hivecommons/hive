@@ -6,12 +6,12 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
 const (
@@ -142,38 +142,13 @@ func verifySourceEdit(edit sourceEdit, now time.Time) *crux.CodeWork {
 		return nil
 	}
 
-	git := func(args ...string) (string, bool) {
-		ctx, cancel := context.WithTimeout(context.Background(), codeWorkGitTimeout)
-		defer cancel()
-		command := exec.CommandContext(ctx, "git", append([]string{"-C", filepath.Dir(edit.path)}, args...)...)
-		command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
-		bytes, err := command.Output()
-		return strings.TrimSpace(string(bytes)), err == nil
-	}
-	root, ok := git("rev-parse", "--show-toplevel")
-	if !ok {
+	ctx, cancel := context.WithTimeout(context.Background(), codeWorkGitTimeout)
+	defer cancel()
+	observation, err := pushbroker.ObserveWorkspaceFile(ctx, edit.path)
+	if err != nil || observation == nil {
 		return nil
 	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil
-	}
-	canonicalFile, err := filepath.EvalSymlinks(edit.path)
-	if err != nil {
-		return nil
-	}
-	relative, err := filepath.Rel(root, canonicalFile)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return nil
-	}
-	head, ok := git("rev-parse", "HEAD")
-	if !ok || head == "" {
-		return nil
-	}
-	origin, ok := git("remote", "get-url", "origin")
-	if !ok {
-		return nil
-	}
+	origin := observation.Origin
 	if strings.HasPrefix(origin, "git@") {
 		parts := strings.SplitN(origin, ":", 2)
 		if len(parts) != 2 {
@@ -189,19 +164,11 @@ func verifySourceEdit(edit sourceEdit, now time.Time) *crux.CodeWork {
 	if len(strings.Split(repo, "/")) != 2 {
 		return nil
 	}
-	// The successful tool receipt alone is insufficient: the file must
-	// actually differ from HEAD or be a nonignored new source file.
-	changed, ok := git("diff", "--name-only", "HEAD", "--", canonicalFile)
-	if !ok {
+	after, err := os.Lstat(edit.path)
+	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
 		return nil
 	}
-	if changed == "" {
-		changed, ok = git("ls-files", "--others", "--exclude-standard", "--", canonicalFile)
-	}
-	if !ok || changed == "" {
-		return nil
-	}
-	return &crux.CodeWork{Repo: repo, Head: head, Path: relative, Source: crux.CodeWorkSource, At: edit.at, ObservedAt: now}
+	return &crux.CodeWork{Repo: repo, Head: observation.Head, Path: observation.Path, Source: crux.CodeWorkSource, At: edit.at, ObservedAt: now}
 }
 
 func cloneCodeWork(observation *crux.CodeWork) *crux.CodeWork {
