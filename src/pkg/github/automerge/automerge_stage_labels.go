@@ -1499,15 +1499,12 @@ func (c *Engine) postStageNoteWith(ctx context.Context, policy StageLabelPolicy,
 // statusWriter is prstatus.Write or prstatus.WriteMentioning.
 type statusWriter func(ctx context.Context, f prstatus.Forge, item, key, text string) (prstatus.WriteResult, error)
 
-// writeStatusSection rewrites section key of the PR's hive status comment
-// to text through prstatus.Write, the one status writer
-// the GitHub client shares: it is serialised per PR, the edit is retried
-// when the comment changed underneath, and the comment is created only when
-// the PR has none. Returns the number of comments created.
-func (c *Engine) writeStatusSection(ctx context.Context, owner, repo string, number int, key, text string) (int, error) {
-	return c.writeStatusSectionWith(ctx, owner, repo, number, key, text, prstatus.Write)
-}
-
+// writeStatusSectionWith rewrites section key of the PR's hive status
+// comment to text through write (prstatus.Write or prstatus.WriteMentioning),
+// the one status writer the GitHub client shares: it is serialised per PR,
+// the edit is retried when the comment changed underneath, and the comment
+// is created only when the PR has none. Returns the number of comments
+// created.
 func (c *Engine) writeStatusSectionWith(ctx context.Context, owner, repo string, number int, key, text string, write statusWriter) (int, error) {
 	f := &engineStatusForge{e: c, owner: owner, repo: repo, number: number}
 	res, err := write(ctx, f, prstatus.ItemKey(owner+"/"+repo, number), key, text)
