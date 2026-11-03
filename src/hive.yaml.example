@@ -381,6 +381,18 @@ agents:
     #   auto_dispatch: false
     #   min_model_capability: T1
     #   daily_cap_per_contributor: 0
+    # Contributor-first lane: make a connected contributor relay that is
+    # "Acting as" this role the lane's PRIMARY worker. While one is connected
+    # (fresh heartbeat, not failure-paused) the governor withholds this
+    # agent's kicks, so the hive's own inference budget is not spent on work a
+    # contributor is already covering — the opposite order from standby, which
+    # offers paused BUDGET work. Kicks resume on the normal cadence once no
+    # relay has covered the role for contributor_first_grace. The role must be
+    # delegatable (hub.contribute_delegatable_roles, or the default scanner /
+    # quality / outreach) or the hive fails to load. See
+    # src/docs/agent-configuration.md#contributor-first-lanes-contributor_first.
+    # contributor_first: false
+    # contributor_first_grace: 10m
   architect:
     enabled: false                        # Disabled by default — enable for design work
     backend: claude

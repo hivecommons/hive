@@ -442,6 +442,26 @@ type AgentConfig struct {
 	// src/docs/design/standby-contributors.md.
 	Standby *StandbyConfig `yaml:"standby,omitempty" json:"standby,omitempty"`
 
+	// ContributorFirst makes a connected contributor relay acting as this
+	// agent's role the lane's PRIMARY worker. While such a relay is connected
+	// (fresh heartbeat, not failure-paused) the governor withholds this
+	// agent's kicks — at the same gates that withhold them for an exhausted
+	// budget — so the hive's own inference budget is not spent on work a
+	// contributor is already covering. Standby (the block above) is the
+	// opposite order: it offers paused budget work to volunteers. Off is the
+	// zero value, and an absent key leaves every existing roster unchanged.
+	//
+	// The role must be one contributors may act as
+	// (hub.contribute_delegatable_roles, or the default scanner / quality /
+	// outreach), or the load fails: a contributor-first lane nobody may claim
+	// would sit inert forever.
+	ContributorFirst bool `yaml:"contributor_first,omitempty" json:"contributor_first,omitempty"`
+	// ContributorFirstGrace is how long kicks stay withheld after the last
+	// covering relay disappears, so a routine relay reconnect does not flap
+	// the resident agent. Absent means DefaultContributorFirstGrace (10m);
+	// negative is rejected at load.
+	ContributorFirstGrace time.Duration `yaml:"contributor_first_grace,omitempty" json:"contributor_first_grace,omitempty"`
+
 	// Channels declares how this agent gets triggered. "kick" is the governor
 	// runtime; "mention" is valid only alongside "kick". When nil/empty, the
 	// agent uses governor timer kicks by default (implicit kick channel).

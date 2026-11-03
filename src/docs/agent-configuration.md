@@ -1245,6 +1245,67 @@ T3 list** — for the same reason none proposes lowering a floor.
 
 That is deliberate, and it is the point of the whole feature. A lane that ran on a strong model for months and then quietly starts producing work from a weak one costs more reviewer trust than a paused lane saves queue depth. **"Nobody qualifies, the lane stays paused" is an acceptable answer.** Lowering a floor should be a decision you made, in a file, on purpose.
 
+## Contributor-first lanes (`contributor_first`)
+
+A contributor relay can act as one of your agent roles ("Acting as" on the
+contributor card, or `HIVE_AGENT_ROLE` on the relay; see
+[Delegated ClankeR agent roles](contributor-trust-and-roles.md#delegated-clanker-agent-roles)).
+It then does that role's work on the contributor's own machine, with the
+contributor's own model. By default it does so **in parallel** with your
+resident agent: the governor keeps kicking the resident agent on its cadence,
+so your own inference budget is still spent on a lane a contributor is already
+covering. Standby (above) is the opposite order on purpose — it offers paused
+*budget* work to volunteers and never fires before the budget is gone.
+
+`contributor_first` inverts the order for one lane. While at least one
+contributor relay is **acting as that role and connected** — fresh heartbeat,
+not in a failure-streak pause — the governor **withholds the resident agent's
+kicks**, at the same gates where it withholds them for an exhausted budget
+(cadence kicks, continuous re-kicks, CEL event kicks and crash-recovery resume
+kicks). The contributor is the lane's primary worker and spends their own
+inference; the resident agent is the fallback. Once no relay has covered the
+role for `contributor_first_grace`, the resident agent resumes on its normal
+cadence. The grace exists because a relay reconnect is routine (the hub keeps
+a dropped relay's lease for thirty minutes for the same reason); without it
+the resident agent would flap on and off with every socket drop.
+
+```yaml
+agents:
+  quality:
+    contributor_first: true          # default false
+    contributor_first_grace: 10m     # default 10m; how long to wait for a relay to return
+```
+
+| Field | Meaning |
+|---|---|
+| `contributor_first` | Make a connected contributor relay acting as this role the lane's primary worker, and withhold the resident agent's kicks while one is connected. Default off; an absent key changes nothing. **The role must be one contributors may act as** — in `hub.contribute_delegatable_roles`, or one of the default `scanner`, `quality`, `outreach` — or the load fails: a contributor-first lane nobody may claim would sit inert while you believe contributors are taking the load. `supervisor` is never delegatable and is rejected. |
+| `contributor_first_grace` | How long kicks stay withheld after the last covering relay disappears. Default **10m**; negative fails the load. |
+
+What you see: the Governor section gains a **contributor-first** tile naming
+each covered lane and who covers it ("quality covered by alice, resident kicks
+withheld"), and during the grace it says when the resident agent resumes.
+`/api/status` carries the same facts under `governor.covered_lanes`. A
+withheld agent is simply idle; it is not paused, not disabled, and nothing
+about its cadence or mode changes.
+
+What does **not** change:
+
+- **Budget and standby.** A covered lane is never reported as paused for
+  budget: `suppressed_lanes` and `lane_pause_reasons` stay budget-only, so
+  standby dispatch keeps its meaning. If the budget *is* exhausted, the lane
+  reads as paused for budget exactly as before, and the contributor relay
+  keeps working because the contributor path has never been budget-gated.
+- **Who may act as the role.** Trust tier, grants and the delegatable list are
+  decided by the contributor path as before; `contributor_first` only reads
+  the result. A relay that is busy on a task still counts as covering — it is
+  draining the lane, which is the point.
+- **What a relay may take.** Contributors run on their own GitHub identity and
+  scoped token, so work the role does *outside* contributor task assignment
+  (for example pushes to adopted branches, or merges) is not done for the
+  resident agent while it is withheld. Set `contributor_first` on lanes whose
+  work is issue-shaped and delegatable, which is what the delegatable-role
+  gate already expresses.
+
 ## Write-back containment (`writeback`)
 
 ACMM levels and label policy decide what *agents* may do. The `writeback`

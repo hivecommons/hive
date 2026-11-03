@@ -1185,9 +1185,23 @@ type FrontendGovernor struct {
 	LanePauseReasons  map[string]string  `json:"lane_pause_reasons,omitempty"`
 	QualifiedStandbys map[string]int     `json:"qualified_standbys,omitempty"`
 	SuspendedStandbys map[string]int     `json:"suspended_standbys,omitempty"`
-	NextKickAt        string             `json:"nextKickAt,omitempty"`
-	NextKickIn        string             `json:"nextKickIn,omitempty"`
-	NextAgents        []string           `json:"nextAgents,omitempty"`
+	// CoveredLanes are the contributor-first lanes (agents.<name>.contributor_first)
+	// whose resident kicks the governor is withholding because a connected
+	// contributor relay is acting as the role, keyed by agent name.
+	CoveredLanes map[string]FrontendLaneCoverage `json:"covered_lanes,omitempty"`
+	NextKickAt   string                          `json:"nextKickAt,omitempty"`
+	NextKickIn   string                          `json:"nextKickIn,omitempty"`
+	NextAgents   []string                        `json:"nextAgents,omitempty"`
+}
+
+// FrontendLaneCoverage is one contributor-first lane the governor is
+// withholding kicks for: who covers it, since when, and — while no relay
+// covers it — when the resident agent resumes. Times are RFC 3339.
+type FrontendLaneCoverage struct {
+	Contributors []string `json:"contributors,omitempty"`
+	Since        string   `json:"since,omitempty"`
+	LastSeen     string   `json:"last_seen,omitempty"`
+	GraceUntil   string   `json:"grace_until,omitempty"`
 }
 
 type FrontendThresholds struct {

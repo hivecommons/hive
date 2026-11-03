@@ -230,15 +230,16 @@ type (
 )
 
 const (
-	ChannelTypeMention      = cruxconfig.ChannelTypeMention
-	DefaultExperimentEngine = cruxconfig.DefaultExperimentEngine
-	ExperimentEngineNous    = cruxconfig.ExperimentEngineNous
-	RoleExperimenter        = cruxconfig.RoleExperimenter
-	StandbyDefaultFloor     = cruxconfig.StandbyDefaultFloor
-	StandbyTierT1           = cruxconfig.StandbyTierT1
-	StandbyTierT2           = cruxconfig.StandbyTierT2
-	StandbyTierT3           = cruxconfig.StandbyTierT3
-	StandbyTierUnknown      = cruxconfig.StandbyTierUnknown
+	ChannelTypeMention           = cruxconfig.ChannelTypeMention
+	DefaultContributorFirstGrace = cruxconfig.DefaultContributorFirstGrace
+	DefaultExperimentEngine      = cruxconfig.DefaultExperimentEngine
+	ExperimentEngineNous         = cruxconfig.ExperimentEngineNous
+	RoleExperimenter             = cruxconfig.RoleExperimenter
+	StandbyDefaultFloor          = cruxconfig.StandbyDefaultFloor
+	StandbyTierT1                = cruxconfig.StandbyTierT1
+	StandbyTierT2                = cruxconfig.StandbyTierT2
+	StandbyTierT3                = cruxconfig.StandbyTierT3
+	StandbyTierUnknown           = cruxconfig.StandbyTierUnknown
 )
 
 var NormalizeStandbyTier = cruxconfig.NormalizeStandbyTier

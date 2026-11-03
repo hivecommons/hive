@@ -536,6 +536,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateStandby(); err != nil {
 		return err
 	}
+	// Contributor-first lanes: the role must be one contributors may act as,
+	// or the flag can never do anything (contributor_first.go).
+	if err := c.validateContributorFirst(); err != nil {
+		return err
+	}
 	return nil
 }
 
