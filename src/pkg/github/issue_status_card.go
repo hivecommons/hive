@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // The attention pilot (github.notifications.attention_pilot,
@@ -85,8 +86,8 @@ func (c *Client) PostIssueAttention(ctx context.Context, repo string, number int
 	// The explicit comment goes first: if the card edit then fails, the
 	// next pass finds the marker and only retries the edit, never a second
 	// announcement.
-	if !announced && cardExists {
-		if err := c.CreateIssueComment(WithNotificationSubject(ctx, prstatus.KeyIssueAttentionPrefix+cause), repo, number, marker+"\n"+body); err != nil {
+	if !announced && cardExists && c.issueAttentionAllowed(ctx, owner, name, number, repo, body) {
+		if err := c.CreateIssueComment(WithNotificationSubject(ctx, prstatus.KeyIssueAttentionPrefix+cause), repo, number, marker+"\n"+body); err != nil { // writeback:gated — issueAttentionAllowed consulted the gate above
 			return false, err
 		}
 		posted = true
@@ -96,4 +97,24 @@ func (c *Client) PostIssueAttention(ctx context.Context, repo string, number int
 		c.noteCommentSuppressed()
 	}
 	return posted || created, err
+}
+
+// issueAttentionAllowed consults the write-back gate for the explicit
+// attention comment on an issue. A failed issue read refuses the comment; the
+// next pass retries it.
+func (c *Client) issueAttentionAllowed(ctx context.Context, owner, name string, number int, repo, body string) bool {
+	issue, _, _, err := c.getIssueWithBlockedCount(ctx, owner, name, number)
+	if err != nil || issue == nil {
+		return false
+	}
+	item := writeback.Item{
+		Number:       number,
+		Author:       issue.GetUser().GetLogin(),
+		HiveAuthored: issue.GetUser().GetType() == "Bot" && c.IsHiveAuthorLogin(issue.GetUser().GetLogin()),
+		CreatedAt:    issue.GetCreatedAt().Time,
+	}
+	for _, l := range issue.Labels {
+		item.Labels = append(item.Labels, l.GetName())
+	}
+	return c.WritebackAllowed(repo, item, writeback.KindNeedsDecisionComment, body).Allowed
 }
