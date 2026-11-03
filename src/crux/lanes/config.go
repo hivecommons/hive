@@ -3,6 +3,7 @@
 package lanes
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -324,6 +325,8 @@ func (d *flexDuration) UnmarshalJSON(data []byte) error {
 }
 
 // UnmarshalJSON accepts duration fields as integer nanoseconds or strings such as "30s".
+// It decodes strictly: the outer decoder's DisallowUnknownFields does not propagate
+// into Unmarshaler methods, so unknown keys must be rejected here.
 func (c *Config) UnmarshalJSON(data []byte) error {
 	type plain Config
 	aux := struct {
@@ -336,7 +339,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		MaxRetryDelay flexDuration `json:"max_retry_delay"`
 		Timeout       flexDuration `json:"timeout"`
 	}{plain: (*plain)(c)}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&aux); err != nil {
 		return err
 	}
 	c.Retention, c.Dedup, c.Lease = time.Duration(aux.Retention), time.Duration(aux.Dedup), time.Duration(aux.Lease)
