@@ -9,9 +9,46 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/convergence/proof"
+	"github.com/hivecommons/hive/pkg/effects"
 )
 
 const journalProgressDeadline = 3 * time.Second
+
+func TestExecutorCancellationAfterEffectPersistsOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		err    error
+	}{
+		{status: StatusApplied},
+		{status: StatusUnknown, err: context.Canceled},
+		{status: StatusNotApplied, err: effects.NotApplied(context.Canceled)},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			x, claim, now := newExecutor(t, proof.ModeEnforce)
+			entry, err := x.Ledger.Acquire(claim, "alice", ttl, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			e := testEffect()
+			_, err = x.ExecuteContext(ctx, e, entry.Epoch, "alice", func() (string, error) {
+				cancel()
+				return "external-result", tc.err
+			})
+			if (err != nil) != (tc.err != nil) || (tc.err != nil && !errors.Is(err, context.Canceled)) {
+				t.Fatalf("effect error chain changed: %v", err)
+			}
+			reopened, err := OpenJournal(x.Journal.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := reopened.Get(e.LogicalID()); !ok || got.Status != tc.status {
+				t.Fatalf("restart lost post-call outcome: %+v %v; want %s", got, ok, tc.status)
+			}
+		})
+	}
+}
 
 func waitJournalSignal(t *testing.T, ch <-chan struct{}) {
 	t.Helper()

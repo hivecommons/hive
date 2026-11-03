@@ -1033,7 +1033,7 @@ func ompLaunchCmd(binary, model, effort string) string {
 		approval = ompDefaultApprovalMode
 	}
 	cmd := fmt.Sprintf("%s --approval-mode %s", binary, ompShellArg(approval))
-	if model != "" {
+	if model := strings.TrimSpace(model); model != "" {
 		cmd += fmt.Sprintf(" --model %s", ompShellArg(model))
 	}
 	if effort != "" {

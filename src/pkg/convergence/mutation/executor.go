@@ -135,16 +135,19 @@ func (x Executor) ExecuteContext(ctx context.Context, e Effect, epoch uint64, ho
 	}
 	result, effectErr := effect()
 	after := x.now()
+	// Once the call ran, persist its outcome even if its caller timed out.
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DefaultJournalLockTimeout)
+	defer cancel()
 
 	if effectErr != nil && errors.Is(effectErr, effects.ErrNotApplied) {
-		if _, recErr := x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusNotApplied, "", after); recErr != nil {
+		if _, recErr := x.Journal.RecordResultContext(recordCtx, op.LogicalID, epoch, StatusNotApplied, "", after); recErr != nil {
 			return Operation{}, fmt.Errorf("recording refused effect: %v (effect error: %w)", recErr, effectErr)
 		}
 		return Operation{}, effectErr
 	}
 	if effectErr != nil {
 		// Uncertain: the call failed but the effect may exist externally.
-		if _, recErr := x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
+		if _, recErr := x.Journal.RecordResultContext(recordCtx, op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
 			return Operation{}, fmt.Errorf("recording uncertain effect: %v (effect error: %w)", recErr, effectErr)
 		}
 		return Operation{}, fmt.Errorf("effect outcome uncertain, reconciliation required: %w", effectErr)
@@ -155,11 +158,11 @@ func (x Executor) ExecuteContext(ctx context.Context, e Effect, epoch uint64, ho
 		// The effect happened but this owner may no longer speak for it:
 		// record Unknown so the CURRENT owner reconciles the same logical
 		// operation from authoritative external state — never a duplicate.
-		if _, recErr := x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
+		if _, recErr := x.Journal.RecordResultContext(recordCtx, op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {
 			return Operation{}, fmt.Errorf("recording unacknowledgeable effect: %v (fence: %w)", recErr, err)
 		}
 		return Operation{}, fmt.Errorf("acknowledgment fenced, reconciliation required: %w", err)
 	}
 
-	return x.Journal.RecordResultContext(ctx, op.LogicalID, epoch, StatusApplied, result, after)
+	return x.Journal.RecordResultContext(recordCtx, op.LogicalID, epoch, StatusApplied, result, after)
 }

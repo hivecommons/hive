@@ -530,6 +530,7 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
 | `dashboard.(*Server).mirrorPlanWith` | `status` |  |
 | `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |
+| `github.(*Client).ApproveIssueRelease` | `status` | solicited authenticated release approval response |
 | `github.(*Client).CreateIssueCommentBudgeted` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).PostFleetReportCleared` | `status` |  |
 | `github.(*Client).PostFleetReportRecovery` | `status` |  |
@@ -558,7 +559,10 @@ without a class. Review submissions and review requests are always counted as
 | `main.postReviewAcknowledgements` | `status` |  |
 | `main.rfcNotifySource.Comment` | `status` |  |
 | `main.unparkEscalatedPR` | `status` |  |
+| `mention.(*StageCommenter).Post` | `status` | deduplicated stage transition note |
+| `mergelane.(*RESTGitHub).CreateIssueComment` | `status` | passthrough wrapper; attributed to its caller |
 | `dashboard.(*ContributeWSHub).parkWrongBase` | `attention` |  |
+| `dashboard.(*ContributeWSHub).noteAlreadyDoneUnverified` | `attention` | asks a maintainer to verify an unsupported already-done claim |
 | `dashboard.(*Server).handleRepoItemReroute` | `attention` |  |
 | `dashboard.(*Server).handleReviewPipelineSendToHuman` | `attention` |  |
 | `dashboard.(*Server).reroutePickupLapsed` | `attention` |  |
@@ -576,7 +580,12 @@ without a class. Review submissions and review requests are always counted as
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
-| `main.maintainHeldPRMergeability` | `attention` |  |
+| `main.noteHeldPRUpdateStopped` | `attention` |  |
+| `main.sweepDependencyBotConflicts` | `attention` | asks a person to rebase or retry a dependency-bot PR |
+| `mention.(*Responder).HandleAgentEvent` | `attention` | solicited completion reply to an explicit mention |
+| `mergelane.(*round).ensureForkWaitComment` | `attention` | asks the fork author to refresh the branch |
+| `worksource.(*forgeWorkSource).AddComment` | `attention` | passthrough wrapper; attributed to its caller |
+| `worksource.(*githubIssuesSource).AddComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
@@ -589,7 +598,8 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.postClaimComment` | `protocol_command` |  |
 | `github.(*Client).PostClaimNote` | `protocol_command` |  |
 | `github.(*Client).reportOperatorPullRequestApproval` | `protocol_command` |  |
-| `main.githubClaimHooks` | `protocol_command` |  |
+| `main.githubClaimHooksOn` | `protocol_command` |  |
+| `github.(*Client).RecordVerdictBlocker` | `protocol_command` | carries the machine-consumed blocked-on marker |
 | `github.(*Client).handleOnePRRequest` | `security_event` |  |
 | `github.(*Client).markReporterTrustAwaiting` | `security_event` |  |
 | `github.(*Client).reconcileReporterTrustSignal` | `security_event` |  |

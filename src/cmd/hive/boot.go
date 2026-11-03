@@ -252,28 +252,6 @@ type boot struct {
 	replanLane *planning.ReplanLane
 	retroLane  *retro.Lane
 
-	// runLoop
-	lastAutoMergeSweep     time.Time
-	lastTaskListSweep      time.Time
-	lastDuplicateSweep     time.Time
-	lastSupersessionSweep  time.Time
-	lastDuplicateFixSweep  time.Time
-	lastSharedCIRerunSweep time.Time
-	lastRedMainSweep       time.Time
-	lastBlockedIssuesSweep time.Time
-	lastIssueUnparkSweep   time.Time
-	lastClosedIssueSweep   time.Time
-	// lastClarityResumeSweep gates runClarityGateResumeSweepIfDue
-	// (hivecommons/hive#13588).
-	lastClarityResumeSweep time.Time
-	// lastPriorArtResumeSweep gates runPriorArtGateResumeSweepIfDue
-	// (hivecommons/hive#13575).
-	lastPriorArtResumeSweep time.Time
-	lastSentinelSweep       time.Time
-	lastGFISweep            time.Time
-	// lastLegacyFleetReportSweep gates runLegacyFleetReportSweepIfDue
-	// (hivecommons/hive#13470).
-	lastLegacyFleetReportSweep time.Time
 	// matrixIngestSt gates the incremental Matrix ingest pass (#16276),
 	// owned by its independent ticker goroutine.
 	matrixIngestSt      *matrixIngestState

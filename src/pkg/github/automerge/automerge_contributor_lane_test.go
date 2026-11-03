@@ -393,7 +393,7 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				return
 			}
 			w.WriteHeader(http.StatusCreated)
-		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/"+fx.baseRef:
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/"+baseRef:
 			if len(fx.rulesetContexts) > 0 {
 				checks := make([]map[string]string, 0, len(fx.rulesetContexts))
 				for _, name := range fx.rulesetContexts {

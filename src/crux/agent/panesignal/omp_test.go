@@ -16,7 +16,12 @@ func TestOMPWorkingAndReadiness(t *testing.T) {
 			t.Errorf("OMP idle status must be recognized without reading as busy: %q", pane)
 		}
 	}
-	for _, pane := range []string{"Setup step 1 of 3\n❯", "Paste the authorization code (or full redirect URL)\n❯"} {
+	for _, pane := range []string{
+		"Setup step 1 of 3\n❯",
+		"Paste the authorization code (or full redirect URL)\n❯",
+		"Setup step 1 of 3\n❯" + strings.Repeat("\n", ompSetupWizardTailLines),
+		"Setup step 1 of 3\n" + strings.Repeat("\n", ompSetupWizardTailLines) + "❯",
+	} {
 		if !ShowsOMPSetupWizard(pane) || ShowsInputPrompt(pane) {
 			t.Errorf("OMP setup wizard must not accept a kick: %q", pane)
 		}

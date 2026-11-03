@@ -407,11 +407,11 @@ func TestCurrentBaseGateMergeQueueBase(t *testing.T) {
 		wantUpdates   int
 		wantRequired  bool
 	}{
-		{name: "normal base is updated", updateAllowed: true, wantStop: true, wantReason: "check-pending", wantUpdates: 1},
+		{name: "normal base is updated", updateAllowed: true, wantStop: true, wantReason: basePreparationReady, wantUpdates: 1},
 		{name: "merge-queue base inside the old recheck is not updated", refusedAgo: 10 * time.Minute, updateAllowed: true, wantRequired: true},
 		{name: "merge-queue base past the old recheck is not updated", refusedAgo: 101 * time.Minute, updateAllowed: true, wantRequired: true},
 		{name: "merge-queue base without update budget is not held behind", refusedAgo: 101 * time.Minute, updateAllowed: false, wantRequired: true},
-		{name: "merge-queue refusal past the refresh hold updates again", refusedAgo: mergeQueueBaseRefreshHold, updateAllowed: true, wantStop: true, wantReason: "check-pending", wantUpdates: 1},
+		{name: "merge-queue refusal past the refresh hold updates again", refusedAgo: mergeQueueBaseRefreshHold, updateAllowed: true, wantStop: true, wantReason: basePreparationReady, wantUpdates: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -421,6 +421,10 @@ func TestCurrentBaseGateMergeQueueBase(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/main..."+head:
 					compares++
 					_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
@@ -510,7 +514,7 @@ func TestSelfAuthoredLaneNoBaseRefreshOnMergeQueueBase(t *testing.T) {
 	sweep("current head re-probes once no hold for the recheck", 345*time.Minute+mergeQueueBaseRecheck, 0, autoMergeReasonMergeQueueRequired, 0, 1)
 	reprobe := 345*time.Minute + mergeQueueBaseRecheck
 	sweep("behind head a day after the first refusal is still held", reprobe+20*time.Hour, 2, autoMergeReasonMergeQueueRequired, 0, 0)
-	sweep("no refusal for the refresh hold: the base is updated again", reprobe+mergeQueueBaseRefreshHold, 2, "check-pending", 1, 0)
+	sweep("no refusal for the refresh hold: the base is updated again", reprobe+mergeQueueBaseRefreshHold, 2, basePreparationReady, 1, 0)
 }
 
 // TestSelfAuthoredLaneMergeQueueRuleRemoved pins the way out of the hold:
@@ -540,8 +544,8 @@ func TestSelfAuthoredLaneMergeQueueRuleRemoved(t *testing.T) {
 	}
 	now = t0.Add(mergeQueueBaseRefreshHold)
 	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
-	if err != nil || reason != "check-pending" || !event.BranchUpdated {
-		t.Fatalf("after the refresh hold: reason, BranchUpdated, err = %q, %v, %v; want check-pending, true", reason, event.BranchUpdated, err)
+	if err != nil || reason != basePreparationReady || !event.BranchUpdated {
+		t.Fatalf("after the refresh hold: reason, BranchUpdated, err = %q, %v, %v; want %q, true", reason, event.BranchUpdated, err, basePreparationReady)
 	}
 	if _, updates, merges := api.counts(); updates != 1 || merges != 0 {
 		t.Fatalf("after the refresh hold: updates, merges = %d, %d; want 1, 0", updates, merges)

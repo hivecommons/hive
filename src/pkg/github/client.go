@@ -3640,12 +3640,12 @@ func (c *Client) removeLabelObserved(ctx context.Context, repo string, number in
 // harm, whereas a read that keeps failing (item transferred or deleted,
 // persistent API error) would otherwise fence every retry forever
 // (hivecommons/hive#15944).
-func (c *Client) reconcileLabelMutation(ctx context.Context, owner, repoName string, number int, claim effects.Claim,
-	effect func(context.Context) (effects.Result, error), journalErr error, applied func(current []string) bool) (effects.Result, error) {
+func (c *Client) reconcileLabelMutation(ctx context.Context, claim effects.Claim,
+	effect func(context.Context) (effects.Result, error), journalErr error, observe func(context.Context) (effects.ExternalState, error)) (effects.Result, error) {
 	if c == nil || c.client == nil {
 		return effects.Result{}, journalErr
 	}
-	issue, _, lookupErr := c.client.Issues.Get(WithRESTCaller(ctx, "hive:reconcile_label_mutation"), owner, repoName, number)
+	state, lookupErr := observe(ctx)
 	if lookupErr != nil {
 		expired, expErr := effects.ExpireUnresolved(ctx, c.mutationBoundary(), claim, effects.DefaultUnresolvedTTL)
 		if expErr != nil {
@@ -3656,13 +3656,12 @@ func (c *Client) reconcileLabelMutation(ctx context.Context, owner, repoName str
 		}
 		return effects.Execute(ctx, c.mutationBoundary(), claim, effect)
 	}
-	state := effects.ExternalState{Applied: applied(extractLabels(issue.Labels)), Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}
 	if recErr := effects.Reconcile(ctx, c.mutationBoundary(), claim, state); recErr != nil {
 		return effects.Result{}, fmt.Errorf("%w (reconciliation failed: %v)", journalErr, recErr)
 	}
 	if c.logger != nil {
 		c.logger.Info("label mutation: reconciled unresolved operation against the item's current labels",
-			slog.String("repo", owner+"/"+repoName), slog.Int("number", number), slog.Bool("applied", state.Applied))
+			slog.String("repo", claim.Repo), slog.String("number", claim.Target), slog.Bool("applied", state.Applied))
 	}
 	if state.Applied {
 		return effects.Result{Provenance: state.Provenance}, nil

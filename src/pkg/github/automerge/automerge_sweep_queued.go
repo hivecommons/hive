@@ -611,21 +611,6 @@ func (c *Engine) mergeQueueBaseKnown(owner, repo, base string) bool {
 	return c.mergeQueueMemory().Required(owner+"/"+repo, base, c.clock())
 }
 
-func mergeAPIErrorNotApplied(err error) error {
-	if err == nil {
-		return nil
-	}
-	var ghErr *gh.ErrorResponse
-	if !errors.As(err, &ghErr) || ghErr.Response == nil {
-		return err
-	}
-	switch ghErr.Response.StatusCode {
-	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusForbidden:
-		return effects.NotApplied(err)
-	}
-	return err
-}
-
 // executeMergeEffect runs the merge call through the mutation boundary and
 // brackets it with a merge attempt (hivecommons/hive#15245) so the tracker
 // shows "Merging" for the call's duration and a refusal's reason after.

@@ -23,8 +23,15 @@ func ShowsOMPMidTurn(pane string) bool {
 
 func ShowsOMPSetupWizard(pane string) bool {
 	lines := strings.Split(pane, "\n")
-	if len(lines) > ompSetupWizardTailLines {
-		lines = lines[len(lines)-ompSetupWizardTailLines:]
+	kept := 0
+	for i := len(lines) - 1; i >= 0 && kept < ompSetupWizardTailLines; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		kept++
+		if ompSetupWizardRe.MatchString(lines[i]) {
+			return true
+		}
 	}
-	return ompSetupWizardRe.MatchString(strings.Join(lines, "\n"))
+	return false
 }

@@ -135,7 +135,7 @@ func updateBranchRefusalServer(t *testing.T, message string, head *string, extra
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = fmt.Fprintf(w, `{"message":%q}`, message)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
-			_, _ = fmt.Fprintf(w, `{"number":7,"head":{"sha":%q}}`, *head)
+			_, _ = fmt.Fprintf(w, `{"number":7,"state":"open","head":{"sha":%q},"base":{"ref":"main"}}`, *head)
 		case extra != nil:
 			extra(w, r)
 		default:
@@ -219,14 +219,22 @@ func TestCurrentBaseGateWorkflowRefusalKeyedOnBaseTip(t *testing.T) {
 	var baseMu sync.Mutex
 	baseTip := "sha-base-1"
 	compare := func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/compare/main...sha-head" {
+		if r.Method != http.MethodGet {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		baseMu.Lock()
 		defer baseMu.Unlock()
-		_, _ = fmt.Fprintf(w, `{"behind_by":12,"ahead_by":1,"base_commit":{"sha":%q}}`, baseTip)
+		switch r.URL.Path {
+		case "/repos/acme/widget/compare/main...sha-head":
+			_, _ = fmt.Fprintf(w, `{"behind_by":12,"ahead_by":1,"base_commit":{"sha":%q}}`, baseTip)
+		case "/repos/acme/widget/branches/main":
+			_, _ = fmt.Fprintf(w, `{"name":"main","commit":{"sha":%q}}`, baseTip)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}
 	srv, updates := updateBranchRefusalServer(t, workflowPermissionRefusal, &head, compare)
 	defer srv.Close()
