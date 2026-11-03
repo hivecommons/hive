@@ -53,6 +53,7 @@ func ListPRChangedFiles(ctx context.Context, client *gh.Client, owner, repo stri
 				Status:    f.GetStatus(),
 				Additions: f.GetAdditions(),
 				Deletions: f.GetDeletions(),
+				Patch:     f.GetPatch(),
 			})
 		}
 		if resp == nil || resp.NextPage == 0 {

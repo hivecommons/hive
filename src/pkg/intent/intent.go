@@ -102,6 +102,8 @@ type ChangedFile struct {
 	Status    string
 	Additions int
 	Deletions int
+	// Patch is the unified diff from the files API; empty means unavailable.
+	Patch string
 }
 
 type PR struct {
