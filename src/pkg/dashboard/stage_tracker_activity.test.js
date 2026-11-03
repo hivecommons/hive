@@ -270,6 +270,15 @@ test('canonical activity browser wiring is retained (not browser/visual proof)',
   assert.match(harness, /Emulation\.setFocusEmulationEnabled', \{ enabled: true \}/);
   assert.match(harness, /documentFocused: document\.hasFocus\(\), helpFocused: document\.activeElement === help/);
   assert.match(harness, /captureBeyondViewport: !viewportOnly/);
+  assert.match(harness, /x: scrollX, y: scrollY, width: innerWidth, height: innerHeight/);
+  assert.match(harness, /getImageData\(0, 0, width, height\)/);
+  assert.match(harness, /probe: 'viewport-paint', ok: capture\.painted/);
+  assert.match(harness, /if \(!capture\.painted\) activityFailures\.push/);
+  assert.match(harness, /failures\.push\(\.\.\.pointerCapture\.failures\)/);
+  assert.match(harness, /failures\.push\(\.\.\.keyboardCapture\.failures\)/);
+  assert.match(harness, /if \(!point\.triggerReachable\) failures\.push/);
+  assert.match(harness, /document\.querySelectorAll\('\.hive-dialog-overlay'\)[\s\S]*?el\.hiveDialogClose\(\)/);
+  assert.match(harness, /Prior fixture dialog survived native cleanup/);
   assert.match(harness, /screenshot\(prefix \+ '-decision-pointer\.png', true\)/);
   assert.match(harness, /screenshot\(prefix \+ '-decision-keyboard\.png', true\)/);
   assert.match(harness, /every native decision action must be reachable and unobscured/);

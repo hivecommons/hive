@@ -606,12 +606,28 @@ assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'issue', repo: '' }).map(i
 assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'pr', repo: '' }).map(it => it.number), [21, 31, 32, 40], 'Pull requests filter flattens every PR once');
 
 // Hover text budget per row (owner request): only the #N link, the PR link,
-// the item title and the active chevron carry title="…". The row container,
+// the item title and the active chevron carry nonempty title="…". The row container,
 // sub-row container, kind / author / actor icons, chips, since cells and
 // every non-active chevron carry none; icons expose their label via aria-label.
+// Accessible chevron wrappers use title="" only to suppress inherited native
+// hover text while the shared portal exposes their full details.
 const tags = (html) => Array.from(html.matchAll(/<(\w+)\b([^>]*)>/g)).map(m => ({ tag: m[1], attrs: m[2] }));
-const titled = (html) => tags(html).filter(t => / title="/.test(t.attrs) && !t.attrs.includes('data-track='));
-const expectTitles = (html, want, what) => assert.deepStrictEqual(titled(html).map(t => t.tag + '.' + ((/class="([^" ]+)/.exec(t.attrs) || [])[1] || '')), want, what + ': ' + html);
+const titleAttribute = (tag) => (/(?:^|\s)title="([^"]*)"/.exec(tag.attrs) || [])[1];
+const chevronHelp = (tag) => tag.tag === 'span' && /(?:^|\s)class="ham-chevron-info config-info"/.test(tag.attrs);
+const titled = (html) => tags(html).filter(t => titleAttribute(t) !== undefined && !t.attrs.includes('data-track=') &&
+  !(chevronHelp(t) && titleAttribute(t) === ''));
+const expectTitles = (html, want, what) => {
+  for (const tag of tags(html).filter(chevronHelp)) {
+    assert.strictEqual(titleAttribute(tag), '', what + ': portal wrapper must suppress inherited native hover text');
+    assert.match(tag.attrs, /(?:^|\s)tabindex="0"/, what + ': full details remain keyboard reachable');
+    assert.match(tag.attrs, /(?:^|\s)aria-label="[^"]+"/, what + ': full accessible caption remains');
+    assert.match(tag.attrs, /(?:^|\s)aria-describedby="ham-(?:chevron|track)-tip-[^"]+"/, what + ': shared tooltip stays associated');
+  }
+  assert.deepStrictEqual(titled(html).map(t => t.tag + '.' + ((/class="([^" ]+)/.exec(t.attrs) || [])[1] || '')), want, what + ': ' + html);
+};
+assert.strictEqual(titled('<span class="ham-chevron-info config-info" title=""></span>').length, 0, 'only the exact empty portal suppressor is exempt');
+assert.strictEqual(titled('<span class="ham-chevron-info config-info" title="unexpected native tooltip"></span>').length, 1, 'nonempty wrapper titles still violate the exact hover budget');
+assert.strictEqual(titled('<li class="ham-seg" title=""></li><span class="unexpected" title=""></span>').length, 2, 'unrelated title-bearing extras are never whitelisted');
 assert.ok(!/<svg[^>]*>\s*<title>/.test(golden), 'no svg <title> tooltips anywhere in the tracker');
 assert.ok(!/<(div|span)[^>]*class="ham-(row|sub|since|badge|kind-ico)[^>]*title="/.test(golden), 'containers, since cells, chips and kind icons carry no title');
 for (const r of golden.split('<div class="ham-row"').slice(1)) {

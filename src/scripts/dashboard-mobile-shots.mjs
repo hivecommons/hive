@@ -301,13 +301,41 @@ async function main() {
       return result.result.result.value;
     };
     const screenshot = async (file, viewportOnly = false) => {
-      const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: !viewportOnly });
+      const viewport = viewportOnly ? await evaluate(`({
+        x: scrollX, y: scrollY, width: innerWidth, height: innerHeight,
+        clientWidth: document.documentElement.clientWidth,
+        clientHeight: document.documentElement.clientHeight
+      })`) : null;
+      const clip = viewport ? { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height, scale: 1 } : undefined;
+      const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: !viewportOnly, ...(clip ? { clip } : {}) });
       if (shot.error) throw new Error(shot.error.message);
       fs.writeFileSync(path.join(opts.out, file), Buffer.from(shot.result.data, 'base64'));
+      if (!viewport) return;
+      const pixels = await evaluate(`(async () => {
+        const image = new Image();
+        image.src = ${JSON.stringify('data:image/png;base64,')} + ${JSON.stringify(shot.result.data)};
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0);
+        const width = Math.min(canvas.width, Math.floor(${viewport.clientWidth} * canvas.width / ${viewport.width}));
+        const height = Math.min(canvas.height, Math.floor(${viewport.clientHeight} * canvas.height / ${viewport.height}));
+        const data = context.getImageData(0, 0, width, height).data;
+        let painted = false;
+        for (let pixel = 4; pixel < data.length; pixel += 4) {
+          if (data[pixel] !== data[0] || data[pixel + 1] !== data[1] ||
+              data[pixel + 2] !== data[2] || data[pixel + 3] !== data[3]) { painted = true; break; }
+        }
+        return { painted, width: canvas.width, height: canvas.height, inspectedWidth: width, inspectedHeight: height };
+      })()`);
+      return { file, viewport, clip, ...pixels,
+        failures: pixels.painted ? [] : ['Viewport capture contains only a uniform background; DOM assertions are not visual proof'] };
     };
     const nativeDecisionInput = async prefix => {
       const failures = [];
       const point = await evaluate(`(async () => {
+        stageTrackerCloseDecisionPop(false);
         const trigger = [...document.querySelectorAll('.ham-chevron-decision .ham-decision-trigger')]
           .find(button => Number(button.closest('[data-ham-stage]')?.dataset.hamStage) === 80);
         if (!trigger) throw new Error('Missing native stage-80 decision trigger');
@@ -317,11 +345,15 @@ async function main() {
         help.focus({ preventScroll: true });
         const box = trigger.getBoundingClientRect();
         const portal = document.getElementById('config-tooltip-portal');
+        const target = document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2);
         return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2,
           documentFocused: document.hasFocus(), helpFocused: document.activeElement === help,
+          triggerReachable: target === trigger || trigger.contains(target),
+          target: target?.className || target?.tagName || null,
           tooltipWasOpen: !!portal && !portal.hidden && getComputedStyle(portal).display !== 'none' };
       })()`);
       if (!point.tooltipWasOpen) failures.push('Native pointer precondition: ordinary tooltip was not open');
+      if (!point.triggerReachable) failures.push('Native pointer precondition: trigger is intercepted by ' + point.target);
       const moved = await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, pointerType: 'mouse' });
       if (moved.error) throw new Error(moved.error.message);
       await sleep(STATE_SETTLE_MS);
@@ -351,7 +383,8 @@ async function main() {
         return { mode, ...result };
       };
       const observations = [await inspect('native pointer')];
-      await screenshot(prefix + '-decision-pointer.png', true);
+      const pointerCapture = await screenshot(prefix + '-decision-pointer.png', true);
+      failures.push(...pointerCapture.failures);
       const keys = [{ key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
         { key: 'Enter', code: 'Enter', keyCode: 13 }, { key: ' ', code: 'Space', keyCode: 32 }];
       for (const { key, code, keyCode } of keys) {
@@ -367,9 +400,10 @@ async function main() {
         }
         observations.push(await inspect('native keyboard ' + JSON.stringify(key)));
       }
-      await screenshot(prefix + '-decision-keyboard.png', true);
+      const keyboardCapture = await screenshot(prefix + '-decision-keyboard.png', true);
+      failures.push(...keyboardCapture.failures);
       await evaluate('stageTrackerCloseDecisionPop(false); true');
-      return { pointerPrecondition: point, observations, failures };
+      return { pointerPrecondition: point, observations, captures: [pointerCapture, keyboardCapture], failures };
     };
 
     await send('Page.enable');
@@ -383,6 +417,13 @@ async function main() {
     const resetJS = `(() => {
       window.__activityDensityCleanup?.();
       document.getElementById('preparation-rail-layout-fixture')?.remove();
+      // The preceding terminal state owns a native dialog and capture listener.
+      // Close it through its API, not by hiding/removing its DOM.
+      document.querySelectorAll('.hive-dialog-overlay').forEach((el) => {
+        if (typeof el.hiveDialogClose !== 'function') throw new Error('Cannot clean up prior fixture dialog');
+        el.hiveDialogClose();
+      });
+      if (document.querySelector('.hive-dialog-overlay')) throw new Error('Prior fixture dialog survived native cleanup');
       document.querySelectorAll('.config-overlay, .modal-overlay').forEach((el) => { el.classList.add('hidden'); });
       document.documentElement.classList.remove('modal-open'); document.body.classList.remove('modal-open');
       return true;
@@ -453,8 +494,9 @@ async function main() {
           if (!await evaluate(expandOneJS('activity-monitor-section'))) throw new Error('Cannot expand actual Activity Monitor');
           const fixture = await evaluate('(' + activityDensityFixture.toString() + ')(' + JSON.stringify(density) + ')');
           await sleep(STATE_SETTLE_MS);
-          await screenshot(`${vp.name}-${theme}-activity-density-viewport.png`, true);
-          const results = [];
+          const capture = await screenshot(`${vp.name}-${theme}-activity-density-viewport.png`, true);
+          const results = [{ probe: 'viewport-paint', ok: capture.painted, result: capture }];
+          if (!capture.painted) activityFailures.push(vp.name + ' ' + theme + ' blank viewport capture');
           for (const probe of probes) {
             const result = await evaluate(`(async () => {
               try { return { ok: true, result: await (${probe.source})({ dedicatedPreview: true }) }; }

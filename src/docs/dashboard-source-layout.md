@@ -67,6 +67,14 @@ focuses decision actions without scrolling, which would otherwise close the
 dialog through its scroll-away listener. Control probes await a bounded stable
 scroll/visual viewport before every mandatory hit-test; native pointer/keyboard
 reports also retain each decision action's bounds and actual hit target.
+Fixture transitions close the preceding terminal/export dialog through its
+native close API, releasing its captured keyboard listener instead of leaving
+an unrelated modal over the activity controls. Native pointer preconditions
+also hit-test the trigger itself. Viewport captures explicitly target the
+current document scroll rectangle; density and pointer/keyboard reports inspect
+their actual PNG pixels, excluding scrollbars, and fail a uniform-background
+capture. This paint check only rejects empty evidence; nonblank images still
+require visual inspection and do not replace geometry or interaction checks.
 The 12:36 screenshot shapes additionally exercise nested #16450 and root
 #16451 recorded/unverified preparation fronts, #16446 awaiting a superseding
 human decision, pluk #436 assigned review after passing CI, #16437 approved
