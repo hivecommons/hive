@@ -154,6 +154,8 @@ func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) (b
 				logger.Warn("restarted agent NOT resume-kicked (cadence/budget gate); it idles until its next scheduled slot", "agent", a, "reason", string(reason))
 			case governor.ResumeRefusalBudgetExhausted:
 				logger.Warn("restarted agent NOT resume-kicked (cadence/budget gate); budget exhausted, kicks suspended", "agent", a, "reason", string(reason))
+			case governor.ResumeRefusalContributorCovering:
+				logger.Info("restarted agent NOT resume-kicked; a contributor relay is covering its role (contributor_first)", "agent", a, "reason", string(reason))
 			default:
 				logger.Info("restarted agent NOT resume-kicked (cadence/budget gate); idle by configuration", "agent", a, "reason", string(reason))
 			}
