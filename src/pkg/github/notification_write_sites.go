@@ -32,6 +32,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"automerge.(*engineStatusForge).CreateComment": {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.
+	"automerge.(*Engine).postStageNoteWith":                   {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).markAlreadyDoneIssue":       {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).releaseGateParkLabel":       {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).releaseToolingBlockedLabel": {Class: NotificationClassStatus},

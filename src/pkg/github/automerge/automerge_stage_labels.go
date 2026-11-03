@@ -1490,7 +1490,11 @@ func (c *Engine) postStageNoteWith(ctx context.Context, policy StageLabelPolicy,
 	if policy.QuietNotifications {
 		return c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, key, body, write)
 	}
-	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	commenter, ok := c.transport.(issueCommenter)
+	if !ok {
+		return 0, fmt.Errorf("creating stage note on %s/%s#%d: transport has no comment primitive", obs.Owner, obs.Repo, obs.Number)
+	}
+	if err := commenter.CreateIssueComment(ctx, obs.Owner+"/"+obs.Repo, obs.Number, body); err != nil {
 		return 0, err
 	}
 	return 1, nil
