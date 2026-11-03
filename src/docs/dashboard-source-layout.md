@@ -54,7 +54,10 @@ the existing reporting-only workflow policy and permissions are unchanged.
 In addition to the DOM-handler probes, real CDP mouse movement and
 ArrowDown/Enter/Space key dispatch check tooltip takeover and entry into an
 already-open decision dialog. `*-activity-decision-pointer.png` and
-`*-activity-decision-keyboard.png` capture those actual browser interactions;
+`*-activity-decision-keyboard.png` capture the actual viewport during those
+browser interactions, rather than a full-document composite of fixed dialogs;
+the isolated headless page owns emulated focus, recorded in pointer preconditions.
+Geometry failures include the actual control hit target or measured content gap;
 no decision action is activated. Fixture/probe failures remain failures, not
 skipped or string-assertion substitutes for browser proof.
 The 12:36 screenshot shapes additionally exercise nested #16450 and root

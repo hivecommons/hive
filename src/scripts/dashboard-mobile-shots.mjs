@@ -300,8 +300,8 @@ async function main() {
       if (result.result.exceptionDetails) throw new Error(result.result.exceptionDetails.exception?.description || 'evaluate failed');
       return result.result.result.value;
     };
-    const screenshot = async file => {
-      const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    const screenshot = async (file, viewportOnly = false) => {
+      const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: !viewportOnly });
       if (shot.error) throw new Error(shot.error.message);
       fs.writeFileSync(path.join(opts.out, file), Buffer.from(shot.result.data, 'base64'));
     };
@@ -318,6 +318,7 @@ async function main() {
         const box = trigger.getBoundingClientRect();
         const portal = document.getElementById('config-tooltip-portal');
         return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2,
+          documentFocused: document.hasFocus(), helpFocused: document.activeElement === help,
           tooltipWasOpen: !!portal && !portal.hidden && getComputedStyle(portal).display !== 'none' };
       })()`);
       if (!point.tooltipWasOpen) failures.push('Native pointer precondition: ordinary tooltip was not open');
@@ -337,7 +338,7 @@ async function main() {
         return { mode, ...result };
       };
       const observations = [await inspect('native pointer')];
-      await screenshot(prefix + '-decision-pointer.png');
+      await screenshot(prefix + '-decision-pointer.png', true);
       const keys = [{ key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
         { key: 'Enter', code: 'Enter', keyCode: 13 }, { key: ' ', code: 'Space', keyCode: 32 }];
       for (const { key, code, keyCode } of keys) {
@@ -353,13 +354,16 @@ async function main() {
         }
         observations.push(await inspect('native keyboard ' + JSON.stringify(key)));
       }
-      await screenshot(prefix + '-decision-keyboard.png');
+      await screenshot(prefix + '-decision-keyboard.png', true);
       await evaluate('stageTrackerCloseDecisionPop(false); true');
-      return { observations, failures };
+      return { pointerPrecondition: point, observations, failures };
     };
 
     await send('Page.enable');
     await send('Runtime.enable');
+    // Headless input must own focus for native focusin and keyboard delivery.
+    await send('Page.bringToFront');
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true });
 
     // Each state callback is best-effort: a missing helper yields a skipped shot, not a harness error.
     const setThemeJS = (theme) => `document.body.classList.toggle('light-mode', ${theme === 'light'}); document.documentElement.style.colorScheme = '${theme}'; true`;

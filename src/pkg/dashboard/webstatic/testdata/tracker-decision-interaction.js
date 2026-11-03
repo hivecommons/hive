@@ -61,6 +61,7 @@
       close();
       trigger.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
       await frame();
+      await frame();
       hit(trigger, 'decision trigger');
       assert(!trigger.closest('.config-info') && !trigger.closest('.ham-chevron-info').querySelector('.config-tooltip'), 'decision has no generic tooltip ancestor/source');
       help.focus({ preventScroll: true });
@@ -71,6 +72,7 @@
       await new Promise(resolve => setTimeout(resolve, hoverSettleMS));
       inspectDialog(trigger, 'pointer hover');
       close();
+      trigger.blur();
       trigger.focus({ preventScroll: true });
       inspectDialog(trigger, 'keyboard focus');
       for (const key of ['ArrowDown', 'Enter', ' ']) {
@@ -92,6 +94,7 @@
     originalFocus?.focus?.({ preventScroll: true });
     close();
     for (const [el, position] of scrollParents) el.scrollTo({ ...position, behavior: 'instant' });
+    await frame();
   }
   if (failures.length) throw new Error(JSON.stringify({ viewport: innerWidth, tested: targets.length, failures }));
   return { viewport: innerWidth, tested: targets.length, failures };

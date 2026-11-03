@@ -264,6 +264,11 @@ test('canonical activity browser wiring is retained (not browser/visual proof)',
   }
   assert.match(harness, /Input\.dispatchMouseEvent/);
   assert.match(harness, /Input\.dispatchKeyEvent/);
+  assert.match(harness, /Emulation\.setFocusEmulationEnabled', \{ enabled: true \}/);
+  assert.match(harness, /documentFocused: document\.hasFocus\(\), helpFocused: document\.activeElement === help/);
+  assert.match(harness, /captureBeyondViewport: !viewportOnly/);
+  assert.match(harness, /screenshot\(prefix \+ '-decision-pointer\.png', true\)/);
+  assert.match(harness, /screenshot\(prefix \+ '-decision-keyboard\.png', true\)/);
   assert.match(harness, /preparationRailLayoutFixture\.toString/);
   assert.match(harness, /if \(activityFailures\.length\) throw new Error/);
   assert.match(harness, /activity-probes\.json/);

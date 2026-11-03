@@ -334,7 +334,7 @@ assert.ok(row.includes('Review unknown') && row.includes('CI unknown'), 'legacy 
 // 071 needs-author: the owner wait returns to PR in progress without pretending coding.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{number:50,slug:'review-pending'},{number:71,slug:'needs-author',from:50}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured', T, T, 'todo cap']);
-assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Needs @sam</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-chevron-copy"><span class="ham-detour">Needs @sam</span></span><svg class="ham-ico ham-actor-ico"'), row);
 assert.ok(tooltip(row).includes('Trail: CI / Review → Needs author'), tooltip(row));
 // The trail names hops from the payload's {number, slug} entries (#14787
 // showed "undefined → undefined → …" when it read a field the server never
@@ -376,7 +376,7 @@ assert.ok(!row.includes('ham-actor-ico') && row.includes('<span class="ham-seg-t
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', stage: 10 }, stages, ctx);
 assert.ok(!row.includes('ham-actor-ico') && !tooltip(row).includes('Next move'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 105, kind: 'pr', stage: 90 }, stages, ctx);
-assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Ready for human merge</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-chevron-copy"><span class="ham-detour">Ready for human merge</span></span><svg class="ham-ico ham-actor-ico"'), row);
 
 // Merged: everything neutral-done, the cap carries the only check.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
@@ -555,7 +555,7 @@ for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passe
     assert.ok(r.includes('CI unknown') && r.includes('Review unknown'), 'legacy labels alone cannot supply activity at ' + st);
     continue;
   }
-  const m = /aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
+  const m = /aria-current="step"><span class="ham-chevron-info (?:config-info|ham-chevron-decision)"[^>]*><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-chevron-copy"><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);
   assert.deepStrictEqual([m[1], m[2]], [word, actor === 'author' ? 'clanker' : actor], 'stage ' + st);
   prWords[st] = m[1];

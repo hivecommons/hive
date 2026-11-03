@@ -35,9 +35,11 @@
       assert(box.top >= -tolerance && box.bottom <= innerHeight + tolerance, name + 'entire control is vertically reachable after deliberate scrolling');
       const hit = document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2);
       coverage.hitTested++;
-      assert(hit === control || control.contains(hit), name + 'every control center hits that control, not an overlay or offscreen null');
+      assert(hit === control || control.contains(hit), name + 'every control center hits that control, not an overlay or offscreen null: ' +
+        JSON.stringify({ control: control.className, box: box.toJSON(), hit: hit?.className || hit?.tagName || null }));
     } finally {
       for (const { el, left, top } of scrollParents) el.scrollTo({ left, top, behavior: 'instant' });
+      await new Promise(requestAnimationFrame);
     }
   };
   const rows = [...document.querySelectorAll('#activity-monitor-section .ham-row, #activity-monitor-section .ham-sub')];
@@ -80,7 +82,8 @@
       const previous = flow[child - 1], next = flow[child];
       const spacing = rowGap + (parseFloat(getComputedStyle(previous).marginBottom) || 0) + (parseFloat(getComputedStyle(next).marginTop) || 0);
       const measured = rect(next).top - rect(previous).bottom;
-      assert(measured >= -tolerance && measured <= spacing + tolerance, name + 'no overlap or unexplained vertical gap between successive content/sub-rows');
+      assert(measured >= -tolerance && measured <= spacing + tolerance, name + 'no overlap or unexplained vertical gap between successive content/sub-rows: ' +
+        JSON.stringify({ previous: previous.className, next: next.className, measured, allowed: spacing }));
     }
     if (matchMedia('(min-width: 1101px)').matches) {
       assert(near(rect(lead).left, rect(columns[0]).left), name + 'issue starts at Open');
