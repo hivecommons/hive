@@ -189,6 +189,23 @@ Two consequences worth stating outright for a non-Kubernetes hive:
   the hive to whatever the seed was provisioned with, silently downgrading
   every hold-gated agent. Back up the volume, not just the seed file.
 
+### Safety gates do not survive a seed boot — but the boot says so
+
+A boot from the ConfigMap seed (no runtime config on the PVC, or one moved
+aside during a recovery) runs with whatever gates the *seed* has, which on a
+long-lived hive is usually none: `review.require_labels`,
+`project.paused_repos`, `writeback.per_repo` and
+`project.issue_filter.require_labels` all live in the overlay. On the a1 spoke
+that silently re-enabled reviews on every unlabelled PR for four hours
+([#16438](https://github.com/hivecommons/hive/issues/16438)). The Go binary now
+compares the loaded config against any previous overlay still on the PVC
+(`hive.yaml.runtime`, `hive.yaml.runtime.bak`, `hive.yaml.dashboard`) and logs
+`WARN safety gate dropped: …` once per gate with the previous value; the same
+list is served as `config.gate_regressions` on `/api/status` and shown as a
+banner at the top of Settings. `config.refuse_gate_regression: true` turns the
+warning into a refusal to start. Nothing about how the gates are *enforced*
+changes; the entrypoint's choice of boot source is unchanged too.
+
 ### Migration
 
 The rename is **copy-forward, never destructive**. Writers emit
