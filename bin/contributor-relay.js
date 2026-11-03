@@ -5110,6 +5110,10 @@ const PROMPT_SUBMIT_DELAYED_RENDER_POLLS = 2;
 // `send-keys -l` bursts. Keep other backends on their long-tested literal path
 // until their panes show the same transport failure.
 const TASK_PROMPT_BRACKETED_PASTE_BACKENDS = new Set(['codex']);
+// #16423: tmux rejects a single command above a few KB ("command too long"),
+// and `send-keys -l '<prompt>'` is one command. Donated standby prompts carry
+// the lane role prompt (~55 KB), so any backend pastes above this size.
+const TASK_PROMPT_PASTE_BUFFER_THRESHOLD_BYTES = 8192;
 const STRICT_PROMPT_CONFIRM_BACKENDS = new Set(['codex']);
 let tmuxPromptBufferSeq = 0;
 
@@ -5137,7 +5141,8 @@ function tmuxPasteTaskPrompt(text) {
 }
 
 function tmuxDeliverTaskPrompt(text) {
-  if (TASK_PROMPT_BRACKETED_PASTE_BACKENDS.has(BACKEND)) {
+  if (TASK_PROMPT_BRACKETED_PASTE_BACKENDS.has(BACKEND) ||
+      Buffer.byteLength(text, 'utf8') > TASK_PROMPT_PASTE_BUFFER_THRESHOLD_BYTES) {
     tmuxPasteTaskPrompt(text);
   } else {
     execSync(`tmux send-keys -t ${TMUX_SESSION} -l ${shellQuote(text)}`, { timeout: 30000 });
@@ -5410,6 +5415,8 @@ function tmuxSendKeys(text) {
     }
     if (!sent) {
       console.error('All tmux prompt paste attempts failed — task prompt lost');
+      // #16423: tell the hub, or the item sits as an accepted task that never started.
+      failCurrentTask('All tmux prompt paste attempts failed — task prompt lost', { kind: 'environment' });
       return;
     }
     // #6717/#9078: settle before submitting. sleepMs() is a no-op under

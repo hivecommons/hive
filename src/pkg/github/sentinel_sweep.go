@@ -692,6 +692,39 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if err != nil {
 		return SentinelSweepEvent{}, false, err
 	}
+	// The hive's sentinel comment for an EARLIER head, if this head has
+	// none yet. A new push rewrites it for the new head rather than
+	// stamping the PR a second time (hivecommons/hive#16433): the label is
+	// what blocks, the comment is the explanation, and one explanation per
+	// PR is enough. Only a comment the hive can verify as its own is
+	// reused — a hive that cannot name its accounts never rewrites a
+	// comment the PR author may have forged. findOwnMarkerComment keeps
+	// its exact-head read for the clearance logic below.
+	var prior *gh.IssueComment
+	if !posted && c.knowsOwnAccounts() {
+		if prior, _, err = c.findOwnMarkerComment(ctx, owner, repo, number, SentinelMarker); err != nil {
+			return SentinelSweepEvent{}, false, err
+		}
+	}
+	writeSentinelComment := func(body, what string) error {
+		target := comment
+		if !posted {
+			target = prior
+		}
+		if target != nil {
+			if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, target.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
+				return fmt.Errorf("updating sentinel %s: %w", what, err)
+			}
+			c.noteCommentEdited()
+			return nil
+		}
+		_, resp, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}) // writeback:gated
+		c.noteWritebackOutcome(displayRepo, resp, err)
+		if err != nil {
+			return fmt.Errorf("posting sentinel %s: %w", what, err)
+		}
+		return nil
+	}
 	if decision.Block && !hasAlertLabel && sentinelClearedByMaintainer(comment, posted) {
 		// The alert for this exact head is on the PR but the label is not:
 		// only a maintainer removes it, and the comment promised "Hive will
@@ -741,16 +774,14 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 			if err != nil {
 				return SentinelSweepEvent{}, false, fmt.Errorf("removing %s label from trusted author PR: %w", label, err)
 			}
-			if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, comment.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
-				return SentinelSweepEvent{}, false, fmt.Errorf("updating sentinel notice: %w", err)
+			if err := writeSentinelComment(body, "notice"); err != nil {
+				return SentinelSweepEvent{}, false, err
 			}
 			return event, true, nil
 		}
 		if !posted {
-			_, resp, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}) // writeback:gated
-			c.noteWritebackOutcome(displayRepo, resp, err)
-			if err != nil {
-				return SentinelSweepEvent{}, false, fmt.Errorf("posting sentinel notice: %w", err)
+			if err := writeSentinelComment(body, "notice"); err != nil {
+				return SentinelSweepEvent{}, false, err
 			}
 		}
 		return event, true, nil
@@ -763,15 +794,8 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if err != nil {
 		return SentinelSweepEvent{}, false, fmt.Errorf("adding %s label: %w", label, err)
 	}
-	body := SentinelComment(decision, head, author, findings)
-	if posted {
-		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, comment.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
-			return SentinelSweepEvent{}, false, fmt.Errorf("updating sentinel alert: %w", err)
-		}
-	} else {
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
-			return SentinelSweepEvent{}, false, fmt.Errorf("posting sentinel comment: %w", err)
-		}
+	if err := writeSentinelComment(SentinelComment(decision, head, author, findings), "alert"); err != nil {
+		return SentinelSweepEvent{}, false, err
 	}
 	return event, true, nil
 }

@@ -650,6 +650,26 @@ const (
 	DecisionCommentMarker = "<!-- hive:stage-needs-decision -->"
 )
 
+// EntryCommentMarker is the marker the entry comment for stage carries, or
+// "" for a stage with no entry comment.
+func EntryCommentMarker(stage Stage) string {
+	switch stage {
+	case ReadyForHumanMerge:
+		return ReadyCommentMarker
+	case NeedsDecision:
+		return DecisionCommentMarker
+	}
+	return ""
+}
+
+// EntryCommentUpdated is body — a fresh ReadyComment or DecisionComment —
+// as it is written over the PR's existing entry comment: the same text with
+// one line saying when it was last rewritten, so a reader who saw the
+// earlier wording knows it changed (hivecommons/hive#16433).
+func EntryCommentUpdated(body string, at time.Time) string {
+	return strings.TrimRight(body, "\n") + "\n\n<sub>Updated " + at.UTC().Format("2006-01-02 15:04 UTC") + ".</sub>"
+}
+
 // ReadyComment renders the 090 entry comment:
 //
 //	Ready for a human merge: verdict approved @abc1234, 55/55 checks green,

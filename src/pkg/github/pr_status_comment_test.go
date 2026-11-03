@@ -28,6 +28,7 @@ type statusCommentServer struct {
 	creates  int
 	edits    int
 	deletes  []string
+	reviews  int
 }
 
 var issuePathRe = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/(\d+)$`)
@@ -44,6 +45,9 @@ func (s *statusCommentServer) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "user": map[string]any{"login": "alice", "type": "User"}, "labels": []any{}})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
 			_ = json.NewEncoder(w).Encode(s.comments)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			s.reviews++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1, "state": "APPROVED"})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -261,6 +265,73 @@ func TestReviewRequestWatcher_QuietModeSuppressesNoFindingsReview(t *testing.T) 
 	}
 	if resp := submit("`main.go:12` the error is dropped on the floor"); !resp.OK || reviewed != 1 {
 		t.Fatalf("a body with findings must still post: %+v reviewed=%d", resp, reviewed)
+	}
+}
+
+// Quiet mode: a narrated clean review from a plain reviewer lane ("Read the
+// tree … Looks correct to me. No findings.") whose verdict approves with no
+// findings is suppressed like the one-line acknowledgement, and its body is
+// folded into the PR's status comment — created once, then edited in place
+// when the second lane reports — instead of being submitted as a review.
+func TestReviewRequestWatcher_QuietModeSuppressesNarratedCleanReview(t *testing.T) {
+	s := &statusCommentServer{}
+	srv := s.start(t)
+	c := reviewTestClient(t, srv.URL)
+	c.SetAppBotLogin("hive-app[bot]")
+	c.SetNotificationsQuiet(func() bool { return true })
+	dir := withReviewDir(t)
+	oldLinks := ReviewLinksPath
+	ReviewLinksPath = filepath.Join(t.TempDir(), "review-links.json")
+	t.Cleanup(func() { ReviewLinksPath = oldLinks })
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		{Repo: "o/r", Number: 5, HeadSHA: "abc", Perspective: review.PerspectiveCorrectness, Agent: "reviewer"},
+		{Repo: "o/r", Number: 5, HeadSHA: "abc", Perspective: review.PerspectiveSecurity, Agent: "reviewer-2"},
+	}})
+
+	submit := func(agent, perspective, event, verdict, body string) ReviewResponse {
+		t.Helper()
+		path, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: event, Agent: agent, Body: body, Report: validVerdictJSON(t, "o/r", 5, perspective, verdict)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.ProcessReviewRequestsOnce(context.Background())
+		raw, err := os.ReadFile(strings.TrimSuffix(path, ".json") + ".result.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var resp ReviewResponse
+		_ = json.Unmarshal(raw, &resp)
+		return resp
+	}
+
+	narrated := "Read the tree at `c7c8dfb`: the retry loop bounds its attempts. Looks correct to me.\n\nNo findings."
+	resp := submit("reviewer", "correctness", "approve", "approve", narrated)
+	if !resp.OK || resp.State != ReviewEventRecordVerdict || resp.Note != reviewNoFindingsSuppressedNote {
+		t.Fatalf("narrated clean review must be recorded, not posted: %+v", resp)
+	}
+	if s.reviews != 0 || s.creates != 1 || s.edits != 0 {
+		t.Fatalf("reviews=%d creates=%d edits=%d, want the verdict folded into one new status comment", s.reviews, s.creates, s.edits)
+	}
+	body, _ := s.comments[0]["body"].(string)
+	if !strings.Contains(body, "**Reviewed** by `reviewer` — no findings.") || !strings.Contains(body, "Looks correct to me.") {
+		t.Fatalf("status comment must carry the verdict and the reviewer's notes: %q", body)
+	}
+
+	if resp := submit("reviewer-2", "security", "approve", "approve", "Checked the token handling; no findings from security."); !resp.OK || resp.State != ReviewEventRecordVerdict {
+		t.Fatalf("second lane must be recorded too: %+v", resp)
+	}
+	if s.reviews != 0 || s.creates != 1 || s.edits != 1 {
+		t.Fatalf("reviews=%d creates=%d edits=%d, want the second lane to edit the status comment", s.reviews, s.creates, s.edits)
+	}
+	body, _ = s.comments[0]["body"].(string)
+	if !strings.Contains(body, "by `reviewer` —") || !strings.Contains(body, "by `reviewer-2` —") {
+		t.Fatalf("both lanes must share the status comment: %q", body)
+	}
+
+	// A body that says "no findings" while the verdict disagrees is a
+	// real review and still goes out.
+	if resp := submit("reviewer", "correctness", "request_changes", "changes_requested", "No findings on the happy path, but `main.go:12` drops the error."); !resp.OK || s.reviews != 1 {
+		t.Fatalf("a non-approving verdict must still post: %+v reviews=%d", resp, s.reviews)
 	}
 }
 

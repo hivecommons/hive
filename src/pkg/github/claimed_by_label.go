@@ -92,23 +92,45 @@ func (c *Client) humanClaimReleased(ctx context.Context, owner, repo string, num
 		return false, err
 	}
 	var bodies []string
+	// The claim ledger (claims.LedgerMarker) is one comment rewritten per
+	// transition: once released it carries only the release marker, the
+	// human claim it ended no longer appears anywhere. A ledger whose
+	// current state is a human release is a released human claim.
+	ledgerReleasedHuman := false
 	for _, comment := range comments {
 		if !c.isTrustedAppBotCommentAuthor(comment) {
 			continue
 		}
 		body := comment.GetBody()
-		if _, ok := issueclaim.ParseReleaseMarker(body); ok {
+		if rel, ok := issueclaim.ParseReleaseMarker(body); ok {
 			bodies = append(bodies, body)
+			if strings.Contains(body, claims.LedgerMarker) {
+				ledgerReleasedHuman = humanClaimKind(rel.Kind)
+			}
 			continue
 		}
-		if marker, ok := issueclaim.ParseMarker(body); ok &&
-			(strings.EqualFold(marker.Kind, string(claims.KindHuman)) ||
-				strings.EqualFold(marker.Kind, string(claims.KindContributor)) || strings.EqualFold(marker.Kind, string(claims.KindExternal))) {
+		marker, ok := issueclaim.ParseMarker(body)
+		if !ok {
+			continue
+		}
+		if humanClaimKind(marker.Kind) {
 			bodies = append(bodies, body)
+		} else if strings.Contains(body, claims.LedgerMarker) {
+			ledgerReleasedHuman = claims.LedgerHumanReleased(body)
 		}
 	}
 	latest, found := issueclaim.Latest(bodies, 0)
-	return found && latest.Released, nil
+	if !found {
+		return ledgerReleasedHuman, nil
+	}
+	return latest.Released, nil
+}
+
+// humanClaimKind reports whether kind names a human principal: a person, a
+// relay contributor or an external bot acting for one.
+func humanClaimKind(kind string) bool {
+	return strings.EqualFold(kind, string(claims.KindHuman)) ||
+		strings.EqualFold(kind, string(claims.KindContributor)) || strings.EqualFold(kind, string(claims.KindExternal))
 }
 
 // RemoveClaimedByLabel removes the claimed-by label(s) derived from claim:
