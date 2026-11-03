@@ -69,7 +69,9 @@ func LedgerComment(previous string, event LedgerEvent) string {
 	b.WriteString("\n")
 	switch {
 	case event.Released:
-		b.WriteString(releaseCommentAt(event.Claim, event.Reason, event.At))
+		// The release prose quotes the reason verbatim; a reason that smuggles
+		// a marker opener in would hand the ledger a second machine marker.
+		b.WriteString(releaseCommentAt(event.Claim, strings.ReplaceAll(event.Reason, "<!--", ""), event.At))
 	case event.Previous.Holder != "":
 		b.WriteString(TakeoverComment(event.Claim, event.Previous))
 	default:
