@@ -47,6 +47,8 @@ const (
 	claudeAutoModeNoticeFooterLines = 2
 )
 
+var ompSplashSkipRe = regexp.MustCompile(`(?i)press (?:⏎|enter) to skip`)
+
 var BlockingPrompts = []BlockingPrompt{
 	{
 		backend: "claude",
@@ -129,10 +131,9 @@ var BlockingPrompts = []BlockingPrompt{
 	},
 	{
 		backend: "omp",
-		match: func(p string) bool {
-			lower := strings.ToLower(p)
-			return strings.Contains(lower, "welcome to omp") && strings.Contains(lower, "press enter to skip")
-		},
+		// OMP renders the splash footer with either a unicode or plain key
+		// name. The provider setup wizard is a login screen, not this prompt.
+		match: ompSplashSkipRe.MatchString,
 		key:   "Enter",
 		label: "omp onboarding",
 	},

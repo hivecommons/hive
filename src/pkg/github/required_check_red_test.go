@@ -17,12 +17,15 @@ func TestEnrichCIStatus_RequiredRedHonoursTheRequiredSet(t *testing.T) {
 		return map[string]any{"name": name, "status": "completed", "conclusion": conclusion}
 	}
 	for _, tc := range []struct {
-		name      string
-		runs      []map[string]any
-		statuses  []string
-		required  map[string]bool
-		wantRed   bool
-		wantFacts bool // RequiredChecksAllReported
+		name                string
+		runs                []map[string]any
+		statuses            []string
+		statusState         string
+		statusesFail        bool
+		required            map[string]bool
+		wantRed             bool
+		wantFacts           bool // RequiredChecksAllReported
+		wantFailingRequired string
 	}{
 		{
 			name:      "only a non-required check failing",
@@ -32,11 +35,12 @@ func TestEnrichCIStatus_RequiredRedHonoursTheRequiredSet(t *testing.T) {
 			wantFacts: true,
 		},
 		{
-			name:      "a required check failing",
-			runs:      []map[string]any{run("test", "failure"), run(advisory, "failure")},
-			required:  map[string]bool{"test": true},
-			wantRed:   true,
-			wantFacts: true,
+			name:                "a required check failing",
+			runs:                []map[string]any{run("test", "failure"), run(advisory, "failure")},
+			required:            map[string]bool{"test": true},
+			wantRed:             true,
+			wantFacts:           true,
+			wantFailingRequired: "test",
 		},
 		{
 			name:    "required set unknown fails closed",
@@ -50,17 +54,34 @@ func TestEnrichCIStatus_RequiredRedHonoursTheRequiredSet(t *testing.T) {
 			wantRed:  true,
 		},
 		{
-			// The required context is a commit status, which the check-run
-			// listing cannot see: nothing proves it is not the red one.
-			name:     "a required commit status fails closed",
-			runs:     []map[string]any{run(advisory, "failure")},
-			statuses: []string{"validate"},
-			required: map[string]bool{"validate": true},
-			wantRed:  true,
+			// Commit-status evidence now proves both presence and failure.
+			name:                "a required commit status fails closed",
+			runs:                []map[string]any{run(advisory, "failure")},
+			statuses:            []string{"validate"},
+			statusState:         "failure",
+			required:            map[string]bool{"validate": true},
+			wantRed:             true,
+			wantFacts:           true,
+			wantFailingRequired: "validate",
+		},
+		{
+			name:      "a successful required commit status does not inherit advisory failure",
+			runs:      []map[string]any{run(advisory, "failure")},
+			statuses:  []string{"validate"},
+			required:  map[string]bool{"validate": true},
+			wantFacts: true,
+		},
+		{
+			name:         "unavailable required commit status fails closed",
+			runs:         []map[string]any{run(advisory, "failure")},
+			statuses:     []string{"validate"},
+			statusesFail: true,
+			required:     map[string]bool{"validate": true},
+			wantRed:      true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := &protectionServer{mergeableState: "unstable", checkRuns: tc.runs, statuses: tc.statuses}
+			p := &protectionServer{mergeableState: "unstable", checkRuns: tc.runs, statuses: tc.statuses, statusState: tc.statusState, statusesFail: tc.statusesFail}
 			pr := enrichOnePR(t, p, tc.required)
 			if pr.CIStatus != "failure" || !pr.HasFailingCheck() {
 				t.Fatalf("CIStatus = %q, HasFailingCheck = %v; want a failing PR either way", pr.CIStatus, pr.HasFailingCheck())
@@ -71,6 +92,9 @@ func TestEnrichCIStatus_RequiredRedHonoursTheRequiredSet(t *testing.T) {
 			gotFacts := pr.Protection != nil && pr.Protection.RequiredChecksAllReported
 			if gotFacts != tc.wantFacts {
 				t.Errorf("RequiredChecksAllReported = %v, want %v", gotFacts, tc.wantFacts)
+			}
+			if tc.wantFailingRequired != "" && (pr.Protection == nil || len(pr.Protection.FailingRequiredChecks) != 1 || pr.Protection.FailingRequiredChecks[0] != tc.wantFailingRequired) {
+				t.Errorf("Protection = %+v, want exactly failing required check %q", pr.Protection, tc.wantFailingRequired)
 			}
 		})
 	}

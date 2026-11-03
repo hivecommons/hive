@@ -6406,9 +6406,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/time/rate
-Version:  v0.15.0
+Version:  v0.16.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/time/+/v0.15.0:LICENSE
+Source:   https://cs.opensource.google/go/x/time/+/v0.16.0:LICENSE
 
 Copyright 2009 The Go Authors.
 

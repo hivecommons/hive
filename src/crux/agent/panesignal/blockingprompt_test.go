@@ -133,6 +133,30 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 	}
 }
 
+func TestBlockingPromptKey_OMPSplashIsBackendScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name, backend, pane string
+		want                bool
+	}{
+		{"plain footer without branding", "omp", "press enter to skip", true},
+		{"unicode footer without branding", "omp", "press ⏎ to skip", true},
+		{"case insensitive footer", "omp", "PRESS ENTER TO SKIP", true},
+		{"branding without footer", "omp", "Welcome to omp", false},
+		{"provider setup wizard", "omp", "Set up your providers\nSelect provider to login", false},
+		{"other backend", "claude", "press ⏎ to skip", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, label, ok := BlockingPromptKey(tc.backend, tc.pane)
+			if ok != tc.want {
+				t.Fatalf("recognised = %v, want %v", ok, tc.want)
+			}
+			if ok && (key != "Enter" || label != "omp onboarding") {
+				t.Errorf("key, label = %q, %q; want Enter, omp onboarding", key, label)
+			}
+		})
+	}
+}
+
 // TestBlockingPromptKey_IgnoresUnrelatedPanes: a prompt is only answered when
 // positively identified. Firing a numbered keystroke at an arbitrary pane would
 // type stray input into a working agent's prompt.
