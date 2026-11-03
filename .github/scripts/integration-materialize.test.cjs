@@ -287,7 +287,7 @@ test('real Git plumbing produces exact deterministic prefixes and retains an act
     GIT_TERMINAL_PROMPT: '0',
   };
   const git = (args, env = {}) => execFileSync('git',
-    ['-c', 'core.hooksPath=/dev/null', '--literal-pathspecs', ...args],
+    ['-c', 'core.hooksPath=/dev/null', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '--literal-pathspecs', ...args],
     {cwd: directory, env: {...environment, ...env}, encoding: 'utf8',
       timeout: 30000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe']}).trim();
   const write = (file, value) => fs.writeFileSync(path.join(directory, file), `${value}\n`);
@@ -342,6 +342,6 @@ test('real Git plumbing produces exact deterministic prefixes and retains an act
     assert.equal(conflict.prepared.length, 1);
     assert.equal(conflict.prepared[0].subject.id, first.subject.id);
   } finally {
-    fs.rmSync(directory, {recursive: true});
+    fs.rmSync(directory, {recursive: true, force: true, maxRetries: 10, retryDelay: 100});
   }
 });
